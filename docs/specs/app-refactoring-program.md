@@ -295,6 +295,9 @@ Dependencies: Wave 3
 
 - Split poker state, job lifecycle, recommendation, training, pipeline, and
   benchmark models into owned modules.
+- Pipeline, poker, recommendation, and training contracts now live under
+  `app/domain`; `app/models.py` preserves compatibility exports while the job
+  lifecycle and benchmark contracts migrate.
 - Keep `models.py` as an exports-only compatibility surface during migration.
 - Move lifecycle transitions into aggregate/domain functions with direct tests.
 

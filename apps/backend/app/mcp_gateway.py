@@ -15,14 +15,16 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validat
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.domain.poker import CanonicalState
+from app.domain.training import (
+    TrainingDecisionRequest,
+    TrainingProgress,
+    TrainingReviewRequest,
+)
 from app.models import (
     BenchmarkOverview,
     JobHistory,
     JobQueue,
     JobRecord,
-    TrainingDecisionRequest,
-    TrainingProgress,
-    TrainingReviewRequest,
 )
 from app.mcp_access import MCP_PRINCIPAL_CONTEXT
 

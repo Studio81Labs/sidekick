@@ -86,6 +86,11 @@ under `app/domain/recommendations`. Providers, local engines, benchmarks, and
 training aggregation import those contracts directly; the legacy model module
 continues to re-export the same objects while dependent domains migrate.
 
+Post-hand decisions, review requests, progress summaries, trends, and solver
+coverage contracts live under `app/domain/training`. Training aggregation and
+transport adapters import that domain directly, while `app/models.py`
+temporarily re-exports the same objects for persisted job compatibility.
+
 Backend API integration tests share transport setup through
 `tests/api_test_support.py`, and route-domain suites live in focused modules.
 Health, capability, and pipeline-selection coverage lives in
