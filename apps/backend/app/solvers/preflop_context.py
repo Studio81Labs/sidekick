@@ -5,7 +5,8 @@ from itertools import pairwise
 import re
 from typing import Literal
 
-from app.models import CanonicalState, PreflopPosition, RecommendationRequest
+from app.domain.poker import PreflopPosition
+from app.models import CanonicalState, RecommendationRequest
 
 Position = PreflopPosition
 

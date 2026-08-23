@@ -6,11 +6,11 @@ from decimal import Decimal
 from datetime import datetime
 from typing import Any, Literal
 
+from app.domain.poker import Street
 from app.models import (
     JobRecord,
     RecommendationAction,
     RecommendationResult,
-    Street,
     TrainingActionDifference,
     TrainingCertainty,
     TrainingCertaintySummary,

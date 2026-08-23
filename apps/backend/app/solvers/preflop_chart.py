@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 
-from app.models import Card, RecommendationAction, RecommendationRequest, RecommendationResult
+from app.domain.poker import Card
+from app.models import RecommendationAction, RecommendationRequest, RecommendationResult
 from app.providers.rule_based import _starting_hand_score
 from app.solvers.preflop_context import (
     MAX_SUPPORTED_ISOLATION_RAISE_SIZE_BB,

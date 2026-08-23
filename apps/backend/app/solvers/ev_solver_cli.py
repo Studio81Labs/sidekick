@@ -11,7 +11,8 @@ from typing import Iterable
 
 from pydantic import ValidationError
 
-from app.models import Card, RecommendationAction, RecommendationRequest, RecommendationResult
+from app.domain.poker import Card
+from app.models import RecommendationAction, RecommendationRequest, RecommendationResult
 from app.providers.rule_based import (
     DECK_CODES,
     HAND_CATEGORY_LABELS,
