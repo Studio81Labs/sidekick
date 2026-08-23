@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from app.models import Card, DetectedState, ParserResult
+from app.domain.poker import Card
+from app.models import DetectedState, ParserResult
 
 
 class MockParser:

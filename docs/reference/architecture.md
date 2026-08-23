@@ -74,6 +74,12 @@ Provider-neutral pipeline selection and capability contracts live under
 domain package directly, while `app/models.py` temporarily re-exports the same
 class objects for legacy callers during the contract migration.
 
+Poker card values, constrained numeric types, and validated preflop and
+postflop action histories live under `app/domain/poker`. Parsers, solvers, and
+training adapters import those primitives directly. Persisted state contracts
+still receive the same class objects through temporary `app.models`
+compatibility exports.
+
 Backend API integration tests share transport setup through
 `tests/api_test_support.py`, and route-domain suites live in focused modules.
 Health, capability, and pipeline-selection coverage lives in

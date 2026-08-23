@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
+from app.domain.poker import Street
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
     McpAccessConfig,
@@ -31,7 +32,6 @@ from app.models import (
     JobRecord,
     RecommendationAction,
     ScreenshotMetadataRequest,
-    Street,
     TrainingDecisionRequest,
     TrainingProgress,
     TrainingReviewCertainty,

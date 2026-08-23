@@ -8,9 +8,9 @@ from typing import Literal
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.domain.poker import FacingAction
 from app.models import (
     CanonicalState,
-    FacingAction,
     RecommendationRequest,
     RecommendationResult,
 )

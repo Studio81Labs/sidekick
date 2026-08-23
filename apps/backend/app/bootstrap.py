@@ -116,6 +116,7 @@ from app.dataset_import import (
     parse_parser_dataset_archive,
 )
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
+from app.domain.poker import Street
 from app.models import (
     ApplicationBackupRestoreResult,
     ArchiveJobsRequest,
@@ -132,7 +133,6 @@ from app.models import (
     JobRecord,
     RecommendationRequest,
     ScreenshotMetadataRequest,
-    Street,
     TrainingDecision,
     TrainingDecisionRequest,
     TrainingProgress,
