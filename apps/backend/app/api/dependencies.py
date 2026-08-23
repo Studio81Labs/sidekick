@@ -9,6 +9,13 @@ from dataclasses import dataclass
 
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.domain.poker import CanonicalState, Street
+from app.domain.hands import (
+    ArchiveJobsRequest,
+    JobHistory,
+    JobQueue,
+    JobRecord,
+    ScreenshotMetadataRequest,
+)
 from app.domain.recommendations import RecommendationAction
 from app.domain.training import (
     TrainingDecisionRequest,
@@ -25,7 +32,6 @@ from app.mcp_access import (
     McpPrincipalSummary,
 )
 from app.models import (
-    ArchiveJobsRequest,
     ApplicationBackupRestoreResult,
     BenchmarkDatasetImportReceipt,
     BenchmarkDatasetImportResult,
@@ -34,10 +40,6 @@ from app.models import (
     BenchmarkRunRequest,
     BenchmarkSelectionRequest,
     HealthResponse,
-    JobHistory,
-    JobQueue,
-    JobRecord,
-    ScreenshotMetadataRequest,
 )
 
 BACKGROUND_TASK_STATE_KEY = "poker_response_background_task_scheduled"

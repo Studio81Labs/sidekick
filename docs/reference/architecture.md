@@ -86,6 +86,11 @@ under `app/domain/recommendations`. Providers, local engines, benchmarks, and
 training aggregation import those contracts directly; the legacy model module
 continues to re-export the same objects while dependent domains migrate.
 
+Upload/job-lifecycle contracts now live under `app/domain/hands`. `JobRecord`,
+`JobQueue`, `JobHistory`, `ScreenshotMetadataRequest`, and
+`ArchiveJobsRequest` are owned there, while the compatibility shell in
+`app/models.py` keeps object-identity compatibility while migration continues.
+
 Post-hand decisions, review requests, progress summaries, trends, and solver
 coverage contracts live under `app/domain/training`. Training aggregation and
 transport adapters import that domain directly, while `app/models.py`

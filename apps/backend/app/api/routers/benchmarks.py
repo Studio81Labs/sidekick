@@ -23,6 +23,7 @@ from app.api.dependencies import (
     BenchmarkTransportNotFoundError,
 )
 from app.api.response_contracts import ZIP_RESPONSE_CONTENT
+from app.domain.hands import JobRecord
 from app.models import (
     BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
     BenchmarkDatasetImportReceipt,
@@ -31,7 +32,6 @@ from app.models import (
     BenchmarkReport,
     BenchmarkRunRequest,
     BenchmarkSelectionRequest,
-    JobRecord,
 )
 
 

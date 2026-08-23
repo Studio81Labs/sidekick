@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validat
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.domain.poker import CanonicalState
+from app.domain.hands import JobHistory, JobQueue, JobRecord
 from app.domain.training import (
     TrainingDecisionRequest,
     TrainingProgress,
@@ -22,9 +23,6 @@ from app.domain.training import (
 )
 from app.models import (
     BenchmarkOverview,
-    JobHistory,
-    JobQueue,
-    JobRecord,
 )
 from app.mcp_access import MCP_PRINCIPAL_CONTEXT
 
