@@ -3,8 +3,9 @@ from json import JSONDecodeError
 import httpx
 from pydantic import SecretStr, ValidationError
 
+from app.domain.poker import CanonicalState
 from app.http_auth import bearer_headers
-from app.models import CanonicalState, RecommendationRequest, RecommendationResult
+from app.models import RecommendationRequest, RecommendationResult
 from app.providers.base import ProviderConfigurationError, ProviderError
 
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.models import CanonicalState
+from app.domain.poker import CanonicalState
 from app.solvers.preflop_context import (
     MONEY_TOLERANCE_BB,
     POSTED_BLIND_BB,

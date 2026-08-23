@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
-from app.domain.poker import Street
+from app.domain.poker import CanonicalState, Street
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
     McpAccessConfig,
@@ -25,7 +25,6 @@ from app.models import (
     BenchmarkReport,
     BenchmarkRunRequest,
     BenchmarkSelectionRequest,
-    CanonicalState,
     HealthResponse,
     JobHistory,
     JobQueue,

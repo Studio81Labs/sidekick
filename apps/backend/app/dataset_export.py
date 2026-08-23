@@ -7,7 +7,8 @@ from tempfile import SpooledTemporaryFile
 from typing import BinaryIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from app.models import CanonicalState, JobRecord
+from app.domain.poker import CanonicalState
+from app.models import JobRecord
 
 
 DATASET_SCHEMA = "poker-hero-parser-dataset"

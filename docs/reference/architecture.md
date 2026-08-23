@@ -76,9 +76,10 @@ class objects for legacy callers during the contract migration.
 
 Poker card values, constrained numeric types, and validated preflop and
 postflop action histories live under `app/domain/poker`. Parsers, solvers, and
-training adapters import those primitives directly. Persisted state contracts
-still receive the same class objects through temporary `app.models`
-compatibility exports.
+training adapters import those primitives directly. The same domain owns
+detected parser state, parser evidence, and canonical user-approved state plus
+their cross-field wager and history validation. `app/models.py` temporarily
+re-exports the same class objects for persisted-data and caller compatibility.
 
 Backend API integration tests share transport setup through
 `tests/api_test_support.py`, and route-domain suites live in focused modules.

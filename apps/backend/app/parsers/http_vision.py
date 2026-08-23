@@ -5,8 +5,8 @@ import httpx
 from pydantic import ValidationError
 
 from app.config import Settings
+from app.domain.poker import ParserResult
 from app.http_auth import bearer_headers
-from app.models import ParserResult
 from app.parsers.base import ParserConfigurationError, ParserError
 
 

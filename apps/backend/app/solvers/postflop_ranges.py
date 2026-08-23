@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-from app.models import CanonicalState
+from app.domain.poker import CanonicalState
 from app.solvers.preflop_context import (
     MAX_SUPPORTED_FOUR_BET_TO_THREE_BET_RATIO,
     MAX_SUPPORTED_ISOLATION_RAISE_SIZE_BB,
