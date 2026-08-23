@@ -69,6 +69,11 @@ dependencies. Backup transport owns multipart limits and streaming responses,
 while archive creation, restore coordination, and interprocess lock timing remain
 inside its injected runtime boundary.
 
+Provider-neutral pipeline selection and capability contracts live under
+`app/domain/pipeline`. Runtime configuration and HTTP adapters import that
+domain package directly, while `app/models.py` temporarily re-exports the same
+class objects for legacy callers during the contract migration.
+
 Backend API integration tests share transport setup through
 `tests/api_test_support.py`, and route-domain suites live in focused modules.
 Health, capability, and pipeline-selection coverage lives in

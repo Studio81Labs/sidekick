@@ -5,7 +5,11 @@ from collections.abc import Iterable
 from app.config import (
     Settings,
 )
-from app.models import PipelineCapabilities, PipelineOption, PipelineSelection
+from app.domain.pipeline import (
+    PipelineCapabilities,
+    PipelineOption,
+    PipelineSelection,
+)
 from app.parsers.registry import PARSER_PLUGINS, PARSER_PLUGIN_IDS, get_parser_plugin
 from app.providers.registry import (
     RECOMMENDATION_PLUGINS,
