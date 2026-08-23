@@ -7,10 +7,9 @@ from datetime import datetime
 from typing import Any, Literal
 
 from app.domain.poker import Street
+from app.domain.recommendations import RecommendationAction, RecommendationResult
 from app.models import (
     JobRecord,
-    RecommendationAction,
-    RecommendationResult,
     TrainingActionDifference,
     TrainingCertainty,
     TrainingCertaintySummary,

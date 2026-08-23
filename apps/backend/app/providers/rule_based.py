@@ -7,7 +7,11 @@ from dataclasses import dataclass
 from itertools import combinations
 
 from app.domain.poker import Card
-from app.models import RecommendationAction, RecommendationRequest, RecommendationResult
+from app.domain.recommendations import (
+    RecommendationAction,
+    RecommendationRequest,
+    RecommendationResult,
+)
 
 RANK_VALUE = {
     "2": 2,

@@ -9,10 +9,7 @@ from pydantic import ValidationError
 
 from app.config import Settings
 from app.domain.poker import CanonicalState, FacingAction
-from app.models import (
-    RecommendationRequest,
-    RecommendationResult,
-)
+from app.domain.recommendations import RecommendationRequest, RecommendationResult
 from app.providers.base import ProviderConfigurationError, ProviderError, ProviderInputError
 from app.solvers.preflop_context import (
     normalize_position,

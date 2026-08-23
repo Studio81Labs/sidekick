@@ -81,6 +81,11 @@ detected parser state, parser evidence, and canonical user-approved state plus
 their cross-field wager and history validation. `app/models.py` temporarily
 re-exports the same class objects for persisted-data and caller compatibility.
 
+Provider-neutral recommendation actions, requests, and result evidence live
+under `app/domain/recommendations`. Providers, local engines, benchmarks, and
+training aggregation import those contracts directly; the legacy model module
+continues to re-export the same objects while dependent domains migrate.
+
 Backend API integration tests share transport setup through
 `tests/api_test_support.py`, and route-domain suites live in focused modules.
 Health, capability, and pipeline-selection coverage lives in

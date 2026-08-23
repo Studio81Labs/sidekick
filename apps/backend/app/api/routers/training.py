@@ -6,9 +6,9 @@ from fastapi.responses import StreamingResponse
 from app.api.dependencies import TrainingProgressQuery, TrainingRuntime
 from app.api.response_contracts import MARKDOWN_RESPONSE_CONTENT
 from app.domain.poker import Street
+from app.domain.recommendations import RecommendationAction
 from app.models import (
     JobRecord,
-    RecommendationAction,
     TrainingProgress,
     TrainingReviewCertainty,
     TrainingReviewOrder,

@@ -117,6 +117,7 @@ from app.dataset_import import (
 )
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.domain.poker import CanonicalState, Street
+from app.domain.recommendations import RecommendationRequest
 from app.models import (
     ApplicationBackupRestoreResult,
     ArchiveJobsRequest,
@@ -130,7 +131,6 @@ from app.models import (
     JobHistory,
     JobQueue,
     JobRecord,
-    RecommendationRequest,
     ScreenshotMetadataRequest,
     TrainingDecision,
     TrainingDecisionRequest,

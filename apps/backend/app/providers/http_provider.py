@@ -4,8 +4,8 @@ import httpx
 from pydantic import SecretStr, ValidationError
 
 from app.domain.poker import CanonicalState
+from app.domain.recommendations import RecommendationRequest, RecommendationResult
 from app.http_auth import bearer_headers
-from app.models import RecommendationRequest, RecommendationResult
 from app.providers.base import ProviderConfigurationError, ProviderError
 
 
