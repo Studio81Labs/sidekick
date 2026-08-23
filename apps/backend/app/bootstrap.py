@@ -115,6 +115,7 @@ from app.dataset_import import (
     import_parser_dataset,
     parse_parser_dataset_archive,
 )
+from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.models import (
     ApplicationBackupRestoreResult,
     ArchiveJobsRequest,
@@ -129,8 +130,6 @@ from app.models import (
     JobHistory,
     JobQueue,
     JobRecord,
-    PipelineCapabilities,
-    PipelineSelection,
     RecommendationRequest,
     ScreenshotMetadataRequest,
     Street,

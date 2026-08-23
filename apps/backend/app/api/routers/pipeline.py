@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.api.dependencies import ApiRuntime, PipelineCapabilitiesUnavailableError
-from app.models import PipelineCapabilities
+from app.domain.pipeline import PipelineCapabilities
 
 
 def create_pipeline_router(runtime: ApiRuntime) -> APIRouter:

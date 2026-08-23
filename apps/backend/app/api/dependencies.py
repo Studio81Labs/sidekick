@@ -7,6 +7,7 @@ container. Routers receive only the use-case callables they need.
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 
+from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
     McpAccessConfig,
@@ -28,8 +29,6 @@ from app.models import (
     JobHistory,
     JobQueue,
     JobRecord,
-    PipelineCapabilities,
-    PipelineSelection,
     RecommendationAction,
     ScreenshotMetadataRequest,
     Street,
