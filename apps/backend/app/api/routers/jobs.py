@@ -33,11 +33,11 @@ from app.api.dependencies import (
 )
 from app.api.response_contracts import SUPPORTED_IMAGE_RESPONSE_CONTENT
 from app.domain.poker import CanonicalState
+from app.domain.training import TrainingDecisionRequest
 from app.models import (
     JobQueue,
     JobRecord,
     ScreenshotMetadataRequest,
-    TrainingDecisionRequest,
 )
 
 

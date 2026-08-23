@@ -7,13 +7,13 @@ from app.api.dependencies import TrainingProgressQuery, TrainingRuntime
 from app.api.response_contracts import MARKDOWN_RESPONSE_CONTENT
 from app.domain.poker import Street
 from app.domain.recommendations import RecommendationAction
-from app.models import (
-    JobRecord,
+from app.domain.training import (
     TrainingProgress,
     TrainingReviewCertainty,
     TrainingReviewOrder,
     TrainingReviewRequest,
 )
+from app.models import JobRecord
 
 
 def create_training_router(runtime: TrainingRuntime) -> APIRouter:

@@ -8,8 +8,7 @@ from typing import Any, Literal
 
 from app.domain.poker import Street
 from app.domain.recommendations import RecommendationAction, RecommendationResult
-from app.models import (
-    JobRecord,
+from app.domain.training import (
     TrainingActionDifference,
     TrainingCertainty,
     TrainingCertaintySummary,
@@ -27,6 +26,7 @@ from app.models import (
     TrainingStreetSummary,
     TrainingTrend,
 )
+from app.models import JobRecord
 
 
 SIZING_MATCH_TOLERANCE = Decimal("0.01")

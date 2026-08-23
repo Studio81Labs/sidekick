@@ -118,6 +118,13 @@ from app.dataset_import import (
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.domain.poker import CanonicalState, Street
 from app.domain.recommendations import RecommendationRequest
+from app.domain.training import (
+    TrainingDecision,
+    TrainingDecisionRequest,
+    TrainingProgress,
+    TrainingReviewOrder,
+    TrainingReviewRequest,
+)
 from app.models import (
     ApplicationBackupRestoreResult,
     ArchiveJobsRequest,
@@ -132,11 +139,6 @@ from app.models import (
     JobQueue,
     JobRecord,
     ScreenshotMetadataRequest,
-    TrainingDecision,
-    TrainingDecisionRequest,
-    TrainingProgress,
-    TrainingReviewOrder,
-    TrainingReviewRequest,
 )
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
