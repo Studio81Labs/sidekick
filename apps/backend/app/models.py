@@ -22,6 +22,7 @@ from app.domain.poker import (
     CompletedPostflopAction,
     CompletedPostflopActionType,
     CanonicalState,
+    ParserConfidence,
     CompletedPostflopStreet,
     CompletedPostflopStreetHistory,
     DetectedState,
