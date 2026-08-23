@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.config import Settings
-from app.models import ParserResult
+from app.domain.poker import ParserResult
 from app.ocr_layouts import OCR_CV_LAYOUT_PROFILE_IDS
 from app.parsers.base import ParserError
 from app.parsers.http_vision import HttpVisionParser

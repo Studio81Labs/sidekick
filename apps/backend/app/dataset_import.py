@@ -29,10 +29,9 @@ from app.dataset_export import (
     dataset_case_limit_message,
     parser_dataset_archive_case,
 )
+from app.domain.poker import CanonicalState, DetectedState
 from app.models import (
     BenchmarkDatasetImportResult,
-    CanonicalState,
-    DetectedState,
     JobRecord,
 )
 from app.storage import FileJobStore, JobNotFoundError

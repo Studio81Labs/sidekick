@@ -11,13 +11,13 @@ from typing import Any
 import ijson
 from pydantic import TypeAdapter, ValidationError
 
+from app.domain.poker import CanonicalState
 from app.models import (
     BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
     BenchmarkDatasetImportReceipt,
     BenchmarkDatasetImportResult,
     BenchmarkReport,
     BenchmarkReportSummary,
-    CanonicalState,
     JobRecord,
 )
 

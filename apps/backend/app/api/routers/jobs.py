@@ -32,8 +32,8 @@ from app.api.dependencies import (
     JobsUploadRuntime,
 )
 from app.api.response_contracts import SUPPORTED_IMAGE_RESPONSE_CONTENT
+from app.domain.poker import CanonicalState
 from app.models import (
-    CanonicalState,
     JobQueue,
     JobRecord,
     ScreenshotMetadataRequest,

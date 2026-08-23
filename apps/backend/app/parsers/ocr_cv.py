@@ -7,8 +7,7 @@ from typing import Literal, cast
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-from app.domain.poker import Card, Rank, Street, Suit
-from app.models import DetectedState, ParserResult
+from app.domain.poker import Card, DetectedState, ParserResult, Rank, Street, Suit
 from app.ocr_layouts import (
     FORTUNA_NATIONS_LAYOUT,
     CardSlot,

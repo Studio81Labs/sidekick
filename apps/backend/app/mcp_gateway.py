@@ -14,9 +14,9 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.domain.poker import CanonicalState
 from app.models import (
     BenchmarkOverview,
-    CanonicalState,
     JobHistory,
     JobQueue,
     JobRecord,

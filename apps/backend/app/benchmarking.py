@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import Any
 
 from app.benchmark_corpus import benchmark_corpus_fingerprint
+from app.domain.poker import CanonicalState, DetectedState
 from app.models import (
     BENCHMARK_FIELDS,
     BenchmarkCaseResult,
@@ -10,8 +11,6 @@ from app.models import (
     BenchmarkFieldMetric,
     BenchmarkParserRouting,
     BenchmarkReport,
-    CanonicalState,
-    DetectedState,
     JobRecord,
     benchmark_values_match,
     normalize_benchmark_value,

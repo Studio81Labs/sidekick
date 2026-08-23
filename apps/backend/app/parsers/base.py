@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Protocol
 
-from app.models import ParserResult
+from app.domain.poker import ParserResult
 
 
 class ParserError(RuntimeError):
