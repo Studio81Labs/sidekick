@@ -20,7 +20,7 @@ from pydantic import (
 
 from app.config import Settings, get_settings
 from app.domain.poker import CanonicalState, Street
-from app.models import (
+from app.domain.recommendations import (
     RecommendationAction,
     RecommendationRequest,
     RecommendationResult,

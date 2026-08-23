@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.domain.poker import CanonicalState, Street
+from app.domain.recommendations import RecommendationAction
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
     McpAccessConfig,
@@ -29,7 +30,6 @@ from app.models import (
     JobHistory,
     JobQueue,
     JobRecord,
-    RecommendationAction,
     ScreenshotMetadataRequest,
     TrainingDecisionRequest,
     TrainingProgress,

@@ -1,7 +1,7 @@
 from typing import Protocol
 
 from app.domain.poker import CanonicalState
-from app.models import RecommendationRequest, RecommendationResult
+from app.domain.recommendations import RecommendationRequest, RecommendationResult
 
 
 class ProviderError(RuntimeError):

@@ -43,9 +43,13 @@ from app.domain.poker import (
     Suit,
 )
 from app.domain.poker.models import CODE_BY_SUIT, RANKS, SUIT_BY_CODE
+from app.domain.recommendations import (
+    RecommendationAction,
+    RecommendationRequest,
+    RecommendationResult,
+)
 
 
-RecommendationAction = Literal["fold", "check", "call", "bet", "raise"]
 DeploymentEnvironment = Literal["local", "staging", "production"]
 TrainingCertainty = Literal["low", "medium", "high"]
 TrainingOutcome = Literal["match", "mixed", "same_action", "mixed_action", "different"]
@@ -188,35 +192,6 @@ def normalize_benchmark_value(field_name: BenchmarkFieldName, value: Any) -> Any
             return BENCHMARK_POSITION_ALIASES.get(normalized, normalized)
         return normalized
     return value
-
-
-class RecommendationRequest(BaseModel):
-    state: CanonicalState
-    provider: str
-
-
-class RecommendationResult(BaseModel):
-    action: RecommendationAction
-    sizing: float | None = Field(
-        default=None,
-        gt=0,
-        allow_inf_nan=False,
-        strict=True,
-    )
-    confidence: float = Field(
-        ge=0,
-        le=1,
-        allow_inf_nan=False,
-        strict=True,
-    )
-    explanation: str
-    raw: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_sizing(self) -> Self:
-        if self.action not in {"bet", "raise"} and self.sizing is not None:
-            raise ValueError("Sizing is only valid for bet or raise recommendations")
-        return self
 
 
 class TrainingDecisionRequest(BaseModel):

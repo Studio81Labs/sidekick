@@ -4,7 +4,7 @@ import sys
 
 from pydantic import ValidationError
 
-from app.models import RecommendationRequest, RecommendationResult
+from app.domain.recommendations import RecommendationRequest, RecommendationResult
 from app.providers.rule_based import RuleBasedTrainingProvider
 
 RULE_BASED_SUFFIX = " This is a rule-based training recommendation, not a solver output."

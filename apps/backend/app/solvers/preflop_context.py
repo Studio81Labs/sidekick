@@ -6,7 +6,7 @@ import re
 from typing import Literal
 
 from app.domain.poker import CanonicalState, PreflopPosition
-from app.models import RecommendationRequest
+from app.domain.recommendations import RecommendationRequest
 
 Position = PreflopPosition
 

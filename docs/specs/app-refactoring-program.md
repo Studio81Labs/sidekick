@@ -484,7 +484,7 @@ Every implementation PR must include:
 | 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                   |
 | 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed |
 | 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                       |
-| 5    | In progress | Pipeline contracts and poker primitives/state moved under `app/domain`; `app.models` preserves compatibility exports while remaining domains migrate                    |
+| 5    | In progress | Pipeline, poker state, and recommendation contracts moved under `app/domain`; `app.models` preserves compatibility exports while remaining domains migrate              |
 | 6-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                     |
 
 ## Exit Criteria
