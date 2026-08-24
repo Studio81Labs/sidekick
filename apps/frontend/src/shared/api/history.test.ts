@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { getHistory as getDomainHistory } from "../../domains/history/api/historyApi";
 import { jsonResponse, resetApiMocks } from "../../test/api";
 import { archiveJobs, getHistory } from "./history";
 
@@ -32,6 +33,10 @@ describe("archiveJobs", () => {
 });
 
 describe("getHistory", () => {
+  it("preserves the domain adapter export identity", () => {
+    expect(getHistory).toBe(getDomainHistory);
+  });
+
   it("requests an older page from the current loaded offset", async () => {
     const fetchMock = vi
       .fn()

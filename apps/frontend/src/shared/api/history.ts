@@ -1,29 +1,9 @@
 import type { JobHistory } from "../types/jobs";
 import { apiUrl, readJson } from "./core";
 
-const HISTORY_ARCHIVE_BATCH_SIZE = 100;
+export { getHistory } from "../../domains/history/api/historyApi";
 
-export async function getHistory(
-  offset = 0,
-  query = "",
-  limit?: number,
-): Promise<JobHistory> {
-  const params = new URLSearchParams();
-  if (offset > 0) {
-    params.set("offset", String(offset));
-  }
-  if (query.trim()) {
-    params.set("query", query.trim());
-  }
-  if (limit !== undefined) {
-    params.set("limit", String(limit));
-  }
-  const queryString = params.size > 0 ? `?${params.toString()}` : "";
-  const response = await fetch(apiUrl(`/api/history${queryString}`), {
-    credentials: "include",
-  });
-  return readJson<JobHistory>(response);
-}
+const HISTORY_ARCHIVE_BATCH_SIZE = 100;
 
 export async function archiveJobs(jobIds: string[]): Promise<JobHistory> {
   if (jobIds.length === 0) {

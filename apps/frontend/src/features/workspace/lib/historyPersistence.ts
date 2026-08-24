@@ -1,4 +1,4 @@
-import { getHistory } from "../../../shared/api/history";
+import { getHistory } from "../../../domains/history/api/historyApi";
 import type { JobHistory, JobRecord } from "../../../shared/types/jobs";
 import type { HistoryItem } from "../../history/lib/historyPresentation";
 import { readPersistedMutationLease } from "./mutationLeaseStorage";
