@@ -27,7 +27,7 @@ function seedCaches(jobId: string) {
 }
 
 describe("hand workflow commands", () => {
-  it("approves state without invalidating unrelated training progress", async () => {
+  it("approves state and invalidates training progress that may lose a prior result", async () => {
     const seeded = seedCaches("a".repeat(32));
     const state = { ...canonicalState(), user_approved: false };
     const approved = jobRecord({ ...seeded.job, approved_state: state });
@@ -45,7 +45,11 @@ describe("hand workflow commands", () => {
       job: approved,
       cache: {
         updated: jobQueryKeys.detail(approved.id),
-        invalidated: [jobQueryKeys.processing(), historyQueryKeys.all],
+        invalidated: [
+          jobQueryKeys.processing(),
+          historyQueryKeys.all,
+          trainingQueryKeys.all,
+        ],
       },
     });
     expect(
@@ -56,7 +60,7 @@ describe("hand workflow commands", () => {
     ).toBe(true);
     expect(
       seeded.queryClient.getQueryState(seeded.trainingKey)?.isInvalidated,
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("preserves recommendation identity, abort signal, and training invalidation", async () => {
@@ -87,6 +91,49 @@ describe("hand workflow commands", () => {
         signal: controller.signal,
       }),
     );
+  });
+
+  it("preserves metadata cached by a newer concurrent save", async () => {
+    const seeded = seedCaches("d".repeat(32));
+    const current = jobRecord({
+      ...seeded.job,
+      title: "Updated title",
+      notes: "Updated notes",
+      tags: ["updated"],
+      updated_at: "2026-08-25T04:00:00Z",
+    });
+    const staleRecommendation = jobRecord({
+      ...seeded.job,
+      title: "Old title",
+      notes: "Old notes",
+      tags: ["old"],
+      status: "recommended",
+      updated_at: "2026-08-25T03:00:00Z",
+    });
+    seeded.queryClient.setQueryData(
+      jobQueryKeys.detail(seeded.job.id),
+      current,
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(jsonResponse(staleRecommendation)),
+    );
+
+    const outcome = await requestRecommendationCommand(seeded.queryClient, {
+      jobId: seeded.job.id,
+      requestId: "recommendation-3",
+    });
+
+    expect(outcome.job).toEqual(staleRecommendation);
+    expect(
+      seeded.queryClient.getQueryData(jobQueryKeys.detail(seeded.job.id)),
+    ).toEqual({
+      ...staleRecommendation,
+      title: current.title,
+      notes: current.notes,
+      tags: current.tags,
+      updated_at: current.updated_at,
+    });
   });
 
   it.each([

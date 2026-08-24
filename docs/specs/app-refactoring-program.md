@@ -449,8 +449,9 @@ the existing same-file idempotent retry path; the shared API remains an
 identity-preserving alias.
 Approval and recommendation now use separate abort-aware hand-review commands.
 They preserve the recommendation idempotency ID and signal, seed confirmed job
-detail, and invalidate processing/history plus training progress after a
-recommendation. Analyzer composition continues to own automation sequencing,
+detail without overwriting newer concurrent metadata, and invalidate
+processing, history, and training progress after either mutation. Analyzer
+composition continues to own automation sequencing,
 mutation-lease handoff, active request cancellation, and optional training
 decision recording; failures apply no Query cache effects.
 Training decisions and training review completion, note updates, and reopen now
