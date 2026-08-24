@@ -3,6 +3,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { deleteJob } from "../../../domains/jobs/api/jobsApi";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
+import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
 
 export async function deleteScreenshotCommand(
   queryClient: QueryClient,
@@ -13,6 +14,17 @@ export async function deleteScreenshotCommand(
     removed: jobQueryKeys.detail(jobId),
     invalidated: [jobQueryKeys.processing(), historyQueryKeys.all] as const,
   };
+  const superseded = [cache.removed, ...cache.invalidated] as const;
+
+  for (const queryKey of superseded) {
+    supersedeLatestQueryResults(queryClient, queryKey);
+  }
+  await Promise.all([
+    queryClient.cancelQueries({ queryKey: cache.removed, exact: true }),
+    ...cache.invalidated.map((queryKey) =>
+      queryClient.cancelQueries({ queryKey }),
+    ),
+  ]);
 
   queryClient.removeQueries({ queryKey: cache.removed, exact: true });
   await Promise.all(
@@ -21,5 +33,5 @@ export async function deleteScreenshotCommand(
     ),
   );
 
-  return { jobId, cache };
+  return { jobId, cache: { ...cache, superseded } };
 }

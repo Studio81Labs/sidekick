@@ -1,10 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createQueryClient } from "../../../app/providers/queryClient";
-import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
-import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
+import {
+  fetchHistoryPageQuery,
+  historyQueryKeys,
+} from "../../../domains/history/api/historyQueries";
+import {
+  fetchJobQuery,
+  fetchProcessingJobsQuery,
+  jobQueryKeys,
+} from "../../../domains/jobs/api/jobsQueries";
 import { jobRecord } from "../../../test/analyzerHarness";
-import { resetApiMocks } from "../../../test/api";
+import { jsonResponse, resetApiMocks } from "../../../test/api";
 import { deleteScreenshotCommand } from "./deleteScreenshotCommand";
 
 afterEach(resetApiMocks);
@@ -18,18 +25,53 @@ describe("delete screenshot command", () => {
     queryClient.setQueryData(jobQueryKeys.detail(job.id), job);
     queryClient.setQueryData(processingKey, { jobs: [job], total: 1 });
     queryClient.setQueryData(historyKey, { jobs: [job], total: 1 });
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 })),
-    );
+    let resolveDetail!: (response: Response) => void;
+    let resolveProcessing!: (response: Response) => void;
+    let resolveHistory!: (response: Response) => void;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveDetail = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveProcessing = resolve;
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveHistory = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const staleReads = [
+      fetchJobQuery(queryClient, job.id),
+      fetchProcessingJobsQuery(queryClient),
+      fetchHistoryPageQuery(queryClient),
+    ];
 
     const outcome = await deleteScreenshotCommand(queryClient, job.id);
+    resolveDetail(jsonResponse(job));
+    resolveProcessing(jsonResponse({ jobs: [job], total: 1 }));
+    resolveHistory(jsonResponse({ jobs: [job], total: 1 }));
+    await Promise.all(staleReads);
 
     expect(outcome).toEqual({
       jobId: job.id,
       cache: {
         removed: jobQueryKeys.detail(job.id),
         invalidated: [jobQueryKeys.processing(), historyQueryKeys.all],
+        superseded: [
+          jobQueryKeys.detail(job.id),
+          jobQueryKeys.processing(),
+          historyQueryKeys.all,
+        ],
       },
     });
     expect(

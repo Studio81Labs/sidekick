@@ -425,6 +425,8 @@ updated or invalidated.
 Permanent screenshot deletion now follows the same boundary: confirmed success
 removes the detail cache and invalidates processing/history families, while
 failed or ambiguous transport leaves cache state untouched for lease recovery.
+Confirmed deletion also cancels Query-managed reads and supersedes imperative
+reads for those keys so a stale pre-deletion response cannot repopulate cache.
 
 Gate: every mutation has success, definite failure, ambiguous failure/recovery,
 and retry coverage.
