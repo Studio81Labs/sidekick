@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-import { getTrainingProgress } from "../../../shared/api/training";
+import { getTrainingProgress } from "../../../domains/training/api/trainingApi";
 import type {
   Street,
   TrainingCertaintyFilter,
