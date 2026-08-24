@@ -126,14 +126,16 @@ from app.domain.training import (
     TrainingReviewOrder,
     TrainingReviewRequest,
 )
-from app.models import (
-    ApplicationBackupRestoreResult,
+from app.domain.benchmarks import (
     BenchmarkDatasetImportResult,
     BenchmarkOverview,
     BenchmarkParserPipelineSummary,
     BenchmarkReport,
     BenchmarkRunRequest,
     BenchmarkSelectionRequest,
+)
+from app.models import (
+    ApplicationBackupRestoreResult,
     HealthResponse,
 )
 from app.mcp_access import (

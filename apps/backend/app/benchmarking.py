@@ -2,10 +2,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from app.benchmark_corpus import benchmark_corpus_fingerprint
-from app.domain.poker import CanonicalState, DetectedState
-from app.domain.hands import JobRecord
-from app.models import (
+from app.domain.benchmarks import (
     BENCHMARK_FIELDS,
     BenchmarkCaseResult,
     BenchmarkFieldComparison,
@@ -15,6 +12,9 @@ from app.models import (
     benchmark_values_match,
     normalize_benchmark_value,
 )
+from app.benchmark_corpus import benchmark_corpus_fingerprint
+from app.domain.poker import CanonicalState, DetectedState
+from app.domain.hands import JobRecord
 from app.parsers.base import ParserConfigurationError, ScreenshotParser
 
 

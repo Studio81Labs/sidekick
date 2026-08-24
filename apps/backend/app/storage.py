@@ -12,14 +12,14 @@ import ijson
 from pydantic import TypeAdapter, ValidationError
 
 from app.domain.poker import CanonicalState
-from app.domain.hands import JobRecord
-from app.models import (
+from app.domain.benchmarks import (
     BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
     BenchmarkDatasetImportReceipt,
     BenchmarkDatasetImportResult,
     BenchmarkReport,
     BenchmarkReportSummary,
 )
+from app.domain.hands import JobRecord
 
 JOB_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 BENCHMARK_ID_PATTERN = JOB_ID_PATTERN

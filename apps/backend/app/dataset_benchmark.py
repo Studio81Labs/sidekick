@@ -10,12 +10,12 @@ from pydantic import ValidationError
 from app.benchmarking import run_benchmark
 from app.config import Settings, get_settings
 from app.dataset_export import MAX_DATASET_EXPANSION_RATIO
+from app.domain.benchmarks import BENCHMARK_FIELDS, BenchmarkReport
 from app.dataset_import import (
     DatasetImportError,
     import_parser_dataset,
     parse_parser_dataset_archive,
 )
-from app.models import BENCHMARK_FIELDS, BenchmarkReport
 from app.parsers.base import ParserConfigurationError
 from app.parsers.registry import build_parser
 from app.pipeline import configured_recommendation_engine
