@@ -1,3 +1,5 @@
+"""File-backed benchmark store adapter."""
+
 from __future__ import annotations
 
 import os
@@ -9,9 +11,8 @@ from pathlib import Path
 from typing import Any
 
 import ijson
-from pydantic import TypeAdapter, ValidationError
+from pydantic import ValidationError
 
-from app.domain.poker import CanonicalState
 from app.domain.benchmarks import (
     BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
     BenchmarkDatasetImportReceipt,
@@ -19,10 +20,12 @@ from app.domain.benchmarks import (
     BenchmarkReport,
     BenchmarkReportSummary,
 )
-from app.domain.hands import JobRecord
+from app.storage.persistence import (
+    BENCHMARK_ID_PATTERN,
+    BenchmarkImportNotFoundError,
+    BenchmarkNotFoundError,
+)
 
-JOB_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
-BENCHMARK_ID_PATTERN = JOB_ID_PATTERN
 BENCHMARK_SUMMARY_SUFFIX = ".summary.json"
 BENCHMARK_SUMMARY_SCALAR_FIELDS = frozenset({
     "id",
@@ -38,378 +41,6 @@ BENCHMARK_SUMMARY_METADATA_FIELDS = (
     BENCHMARK_SUMMARY_SCALAR_FIELDS | BENCHMARK_SUMMARY_OPTIONAL_SCALAR_FIELDS
 )
 BENCHMARK_IMPORT_REQUEST_ID_RE = re.compile(BENCHMARK_IMPORT_REQUEST_ID_PATTERN)
-JOB_RECORD_PAYLOAD_ADAPTER = TypeAdapter(dict[str, Any])
-LEGACY_ACTIONS_WITHOUT_SIZING = frozenset({"fold", "check", "call"})
-LEGACY_WAGER_ACTIONS = frozenset({"bet", "raise"})
-DATA_VOLUME_MARKER_FILENAME = ".poker-hero-data-volume"
-DATA_VOLUME_MARKER_PREFIX = "poker-hero-data-volume-v1:"
-
-
-class DataVolumeError(RuntimeError):
-    pass
-
-
-def initialize_data_volume(data_dir: Path, volume_id: str) -> None:
-    required_store_dirs = (data_dir / "jobs", data_dir / "benchmarks")
-    try:
-        stores_are_initialized = data_dir.is_dir() and all(
-            path.is_dir() for path in required_store_dirs
-        )
-    except OSError as exc:
-        raise DataVolumeError(
-            f"Could not inspect data directory: {data_dir}"
-        ) from exc
-    if not stores_are_initialized:
-        raise DataVolumeError(
-            f"Data directory was not initialized by the backend: {data_dir}"
-        )
-
-    marker_path = data_dir / DATA_VOLUME_MARKER_FILENAME
-    if marker_path.exists():
-        _require_durable_data_volume_marker(data_dir, volume_id)
-        return
-
-    temp_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w",
-            dir=data_dir,
-            encoding="utf-8",
-            prefix=".poker-hero-data-volume.",
-            suffix=".tmp",
-            delete=False,
-        ) as temp_file:
-            temp_path = Path(temp_file.name)
-            temp_file.write(_data_volume_marker_content(volume_id))
-            temp_file.flush()
-            os.fsync(temp_file.fileno())
-        temp_path.chmod(0o644)
-        try:
-            os.link(temp_path, marker_path)
-        except FileExistsError:
-            pass
-    except OSError as exc:
-        raise DataVolumeError(
-            f"Could not initialize data directory: {data_dir}"
-        ) from exc
-    finally:
-        if temp_path is not None:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-    _require_durable_data_volume_marker(data_dir, volume_id)
-
-
-def require_initialized_data_volume(data_dir: Path, volume_id: str) -> None:
-    marker_path = data_dir / DATA_VOLUME_MARKER_FILENAME
-    try:
-        marker_content = marker_path.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise DataVolumeError(
-            f"Data volume marker is missing from {data_dir}; refusing backup export"
-        ) from exc
-    except OSError as exc:
-        raise DataVolumeError(
-            f"Could not verify data volume marker in {data_dir}"
-        ) from exc
-    if marker_content != _data_volume_marker_content(volume_id):
-        raise DataVolumeError(
-            f"Data volume marker does not match {data_dir}; refusing backup export"
-        )
-
-
-def require_initialized_data_stores(data_dir: Path) -> None:
-    required_store_dirs = (data_dir / "jobs", data_dir / "benchmarks")
-    try:
-        missing_stores = [
-            path.name for path in required_store_dirs if not path.is_dir()
-        ]
-    except OSError as exc:
-        raise DataVolumeError(
-            f"Could not verify data stores in {data_dir}"
-        ) from exc
-    if missing_stores:
-        missing = ", ".join(missing_stores)
-        raise DataVolumeError(
-            f"Required data store directories are missing from {data_dir}: {missing}; "
-            "refusing backup export"
-        )
-
-
-def _data_volume_marker_content(volume_id: str) -> str:
-    return f"{DATA_VOLUME_MARKER_PREFIX}{volume_id}\n"
-
-
-def _require_durable_data_volume_marker(data_dir: Path, volume_id: str) -> None:
-    require_initialized_data_volume(data_dir, volume_id)
-    try:
-        _fsync_directory(data_dir)
-    except OSError as exc:
-        raise DataVolumeError(
-            f"Could not make data volume marker durable: {data_dir}"
-        ) from exc
-
-
-def _fsync_directory(directory: Path) -> None:
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(directory, flags)
-    try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-
-
-def _normalize_legacy_action_sizing(
-    value: Any,
-    *,
-    normalize_non_wager: bool,
-) -> None:
-    if not isinstance(value, dict):
-        return
-    action = value.get("action")
-    sizing = value.get("sizing")
-    if action in LEGACY_WAGER_ACTIONS and sizing == 0:
-        value["sizing"] = None
-    elif (
-        normalize_non_wager
-        and action in LEGACY_ACTIONS_WITHOUT_SIZING
-        and sizing is not None
-    ):
-        value["sizing"] = None
-
-
-def load_persisted_job_record(payload: str | bytes) -> JobRecord:
-    values = JOB_RECORD_PAYLOAD_ADAPTER.validate_json(payload)
-    _normalize_legacy_action_sizing(
-        values.get("recommendation"),
-        normalize_non_wager=True,
-    )
-    _normalize_legacy_action_sizing(
-        values.get("training_decision"),
-        normalize_non_wager=False,
-    )
-    return JobRecord.model_validate(values)
-
-
-class JobNotFoundError(KeyError):
-    pass
-
-
-class BenchmarkNotFoundError(KeyError):
-    pass
-
-
-class BenchmarkImportNotFoundError(KeyError):
-    pass
-
-
-class FileJobStore:
-    def __init__(self, data_dir: Path) -> None:
-        self.data_dir = data_dir
-        self.jobs_dir = (self.data_dir / "jobs").resolve()
-        self.jobs_dir.mkdir(parents=True, exist_ok=True)
-
-    def create_job(
-        self,
-        original_filename: str,
-        image_bytes: bytes,
-        parser_provider: str,
-        recommendation_provider: str,
-        parser_layout_profile: str | None = None,
-        recommendation_engine: str | None = None,
-        job_id: str | None = None,
-        upload_request_id: str | None = None,
-    ) -> JobRecord:
-        image_suffix = Path(original_filename).suffix or ".png"
-        job_values = {
-            "original_filename": original_filename,
-            "image_filename": f"original{image_suffix}",
-            "parser_provider": parser_provider,
-            "parser_layout_profile": parser_layout_profile,
-            "recommendation_provider": recommendation_provider,
-            "recommendation_engine": recommendation_engine,
-            "upload_request_id": upload_request_id,
-        }
-        if job_id is not None:
-            job_values["id"] = job_id
-        job = JobRecord.model_validate(job_values)
-        job_dir = self._job_dir(job.id)
-        job_dir.mkdir(parents=True, exist_ok=False)
-        self.image_path(job).write_bytes(image_bytes)
-        self.save(job)
-        return job
-
-    def create_benchmark_import_job(
-        self,
-        *,
-        job_id: str,
-        original_filename: str,
-        image_bytes: bytes,
-        parser_provider: str,
-        recommendation_provider: str,
-        parser_layout_profile: str | None = None,
-        recommendation_engine: str | None = None,
-        approved_state: CanonicalState,
-        import_request_id: str,
-    ) -> JobRecord:
-        image_suffix = Path(original_filename).suffix or ".png"
-        job = JobRecord(
-            id=job_id,
-            status="approved",
-            original_filename=original_filename,
-            image_filename=f"original{image_suffix}",
-            parser_provider=parser_provider,
-            parser_layout_profile=parser_layout_profile,
-            recommendation_provider=recommendation_provider,
-            recommendation_engine=recommendation_engine,
-            approved_state=approved_state,
-            benchmark_included=True,
-            benchmark_import_request_id=import_request_id,
-        )
-        job_dir = self._job_dir(job.id)
-        job_dir.mkdir(parents=True, exist_ok=True)
-        if self._job_path(job.id).exists():
-            raise FileExistsError(job.id)
-        self.save(job)
-        self.write_image(job, image_bytes)
-        return job
-
-    def write_image(self, job: JobRecord, image_bytes: bytes) -> None:
-        self._atomic_write_bytes(self.image_path(job), image_bytes)
-
-    def image_path(self, job: JobRecord) -> Path:
-        job_dir = self._job_dir(job.id)
-        return self._resolve_under(job_dir, job_dir / job.image_filename)
-
-    def get(self, job_id: str) -> JobRecord:
-        path = self._job_path(job_id)
-        if not path.exists():
-            raise JobNotFoundError(job_id)
-        try:
-            payload = path.read_bytes()
-        except FileNotFoundError as exc:
-            raise JobNotFoundError(job_id) from exc
-        return load_persisted_job_record(payload)
-
-    def list(self) -> list[JobRecord]:
-        jobs: list[JobRecord] = []
-        for path in self.jobs_dir.glob("*/job.json"):
-            try:
-                payload = path.read_bytes()
-            except FileNotFoundError:
-                # A concurrent delete may remove a job after the directory scan.
-                continue
-            jobs.append(load_persisted_job_record(payload))
-        return sorted(jobs, key=lambda job: job.created_at)
-
-    def save(self, job: JobRecord) -> JobRecord:
-        job.touch()
-        path = self._job_path(job.id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                "w",
-                dir=path.parent,
-                encoding="utf-8",
-                prefix="job.",
-                suffix=".tmp",
-                delete=False,
-            ) as temp_file:
-                temp_path = Path(temp_file.name)
-                temp_file.write(job.model_dump_json(indent=2))
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            os.replace(temp_path, path)
-        finally:
-            if temp_path is not None and temp_path.exists():
-                temp_path.unlink()
-        return job
-
-    def restore(self, job: JobRecord, image_bytes: bytes) -> JobRecord:
-        job_dir = self._job_dir(job.id)
-        if job_dir.exists():
-            raise FileExistsError(job.id)
-        if (
-            not job.image_filename
-            or Path(job.image_filename).name != job.image_filename
-            or "\\" in job.image_filename
-        ):
-            raise ValueError("job image filename must not contain a path")
-        temp_dir = Path(tempfile.mkdtemp(
-            dir=self.jobs_dir,
-            prefix=".backup-restore.",
-        ))
-        try:
-            self._write_file(
-                temp_dir / job.image_filename,
-                image_bytes,
-            )
-            self._write_file(
-                temp_dir / "job.json",
-                job.model_dump_json(indent=2).encode(),
-            )
-            os.replace(temp_dir, job_dir)
-        finally:
-            if temp_dir.exists():
-                shutil.rmtree(temp_dir)
-        return job
-
-    def delete(self, job_id: str) -> None:
-        job_dir = self._job_dir(job_id)
-        if not self._job_path(job_id).is_file():
-            raise JobNotFoundError(job_id)
-        try:
-            shutil.rmtree(job_dir)
-            _fsync_directory(self.jobs_dir)
-        except FileNotFoundError as exc:
-            raise JobNotFoundError(job_id) from exc
-
-    def _job_dir(self, job_id: str) -> Path:
-        self._validate_job_id(job_id)
-        return self._resolve_under(self.jobs_dir, self.jobs_dir / job_id)
-
-    def _job_path(self, job_id: str) -> Path:
-        return self._resolve_under(self.jobs_dir, self._job_dir(job_id) / "job.json")
-
-    def _validate_job_id(self, job_id: str) -> None:
-        if JOB_ID_PATTERN.fullmatch(job_id) is None:
-            raise JobNotFoundError(job_id)
-
-    def _resolve_under(self, base_dir: Path, candidate: Path) -> Path:
-        base = base_dir.resolve()
-        path = candidate.resolve(strict=False)
-        try:
-            path.relative_to(base)
-        except ValueError as exc:
-            raise JobNotFoundError(str(candidate)) from exc
-        return path
-
-    def _atomic_write_bytes(self, path: Path, payload: bytes) -> None:
-        temp_path: Path | None = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                "wb",
-                dir=path.parent,
-                prefix="image.",
-                suffix=".tmp",
-                delete=False,
-            ) as temp_file:
-                temp_path = Path(temp_file.name)
-                temp_file.write(payload)
-                temp_file.flush()
-                os.fsync(temp_file.fileno())
-            os.replace(temp_path, path)
-        finally:
-            if temp_path is not None and temp_path.exists():
-                temp_path.unlink()
-
-    def _write_file(self, path: Path, payload: bytes) -> None:
-        with path.open("xb") as file:
-            file.write(payload)
-            file.flush()
-            os.fsync(file.fileno())
 
 
 class FileBenchmarkStore:
@@ -553,27 +184,6 @@ class FileBenchmarkStore:
             ):
                 previous = summary
         return previous
-
-    def _list_report_summaries(
-        self,
-        *,
-        parser_provider: str | None,
-        layout_profile: str | None,
-    ) -> list[BenchmarkReportSummary]:
-        summaries: list[BenchmarkReportSummary] = []
-        for path in self.benchmarks_dir.glob(f"*{BENCHMARK_SUMMARY_SUFFIX}"):
-            report_id = path.name.removesuffix(BENCHMARK_SUMMARY_SUFFIX)
-            if BENCHMARK_ID_PATTERN.fullmatch(report_id) is None:
-                continue
-            if not self._report_path(report_id).exists():
-                continue
-            summary = self._read_report_summary(report_id, path)
-            if parser_provider is not None and summary.parser_provider != parser_provider:
-                continue
-            if layout_profile is not None and summary.layout_profile != layout_profile:
-                continue
-            summaries.append(summary)
-        return summaries
 
     def save(self, report: BenchmarkReport) -> BenchmarkReport:
         payload = report.model_dump_json(indent=2)
@@ -855,6 +465,27 @@ class FileBenchmarkStore:
         if summary.id != path.stem:
             raise ValueError("Benchmark report ID does not match its filename")
         return summary
+
+    def _list_report_summaries(
+        self,
+        *,
+        parser_provider: str | None,
+        layout_profile: str | None,
+    ) -> list[BenchmarkReportSummary]:
+        summaries: list[BenchmarkReportSummary] = []
+        for path in self.benchmarks_dir.glob(f"*{BENCHMARK_SUMMARY_SUFFIX}"):
+            report_id = path.name.removesuffix(BENCHMARK_SUMMARY_SUFFIX)
+            if BENCHMARK_ID_PATTERN.fullmatch(report_id) is None:
+                continue
+            if not self._report_path(report_id).exists():
+                continue
+            summary = self._read_report_summary(report_id, path)
+            if parser_provider is not None and summary.parser_provider != parser_provider:
+                continue
+            if layout_profile is not None and summary.layout_profile != layout_profile:
+                continue
+            summaries.append(summary)
+        return summaries
 
     def _import_dir(self, request_id: str) -> Path:
         if (

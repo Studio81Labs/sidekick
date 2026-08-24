@@ -32,7 +32,8 @@ from app.dataset_export import (
     parser_dataset_archive_case,
 )
 from app.domain.poker import CanonicalState, DetectedState
-from app.storage import FileJobStore, JobNotFoundError
+from app.storage.file_job_store import FileJobStore
+from app.storage.persistence import JobNotFoundError
 
 
 MAX_MANIFEST_BYTES = 1024 * 1024

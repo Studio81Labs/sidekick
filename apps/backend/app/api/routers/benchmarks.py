@@ -23,8 +23,7 @@ from app.api.dependencies import (
     BenchmarkTransportNotFoundError,
 )
 from app.api.response_contracts import ZIP_RESPONSE_CONTENT
-from app.domain.hands import JobRecord
-from app.models import (
+from app.domain.benchmarks import (
     BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
     BenchmarkDatasetImportReceipt,
     BenchmarkDatasetImportResult,
@@ -33,6 +32,7 @@ from app.models import (
     BenchmarkRunRequest,
     BenchmarkSelectionRequest,
 )
+from app.domain.hands import JobRecord
 
 
 def create_benchmarks_router(runtime: BenchmarksRuntime) -> APIRouter:

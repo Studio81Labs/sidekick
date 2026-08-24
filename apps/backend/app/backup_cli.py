@@ -25,13 +25,13 @@ from app.application_backup import (
 )
 from app.config import Settings, get_settings
 from app.data_lock import DataLockError, InterprocessDataLock
-from app.storage import (
+from app.storage.file_benchmark_store import FileBenchmarkStore
+from app.storage.file_job_store import FileJobStore
+from app.storage.persistence import (
     DataVolumeError,
-    FileBenchmarkStore,
-    FileJobStore,
     initialize_data_volume,
-    require_initialized_data_volume,
     require_initialized_data_stores,
+    require_initialized_data_volume,
 )
 
 
