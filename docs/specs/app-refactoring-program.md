@@ -329,8 +329,10 @@ Training review, progress, and lesson-export use cases now dispatch through
 `app/application/training.py`, while benchmark dataset, report, import, and run
 operations dispatch through `app/application/benchmarks.py`. Backup export and
 restore operations now dispatch through `app/application/backups.py`, and health
-and pipeline queries dispatch through `app/application/system.py`. The remaining
-use-case domains still use bootstrap-composed runtime callbacks.
+and pipeline queries dispatch through `app/application/system.py`. MCP
+configuration, principal listing, issuance, rotation, and revocation dispatch
+through `app/application/mcp_admin.py`. Application services still receive
+bootstrap-composed callbacks pending deeper repository and service slices.
 
 Gate: crash/recovery, stale recommendation, deletion during parsing,
 multiprocess locking, backup, and import tests pass.

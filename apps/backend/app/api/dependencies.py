@@ -4,7 +4,7 @@ The application factory wires concrete settings, stores, and plugins into this
 container. Routers receive only the use-case callables they need.
 """
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from app.application.benchmarks import (
@@ -18,6 +18,7 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService as JobsUploadRuntime,
 )
+from app.application.mcp_admin import McpAdminService
 from app.application.system import SystemQueryService
 from app.application.training import (
     TrainingProgressQuery,
@@ -32,13 +33,6 @@ from app.domain.hands import (
 )
 from app.application.backups import ApplicationBackupExport, BackupService
 from app.domain.training import TrainingDecisionRequest
-from app.mcp_access import (
-    CreateMcpPrincipalRequest,
-    McpAccessConfig,
-    McpIssuedPrincipal,
-    McpPrincipalList,
-    McpPrincipalSummary,
-)
 
 BACKGROUND_TASK_STATE_KEY = "poker_response_background_task_scheduled"
 
@@ -163,15 +157,4 @@ class JobsRecommendationRuntime:
 BackupsRuntime = BackupService
 
 
-@dataclass(frozen=True)
-class McpAdminRuntime:
-    """Dependencies required by the MCP administration transport endpoints."""
-
-    get_config: Callable[[], McpAccessConfig]
-    list_principals: Callable[[], Awaitable[McpPrincipalList]]
-    create_principal: Callable[
-        [CreateMcpPrincipalRequest],
-        Awaitable[McpIssuedPrincipal],
-    ]
-    rotate_principal: Callable[[str], Awaitable[McpIssuedPrincipal]]
-    revoke_principal: Callable[[str], Awaitable[McpPrincipalSummary]]
+McpAdminRuntime = McpAdminService

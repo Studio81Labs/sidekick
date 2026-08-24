@@ -16,6 +16,7 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService,
 )
+from app.application.mcp_admin import McpAdminService
 from app.application.system import SystemQueryService
 from app.application.training import TrainingProgressQuery, TrainingService
 
@@ -33,6 +34,7 @@ __all__ = [
     "JobUploadPipelineRequest",
     "JobUploadRequest",
     "JobUploadService",
+    "McpAdminService",
     "SystemQueryService",
     "TrainingProgressQuery",
     "TrainingService",
