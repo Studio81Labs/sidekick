@@ -39,6 +39,10 @@ import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDi
 import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
 import {
+  AnalyzerWorkflowProvider,
+  useAnalyzerWorkflow,
+} from "../../features/workspace/hooks/useAnalyzerWorkflow";
+import {
   fetchHistoryPageQuery,
   fetchJobQuery,
 } from "../../features/workspace/lib/queryReads";
@@ -158,7 +162,19 @@ import {
 } from "../../features/workspace/lib/workflow";
 
 export default function AnalyzerPage() {
+  return (
+    <AnalyzerWorkflowProvider>
+      <AnalyzerWorkspace />
+    </AnalyzerWorkflowProvider>
+  );
+}
+
+function AnalyzerWorkspace() {
   const queryClient = useQueryClient();
+  const {
+    state: { attentionByJobId: jobAttention },
+    dispatch: dispatchWorkflow,
+  } = useAnalyzerWorkflow();
   const [jobs, setJobs] = useState<JobRecord[]>(
     () => readProcessingQueue() ?? [],
   );
@@ -181,7 +197,6 @@ export default function AnalyzerPage() {
   const [queueProgress, setQueueProgress] = useState<QueueProgress | null>(
     null,
   );
-  const [jobAttention, setJobAttention] = useState<Record<string, string>>({});
   const [processingRestoreRequest, setProcessingRestoreRequest] = useState(0);
   const [mutationLeaseRestoreRequest, setMutationLeaseRestoreRequest] =
     useState(0);
@@ -1834,15 +1849,9 @@ export default function AnalyzerPage() {
     if (jobIds.size === 0) {
       return;
     }
-    setJobAttention((current) => {
-      if (![...jobIds].some((jobId) => jobId in current)) {
-        return current;
-      }
-      const next = { ...current };
-      for (const jobId of jobIds) {
-        delete next[jobId];
-      }
-      return next;
+    dispatchWorkflow({
+      type: "job-attention-cleared",
+      jobIds: [...jobIds],
     });
   }
 
@@ -2554,10 +2563,11 @@ export default function AnalyzerPage() {
                 automationError,
                 "Automation stopped for this screenshot",
               );
-              setJobAttention((current) => ({
-                ...current,
-                [created.id]: message,
-              }));
+              dispatchWorkflow({
+                type: "job-attention-marked",
+                jobId: created.id,
+                message,
+              });
               completed = confirmedJob;
               attentionMessages.push(`${selectedFile.name}: ${message}`);
               failedCount += 1;

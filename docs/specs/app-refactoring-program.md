@@ -357,6 +357,11 @@ Dependencies: Wave 4
 - Move browser persistence behind injected projection adapters.
 - Keep API side effects in commands, outside the reducer.
 
+Wave 7 progress: the analyzer now mounts a route-scoped
+`AnalyzerWorkflowProvider` backed by a typed pure reducer. Queue attention
+messages are the first migrated workflow state family, with typed mark/clear
+events and no server job records or side effects stored in the reducer.
+
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
 
