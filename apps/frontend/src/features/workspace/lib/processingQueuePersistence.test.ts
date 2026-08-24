@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createQueryClient } from "../../../app/providers/queryClient";
 import { getProcessingJobs } from "../../../domains/jobs/api/jobsApi";
+import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
   getProcessingQueueExtent,
@@ -40,6 +42,7 @@ describe("processing queue persistence", () => {
   });
 
   it("retries a paginated load when the server snapshot changes", async () => {
+    const queryClient = createQueryClient();
     const secondJob = jobRecord({ id: "f".repeat(32) });
     vi.mocked(getProcessingJobs)
       .mockResolvedValueOnce({
@@ -63,7 +66,7 @@ describe("processing queue persistence", () => {
         snapshot_version: "stable",
       });
 
-    await expect(getProcessingQueueExtent()).resolves.toEqual({
+    await expect(getProcessingQueueExtent(queryClient)).resolves.toEqual({
       total: 2,
       jobs: [persistedJob, secondJob],
       snapshot_version: "stable",
@@ -72,5 +75,10 @@ describe("processing queue persistence", () => {
     expect(getProcessingJobs).toHaveBeenNthCalledWith(2, 1);
     expect(getProcessingJobs).toHaveBeenNthCalledWith(3, 0);
     expect(getProcessingJobs).toHaveBeenNthCalledWith(4, 1);
+    expect(queryClient.getQueryData(jobQueryKeys.processingPage(0))).toEqual({
+      total: 2,
+      jobs: [persistedJob],
+      snapshot_version: "stable",
+    });
   });
 });

@@ -1,4 +1,6 @@
-import { getProcessingJobs } from "../../../domains/jobs/api/jobsApi";
+import type { QueryClient } from "@tanstack/react-query";
+
+import { fetchProcessingJobsQuery } from "../../../domains/jobs/api/jobsQueries";
 import type { JobQueue, JobRecord } from "../../../shared/types/jobs";
 import {
   isCachedJobRecord,
@@ -177,7 +179,9 @@ export function processingQueueSessionSynced(): boolean {
   }
 }
 
-export async function getProcessingQueueExtent(): Promise<JobQueue> {
+export async function getProcessingQueueExtent(
+  queryClient: QueryClient,
+): Promise<JobQueue> {
   for (
     let attempt = 0;
     attempt < PROCESSING_QUEUE_SNAPSHOT_RETRY_LIMIT;
@@ -189,7 +193,7 @@ export async function getProcessingQueueExtent(): Promise<JobQueue> {
     let total = 0;
 
     do {
-      const page = await getProcessingJobs(jobs.length);
+      const page = await fetchProcessingJobsQuery(queryClient, jobs.length);
       if (
         snapshotVersion !== null &&
         page.snapshot_version !== undefined &&

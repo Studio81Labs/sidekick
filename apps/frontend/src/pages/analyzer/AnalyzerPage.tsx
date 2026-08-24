@@ -1,5 +1,6 @@
 import { type ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import "./AnalyzerPage.css";
 import { AnalyzerToolbar } from "./components/AnalyzerToolbar";
@@ -37,7 +38,10 @@ import { useScreenshotDetails } from "../../features/screenshots/hooks/useScreen
 import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDialog";
 import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
-import { getJob } from "../../shared/api/jobs";
+import {
+  fetchHistoryPageQuery,
+  fetchJobQuery,
+} from "../../features/workspace/lib/queryReads";
 import {
   ApiResponseError,
   applicationBackupUrl,
@@ -46,7 +50,6 @@ import {
   completeTrainingReview,
   deleteJob,
   getBenchmarkDatasetImport,
-  getHistory,
   getTrainingProgress,
   humanReadableMessage,
   importBenchmarkDataset,
@@ -155,6 +158,7 @@ import {
 } from "../../features/workspace/lib/workflow";
 
 export default function AnalyzerPage() {
+  const queryClient = useQueryClient();
   const [jobs, setJobs] = useState<JobRecord[]>(
     () => readProcessingQueue() ?? [],
   );
@@ -1292,7 +1296,9 @@ export default function AnalyzerPage() {
     historyJobRestoreIdsRef.current.clear();
     historyJobRestoreActiveIdsRef.current = new Set(requestedJobIds);
     const restoreGeneration = historyMutationGenerationRef.current;
-    const restore = Promise.all(requestedJobIds.map((jobId) => getJob(jobId)))
+    const restore = Promise.all(
+      requestedJobIds.map((jobId) => fetchJobQuery(queryClient, jobId)),
+    )
       .then((incomingJobs) => {
         if (
           historyMutationGenerationRef.current !== restoreGeneration ||
@@ -1606,13 +1612,13 @@ export default function AnalyzerPage() {
           "Could not migrate legacy history before restoring processing",
         );
       }
-      const queue = await getProcessingQueueExtent();
+      const queue = await getProcessingQueueExtent(queryClient);
       const lease = processingMutationLeaseRef.current;
       if (
         lease?.kind === "job" &&
         !queue.jobs.some((candidate) => candidate.id === lease.jobId)
       ) {
-        const leasedJob = await getJob(lease.jobId);
+        const leasedJob = await fetchJobQuery(queryClient, lease.jobId);
         return {
           ...queue,
           revalidatedLeaseJob: leasedJob,
@@ -1623,7 +1629,7 @@ export default function AnalyzerPage() {
         const confirmationJobs = await Promise.all(
           lease.confirmationJobIds
             .filter((jobId) => !queueIds.has(jobId))
-            .map((jobId) => getJob(jobId)),
+            .map((jobId) => fetchJobQuery(queryClient, jobId)),
         );
         return {
           ...queue,
@@ -2143,7 +2149,7 @@ export default function AnalyzerPage() {
     setHistoryLoading(true);
     setError(null);
     try {
-      const page = await getHistory(0, query);
+      const page = await fetchHistoryPageQuery(queryClient, 0, query);
       if (requestId !== historySearchRequestRef.current) {
         return;
       }
@@ -2167,7 +2173,11 @@ export default function AnalyzerPage() {
       HISTORY_CACHE_LIMIT,
     );
     try {
-      const page = await getHistorySearchExtent(query, loadedCount);
+      const page = await getHistorySearchExtent(
+        queryClient,
+        query,
+        loadedCount,
+      );
       if (requestId === historySearchRequestRef.current) {
         applyHistorySearchPage(page);
       }
@@ -2205,7 +2215,8 @@ export default function AnalyzerPage() {
     try {
       if (historySearchActive) {
         const requestId = ++historySearchRequestRef.current;
-        const page = await getHistory(
+        const page = await fetchHistoryPageQuery(
+          queryClient,
           visibleHistory.length,
           historySearchQuery,
         );
@@ -2224,6 +2235,7 @@ export default function AnalyzerPage() {
           return;
         }
         const rebuiltPage = await getHistorySearchExtent(
+          queryClient,
           historySearchQuery,
           Math.min(visibleHistory.length + HISTORY_CACHE_LIMIT, page.total),
         );
@@ -2233,9 +2245,9 @@ export default function AnalyzerPage() {
         applyHistorySearchPage(rebuiltPage);
         return;
       }
-      const page = await getHistory(history.length);
+      const page = await fetchHistoryPageQuery(queryClient, history.length);
       if (page.total !== historyTotal) {
-        applyHistoryPage(await getHistory());
+        applyHistoryPage(await fetchHistoryPageQuery(queryClient));
         return;
       }
       applyHistoryPage(page, true);
@@ -2253,7 +2265,9 @@ export default function AnalyzerPage() {
     const restoreGeneration = historyMutationGenerationRef.current;
     setHistoryLoading(true);
     try {
-      const page = jobIds ? await archiveJobs(jobIds) : await getHistory();
+      const page = jobIds
+        ? await archiveJobs(jobIds)
+        : await fetchHistoryPageQuery(queryClient);
       if (
         historyMutationGenerationRef.current !== restoreGeneration ||
         historyMutationCountRef.current > 0
@@ -3007,7 +3021,7 @@ export default function AnalyzerPage() {
           return;
         }
 
-        const nextJob = await getJob(nextHand.job_id);
+        const nextJob = await fetchJobQuery(queryClient, nextHand.job_id);
         upsertAndActivateJob(nextJob);
         setTrainingReviewQueueJobId(nextJob.id);
         toast.success("Training review completed. Next hand ready");
@@ -3126,7 +3140,7 @@ export default function AnalyzerPage() {
     setTrainingReviewJobId(jobId);
     setError(null);
     try {
-      persistedJob ??= await getJob(jobId);
+      persistedJob ??= await fetchJobQuery(queryClient, jobId);
       if (mutationRecoveryPending([persistedJobMutationScope(persistedJob)])) {
         return;
       }

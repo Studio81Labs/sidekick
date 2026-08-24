@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { createQueryClient } from "../../../app/providers/queryClient";
 import { getHistory } from "../../../domains/history/api/historyApi";
+import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
   HISTORY_CACHE_LIMIT,
@@ -42,6 +44,7 @@ describe("history persistence", () => {
   });
 
   it("retries history pagination when the snapshot changes", async () => {
+    const queryClient = createQueryClient();
     const firstJob = jobRecord({
       id: "1".repeat(32),
       archived_at: "2026-07-10T00:00:00Z",
@@ -67,7 +70,9 @@ describe("history persistence", () => {
         snapshot_version: "stable",
       });
 
-    await expect(getHistorySearchExtent("river", 2)).resolves.toEqual({
+    await expect(
+      getHistorySearchExtent(queryClient, "river", 2),
+    ).resolves.toEqual({
       total: 2,
       jobs: [firstJob, secondJob],
       snapshot_version: "stable",
@@ -75,5 +80,12 @@ describe("history persistence", () => {
     expect(getHistory).toHaveBeenNthCalledWith(1, 0, "river", 2);
     expect(getHistory).toHaveBeenNthCalledWith(2, 1, "river", 1);
     expect(getHistory).toHaveBeenNthCalledWith(3, 0, "river", 2);
+    expect(
+      queryClient.getQueryData(historyQueryKeys.page(0, "river", 2)),
+    ).toEqual({
+      total: 2,
+      jobs: [firstJob, secondJob],
+      snapshot_version: "stable",
+    });
   });
 });

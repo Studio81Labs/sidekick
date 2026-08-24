@@ -1,5 +1,10 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  queryOptions,
+  useQuery,
+} from "@tanstack/react-query";
 
+import { cacheLatestQueryResult } from "../../../shared/api/queryCache";
 import { getJob, getProcessingJobs } from "./jobsApi";
 
 export const jobQueryKeys = {
@@ -25,6 +30,22 @@ export function processingJobsQueryOptions(offset = 0) {
     queryKey: jobQueryKeys.processingPage(offset),
     staleTime: 0,
   });
+}
+
+export function fetchJobQuery(queryClient: QueryClient, jobId: string) {
+  return cacheLatestQueryResult(
+    queryClient,
+    jobQueryKeys.detail(jobId),
+    getJob(jobId),
+  );
+}
+
+export function fetchProcessingJobsQuery(queryClient: QueryClient, offset = 0) {
+  return cacheLatestQueryResult(
+    queryClient,
+    jobQueryKeys.processingPage(offset),
+    getProcessingJobs(offset),
+  );
 }
 
 export function useJobQuery(jobId: string, enabled: boolean) {

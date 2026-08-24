@@ -1,5 +1,10 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  queryOptions,
+  useQuery,
+} from "@tanstack/react-query";
 
+import { cacheLatestQueryResult } from "../../../shared/api/queryCache";
 import { getHistory } from "./historyApi";
 
 export const historyQueryKeys = {
@@ -22,6 +27,19 @@ export function historyPageQueryOptions(
     queryFn: ({ signal }) => getHistory(offset, query, limit, signal),
     staleTime: 0,
   });
+}
+
+export function fetchHistoryPageQuery(
+  queryClient: QueryClient,
+  offset = 0,
+  query = "",
+  limit?: number,
+) {
+  return cacheLatestQueryResult(
+    queryClient,
+    historyQueryKeys.page(offset, query, limit),
+    getHistory(offset, query, limit),
+  );
 }
 
 export function useHistoryPageQuery(
