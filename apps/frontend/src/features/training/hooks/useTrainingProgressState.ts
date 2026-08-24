@@ -1,6 +1,10 @@
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
-import { getTrainingProgress } from "../../../domains/training/api/trainingApi";
+import {
+  trainingProgressQueryOptions,
+  trainingQueryKeys,
+} from "../../../domains/training/api/trainingQueries";
 import type {
   Street,
   TrainingCertaintyFilter,
@@ -54,20 +58,28 @@ const INITIAL_QUERY: TrainingProgressQuery = {
   streetFilter: null,
 };
 
-function readProgress(query: TrainingProgressQuery): Promise<TrainingProgress> {
-  return getTrainingProgress(
-    query.reviewOrder,
-    query.reviewStreet,
-    query.reviewDifference,
-    query.reviewCertainty,
-    query.lessonStreet,
-    query.lessonQuery,
-    query.lessonOrder,
-    query.solverFilter,
-    query.positionFilter,
-    query.streetFilter,
-    query.certaintyFilter,
-    query.reviewPosition,
+function readProgress(
+  queryClient: QueryClient,
+  query: TrainingProgressQuery,
+): Promise<TrainingProgress> {
+  return queryClient.fetchQuery(
+    trainingProgressQueryOptions(
+      {
+        certaintyFilter: query.certaintyFilter,
+        lessonOrder: query.lessonOrder,
+        lessonQuery: query.lessonQuery,
+        lessonStreet: query.lessonStreet,
+        positionFilter: query.positionFilter,
+        reviewCertainty: query.reviewCertainty,
+        reviewDifference: query.reviewDifference,
+        reviewOrder: query.reviewOrder,
+        reviewPositionFilter: query.reviewPosition,
+        reviewStreet: query.reviewStreet,
+        solverFilter: query.solverFilter,
+        streetFilter: query.streetFilter,
+      },
+      false,
+    ),
   );
 }
 
@@ -93,6 +105,7 @@ function sameSolverFilter(
 export function useTrainingProgressState({
   onError,
 }: UseTrainingProgressStateOptions) {
+  const queryClient = useQueryClient();
   const [progress, setProgressState] = useState<TrainingProgress | null>(null);
   const [query, setQuery] = useState<TrainingProgressQuery>(INITIAL_QUERY);
   const [lessonSearch, setLessonSearch] = useState("");
@@ -119,7 +132,8 @@ export function useTrainingProgressState({
     setLoading(true);
     onError(null);
     try {
-      const nextProgress = await readProgress(nextQuery);
+      void queryClient.cancelQueries({ queryKey: trainingQueryKeys.all });
+      const nextProgress = await readProgress(queryClient, nextQuery);
       if (!mountedRef.current || requestId !== requestRef.current) return null;
       setProgressState(nextProgress);
       return nextProgress;
@@ -139,6 +153,7 @@ export function useTrainingProgressState({
 
   function cancelLoads() {
     requestRef.current += 1;
+    void queryClient.cancelQueries({ queryKey: trainingQueryKeys.all });
     loadingRef.current = false;
     setLoading(false);
   }

@@ -31,6 +31,11 @@ describe("training query adapter", () => {
     );
   });
 
+  it("keeps configured retries for hooks and disables them for compatibility reads", () => {
+    expect(trainingProgressQueryOptions().retry).toBeUndefined();
+    expect(trainingProgressQueryOptions({}, false).retry).toBe(false);
+  });
+
   it("aborts the transport request when its hook unmounts", async () => {
     const abortListener = vi.fn();
     const fetchMock = vi.fn(

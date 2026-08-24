@@ -58,6 +58,7 @@ export const trainingQueryKeys = {
 
 export function trainingProgressQueryOptions(
   query: TrainingProgressQuery = {},
+  includeSignal = true,
 ) {
   const normalized = normalizeTrainingProgressQuery(query);
   return queryOptions({
@@ -76,8 +77,9 @@ export function trainingProgressQueryOptions(
         normalized.streetFilter,
         normalized.certaintyFilter,
         normalized.reviewPositionFilter,
-        signal,
+        includeSignal ? signal : undefined,
       ),
+    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }

@@ -1,7 +1,11 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { getBenchmarkOverview } from "../../../domains/benchmarks/api/benchmarksApi";
+import {
+  benchmarkOverviewQueryOptions,
+  benchmarkQueryKeys,
+} from "../../../domains/benchmarks/api/benchmarksQueries";
 import type {
   BenchmarkOverview,
   BenchmarkReport,
@@ -30,6 +34,7 @@ export function useBenchmarkReportState({
   dialogOpen,
   onError,
 }: UseBenchmarkReportStateOptions) {
+  const queryClient = useQueryClient();
   const [overview, setOverview] = useState<BenchmarkOverview | null>(null);
   const [loading, setLoading] = useState(false);
   const [reportLoading, setReportLoading] = useState(false);
@@ -78,12 +83,13 @@ export function useBenchmarkReportState({
       setComparisonReportLoading(false);
       return;
     }
-    cacheBenchmarkReport(reportCacheRef.current, report);
+    cacheBenchmarkReport(reportCacheRef.current, report, queryClient);
     setComparisonReportLoading(true);
     void loadCachedBenchmarkReport(
       previousReport.id,
       reportCacheRef.current,
       reportRequestsRef.current,
+      queryClient,
     )
       .then((loadedReport) => {
         if (
@@ -115,7 +121,11 @@ export function useBenchmarkReportState({
 
   function cacheOverviewReport(nextOverview: BenchmarkOverview) {
     if (nextOverview.latest_report) {
-      cacheBenchmarkReport(reportCacheRef.current, nextOverview.latest_report);
+      cacheBenchmarkReport(
+        reportCacheRef.current,
+        nextOverview.latest_report,
+        queryClient,
+      );
     }
   }
 
@@ -141,7 +151,11 @@ export function useBenchmarkReportState({
         : null,
     );
     setLoading(true);
-    void getBenchmarkOverview(selection ?? undefined)
+    void queryClient.cancelQueries({
+      queryKey: benchmarkQueryKeys.overviews(),
+    });
+    void queryClient
+      .fetchQuery(benchmarkOverviewQueryOptions(selection ?? undefined, false))
       .then((nextOverview) => {
         if (requestId !== overviewRequestRef.current) {
           return;
@@ -168,7 +182,12 @@ export function useBenchmarkReportState({
   }: RefreshBenchmarkOptions): Promise<BenchmarkOverview | null> {
     const requestId = ++overviewRequestRef.current;
     try {
-      const nextOverview = await getBenchmarkOverview(selection ?? undefined);
+      void queryClient.cancelQueries({
+        queryKey: benchmarkQueryKeys.overviews(),
+      });
+      const nextOverview = await queryClient.fetchQuery(
+        benchmarkOverviewQueryOptions(selection ?? undefined, false),
+      );
       if (!mountedRef.current || requestId !== overviewRequestRef.current) {
         return null;
       }
@@ -186,6 +205,7 @@ export function useBenchmarkReportState({
   function cancelLoads() {
     overviewRequestRef.current += 1;
     comparisonReportRequestRef.current += 1;
+    void queryClient.cancelQueries({ queryKey: benchmarkQueryKeys.all });
     setLoading(false);
     setComparisonReportLoading(false);
   }
@@ -200,7 +220,7 @@ export function useBenchmarkReportState({
 
   function applyReport(latestReport: BenchmarkReport, selectReport: boolean) {
     const latestSummary = benchmarkReportSummary(latestReport);
-    cacheBenchmarkReport(reportCacheRef.current, latestReport);
+    cacheBenchmarkReport(reportCacheRef.current, latestReport, queryClient);
     if (selectReport) {
       setSelectedReport(latestReport);
     }
@@ -242,6 +262,7 @@ export function useBenchmarkReportState({
           reportId,
           reportCacheRef.current,
           reportRequestsRef.current,
+          queryClient,
         ),
       );
     } catch (error) {

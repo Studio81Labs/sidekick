@@ -1,4 +1,9 @@
-import { getBenchmarkReport } from "../../../domains/benchmarks/api/benchmarksApi";
+import type { QueryClient } from "@tanstack/react-query";
+
+import {
+  benchmarkQueryKeys,
+  benchmarkReportQueryOptions,
+} from "../../../domains/benchmarks/api/benchmarksQueries";
 import type { BenchmarkReport } from "../../../shared/types";
 
 export const BENCHMARK_REPORT_CACHE_LIMIT = 20;
@@ -6,6 +11,7 @@ export const BENCHMARK_REPORT_CACHE_LIMIT = 20;
 export function cacheBenchmarkReport(
   cache: Map<string, BenchmarkReport>,
   report: BenchmarkReport,
+  queryClient?: QueryClient,
 ): BenchmarkReport {
   cache.delete(report.id);
   cache.set(report.id, report);
@@ -15,6 +21,10 @@ export function cacheBenchmarkReport(
       break;
     }
     cache.delete(oldestId);
+    queryClient?.removeQueries({
+      queryKey: benchmarkQueryKeys.report(oldestId),
+      exact: true,
+    });
   }
   return report;
 }
@@ -23,17 +33,19 @@ export function loadCachedBenchmarkReport(
   reportId: string,
   cache: Map<string, BenchmarkReport>,
   pendingRequests: Map<string, Promise<BenchmarkReport>>,
+  queryClient: QueryClient,
 ): Promise<BenchmarkReport> {
   const cached = cache.get(reportId);
   if (cached) {
-    return Promise.resolve(cacheBenchmarkReport(cache, cached));
+    return Promise.resolve(cacheBenchmarkReport(cache, cached, queryClient));
   }
   const pending = pendingRequests.get(reportId);
   if (pending) {
     return pending;
   }
-  const request = getBenchmarkReport(reportId)
-    .then((report) => cacheBenchmarkReport(cache, report))
+  const request = queryClient
+    .fetchQuery(benchmarkReportQueryOptions(reportId, false))
+    .then((report) => cacheBenchmarkReport(cache, report, queryClient))
     .finally(() => {
       if (pendingRequests.get(reportId) === request) {
         pendingRequests.delete(reportId);

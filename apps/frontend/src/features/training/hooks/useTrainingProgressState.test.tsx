@@ -1,3 +1,4 @@
+import { createElement, type PropsWithChildren } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,6 +9,10 @@ import {
   jsonResponse,
 } from "../../../test/analyzerHarness";
 import { useTrainingProgressState } from "./useTrainingProgressState";
+
+function wrapper({ children }: PropsWithChildren) {
+  return createElement(AppProviders, null, children);
+}
 
 function trainingProgress(reviewedHands: number): TrainingProgress {
   return {
@@ -38,7 +43,9 @@ describe("training progress state", () => {
       .mockImplementationOnce(() => olderRequest.promise)
       .mockResolvedValueOnce(jsonResponse(trainingProgress(2)));
     const onError = vi.fn();
-    const { result } = renderHook(() => useTrainingProgressState({ onError }));
+    const { result } = renderHook(() => useTrainingProgressState({ onError }), {
+      wrapper,
+    });
 
     act(() => {
       result.current.loadInitial();
@@ -61,8 +68,9 @@ describe("training progress state", () => {
   it("cancels a pending progress load without applying its response", async () => {
     const pendingRequest = deferredResponse();
     fetchMock().mockImplementationOnce(() => pendingRequest.promise);
-    const { result } = renderHook(() =>
-      useTrainingProgressState({ onError: vi.fn() }),
+    const { result } = renderHook(
+      () => useTrainingProgressState({ onError: vi.fn() }),
+      { wrapper },
     );
 
     act(() => {
@@ -85,7 +93,9 @@ describe("training progress state", () => {
         jsonResponse({ detail: "service unavailable" }, 503),
       );
     const onError = vi.fn();
-    const { result } = renderHook(() => useTrainingProgressState({ onError }));
+    const { result } = renderHook(() => useTrainingProgressState({ onError }), {
+      wrapper,
+    });
 
     act(() => result.current.loadInitial());
     await waitFor(() => expect(result.current.loading).toBe(false));
@@ -103,3 +113,4 @@ describe("training progress state", () => {
     expect(onError).toHaveBeenLastCalledWith("service unavailable");
   });
 });
+import { AppProviders } from "../../../app/providers/AppProviders";

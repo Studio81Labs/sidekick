@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { createQueryClient } from "../../../app/providers/queryClient";
+import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQueries";
 import type { BenchmarkReport } from "../../../shared/types";
 import {
   BENCHMARK_REPORT_CACHE_LIMIT,
@@ -36,10 +38,35 @@ describe("benchmark report cache", () => {
     const cached = cache.get("report-1");
     expect(cached).toBeDefined();
     await expect(
-      loadCachedBenchmarkReport("report-1", cache, new Map()),
+      loadCachedBenchmarkReport(
+        "report-1",
+        cache,
+        new Map(),
+        createQueryClient(),
+      ),
     ).resolves.toBe(cached);
     const cachedIds = [...cache.keys()];
     expect(cachedIds[cachedIds.length - 1]).toBe("report-1");
+  });
+
+  it("removes evicted reports from the query cache", () => {
+    const cache = new Map<string, BenchmarkReport>();
+    const queryClient = createQueryClient();
+
+    for (let index = 0; index <= BENCHMARK_REPORT_CACHE_LIMIT; index += 1) {
+      const value = report(`report-${index}`);
+      queryClient.setQueryData(benchmarkQueryKeys.report(value.id), value);
+      cacheBenchmarkReport(cache, value, queryClient);
+    }
+
+    expect(
+      queryClient.getQueryData(benchmarkQueryKeys.report("report-0")),
+    ).toBeUndefined();
+    expect(
+      queryClient.getQueryData(
+        benchmarkQueryKeys.report(`report-${BENCHMARK_REPORT_CACHE_LIMIT}`),
+      ),
+    ).toBeDefined();
   });
 
   it("reuses an in-flight request", () => {
@@ -48,7 +75,12 @@ describe("benchmark report cache", () => {
     const pendingRequests = new Map([["pending", pending]]);
 
     expect(
-      loadCachedBenchmarkReport("pending", new Map(), pendingRequests),
+      loadCachedBenchmarkReport(
+        "pending",
+        new Map(),
+        pendingRequests,
+        createQueryClient(),
+      ),
     ).toBe(pending);
   });
 });

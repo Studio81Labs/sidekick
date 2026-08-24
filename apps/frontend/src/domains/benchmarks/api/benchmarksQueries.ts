@@ -29,26 +29,41 @@ export const benchmarkQueryKeys = {
     [...benchmarkQueryKeys.imports(), requestId] as const,
 };
 
-export function benchmarkOverviewQueryOptions(pipeline?: ParserPipeline) {
+export function benchmarkOverviewQueryOptions(
+  pipeline?: ParserPipeline,
+  includeSignal = true,
+) {
   return queryOptions({
     queryKey: benchmarkQueryKeys.overview(pipeline),
-    queryFn: ({ signal }) => getBenchmarkOverview(pipeline, signal),
+    queryFn: ({ signal }) =>
+      getBenchmarkOverview(pipeline, includeSignal ? signal : undefined),
+    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }
 
-export function benchmarkReportQueryOptions(reportId: string) {
+export function benchmarkReportQueryOptions(
+  reportId: string,
+  includeSignal = true,
+) {
   return queryOptions({
     queryKey: benchmarkQueryKeys.report(reportId),
-    queryFn: ({ signal }) => getBenchmarkReport(reportId, signal),
+    queryFn: ({ signal }) =>
+      getBenchmarkReport(reportId, includeSignal ? signal : undefined),
+    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }
 
-export function benchmarkImportReceiptQueryOptions(requestId: string) {
+export function benchmarkImportReceiptQueryOptions(
+  requestId: string,
+  includeSignal = true,
+) {
   return queryOptions({
     queryKey: benchmarkQueryKeys.importReceipt(requestId),
-    queryFn: ({ signal }) => getBenchmarkDatasetImport(requestId, signal),
+    queryFn: ({ signal }) =>
+      getBenchmarkDatasetImport(requestId, includeSignal ? signal : undefined),
+    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }
