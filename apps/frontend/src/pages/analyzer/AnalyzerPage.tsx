@@ -43,6 +43,7 @@ import {
   useAnalyzerRecoveryWorkflow,
   useAnalyzerWorkflowProjections,
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
+import { useAnalyzerRecoveryRuntimeServices } from "../../features/workspace/hooks/useAnalyzerRecoveryRuntimeServices";
 import {
   fetchHistoryPageQuery,
   fetchJobQuery,
@@ -82,7 +83,6 @@ import {
   PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS,
   type PersistedJobMutationScope,
   type PersistedMutationLease,
-  type ProcessingQueueRestore,
   type ProjectionMutationLease,
   type ProjectionMutationTarget,
   benchmarkImportLeaseRequestId,
@@ -200,6 +200,20 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     writeHistoryTotal,
     writeProcessingQueue,
   } = useAnalyzerWorkflowProjections();
+  const {
+    benchmarkImportRecoveryPromiseRef,
+    historyFullRestoreRequestedRef,
+    historyJobRestoreActiveIdsRef,
+    historyJobRestoreIdsRef,
+    historyJobRestorePromiseRef,
+    historyJobRestoreRetryTimerRef,
+    historyRestorePromiseRef,
+    historyRestoreRetryRequestedRef,
+    legacyHistoryArchivePromiseRef,
+    processingRestorePromiseRef,
+    processingRestoreRetryRequestedRef,
+    processingStorageRestoreScheduledRef,
+  } = useAnalyzerRecoveryRuntimeServices();
   const [jobs, setJobs] = useState<JobRecord[]>(
     () => readProcessingQueue() ?? [],
   );
@@ -408,25 +422,13 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     ),
   );
   const processingUpdateCandidateIdsRef = useRef(new Set<string>());
-  const processingRestoreRetryRequestedRef = useRef(false);
   const processingMutationLeaseRef = useRef(initialProcessingMutationLease);
   const historyMutationGenerationRef = useRef(0);
   const historyMutationCountRef = useRef(0);
-  const historyJobRestoreActiveIdsRef = useRef(new Set<string>());
-  const historyJobRestoreIdsRef = useRef(new Set<string>());
-  const historyJobRestorePromiseRef = useRef<Promise<void> | null>(null);
-  const historyJobRestoreRetryTimerRef = useRef<number | null>(null);
   const historyUpdateCandidateIdsRef = useRef(
     new Set(mutationLeaseJobIds(initialHistoryMutationLease)),
   );
   const historyMutationLeaseRef = useRef(initialHistoryMutationLease);
-  const historyFullRestoreRequestedRef = useRef(false);
-  const historyRestoreRetryRequestedRef = useRef(false);
-  const historyRestorePromiseRef = useRef<Promise<boolean> | null>(null);
-  const legacyHistoryArchivePromiseRef = useRef<Promise<boolean> | null>(null);
-  const benchmarkImportRecoveryPromiseRef = useRef<Promise<void> | null>(null);
-  const processingRestorePromiseRef =
-    useRef<Promise<ProcessingQueueRestore> | null>(null);
   const benchmarkImportRecoveryPending =
     benchmarkImportLeaseRequestId(
       mutationLeases.processing,
@@ -496,8 +498,6 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     }
     writeProcessingQueue(jobs, !processingQueueSessionSynced());
   }, [jobs]);
-
-  const processingStorageRestoreScheduledRef = useRef(false);
 
   useEffect(() => {
     let restoreTimer: number | null = null;

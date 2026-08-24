@@ -499,6 +499,9 @@ both generations and phases plus memoized request, start, retry, and finish
 commands, keeping raw recovery events out of page composition. Each channel
 also exposes explicit idle, requested, running, and retry-scheduled phases
 advanced by those runtime effects without storing the effects themselves.
+Pending restore promises, retry timers, active restore IDs, and retry flags are
+stable refs owned by a focused recovery runtime-service hook; the page retains
+the effects that consume those handles while the reducer remains serializable.
 When benchmark-import recovery overlaps a lease retry timer, the active request
 keeps the mutation-lease channel in the running phase; request settlement then
 selects retry-scheduled or idle from the remaining lease state.
