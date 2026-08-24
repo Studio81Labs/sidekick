@@ -27,6 +27,7 @@ describe("analyzer workflow reducer", () => {
 
   it("clears only matching attention entries", () => {
     const marked = {
+      ...initialAnalyzerWorkflowState,
       attentionByJobId: {
         "job-1": "Review parser warnings",
         "job-2": "Recommendation failed",
@@ -42,6 +43,7 @@ describe("analyzer workflow reducer", () => {
       attentionByJobId: {
         "job-2": "Recommendation failed",
       },
+      queueProgress: null,
     });
     expect(
       analyzerWorkflowReducer(marked, {
@@ -49,5 +51,45 @@ describe("analyzer workflow reducer", () => {
         jobIds: ["missing-job"],
       }),
     ).toBe(marked);
+  });
+
+  it("tracks queue progress, derives abort state, and finishes cleanly", () => {
+    const progress = {
+      aborting: false,
+      completed: 2,
+      currentFile: "third.png",
+      currentIndex: 3,
+      failed: 1,
+      skipped: 0,
+      total: 5,
+    };
+    const started = analyzerWorkflowReducer(initialAnalyzerWorkflowState, {
+      type: "queue-progress-updated",
+      progress,
+    });
+    const aborting = analyzerWorkflowReducer(started, {
+      type: "queue-abort-requested",
+    });
+
+    expect(aborting.queueProgress).toEqual({
+      ...progress,
+      aborting: true,
+      skipped: 3,
+    });
+    expect(
+      analyzerWorkflowReducer(aborting, {
+        type: "queue-abort-requested",
+      }),
+    ).toBe(aborting);
+    expect(
+      analyzerWorkflowReducer(aborting, {
+        type: "queue-processing-finished",
+      }),
+    ).toEqual(initialAnalyzerWorkflowState);
+    expect(
+      analyzerWorkflowReducer(initialAnalyzerWorkflowState, {
+        type: "queue-processing-finished",
+      }),
+    ).toBe(initialAnalyzerWorkflowState);
   });
 });

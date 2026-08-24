@@ -479,8 +479,9 @@ request ordering, and failed-filter rollback. Its outer controller owns only
 dialog lifecycle and opening a selected hand in the analyzer workspace.
 The analyzer route mounts a typed `AnalyzerWorkflowProvider`. Its pure reducer
 owns cross-feature workflow state without copying server job records; queue
-attention messages are the first migrated state family, while API and browser
-persistence side effects remain in commands and projection adapters.
+attention messages and queue-processing progress are the first migrated state
+families. The reducer derives abort progress while API, cancellation, and
+browser-persistence side effects remain in commands and projection adapters.
 
 Workspace persistence is implemented by focused cache-validation,
 mutation-lease, processing-queue, history, and reconciliation modules. The

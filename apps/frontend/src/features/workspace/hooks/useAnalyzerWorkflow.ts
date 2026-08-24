@@ -10,6 +10,17 @@ import {
 
 export type AnalyzerWorkflowState = {
   attentionByJobId: Readonly<Record<string, string>>;
+  queueProgress: AnalyzerQueueProgress | null;
+};
+
+export type AnalyzerQueueProgress = {
+  aborting: boolean;
+  completed: number;
+  currentFile: string;
+  currentIndex: number;
+  failed: number;
+  skipped: number;
+  total: number;
 };
 
 export type AnalyzerWorkflowEvent =
@@ -21,10 +32,21 @@ export type AnalyzerWorkflowEvent =
   | {
       type: "job-attention-cleared";
       jobIds: readonly string[];
+    }
+  | {
+      type: "queue-progress-updated";
+      progress: AnalyzerQueueProgress;
+    }
+  | {
+      type: "queue-abort-requested";
+    }
+  | {
+      type: "queue-processing-finished";
     };
 
 export const initialAnalyzerWorkflowState: AnalyzerWorkflowState = {
   attentionByJobId: {},
+  queueProgress: null,
 };
 
 export function analyzerWorkflowReducer(
@@ -56,6 +78,34 @@ export function analyzerWorkflowReducer(
         delete attentionByJobId[jobId];
       }
       return { ...state, attentionByJobId };
+    }
+    case "queue-progress-updated": {
+      if (state.queueProgress === event.progress) {
+        return state;
+      }
+      return { ...state, queueProgress: event.progress };
+    }
+    case "queue-abort-requested": {
+      if (!state.queueProgress || state.queueProgress.aborting) {
+        return state;
+      }
+      return {
+        ...state,
+        queueProgress: {
+          ...state.queueProgress,
+          aborting: true,
+          skipped: Math.max(
+            state.queueProgress.total - state.queueProgress.completed,
+            0,
+          ),
+        },
+      };
+    }
+    case "queue-processing-finished": {
+      if (state.queueProgress === null) {
+        return state;
+      }
+      return { ...state, queueProgress: null };
     }
   }
 }
