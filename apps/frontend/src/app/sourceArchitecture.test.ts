@@ -114,6 +114,7 @@ function domainCompatibilityFacadeImportAllowed(
     ["shared/api/history.ts", "domains/history/api", "historyApi"],
     ["shared/api/training.ts", "domains/training/api", "trainingApi"],
     ["shared/api/benchmarks.ts", "domains/benchmarks/api", "benchmarksApi"],
+    ["shared/api/system.ts", "domains/backups/api", "backupsApi"],
   ].some(
     ([allowedFacade, allowedDomain, allowedModule]) =>
       facade === allowedFacade &&

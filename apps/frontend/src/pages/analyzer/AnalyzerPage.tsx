@@ -28,6 +28,7 @@ import { TablePreview } from "../../features/capture/components/TablePreview";
 import { TrainingProgressDialog } from "../../features/training/components/TrainingProgressDialog";
 import { useAutomationSettings } from "../../features/automation/hooks/useAutomationSettings";
 import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchmarkController";
+import { restoreApplicationBackupCommand } from "../../features/backups/services/restoreApplicationBackupCommand";
 import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource";
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
 import { usePipelineSelection } from "../../features/pipeline/hooks/usePipelineSelection";
@@ -65,7 +66,6 @@ import {
   getTrainingProgress,
   humanReadableMessage,
   requestRecommendation,
-  restoreApplicationBackup,
   uploadScreenshot,
 } from "../../shared/api/client";
 import {
@@ -3294,7 +3294,9 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setBusy(true);
     setError(null);
     try {
-      const result = await restoreApplicationBackup(backupFile);
+      const { result } = await restoreApplicationBackupCommand(queryClient, {
+        file: backupFile,
+      });
       resetBenchmark();
       setTrainingProgress(null);
       clearHistorySearch();

@@ -110,6 +110,11 @@ preserves the caller-generated import request ID. Confirmed imports guard and
 invalidate imported job details, processing, history, and benchmark overviews;
 reports remain immutable, failures leave Query state untouched, and Analyzer
 composition continues to own projection leases and imported-result rendering.
+Application backup restore now uses a backup-owned multipart command. A
+confirmed restore cancels and supersedes stale reads, then removes job, history,
+training, and benchmark Query families before Analyzer composition schedules
+projection recovery. System and pipeline caches remain intact; transport
+failure leaves every cache untouched so the same archive can be retried.
 Training decisions and review completion/reopen operations now use a
 training-owned command family. The generated-contract adapters preserve the
 legacy positional function signatures, and confirmed responses update job

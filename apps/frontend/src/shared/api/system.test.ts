@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { restoreApplicationBackup as restoreDomainApplicationBackup } from "../../domains/backups/api/backupsApi";
 import { jsonResponse, resetApiMocks } from "../../test/api";
 import {
   applicationBackupUrl,
@@ -10,6 +11,10 @@ import {
 afterEach(resetApiMocks);
 
 describe("application backups", () => {
+  it("preserves the domain restore adapter export identity", () => {
+    expect(restoreApplicationBackup).toBe(restoreDomainApplicationBackup);
+  });
+
   it("uses the same-origin API URL for backup downloads", () => {
     expect(applicationBackupUrl()).toBe(
       "http://localhost:8000/api/backups/export",
