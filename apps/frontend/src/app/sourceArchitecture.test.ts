@@ -113,6 +113,7 @@ function domainCompatibilityFacadeImportAllowed(
     ["shared/api/jobs.ts", "domains/jobs/api", "jobsApi"],
     ["shared/api/history.ts", "domains/history/api", "historyApi"],
     ["shared/api/training.ts", "domains/training/api", "trainingApi"],
+    ["shared/api/benchmarks.ts", "domains/benchmarks/api", "benchmarksApi"],
   ].some(
     ([allowedFacade, allowedDomain, allowedModule]) =>
       facade === allowedFacade &&
@@ -812,6 +813,12 @@ describe("frontend source architecture", () => {
       domainCompatibilityFacadeImportAllowed(
         ["shared", "api", "jobs.ts"],
         ["domains", "jobs", "api", "jobsApi.ts"],
+      ),
+    ).toBe(true);
+    expect(
+      domainCompatibilityFacadeImportAllowed(
+        ["shared", "api", "benchmarks.ts"],
+        ["domains", "benchmarks", "api", "benchmarksApi.ts"],
       ),
     ).toBe(true);
     expect(

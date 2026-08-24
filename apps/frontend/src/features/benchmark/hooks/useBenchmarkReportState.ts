@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { getBenchmarkOverview } from "../../../shared/api/benchmarks";
+import { getBenchmarkOverview } from "../../../domains/benchmarks/api/benchmarksApi";
 import type {
   BenchmarkOverview,
   BenchmarkReport,

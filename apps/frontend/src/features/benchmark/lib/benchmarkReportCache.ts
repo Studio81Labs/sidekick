@@ -1,4 +1,4 @@
-import { getBenchmarkReport } from "../../../shared/api/client";
+import { getBenchmarkReport } from "../../../domains/benchmarks/api/benchmarksApi";
 import type { BenchmarkReport } from "../../../shared/types";
 
 export const BENCHMARK_REPORT_CACHE_LIMIT = 20;
