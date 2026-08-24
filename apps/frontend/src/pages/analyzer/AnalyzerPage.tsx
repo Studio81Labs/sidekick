@@ -518,6 +518,10 @@ function AnalyzerWorkspace() {
       return;
     }
     markProcessingQueueSessionUnsynced();
+    dispatchWorkflow({
+      type: "recovery-retry-scheduled",
+      recovery: "processing",
+    });
     const revalidationTimer = window.setTimeout(() => {
       if (processingMutationCountRef.current === 0) {
         scheduleProcessingQueueRestore();
@@ -768,8 +772,9 @@ function AnalyzerWorkspace() {
       }
     };
     if (
-      processingMutationLeaseRef.current !== null ||
-      historyMutationLeaseRef.current !== null
+      benchmarkImportRecoveryPromiseRef.current === null &&
+      (processingMutationLeaseRef.current !== null ||
+        historyMutationLeaseRef.current !== null)
     ) {
       dispatchWorkflow({
         type: "recovery-retry-scheduled",
