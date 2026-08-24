@@ -36,9 +36,9 @@ import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDi
 import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
 import {
-  type AnalyzerQueueProgress,
   AnalyzerWorkflowProvider,
   useAnalyzerActiveSelection,
+  useAnalyzerQueueWorkflow,
   useAnalyzerWorkflow,
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
 import {
@@ -172,8 +172,6 @@ function AnalyzerWorkspace() {
   const queryClient = useQueryClient();
   const {
     state: {
-      attentionByJobId: jobAttention,
-      queueProgress,
       recoveryRequests: {
         mutationLease: mutationLeaseRestoreRequest,
         processing: processingRestoreRequest,
@@ -182,6 +180,14 @@ function AnalyzerWorkspace() {
     dispatch: dispatchWorkflow,
   } = useAnalyzerWorkflow();
   const { activeJobId, selectActiveJob } = useAnalyzerActiveSelection();
+  const {
+    attentionByJobId: jobAttention,
+    clearJobAttention: clearWorkflowJobAttention,
+    markJobAttention,
+    queueProgress,
+    requestQueueAbort,
+    setQueueProgress,
+  } = useAnalyzerQueueWorkflow();
   const [jobs, setJobs] = useState<JobRecord[]>(
     () => readProcessingQueue() ?? [],
   );
@@ -1931,18 +1937,7 @@ function AnalyzerWorkspace() {
     if (jobIds.size === 0) {
       return;
     }
-    dispatchWorkflow({
-      type: "job-attention-cleared",
-      jobIds: [...jobIds],
-    });
-  }
-
-  function setQueueProgress(progress: AnalyzerQueueProgress | null) {
-    dispatchWorkflow(
-      progress
-        ? { type: "queue-progress-updated", progress }
-        : { type: "queue-processing-finished" },
-    );
+    clearWorkflowJobAttention([...jobIds]);
   }
 
   function clearJobAttention(jobId: string) {
@@ -2653,11 +2648,7 @@ function AnalyzerWorkspace() {
                 automationError,
                 "Automation stopped for this screenshot",
               );
-              dispatchWorkflow({
-                type: "job-attention-marked",
-                jobId: created.id,
-                message,
-              });
+              markJobAttention(created.id, message);
               completed = confirmedJob;
               attentionMessages.push(`${selectedFile.name}: ${message}`);
               failedCount += 1;
@@ -3596,7 +3587,7 @@ function AnalyzerWorkspace() {
   function onAbortQueue() {
     queueAbortRequestedRef.current = true;
     queueAbortControllerRef.current?.abort();
-    dispatchWorkflow({ type: "queue-abort-requested" });
+    requestQueueAbort();
   }
 
   async function saveScreenshotMetadata() {

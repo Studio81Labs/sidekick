@@ -254,3 +254,42 @@ export function useAnalyzerActiveSelection() {
 
   return { activeJobId, selectActiveJob };
 }
+
+export function useAnalyzerQueueWorkflow() {
+  const {
+    state: { attentionByJobId, queueProgress },
+    dispatch,
+  } = useAnalyzerWorkflow();
+  const markJobAttention = useCallback(
+    (jobId: string, message: string) =>
+      dispatch({ type: "job-attention-marked", jobId, message }),
+    [dispatch],
+  );
+  const clearJobAttention = useCallback(
+    (jobIds: readonly string[]) =>
+      dispatch({ type: "job-attention-cleared", jobIds }),
+    [dispatch],
+  );
+  const setQueueProgress = useCallback(
+    (progress: AnalyzerQueueProgress | null) =>
+      dispatch(
+        progress
+          ? { type: "queue-progress-updated", progress }
+          : { type: "queue-processing-finished" },
+      ),
+    [dispatch],
+  );
+  const requestQueueAbort = useCallback(
+    () => dispatch({ type: "queue-abort-requested" }),
+    [dispatch],
+  );
+
+  return {
+    attentionByJobId,
+    clearJobAttention,
+    markJobAttention,
+    queueProgress,
+    requestQueueAbort,
+    setQueueProgress,
+  };
+}
