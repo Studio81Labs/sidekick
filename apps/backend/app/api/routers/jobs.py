@@ -26,12 +26,14 @@ from app.api.dependencies import (
     JobUploadPipelineRequest,
     JobUploadRequest,
     JobUploadUnexpectedParserError,
-    JobsMutationRuntime,
-    JobsRecommendationRuntime,
     JobsUploadRuntime,
 )
 from app.api.response_contracts import SUPPORTED_IMAGE_RESPONSE_CONTENT
-from app.application.jobs import JobQueryService
+from app.application.jobs import (
+    JobMutationService,
+    JobQueryService,
+    JobRecommendationService,
+)
 from app.domain.poker import CanonicalState
 from app.domain.hands import JobQueue, JobRecord, ScreenshotMetadataRequest
 from app.domain.training import TrainingDecisionRequest
@@ -160,7 +162,7 @@ def create_job_upload_router(runtime: JobsUploadRuntime) -> APIRouter:
     return router
 
 
-def create_job_mutations_router(runtime: JobsMutationRuntime) -> APIRouter:
+def create_job_mutations_router(runtime: JobMutationService) -> APIRouter:
     """Build the processing job mutation router with application dependencies."""
 
     router = APIRouter()
@@ -227,7 +229,7 @@ def create_job_mutations_router(runtime: JobsMutationRuntime) -> APIRouter:
 
 
 def create_job_recommendation_router(
-    runtime: JobsRecommendationRuntime,
+    runtime: JobRecommendationService,
 ) -> APIRouter:
     """Build the processing job recommendation router with application dependencies."""
 

@@ -321,11 +321,11 @@ Dependencies: Wave 5
   an application workspace coordinator.
 - Run the same repository conformance suite against each file adapter.
 
-Progress: the first application-service slice owns processing-job query dispatch
-in `app/application/jobs.py`. HTTP job reads depend on that service directly, and
-hosted MCP reaches the same boundary through its internal ASGI API client.
-Uploads, mutations, recommendations, and the remaining use-case domains still
-use bootstrap-composed runtime callbacks.
+Progress: application-owned processing-job services now dispatch queries, short
+mutations, and recommendation commands from `app/application/jobs.py`. HTTP job
+routes depend on those services directly, and hosted MCP reaches the same
+boundaries through its internal ASGI API client. Uploads and the remaining
+use-case domains still use bootstrap-composed runtime callbacks.
 
 Gate: crash/recovery, stale recommendation, deletion during parsing,
 multiprocess locking, backup, and import tests pass.
