@@ -43,7 +43,6 @@ from app.api.dependencies import (
     BenchmarkInputError,
     BenchmarksRuntime,
     BenchmarkTransportNotFoundError,
-    HistoryRuntime,
     JobMutationConflictError,
     JobRecommendationConfigurationError,
     JobRecommendationInputError,
@@ -59,6 +58,7 @@ from app.api.dependencies import (
     TrainingRuntime,
 )
 from app.application.jobs import (
+    JobHistoryService,
     JobImage,
     JobMutationService,
     JobQueryService,
@@ -1337,7 +1337,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         get_health=get_health,
         get_pipeline_capabilities=get_pipeline_capabilities,
     )
-    history_runtime = HistoryRuntime(
+    history_runtime = JobHistoryService(
         list_history=list_history,
         archive_jobs=archive_jobs,
     )

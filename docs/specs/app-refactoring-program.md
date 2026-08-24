@@ -322,7 +322,7 @@ Dependencies: Wave 5
 - Run the same repository conformance suite against each file adapter.
 
 Progress: application-owned processing-job services now dispatch queries,
-uploads, short mutations, and recommendation commands from
+uploads, short mutations, recommendation commands, and history list/archive from
 `app/application/jobs.py`. HTTP job routes depend on those services directly,
 and hosted MCP reaches the same boundaries through its internal ASGI API client.
 The remaining use-case domains still use bootstrap-composed runtime callbacks.

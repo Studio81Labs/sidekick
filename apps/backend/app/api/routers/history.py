@@ -2,11 +2,11 @@
 
 from fastapi import APIRouter, Query
 
-from app.api.dependencies import HistoryRuntime
+from app.application.jobs import JobHistoryService
 from app.domain.hands import ArchiveJobsRequest, JobHistory
 
 
-def create_history_router(runtime: HistoryRuntime) -> APIRouter:
+def create_history_router(runtime: JobHistoryService) -> APIRouter:
     """Build the history router with its application-owned dependencies."""
 
     router = APIRouter()
