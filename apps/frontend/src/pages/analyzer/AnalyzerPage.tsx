@@ -480,6 +480,8 @@ function AnalyzerWorkspace() {
     writeProcessingQueue(jobs, !processingQueueSessionSynced());
   }, [jobs]);
 
+  const processingStorageRestoreScheduledRef = useRef(false);
+
   useEffect(() => {
     let restoreTimer: number | null = null;
     const onStorage = (event: StorageEvent) => {
@@ -495,8 +497,14 @@ function AnalyzerWorkspace() {
       if (restoreTimer !== null) {
         window.clearTimeout(restoreTimer);
       }
+      dispatchWorkflow({
+        type: "recovery-retry-scheduled",
+        recovery: "processing",
+      });
+      processingStorageRestoreScheduledRef.current = true;
       restoreTimer = window.setTimeout(() => {
         restoreTimer = null;
+        processingStorageRestoreScheduledRef.current = false;
         if (processingMutationCountRef.current === 0) {
           scheduleProcessingQueueRestore();
         } else {
@@ -510,6 +518,7 @@ function AnalyzerWorkspace() {
       if (restoreTimer !== null) {
         window.clearTimeout(restoreTimer);
       }
+      processingStorageRestoreScheduledRef.current = false;
     };
   }, []);
 
@@ -518,6 +527,10 @@ function AnalyzerWorkspace() {
       return;
     }
     markProcessingQueueSessionUnsynced();
+    dispatchWorkflow({
+      type: "recovery-retry-scheduled",
+      recovery: "processing",
+    });
     const revalidationTimer = window.setTimeout(() => {
       if (processingMutationCountRef.current === 0) {
         scheduleProcessingQueueRestore();
@@ -533,6 +546,10 @@ function AnalyzerWorkspace() {
       processingMutationLeaseRef.current === null &&
       historyMutationLeaseRef.current === null
     ) {
+      dispatchWorkflow({
+        type: "recovery-finished",
+        recovery: "mutationLease",
+      });
       return;
     }
     let retryTimer: number | null = null;
@@ -540,6 +557,10 @@ function AnalyzerWorkspace() {
     let benchmarkImportRetryNotBefore = 0;
     const revalidateLeases = () => {
       retryTimer = null;
+      dispatchWorkflow({
+        type: "recovery-started",
+        recovery: "mutationLease",
+      });
       let leasePending = false;
       const linkedArchiveLeases = matchingArchiveLeaseTargets(
         processingMutationLeaseRef.current,
@@ -653,6 +674,16 @@ function AnalyzerWorkspace() {
           .finally(() => {
             if (benchmarkImportRecoveryPromiseRef.current === recovery) {
               benchmarkImportRecoveryPromiseRef.current = null;
+              if (appMountedRef.current) {
+                dispatchWorkflow({
+                  type:
+                    processingMutationLeaseRef.current !== null ||
+                    historyMutationLeaseRef.current !== null
+                      ? "recovery-retry-scheduled"
+                      : "recovery-finished",
+                  recovery: "mutationLease",
+                });
+              }
             }
           });
         benchmarkImportRecoveryPromiseRef.current = recovery;
@@ -736,8 +767,29 @@ function AnalyzerWorkspace() {
           revalidateLeases,
           Math.max(retryDelay, benchmarkImportRetryNotBefore - Date.now()),
         );
+        if (benchmarkImportRecoveryPromiseRef.current === null) {
+          dispatchWorkflow({
+            type: "recovery-retry-scheduled",
+            recovery: "mutationLease",
+          });
+        }
+      } else {
+        dispatchWorkflow({
+          type: "recovery-finished",
+          recovery: "mutationLease",
+        });
       }
     };
+    if (
+      benchmarkImportRecoveryPromiseRef.current === null &&
+      (processingMutationLeaseRef.current !== null ||
+        historyMutationLeaseRef.current !== null)
+    ) {
+      dispatchWorkflow({
+        type: "recovery-retry-scheduled",
+        recovery: "mutationLease",
+      });
+    }
     retryTimer = window.setTimeout(revalidateLeases, retryDelay);
     return () => {
       if (retryTimer !== null) {
@@ -1612,8 +1664,18 @@ function AnalyzerWorkspace() {
       readCachedProcessingQueueTotal(cachedJobs) !== null &&
       !cachedJobs?.some(isProcessingJobInProgress)
     ) {
+      dispatchWorkflow({
+        type: processingStorageRestoreScheduledRef.current
+          ? "recovery-retry-scheduled"
+          : "recovery-finished",
+        recovery: "processing",
+      });
       return;
     }
+    dispatchWorkflow({
+      type: "recovery-started",
+      recovery: "processing",
+    });
     markProcessingQueueSessionUnsynced();
 
     const cachedIds = new Set(
@@ -1664,6 +1726,11 @@ function AnalyzerWorkspace() {
           processingRestoreRetryRequestedRef.current = true;
           if (processingMutationCountRef.current === 0) {
             scheduleProcessingQueueRestore();
+          } else {
+            dispatchWorkflow({
+              type: "recovery-retry-scheduled",
+              recovery: "processing",
+            });
           }
           return;
         }
@@ -1803,6 +1870,12 @@ function AnalyzerWorkspace() {
         } else {
           markProcessingQueueSessionUnsynced();
         }
+        dispatchWorkflow({
+          type: processingStorageRestoreScheduledRef.current
+            ? "recovery-retry-scheduled"
+            : "recovery-finished",
+          recovery: "processing",
+        });
       })
       .catch((processingError) => {
         if (active) {
@@ -1821,6 +1894,10 @@ function AnalyzerWorkspace() {
               processingRestoreRetryRequestedRef.current = true;
             }
           }, PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS);
+          dispatchWorkflow({
+            type: "recovery-retry-scheduled",
+            recovery: "processing",
+          });
         }
       });
 

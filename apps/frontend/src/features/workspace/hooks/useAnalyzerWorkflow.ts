@@ -15,7 +15,16 @@ export type AnalyzerWorkflowState = {
     mutationLease: number;
     processing: number;
   };
+  recoveryPhases: Record<AnalyzerRecoveryKind, AnalyzerRecoveryPhase>;
 };
+
+export type AnalyzerRecoveryKind = "mutationLease" | "processing";
+
+export type AnalyzerRecoveryPhase =
+  | "idle"
+  | "requested"
+  | "running"
+  | "retry-scheduled";
 
 export type AnalyzerQueueProgress = {
   aborting: boolean;
@@ -52,6 +61,13 @@ export type AnalyzerWorkflowEvent =
     }
   | {
       type: "mutation-lease-revalidation-requested";
+    }
+  | {
+      type:
+        | "recovery-started"
+        | "recovery-retry-scheduled"
+        | "recovery-finished";
+      recovery: AnalyzerRecoveryKind;
     };
 
 export const initialAnalyzerWorkflowState: AnalyzerWorkflowState = {
@@ -60,6 +76,10 @@ export const initialAnalyzerWorkflowState: AnalyzerWorkflowState = {
   recoveryRequests: {
     mutationLease: 0,
     processing: 0,
+  },
+  recoveryPhases: {
+    mutationLease: "idle",
+    processing: "idle",
   },
 };
 
@@ -128,6 +148,13 @@ export function analyzerWorkflowReducer(
           ...state.recoveryRequests,
           processing: state.recoveryRequests.processing + 1,
         },
+        recoveryPhases: {
+          ...state.recoveryPhases,
+          processing:
+            state.recoveryPhases.processing === "running"
+              ? "running"
+              : "requested",
+        },
       };
     }
     case "mutation-lease-revalidation-requested": {
@@ -136,6 +163,33 @@ export function analyzerWorkflowReducer(
         recoveryRequests: {
           ...state.recoveryRequests,
           mutationLease: state.recoveryRequests.mutationLease + 1,
+        },
+        recoveryPhases: {
+          ...state.recoveryPhases,
+          mutationLease:
+            state.recoveryPhases.mutationLease === "running"
+              ? "running"
+              : "requested",
+        },
+      };
+    }
+    case "recovery-started":
+    case "recovery-retry-scheduled":
+    case "recovery-finished": {
+      const phase =
+        event.type === "recovery-started"
+          ? "running"
+          : event.type === "recovery-retry-scheduled"
+            ? "retry-scheduled"
+            : "idle";
+      if (state.recoveryPhases[event.recovery] === phase) {
+        return state;
+      }
+      return {
+        ...state,
+        recoveryPhases: {
+          ...state.recoveryPhases,
+          [event.recovery]: phase,
         },
       };
     }
