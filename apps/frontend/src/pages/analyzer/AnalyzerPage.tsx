@@ -767,6 +767,15 @@ function AnalyzerWorkspace() {
         });
       }
     };
+    if (
+      processingMutationLeaseRef.current !== null ||
+      historyMutationLeaseRef.current !== null
+    ) {
+      dispatchWorkflow({
+        type: "recovery-retry-scheduled",
+        recovery: "mutationLease",
+      });
+    }
     retryTimer = window.setTimeout(revalidateLeases, retryDelay);
     return () => {
       if (retryTimer !== null) {
