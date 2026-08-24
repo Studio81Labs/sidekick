@@ -33,6 +33,7 @@ import { useHandReviewState } from "../../features/hand-review/hooks/useHandRevi
 import { usePipelineSelection } from "../../features/pipeline/hooks/usePipelineSelection";
 import { useScreenshotDetails } from "../../features/screenshots/hooks/useScreenshotDetails";
 import { updateScreenshotMetadataCommand } from "../../features/screenshots/services/updateScreenshotMetadataCommand";
+import { deleteScreenshotCommand } from "../../features/screenshots/services/deleteScreenshotCommand";
 import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDialog";
 import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
@@ -56,7 +57,6 @@ import {
   approveState,
   archiveJobs,
   completeTrainingReview,
-  deleteJob,
   getBenchmarkDatasetImport,
   getTrainingProgress,
   humanReadableMessage,
@@ -3804,7 +3804,7 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setError(null);
     let restoreAfterMutation = false;
     try {
-      await deleteJob(managedJob.id);
+      await deleteScreenshotCommand(queryClient, managedJob.id);
       restoreAfterMutation = true;
       reconcileAuthoritativeScreenshotRemoval(managedJob, mutationScope);
       toast.success("Screenshot permanently deleted");
