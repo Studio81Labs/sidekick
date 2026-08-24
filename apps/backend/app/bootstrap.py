@@ -54,8 +54,6 @@ from app.api.dependencies import (
     JobUploadParserProviderError,
     JobUploadUnexpectedParserError,
     McpAdminRuntime,
-    TrainingProgressQuery,
-    TrainingRuntime,
 )
 from app.application.jobs import (
     JobHistoryService,
@@ -67,6 +65,7 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService,
 )
+from app.application.training import TrainingProgressQuery, TrainingService
 from app.api.dependencies import PipelineCapabilitiesUnavailableError
 from app.api.routers.backups import create_backups_router
 from app.api.routers.benchmarks import create_benchmarks_router
@@ -1348,7 +1347,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         rotate_principal=rotate_mcp_principal,
         revoke_principal=revoke_mcp_principal,
     )
-    training_runtime = TrainingRuntime(
+    training_runtime = TrainingService(
         complete_review=complete_training_review,
         reopen_review=reopen_training_review,
         get_progress=get_training_progress,

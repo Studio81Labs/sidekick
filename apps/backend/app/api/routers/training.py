@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from app.api.dependencies import TrainingProgressQuery, TrainingRuntime
+from app.application.training import TrainingProgressQuery, TrainingService
 from app.api.response_contracts import MARKDOWN_RESPONSE_CONTENT
 from app.domain.poker import Street
 from app.domain.hands import JobRecord
@@ -16,7 +16,7 @@ from app.domain.training import (
 )
 
 
-def create_training_router(runtime: TrainingRuntime) -> APIRouter:
+def create_training_router(runtime: TrainingService) -> APIRouter:
     """Build the training router with its application-owned dependencies."""
 
     router = APIRouter()

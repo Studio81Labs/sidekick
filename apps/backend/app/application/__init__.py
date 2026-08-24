@@ -10,6 +10,7 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService,
 )
+from app.application.training import TrainingProgressQuery, TrainingService
 
 __all__ = [
     "JobHistoryService",
@@ -20,4 +21,6 @@ __all__ = [
     "JobUploadPipelineRequest",
     "JobUploadRequest",
     "JobUploadService",
+    "TrainingProgressQuery",
+    "TrainingService",
 ]
