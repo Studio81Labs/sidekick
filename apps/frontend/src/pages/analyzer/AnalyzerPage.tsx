@@ -661,6 +661,16 @@ function AnalyzerWorkspace() {
           .finally(() => {
             if (benchmarkImportRecoveryPromiseRef.current === recovery) {
               benchmarkImportRecoveryPromiseRef.current = null;
+              if (appMountedRef.current) {
+                dispatchWorkflow({
+                  type:
+                    processingMutationLeaseRef.current !== null ||
+                    historyMutationLeaseRef.current !== null
+                      ? "recovery-retry-scheduled"
+                      : "recovery-finished",
+                  recovery: "mutationLease",
+                });
+              }
             }
           });
         benchmarkImportRecoveryPromiseRef.current = recovery;
@@ -744,10 +754,12 @@ function AnalyzerWorkspace() {
           revalidateLeases,
           Math.max(retryDelay, benchmarkImportRetryNotBefore - Date.now()),
         );
-        dispatchWorkflow({
-          type: "recovery-retry-scheduled",
-          recovery: "mutationLease",
-        });
+        if (benchmarkImportRecoveryPromiseRef.current === null) {
+          dispatchWorkflow({
+            type: "recovery-retry-scheduled",
+            recovery: "mutationLease",
+          });
+        }
       } else {
         dispatchWorkflow({
           type: "recovery-finished",

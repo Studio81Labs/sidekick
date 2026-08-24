@@ -487,6 +487,9 @@ request generations in the same store; promises, timers, and retry policy
 remain runtime concerns outside the reducer. Each channel also exposes explicit
 idle, requested, running, and retry-scheduled phases advanced by those runtime
 effects without storing the effects themselves.
+When benchmark-import recovery overlaps a lease retry timer, the active request
+keeps the mutation-lease channel in the running phase; request settlement then
+selects retry-scheduled or idle from the remaining lease state.
 
 Workspace persistence is implemented by focused cache-validation,
 mutation-lease, processing-queue, history, and reconciliation modules. The

@@ -141,6 +141,12 @@ describe("analyzer workflow reducer", () => {
     });
 
     expect(running.recoveryPhases.processing).toBe("running");
+    expect(
+      analyzerWorkflowReducer(running, {
+        type: "recovery-started",
+        recovery: "processing",
+      }),
+    ).toBe(running);
     expect(retryScheduled.recoveryPhases.processing).toBe("retry-scheduled");
     expect(finished.recoveryPhases.processing).toBe("idle");
     expect(finished.recoveryRequests).toBe(requested.recoveryRequests);

@@ -365,7 +365,9 @@ reducer. Processing restore and mutation-lease revalidation triggers are also
 typed, independently incremented workflow request generations, with no server
 job records or recovery side effects stored in the reducer. Both recovery
 channels expose explicit idle, requested, running, and retry-scheduled phases
-that are advanced at their existing effect boundaries.
+that are advanced at their existing effect boundaries. Active asynchronous
+lease recovery takes precedence over an overlapping retry timer until its
+request settles.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
