@@ -35,6 +35,10 @@ describe("job query definitions", () => {
     expect(processingJobsQueryOptions(100).queryKey).toEqual(
       jobQueryKeys.processingPage(100),
     );
+    expect(jobQueryOptions("job-123").retry).toBeUndefined();
+    expect(jobQueryOptions("job-123", false).retry).toBe(false);
+    expect(processingJobsQueryOptions(100).retry).toBeUndefined();
+    expect(processingJobsQueryOptions(100, false).retry).toBe(false);
   });
 
   it("cancels an in-flight job request when its observer unmounts", async () => {

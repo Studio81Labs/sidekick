@@ -336,8 +336,11 @@ bootstrap-composed callbacks pending deeper repository and service slices.
 
 Wave 8 progress: job-detail and paged processing-queue reads now have a typed
 domain API adapter plus cancellable TanStack Query options. Existing imperative
-workflows import the domain adapter directly, while `shared/api/jobs.ts` remains
-an identity-preserving compatibility facade during migration.
+analyzer workflows execute job-detail, processing-extent, history-page, and
+history-search reads through the application QueryClient. Stable domain keys
+now own those authoritative server responses while bounded local and session
+storage remain recovery projections. `shared/api/jobs.ts` remains an
+identity-preserving compatibility facade during migration.
 
 Gate: crash/recovery, stale recommendation, deletion during parsing,
 multiprocess locking, backup, and import tests pass.

@@ -1,4 +1,6 @@
-import { getHistory } from "../../../domains/history/api/historyApi";
+import type { QueryClient } from "@tanstack/react-query";
+
+import { fetchHistoryPageQuery } from "../../../domains/history/api/historyQueries";
 import type { JobHistory, JobRecord } from "../../../shared/types/jobs";
 import type { HistoryItem } from "../../history/lib/historyPresentation";
 import { readPersistedMutationLease } from "./mutationLeaseStorage";
@@ -134,6 +136,7 @@ export function historyItemsFromPage(page: JobHistory): HistoryItem[] {
 }
 
 export async function getHistorySearchExtent(
+  queryClient: QueryClient,
   query: string,
   loadedCount: number,
 ): Promise<JobHistory> {
@@ -144,7 +147,8 @@ export async function getHistorySearchExtent(
     let total = 0;
 
     do {
-      const page = await getHistory(
+      const page = await fetchHistoryPageQuery(
+        queryClient,
         jobs.length,
         query,
         Math.min(HISTORY_SEARCH_PAGE_LIMIT, loadedCount - jobs.length),

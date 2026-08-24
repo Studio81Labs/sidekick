@@ -28,6 +28,8 @@ describe("history query adapter", () => {
       "page",
       { offset: 0, query: "", limit: null },
     ]);
+    expect(historyPageQueryOptions().retry).toBeUndefined();
+    expect(historyPageQueryOptions(0, "", undefined, false).retry).toBe(false);
   });
 
   it("aborts the transport request when its hook unmounts", async () => {
