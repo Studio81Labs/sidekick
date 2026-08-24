@@ -1,4 +1,5 @@
 export {
+  deleteJob,
   getJob,
   getProcessingJobs,
   imageUrl,
@@ -9,19 +10,6 @@ import type { JobRecord } from "../types/jobs";
 import type { PipelineSelection } from "../types/pipeline";
 import type { CanonicalState } from "../types/poker";
 import { apiUrl, readJson } from "./core";
-
-export async function deleteJob(jobId: string): Promise<void> {
-  const response = await fetch(
-    apiUrl(`/api/jobs/${encodeURIComponent(jobId)}`),
-    {
-      method: "DELETE",
-      credentials: "include",
-    },
-  );
-  if (!response.ok && response.status !== 404) {
-    await readJson<never>(response);
-  }
-}
 
 export async function uploadScreenshot(
   file: File,

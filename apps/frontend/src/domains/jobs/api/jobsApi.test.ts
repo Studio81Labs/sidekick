@@ -3,6 +3,7 @@ import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import type { components } from "../../../shared/api/generated/openapi";
 import {
+  deleteJob,
   getJob,
   getProcessingJobs,
   type JobMetadataUpdate,
@@ -114,5 +115,28 @@ describe("jobs API adapter", () => {
         credentials: "include",
       },
     );
+  });
+
+  it("deletes a screenshot without reading a successful empty body", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(deleteJob("job/123")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/jobs/job%2F123",
+      { method: "DELETE", credentials: "include" },
+    );
+  });
+
+  it("treats an already missing screenshot as deleted", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(deleteJob("job/123")).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

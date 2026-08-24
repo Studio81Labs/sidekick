@@ -88,6 +88,10 @@ than an authoritative server-state cache. Screenshot metadata writes use a
 screenshot-owned command: the jobs domain owns transport, the detail cache is
 updated from the response, and only processing/history query families are
 invalidated. The legacy shared API export remains an identity-preserving alias.
+Permanent screenshot deletion uses a parallel screenshot service: confirmed
+success removes the detail entry and invalidates processing/history families;
+transport failure leaves Query state untouched so mutation-lease recovery can
+determine whether the backend committed the deletion.
 
 Provider-neutral pipeline selection and capability contracts live under
 `app/domain/pipeline`. Runtime configuration and HTTP adapters import that

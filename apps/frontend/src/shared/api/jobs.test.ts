@@ -9,6 +9,7 @@ import {
   uploadScreenshot,
 } from "./jobs";
 import {
+  deleteJob as deleteDomainJob,
   getJob as getDomainJob,
   updateJobMetadata as updateDomainJobMetadata,
 } from "../../domains/jobs/api/jobsApi";
@@ -17,6 +18,7 @@ import { getJob as getCompatibilityJob } from "./jobs";
 afterEach(resetApiMocks);
 
 it("preserves the shared job-read compatibility export identity", () => {
+  expect(deleteJob).toBe(deleteDomainJob);
   expect(getCompatibilityJob).toBe(getDomainJob);
   expect(updateJobMetadata).toBe(updateDomainJobMetadata);
 });
