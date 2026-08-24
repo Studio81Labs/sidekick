@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 
 from app.application.jobs import (
+    JobHistoryService as HistoryRuntime,
     JobUploadPipelineRequest,
     JobUploadRequest,
     JobUploadService as JobsUploadRuntime,
@@ -16,8 +17,6 @@ from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.domain.poker import CanonicalState, Street
 from app.domain.health import HealthResponse
 from app.domain.hands import (
-    ArchiveJobsRequest,
-    JobHistory,
     JobQueue,
     JobRecord,
     ScreenshotMetadataRequest,
@@ -136,14 +135,6 @@ class ApiRuntime:
 
     get_health: Callable[[], HealthResponse]
     get_pipeline_capabilities: Callable[[], PipelineCapabilities]
-
-
-@dataclass(frozen=True)
-class HistoryRuntime:
-    """Dependencies required by the history transport endpoints."""
-
-    list_history: Callable[[int, int, str | None], JobHistory]
-    archive_jobs: Callable[[ArchiveJobsRequest, int], JobHistory]
 
 
 @dataclass(frozen=True)

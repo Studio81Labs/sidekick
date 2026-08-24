@@ -1,6 +1,7 @@
 """Backend application-service boundaries."""
 
 from app.application.jobs import (
+    JobHistoryService,
     JobImage,
     JobMutationService,
     JobQueryService,
@@ -11,6 +12,7 @@ from app.application.jobs import (
 )
 
 __all__ = [
+    "JobHistoryService",
     "JobImage",
     "JobMutationService",
     "JobQueryService",

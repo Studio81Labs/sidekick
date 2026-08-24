@@ -60,11 +60,11 @@ latest job record so slow OCR does not block unrelated jobs and deleted uploads
 cannot be recreated by parser completion.
 
 FastAPI composition remains in `app/bootstrap.py`, while extracted transport
-adapters live under `app/api/routers`. Health, pipeline, history, MCP
-administration, training, benchmark, backup, and processing-job upload, short
-mutation, and recommendation routes receive focused frozen runtime containers.
-Processing-job reads, uploads, short mutations, and recommendation commands
-dispatch through the storage-independent `app/application/jobs.py` services;
+adapters live under `app/api/routers`. Health, pipeline, MCP administration,
+training, benchmark, and backup routes receive focused frozen runtime containers.
+Processing-job reads, uploads, short mutations, recommendation commands, and
+history list/archive operations dispatch through the storage-independent
+`app/application/jobs.py` services;
 hosted MCP reaches the same boundaries through its internal ASGI API client.
 Remaining storage, locking, aggregation, and persistence stay behind
 bootstrap-owned callables until later application-service slices replace those

@@ -4,8 +4,9 @@ from app.api.dependencies import (
     JobUploadPipelineRequest as CompatibilityJobUploadPipelineRequest,
 )
 from app.api.dependencies import JobUploadRequest as CompatibilityJobUploadRequest
-from app.api.dependencies import JobsUploadRuntime
+from app.api.dependencies import HistoryRuntime, JobsUploadRuntime
 from app.application.jobs import (
+    JobHistoryService,
     JobImage,
     JobMutationService,
     JobQueryService,
@@ -14,7 +15,13 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService,
 )
-from app.domain.hands import JobQueue, JobRecord, ScreenshotMetadataRequest
+from app.domain.hands import (
+    ArchiveJobsRequest,
+    JobHistory,
+    JobQueue,
+    JobRecord,
+    ScreenshotMetadataRequest,
+)
 from app.domain.pipeline import PipelineSelection
 from app.domain.poker import CanonicalState
 from app.domain.training import TrainingDecisionRequest
@@ -172,3 +179,37 @@ def test_job_upload_transport_contracts_preserve_application_identity() -> None:
     assert CompatibilityJobUploadPipelineRequest is JobUploadPipelineRequest
     assert CompatibilityJobUploadRequest is JobUploadRequest
     assert JobsUploadRuntime is JobUploadService
+
+
+def test_job_history_service_dispatches_list_and_archive() -> None:
+    calls: list[tuple[object, ...]] = []
+    history = JobHistory(
+        total=0,
+        jobs=[],
+        snapshot_version="history-snapshot",
+    )
+
+    def list_history(limit: int, offset: int, query: str | None) -> JobHistory:
+        calls.append(("list", limit, offset, query))
+        return history
+
+    def archive_jobs(request: ArchiveJobsRequest, limit: int) -> JobHistory:
+        calls.append(("archive", request.job_ids, limit))
+        return history
+
+    service = JobHistoryService(
+        list_history=list_history,
+        archive_jobs=archive_jobs,
+    )
+    request = ArchiveJobsRequest(job_ids=["job-a"])
+
+    assert service.list_history(7, 3, "river") is history
+    assert service.archive_jobs(request, 9) is history
+    assert calls == [
+        ("list", 7, 3, "river"),
+        ("archive", ["job-a"], 9),
+    ]
+
+
+def test_history_runtime_compatibility_alias_preserves_identity() -> None:
+    assert HistoryRuntime is JobHistoryService

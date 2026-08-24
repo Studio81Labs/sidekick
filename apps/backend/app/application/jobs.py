@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 from app.domain.pipeline import PipelineSelection
 from app.domain.hands import (
+    ArchiveJobsRequest,
+    JobHistory,
     JobQueue,
     JobRecord,
     ScreenshotMetadataRequest,
@@ -24,6 +26,8 @@ RecordTrainingDecision = Callable[[str, TrainingDecisionRequest], JobRecord]
 RecommendJob = Callable[[str, str | None], JobRecord]
 ResolveUploadPipeline = Callable[["JobUploadPipelineRequest"], PipelineSelection]
 ProcessUpload = Callable[["JobUploadRequest"], JobRecord]
+ListJobHistory = Callable[[int, int, str | None], JobHistory]
+ArchiveJobs = Callable[[ArchiveJobsRequest, int], JobHistory]
 
 
 @dataclass(frozen=True)
@@ -148,3 +152,30 @@ class JobUploadService:
 
     def process_upload(self, request: JobUploadRequest) -> JobRecord:
         return self._process_upload(request)
+
+
+class JobHistoryService:
+    """Dispatch history queries and archive commands through the application."""
+
+    def __init__(
+        self,
+        list_history: ListJobHistory,
+        archive_jobs: ArchiveJobs,
+    ) -> None:
+        self._list_history = list_history
+        self._archive_jobs = archive_jobs
+
+    def list_history(
+        self,
+        limit: int,
+        offset: int,
+        query: str | None,
+    ) -> JobHistory:
+        return self._list_history(limit, offset, query)
+
+    def archive_jobs(
+        self,
+        request: ArchiveJobsRequest,
+        limit: int,
+    ) -> JobHistory:
+        return self._archive_jobs(request, limit)
