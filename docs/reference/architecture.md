@@ -97,6 +97,11 @@ normalization helpers (`normalize_benchmark_value`, `benchmark_values_match`,
 and canonical field constants) are owned there, while `app/models.py` re-exports
 the same contract objects during the migration period.
 
+Health and backup transport contracts live in `app/domain/health` and
+`app/domain/backups`. `HealthResponse` and
+`ApplicationBackupRestoreResult` are currently re-exported from `app/models.py`
+for legacy compatibility while HTTP transport imports move directly to domain.
+
 Post-hand decisions, review requests, progress summaries, trends, and solver
 coverage contracts live under `app/domain/training`. Training aggregation and
 transport adapters import that domain directly, while `app/models.py`

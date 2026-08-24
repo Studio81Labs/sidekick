@@ -1,10 +1,5 @@
-from typing import Literal
-
-from pydantic import (
-    BaseModel,
-    Field,
-)
-
+from app.domain.health import DeploymentEnvironment, HealthResponse
+from app.domain.backups import ApplicationBackupRestoreResult
 from app.domain.pipeline import (
     PipelineCapabilities,
     PipelineOption,
@@ -89,21 +84,3 @@ from app.domain.hands import (
     JobRecord,
     ScreenshotMetadataRequest,
 )
-
-
-DeploymentEnvironment = Literal["local", "staging", "production"]
-class HealthResponse(BaseModel):
-    status: Literal["ok"]
-    environment: DeploymentEnvironment
-    parser_provider: str
-    recommendation_provider: str
-    recommendation_engine: str
-
-
-class ApplicationBackupRestoreResult(BaseModel):
-    imported_jobs: int = Field(ge=0)
-    reused_jobs: int = Field(ge=0)
-    imported_benchmark_reports: int = Field(ge=0)
-    reused_benchmark_reports: int = Field(ge=0)
-    total_jobs: int = Field(ge=0)
-    total_benchmark_reports: int = Field(ge=0)

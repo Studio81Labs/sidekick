@@ -119,6 +119,8 @@ from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.domain.poker import CanonicalState, Street
 from app.domain.recommendations import RecommendationRequest
 from app.domain.hands import ArchiveJobsRequest, JobHistory, JobQueue, JobRecord, ScreenshotMetadataRequest
+from app.domain.health import HealthResponse
+from app.domain.backups import ApplicationBackupRestoreResult
 from app.domain.training import (
     TrainingDecision,
     TrainingDecisionRequest,
@@ -133,10 +135,6 @@ from app.domain.benchmarks import (
     BenchmarkReport,
     BenchmarkRunRequest,
     BenchmarkSelectionRequest,
-)
-from app.models import (
-    ApplicationBackupRestoreResult,
-    HealthResponse,
 )
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
