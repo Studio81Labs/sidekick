@@ -5,8 +5,12 @@ import type { JobQueue, JobRecord } from "../../../shared/types/jobs";
 
 type JobQueueResponse = components["schemas"]["JobQueue"];
 type JobRecordResponse = components["schemas"]["JobRecord"];
-export type JobMetadataUpdate =
-  components["schemas"]["ScreenshotMetadataRequest"];
+export type JobMetadataUpdate = Required<
+  Pick<
+    components["schemas"]["ScreenshotMetadataRequest"],
+    "title" | "notes" | "tags"
+  >
+>;
 
 export function toJobRecord(response: JobRecordResponse): JobRecord {
   return response as unknown as JobRecord;

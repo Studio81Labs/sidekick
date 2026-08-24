@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import type { components } from "../../../shared/api/generated/openapi";
 import {
   getJob,
   getProcessingJobs,
+  type JobMetadataUpdate,
   toJobQueue,
   toJobRecord,
   updateJobMetadata,
@@ -42,6 +43,14 @@ const jobResponse = {
 } satisfies components["schemas"]["JobRecord"];
 
 describe("jobs API adapter", () => {
+  it("preserves the required full metadata replacement contract", () => {
+    expectTypeOf<JobMetadataUpdate>().toEqualTypeOf<{
+      title: string | null;
+      notes: string | null;
+      tags: string[];
+    }>();
+  });
+
   it("maps generated job and queue responses into stable domain values", () => {
     expect(toJobRecord(jobResponse)).toEqual(jobResponse);
     expect(

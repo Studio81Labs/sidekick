@@ -39,9 +39,9 @@ describe("update screenshot metadata command", () => {
     const outcome = await updateScreenshotMetadataCommand(queryClient, {
       jobId: currentJob.id,
       metadata: {
-        title: updatedJob.title,
-        notes: updatedJob.notes,
-        tags: updatedJob.tags,
+        title: "Turn bluff",
+        notes: "Review the sizing.",
+        tags: ["turn", "bluff"],
       },
     });
 
