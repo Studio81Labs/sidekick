@@ -16,9 +16,7 @@ export async function setBenchmarkInclusionCommand(
   queryClient: QueryClient,
   command: SetBenchmarkInclusionCommand,
 ) {
-  const job = await setBenchmarkInclusion(command.jobId, {
-    included: command.included,
-  });
+  const job = await setBenchmarkInclusion(command.jobId, command.included);
   const cache = {
     updated: jobQueryKeys.detail(job.id),
     invalidated: [

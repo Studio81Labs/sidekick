@@ -82,8 +82,9 @@ export async function getBenchmarkReport(
 
 export async function setBenchmarkInclusion(
   jobId: string,
-  update: BenchmarkInclusionUpdate,
+  included: boolean,
 ): Promise<JobRecord> {
+  const update: BenchmarkInclusionUpdate = { included };
   const response = await requestJson<JobRecordResponse>(
     `/api/jobs/${jobId}/benchmark`,
     {

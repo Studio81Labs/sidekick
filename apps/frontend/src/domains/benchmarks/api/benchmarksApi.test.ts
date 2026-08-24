@@ -77,9 +77,7 @@ describe("benchmark API adapter", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await setBenchmarkInclusion(jobId, {
-      included: true,
-    });
+    const result = await setBenchmarkInclusion(jobId, true);
 
     expect(result).toEqual(jobResponse);
     expect(fetchMock).toHaveBeenCalledWith(
