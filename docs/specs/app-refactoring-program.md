@@ -371,7 +371,9 @@ request settles. Active job selection is now reducer-owned through a typed
 select/clear event, while hand-review form alignment and its synchronous service
 ref remain in the hand-review feature. A focused selection hook exposes the
 selected ID and memoized command so page composition no longer constructs the
-raw workflow event.
+raw workflow event. Queue progress, abort requests, and attention markers now
+have the same focused state-and-command boundary; abort-controller ownership
+and upload side effects remain in the analyzer runtime.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.

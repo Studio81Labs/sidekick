@@ -483,7 +483,9 @@ attention messages, queue-processing progress, and active job selection are
 reducer-owned state families. Selection stores only the job ID; hand-review form
 alignment, dirty tracking, and the synchronous service ref remain feature-owned.
 A focused provider hook exposes the selection value and command, keeping its raw
-event out of the analyzer composition root.
+event out of the analyzer composition root. Queue progress and attention use a
+parallel focused hook for mark, clear, progress, finish, and abort commands;
+abort controllers and upload effects remain runtime services outside the store.
 The reducer derives abort progress while API, cancellation, and
 browser-persistence side effects remain in commands and projection adapters.
 Processing restore and mutation-lease revalidation use independent typed
