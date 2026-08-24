@@ -435,6 +435,12 @@ updates the returned job detail, invalidates processing/history/overview query
 families, and preserves existing lease recovery and corpus presentation. Prior
 benchmark report caches remain immutable, and the shared transport symbol is an
 identity-preserving compatibility alias.
+Benchmark dataset upload now uses a benchmark-owned multipart command that
+preserves the caller-generated idempotency ID, guards stale reads, and
+invalidates imported detail, processing, history, and overview keys only after
+confirmed success. Existing projection leases and receipt-based ambiguous
+failure recovery remain Analyzer-owned, and the shared transport symbol retains
+its signature and object identity.
 Training decisions and training review completion, note updates, and reopen now
 use training-owned generated-contract commands. Confirmed responses guard
 against stale reads, update job detail, and invalidate processing, history, and

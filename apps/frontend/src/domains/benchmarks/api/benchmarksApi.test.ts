@@ -6,8 +6,10 @@ import {
   getBenchmarkDatasetImport,
   getBenchmarkOverview,
   getBenchmarkReport,
+  importBenchmarkDataset,
   setBenchmarkInclusion,
   toBenchmarkDatasetImportReceipt,
+  toBenchmarkDatasetImportResult,
   toBenchmarkOverview,
   toBenchmarkReport,
 } from "./benchmarksApi";
@@ -16,10 +18,13 @@ type BenchmarkOverviewResponse = components["schemas"]["BenchmarkOverview"];
 type BenchmarkReportResponse = components["schemas"]["BenchmarkReport"];
 type BenchmarkDatasetImportReceiptResponse =
   components["schemas"]["BenchmarkDatasetImportReceipt"];
+type BenchmarkDatasetImportResultResponse =
+  components["schemas"]["BenchmarkDatasetImportResult"];
 
 const overviewResponse = {} as BenchmarkOverviewResponse;
 const reportResponse = {} as BenchmarkReportResponse;
 const receiptResponse = {} as BenchmarkDatasetImportReceiptResponse;
+const importResultResponse = {} as BenchmarkDatasetImportResultResponse;
 
 afterEach(resetApiMocks);
 
@@ -29,6 +34,9 @@ describe("benchmark API adapter", () => {
     expect(toBenchmarkReport(reportResponse)).toBe(reportResponse);
     expect(toBenchmarkDatasetImportReceipt(receiptResponse)).toBe(
       receiptResponse,
+    );
+    expect(toBenchmarkDatasetImportResult(importResultResponse)).toBe(
+      importResultResponse,
     );
   });
 
@@ -89,5 +97,34 @@ describe("benchmark API adapter", () => {
         credentials: "include",
       },
     );
+  });
+
+  it("imports a multipart dataset with the caller-owned request ID", async () => {
+    const file = new File(["dataset"], "dataset.zip", {
+      type: "application/zip",
+    });
+    const importResult = {
+      imported_cases: 1,
+      reused_cases: 0,
+      included_cases: 1,
+      job_ids: ["b".repeat(32)],
+    } as BenchmarkDatasetImportResultResponse;
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(importResult));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(importBenchmarkDataset(file, "request-1")).resolves.toEqual(
+      importResult,
+    );
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/benchmarks/import",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "X-Benchmark-Import-Request-ID": "request-1" },
+        credentials: "include",
+      }),
+    );
+    const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("file")).toBe(file);
   });
 });

@@ -1,6 +1,7 @@
 import type { components } from "../../../shared/api/generated/openapi";
 import { requestJson } from "../../../shared/api/transport";
 import type {
+  BenchmarkDatasetImportResult,
   BenchmarkDatasetImportReceipt,
   BenchmarkOverview,
   BenchmarkReport,
@@ -18,6 +19,8 @@ type BenchmarkOverviewResponse = components["schemas"]["BenchmarkOverview"];
 type BenchmarkReportResponse = components["schemas"]["BenchmarkReport"];
 type BenchmarkDatasetImportReceiptResponse =
   components["schemas"]["BenchmarkDatasetImportReceipt"];
+type BenchmarkDatasetImportResultResponse =
+  components["schemas"]["BenchmarkDatasetImportResult"];
 type JobRecordResponse = components["schemas"]["JobRecord"];
 export type BenchmarkInclusionUpdate = Required<
   Pick<components["schemas"]["BenchmarkSelectionRequest"], "included">
@@ -39,6 +42,12 @@ export function toBenchmarkDatasetImportReceipt(
   response: BenchmarkDatasetImportReceiptResponse,
 ): BenchmarkDatasetImportReceipt {
   return response as unknown as BenchmarkDatasetImportReceipt;
+}
+
+export function toBenchmarkDatasetImportResult(
+  response: BenchmarkDatasetImportResultResponse,
+): BenchmarkDatasetImportResult {
+  return response as BenchmarkDatasetImportResult;
 }
 
 export async function getBenchmarkOverview(
@@ -78,6 +87,23 @@ export async function getBenchmarkReport(
     signal ? { signal } : undefined,
   );
   return toBenchmarkReport(response);
+}
+
+export async function importBenchmarkDataset(
+  file: File,
+  requestId: string,
+): Promise<BenchmarkDatasetImportResult> {
+  const form = new FormData();
+  form.append("file", file);
+  const response = await requestJson<BenchmarkDatasetImportResultResponse>(
+    "/api/benchmarks/import",
+    {
+      method: "POST",
+      headers: { "X-Benchmark-Import-Request-ID": requestId },
+      body: form,
+    },
+  );
+  return toBenchmarkDatasetImportResult(response);
 }
 
 export async function setBenchmarkInclusion(
