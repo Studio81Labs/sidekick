@@ -486,16 +486,16 @@ Every implementation PR must include:
 
 ## Implementation Status
 
-| Wave | Status      | Current work                                                                                                                                                                             |
-| ---- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                              |
-| 1    | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                      |
-| 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                    |
-| 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                  |
-| 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                        |
-| 5    | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; `app/models.py` is an exports-only compatibility facade |
-| 6    | In progress | Repository protocols and split `FileJobStore`/`FileBenchmarkStore` adapters now live under `app/storage`; the workspace coordinator remains next                                         |
-| 7-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                      |
+| Wave | Status      | Current work                                                                                                                                                                                         |
+| ---- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                          |
+| 1    | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                  |
+| 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                |
+| 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                              |
+| 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                    |
+| 5    | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; `app/models.py` is an exports-only compatibility facade             |
+| 6    | In progress | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` now owns repository composition, startup recovery, and lock ordering for imports, backups, and restore |
+| 7-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
 
 ## Exit Criteria
 

@@ -109,6 +109,11 @@ legacy-decoding helpers live in `persistence.py`. The package root preserves the
 historical `app.storage` import surface while production code can depend on the
 owned modules directly.
 
+`app/workspace.py` composes those repositories with the process-wide and
+cross-process coordination boundary. `WorkspaceCoordinator` owns startup job
+recovery and the lock ordering for job, history, benchmark import, backup export,
+and restore transactions; transport callbacks continue to own HTTP error mapping.
+
 Post-hand decisions, review requests, progress summaries, trends, and solver
 coverage contracts live under `app/domain/training`. Training aggregation and
 transport adapters import that domain directly, while `app/models.py`
