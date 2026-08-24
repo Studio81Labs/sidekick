@@ -44,7 +44,6 @@ from app.api.dependencies import (
     BenchmarksRuntime,
     BenchmarkTransportNotFoundError,
     HistoryRuntime,
-    JobImage,
     JobMutationConflictError,
     JobRecommendationConfigurationError,
     JobRecommendationInputError,
@@ -59,12 +58,12 @@ from app.api.dependencies import (
     JobUploadUnexpectedParserError,
     JobsMutationRuntime,
     JobsRecommendationRuntime,
-    JobsReadRuntime,
     JobsUploadRuntime,
     McpAdminRuntime,
     TrainingProgressQuery,
     TrainingRuntime,
 )
+from app.application.jobs import JobImage, JobQueryService
 from app.api.dependencies import PipelineCapabilitiesUnavailableError
 from app.api.routers.backups import create_backups_router
 from app.api.routers.benchmarks import create_benchmarks_router
@@ -1352,7 +1351,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         get_progress=get_training_progress,
         export_lessons=export_training_lessons,
     )
-    jobs_read_runtime = JobsReadRuntime(
+    jobs_read_runtime = JobQueryService(
         list_jobs=list_processing_jobs,
         get_job=get_processing_job,
         get_image=get_processing_job_image,

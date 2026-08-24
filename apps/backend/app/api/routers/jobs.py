@@ -28,16 +28,16 @@ from app.api.dependencies import (
     JobUploadUnexpectedParserError,
     JobsMutationRuntime,
     JobsRecommendationRuntime,
-    JobsReadRuntime,
     JobsUploadRuntime,
 )
 from app.api.response_contracts import SUPPORTED_IMAGE_RESPONSE_CONTENT
+from app.application.jobs import JobQueryService
 from app.domain.poker import CanonicalState
 from app.domain.hands import JobQueue, JobRecord, ScreenshotMetadataRequest
 from app.domain.training import TrainingDecisionRequest
 
 
-def create_jobs_router(runtime: JobsReadRuntime) -> APIRouter:
+def create_jobs_router(runtime: JobQueryService) -> APIRouter:
     """Build the processing job read router with application dependencies."""
 
     router = APIRouter()
