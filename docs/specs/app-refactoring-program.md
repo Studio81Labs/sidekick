@@ -427,6 +427,9 @@ removes the detail cache and invalidates processing/history families, while
 failed or ambiguous transport leaves cache state untouched for lease recovery.
 Confirmed deletion also cancels Query-managed reads and supersedes imperative
 reads for those keys so a stale pre-deletion response cannot repopulate cache.
+Batch archive now uses a history-owned command that preserves bounded transport
+batches, supersedes affected detail/processing/history reads, invalidates only
+those keys, and seeds returned detail records plus the default history page.
 
 Gate: every mutation has success, definite failure, ambiguous failure/recovery,
 and retry coverage.

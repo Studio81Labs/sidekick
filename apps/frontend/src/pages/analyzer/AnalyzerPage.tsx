@@ -47,6 +47,7 @@ import {
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
 import { useAnalyzerRecoveryRuntimeServices } from "../../features/workspace/hooks/useAnalyzerRecoveryRuntimeServices";
 import { useAnalyzerRequestRuntimeServices } from "../../features/workspace/hooks/useAnalyzerRequestRuntimeServices";
+import { archiveJobsCommand } from "../../features/history/services/archiveJobsCommand";
 import {
   fetchHistoryPageQuery,
   fetchJobQuery,
@@ -55,7 +56,6 @@ import {
   ApiResponseError,
   applicationBackupUrl,
   approveState,
-  archiveJobs,
   completeTrainingReview,
   getBenchmarkDatasetImport,
   getTrainingProgress,
@@ -2340,7 +2340,7 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setHistoryLoading(true);
     try {
       const page = jobIds
-        ? await archiveJobs(jobIds)
+        ? (await archiveJobsCommand(queryClient, jobIds)).history
         : await fetchHistoryPageQuery(queryClient);
       if (
         historyMutationGenerationRef.current !== restoreGeneration ||
@@ -3869,7 +3869,12 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     let historyMutationActive = true;
     try {
       applyHistoryPage(
-        await archiveJobs(readyJobs.map((candidate) => candidate.id)),
+        (
+          await archiveJobsCommand(
+            queryClient,
+            readyJobs.map((candidate) => candidate.id),
+          )
+        ).history,
       );
       clearOwnedMutationLease("processing");
       clearOwnedMutationLease("history");

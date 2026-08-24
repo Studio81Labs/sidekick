@@ -95,6 +95,10 @@ determine whether the backend committed the deletion. Confirmed deletion
 cancels Query-managed reads and supersedes matching imperative read generations
 before applying cache outcomes, preventing stale responses from restoring the
 deleted record or projection.
+Batch archive uses a history-owned command with the same stale-read boundary.
+It invalidates archived detail keys and processing/history families, then seeds
+returned job details and the authoritative default history page. The shared API
+archive export remains an identity-preserving domain alias.
 
 Provider-neutral pipeline selection and capability contracts live under
 `app/domain/pipeline`. Runtime configuration and HTTP adapters import that
