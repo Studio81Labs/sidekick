@@ -3,8 +3,11 @@ import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "../../../app/providers/AppProviders";
-import { resetApiMocks } from "../../../test/api";
+import { createQueryClient } from "../../../app/providers/queryClient";
+import { jobRecord } from "../../../test/analyzerHarness";
+import { jsonResponse, resetApiMocks } from "../../../test/api";
 import {
+  fetchJobQuery,
   jobQueryKeys,
   jobQueryOptions,
   processingJobsQueryOptions,
@@ -35,10 +38,48 @@ describe("job query definitions", () => {
     expect(processingJobsQueryOptions(100).queryKey).toEqual(
       jobQueryKeys.processingPage(100),
     );
-    expect(jobQueryOptions("job-123").retry).toBeUndefined();
-    expect(jobQueryOptions("job-123", false).retry).toBe(false);
-    expect(processingJobsQueryOptions(100).retry).toBeUndefined();
-    expect(processingJobsQueryOptions(100, false).retry).toBe(false);
+  });
+
+  it("keeps overlapping imperative reads independent and caches the newest", async () => {
+    const queryClient = createQueryClient();
+    const olderJob = jobRecord({
+      id: "a".repeat(32),
+      updated_at: "2026-08-24T08:00:00Z",
+    });
+    const newerJob = jobRecord({
+      id: olderJob.id,
+      updated_at: "2026-08-24T09:00:00Z",
+    });
+    let resolveOlder!: (response: Response) => void;
+    let resolveNewer!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveOlder = resolve;
+            }),
+        )
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              resolveNewer = resolve;
+            }),
+        ),
+    );
+
+    const olderRequest = fetchJobQuery(queryClient, olderJob.id);
+    const newerRequest = fetchJobQuery(queryClient, newerJob.id);
+    resolveNewer(jsonResponse(newerJob));
+    await expect(newerRequest).resolves.toEqual(newerJob);
+    resolveOlder(jsonResponse(olderJob));
+    await expect(olderRequest).resolves.toEqual(olderJob);
+
+    expect(queryClient.getQueryData(jobQueryKeys.detail(olderJob.id))).toEqual(
+      newerJob,
+    );
   });
 
   it("cancels an in-flight job request when its observer unmounts", async () => {

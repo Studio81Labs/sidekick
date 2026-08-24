@@ -4,6 +4,7 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 
+import { cacheLatestQueryResult } from "../../../shared/api/queryCache";
 import { getJob, getProcessingJobs } from "./jobsApi";
 
 export const jobQueryKeys = {
@@ -15,38 +16,36 @@ export const jobQueryKeys = {
     [...jobQueryKeys.processing(), { offset }] as const,
 };
 
-export function jobQueryOptions(jobId: string, includeSignal = true) {
+export function jobQueryOptions(jobId: string) {
   return queryOptions({
-    queryFn: ({ signal }) =>
-      includeSignal ? getJob(jobId, signal) : getJob(jobId),
+    queryFn: ({ signal }) => getJob(jobId, signal),
     queryKey: jobQueryKeys.detail(jobId),
-    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }
 
-export function processingJobsQueryOptions(offset = 0, includeSignal = true) {
+export function processingJobsQueryOptions(offset = 0) {
   return queryOptions({
-    queryFn: ({ signal }) =>
-      includeSignal
-        ? getProcessingJobs(offset, signal)
-        : getProcessingJobs(offset),
+    queryFn: ({ signal }) => getProcessingJobs(offset, signal),
     queryKey: jobQueryKeys.processingPage(offset),
-    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }
 
 export function fetchJobQuery(queryClient: QueryClient, jobId: string) {
-  const options = jobQueryOptions(jobId, false);
-  queryClient.removeQueries({ queryKey: options.queryKey, exact: true });
-  return queryClient.fetchQuery(options);
+  return cacheLatestQueryResult(
+    queryClient,
+    jobQueryKeys.detail(jobId),
+    getJob(jobId),
+  );
 }
 
 export function fetchProcessingJobsQuery(queryClient: QueryClient, offset = 0) {
-  const options = processingJobsQueryOptions(offset, false);
-  queryClient.removeQueries({ queryKey: options.queryKey, exact: true });
-  return queryClient.fetchQuery(options);
+  return cacheLatestQueryResult(
+    queryClient,
+    jobQueryKeys.processingPage(offset),
+    getProcessingJobs(offset),
+  );
 }
 
 export function useJobQuery(jobId: string, enabled: boolean) {
