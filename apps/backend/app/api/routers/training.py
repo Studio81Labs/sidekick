@@ -6,6 +6,7 @@ from fastapi.responses import StreamingResponse
 from app.api.dependencies import TrainingProgressQuery, TrainingRuntime
 from app.api.response_contracts import MARKDOWN_RESPONSE_CONTENT
 from app.domain.poker import Street
+from app.domain.hands import JobRecord
 from app.domain.recommendations import RecommendationAction
 from app.domain.training import (
     TrainingProgress,
@@ -13,7 +14,6 @@ from app.domain.training import (
     TrainingReviewOrder,
     TrainingReviewRequest,
 )
-from app.models import JobRecord
 
 
 def create_training_router(runtime: TrainingRuntime) -> APIRouter:

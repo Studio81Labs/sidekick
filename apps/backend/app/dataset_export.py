@@ -8,7 +8,7 @@ from typing import BinaryIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from app.domain.poker import CanonicalState
-from app.models import JobRecord
+from app.domain.hands import JobRecord
 
 
 DATASET_SCHEMA = "poker-hero-parser-dataset"

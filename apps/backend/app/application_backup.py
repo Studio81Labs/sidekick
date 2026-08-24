@@ -21,7 +21,8 @@ from pydantic import (
 )
 
 from app.dataset_export import MAX_DATASET_CASES
-from app.models import ApplicationBackupRestoreResult, BenchmarkReport, JobRecord
+from app.domain.hands import JobRecord
+from app.models import ApplicationBackupRestoreResult, BenchmarkReport
 from app.storage import (
     FileBenchmarkStore,
     FileJobStore,

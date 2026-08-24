@@ -4,7 +4,8 @@ from collections.abc import Callable
 from hashlib import sha256
 from pathlib import Path
 
-from app.models import BENCHMARK_FIELDS, JobRecord
+from app.domain.hands import JobRecord
+from app.models import BENCHMARK_FIELDS
 
 
 def benchmark_layout_profile(

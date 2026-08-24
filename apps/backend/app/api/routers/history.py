@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Query
 
 from app.api.dependencies import HistoryRuntime
-from app.models import ArchiveJobsRequest, JobHistory
+from app.domain.hands import ArchiveJobsRequest, JobHistory
 
 
 def create_history_router(runtime: HistoryRuntime) -> APIRouter:

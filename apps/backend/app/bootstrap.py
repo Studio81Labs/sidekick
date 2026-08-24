@@ -118,6 +118,7 @@ from app.dataset_import import (
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.domain.poker import CanonicalState, Street
 from app.domain.recommendations import RecommendationRequest
+from app.domain.hands import ArchiveJobsRequest, JobHistory, JobQueue, JobRecord, ScreenshotMetadataRequest
 from app.domain.training import (
     TrainingDecision,
     TrainingDecisionRequest,
@@ -127,7 +128,6 @@ from app.domain.training import (
 )
 from app.models import (
     ApplicationBackupRestoreResult,
-    ArchiveJobsRequest,
     BenchmarkDatasetImportResult,
     BenchmarkOverview,
     BenchmarkParserPipelineSummary,
@@ -135,10 +135,6 @@ from app.models import (
     BenchmarkRunRequest,
     BenchmarkSelectionRequest,
     HealthResponse,
-    JobHistory,
-    JobQueue,
-    JobRecord,
-    ScreenshotMetadataRequest,
 )
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
