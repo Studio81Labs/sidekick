@@ -106,9 +106,14 @@ describe("analyzer workflow reducer", () => {
       mutationLease: 0,
       processing: 1,
     });
+    expect(processingRequested.recoveryPhases.processing).toBe("requested");
     expect(leaseRequested.recoveryRequests).toEqual({
       mutationLease: 1,
       processing: 1,
+    });
+    expect(leaseRequested.recoveryPhases).toEqual({
+      mutationLease: "requested",
+      processing: "requested",
     });
     expect(leaseRequested.attentionByJobId).toBe(
       processingRequested.attentionByJobId,
@@ -116,5 +121,34 @@ describe("analyzer workflow reducer", () => {
     expect(leaseRequested.queueProgress).toBe(
       processingRequested.queueProgress,
     );
+  });
+
+  it("tracks recovery lifecycle phases without changing request generations", () => {
+    const requested = analyzerWorkflowReducer(initialAnalyzerWorkflowState, {
+      type: "processing-recovery-requested",
+    });
+    const running = analyzerWorkflowReducer(requested, {
+      type: "recovery-started",
+      recovery: "processing",
+    });
+    const retryScheduled = analyzerWorkflowReducer(running, {
+      type: "recovery-retry-scheduled",
+      recovery: "processing",
+    });
+    const finished = analyzerWorkflowReducer(retryScheduled, {
+      type: "recovery-finished",
+      recovery: "processing",
+    });
+
+    expect(running.recoveryPhases.processing).toBe("running");
+    expect(retryScheduled.recoveryPhases.processing).toBe("retry-scheduled");
+    expect(finished.recoveryPhases.processing).toBe("idle");
+    expect(finished.recoveryRequests).toBe(requested.recoveryRequests);
+    expect(
+      analyzerWorkflowReducer(finished, {
+        type: "recovery-finished",
+        recovery: "processing",
+      }),
+    ).toBe(finished);
   });
 });

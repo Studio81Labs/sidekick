@@ -484,7 +484,9 @@ families. The reducer derives abort progress while API, cancellation, and
 browser-persistence side effects remain in commands and projection adapters.
 Processing restore and mutation-lease revalidation use independent typed
 request generations in the same store; promises, timers, and retry policy
-remain runtime concerns outside the reducer.
+remain runtime concerns outside the reducer. Each channel also exposes explicit
+idle, requested, running, and retry-scheduled phases advanced by those runtime
+effects without storing the effects themselves.
 
 Workspace persistence is implemented by focused cache-validation,
 mutation-lease, processing-queue, history, and reconciliation modules. The

@@ -533,6 +533,10 @@ function AnalyzerWorkspace() {
       processingMutationLeaseRef.current === null &&
       historyMutationLeaseRef.current === null
     ) {
+      dispatchWorkflow({
+        type: "recovery-finished",
+        recovery: "mutationLease",
+      });
       return;
     }
     let retryTimer: number | null = null;
@@ -540,6 +544,10 @@ function AnalyzerWorkspace() {
     let benchmarkImportRetryNotBefore = 0;
     const revalidateLeases = () => {
       retryTimer = null;
+      dispatchWorkflow({
+        type: "recovery-started",
+        recovery: "mutationLease",
+      });
       let leasePending = false;
       const linkedArchiveLeases = matchingArchiveLeaseTargets(
         processingMutationLeaseRef.current,
@@ -736,6 +744,15 @@ function AnalyzerWorkspace() {
           revalidateLeases,
           Math.max(retryDelay, benchmarkImportRetryNotBefore - Date.now()),
         );
+        dispatchWorkflow({
+          type: "recovery-retry-scheduled",
+          recovery: "mutationLease",
+        });
+      } else {
+        dispatchWorkflow({
+          type: "recovery-finished",
+          recovery: "mutationLease",
+        });
       }
     };
     retryTimer = window.setTimeout(revalidateLeases, retryDelay);
@@ -1612,8 +1629,16 @@ function AnalyzerWorkspace() {
       readCachedProcessingQueueTotal(cachedJobs) !== null &&
       !cachedJobs?.some(isProcessingJobInProgress)
     ) {
+      dispatchWorkflow({
+        type: "recovery-finished",
+        recovery: "processing",
+      });
       return;
     }
+    dispatchWorkflow({
+      type: "recovery-started",
+      recovery: "processing",
+    });
     markProcessingQueueSessionUnsynced();
 
     const cachedIds = new Set(
@@ -1803,6 +1828,10 @@ function AnalyzerWorkspace() {
         } else {
           markProcessingQueueSessionUnsynced();
         }
+        dispatchWorkflow({
+          type: "recovery-finished",
+          recovery: "processing",
+        });
       })
       .catch((processingError) => {
         if (active) {
@@ -1821,6 +1850,10 @@ function AnalyzerWorkspace() {
               processingRestoreRetryRequestedRef.current = true;
             }
           }, PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS);
+          dispatchWorkflow({
+            type: "recovery-retry-scheduled",
+            recovery: "processing",
+          });
         }
       });
 

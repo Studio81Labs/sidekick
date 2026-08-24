@@ -363,7 +363,9 @@ messages and queue-processing progress now use typed mark, clear, progress,
 abort, and finish events. The abort transition derives its skipped count in the
 reducer. Processing restore and mutation-lease revalidation triggers are also
 typed, independently incremented workflow request generations, with no server
-job records or recovery side effects stored in the reducer.
+job records or recovery side effects stored in the reducer. Both recovery
+channels expose explicit idle, requested, running, and retry-scheduled phases
+that are advanced at their existing effect boundaries.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
