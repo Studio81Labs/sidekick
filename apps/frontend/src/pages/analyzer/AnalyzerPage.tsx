@@ -32,6 +32,7 @@ import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource"
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
 import { usePipelineSelection } from "../../features/pipeline/hooks/usePipelineSelection";
 import { useScreenshotDetails } from "../../features/screenshots/hooks/useScreenshotDetails";
+import { updateScreenshotMetadataCommand } from "../../features/screenshots/services/updateScreenshotMetadataCommand";
 import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDialog";
 import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
@@ -65,7 +66,6 @@ import {
   requestRecommendation,
   restoreApplicationBackup,
   setBenchmarkInclusion,
-  updateJobMetadata,
   uploadScreenshot,
 } from "../../shared/api/client";
 import {
@@ -3618,11 +3618,13 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setScreenshotMetadataSaving(true);
     setError(null);
     try {
-      const updated = await updateJobMetadata(managedJob.id, {
-        title,
-        notes,
-        tags,
-      });
+      const { job: updated } = await updateScreenshotMetadataCommand(
+        queryClient,
+        {
+          jobId: managedJob.id,
+          metadata: { title, notes, tags },
+        },
+      );
       const movedToHistory =
         mutationScope === "processing" && updated.archived_at !== null;
       if (movedToHistory) {

@@ -1,8 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import type { components } from "../../../shared/api/generated/openapi";
-import { getJob, getProcessingJobs, toJobQueue, toJobRecord } from "./jobsApi";
+import {
+  getJob,
+  getProcessingJobs,
+  type JobMetadataUpdate,
+  toJobQueue,
+  toJobRecord,
+  updateJobMetadata,
+} from "./jobsApi";
 
 afterEach(resetApiMocks);
 
@@ -36,6 +43,14 @@ const jobResponse = {
 } satisfies components["schemas"]["JobRecord"];
 
 describe("jobs API adapter", () => {
+  it("preserves the required full metadata replacement contract", () => {
+    expectTypeOf<JobMetadataUpdate>().toEqualTypeOf<{
+      title: string | null;
+      notes: string | null;
+      tags: string[];
+    }>();
+  });
+
   it("maps generated job and queue responses into stable domain values", () => {
     expect(toJobRecord(jobResponse)).toEqual(jobResponse);
     expect(
@@ -75,6 +90,29 @@ describe("jobs API adapter", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/api/jobs?offset=100",
       { credentials: "include" },
+    );
+  });
+
+  it("updates screenshot metadata through the shared transport", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
+    vi.stubGlobal("fetch", fetchMock);
+    const metadata = {
+      title: "Turn bluff",
+      notes: "Review the sizing.",
+      tags: ["turn", "bluff"],
+    };
+
+    await expect(updateJobMetadata("job/123", metadata)).resolves.toEqual(
+      jobResponse,
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/jobs/job%2F123/metadata",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(metadata),
+        credentials: "include",
+      },
     );
   });
 });

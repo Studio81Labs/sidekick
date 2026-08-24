@@ -2,28 +2,13 @@ export {
   getJob,
   getProcessingJobs,
   imageUrl,
+  updateJobMetadata,
 } from "../../domains/jobs/api/jobsApi";
 
 import type { JobRecord } from "../types/jobs";
 import type { PipelineSelection } from "../types/pipeline";
 import type { CanonicalState } from "../types/poker";
 import { apiUrl, readJson } from "./core";
-
-export async function updateJobMetadata(
-  jobId: string,
-  metadata: { title: string | null; notes: string | null; tags: string[] },
-): Promise<JobRecord> {
-  const response = await fetch(
-    apiUrl(`/api/jobs/${encodeURIComponent(jobId)}/metadata`),
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(metadata),
-      credentials: "include",
-    },
-  );
-  return readJson<JobRecord>(response);
-}
 
 export async function deleteJob(jobId: string): Promise<void> {
   const response = await fetch(

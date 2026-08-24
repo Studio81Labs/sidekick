@@ -5,6 +5,12 @@ import type { JobQueue, JobRecord } from "../../../shared/types/jobs";
 
 type JobQueueResponse = components["schemas"]["JobQueue"];
 type JobRecordResponse = components["schemas"]["JobRecord"];
+export type JobMetadataUpdate = Required<
+  Pick<
+    components["schemas"]["ScreenshotMetadataRequest"],
+    "title" | "notes" | "tags"
+  >
+>;
 
 export function toJobRecord(response: JobRecordResponse): JobRecord {
   return response as unknown as JobRecord;
@@ -37,4 +43,19 @@ export async function getProcessingJobs(
     ...(signal ? { signal } : {}),
   });
   return toJobQueue(response);
+}
+
+export async function updateJobMetadata(
+  jobId: string,
+  metadata: JobMetadataUpdate,
+): Promise<JobRecord> {
+  const response = await requestJson<JobRecordResponse>(
+    `/api/jobs/${encodeURIComponent(jobId)}/metadata`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(metadata),
+    },
+  );
+  return toJobRecord(response);
 }

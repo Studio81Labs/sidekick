@@ -417,6 +417,12 @@ Dependencies: Waves 4 and 7
 - Preserve idempotency IDs, abort behavior, mutation leases, and independent
   queue-item failure handling.
 
+Wave 9 progress: screenshot metadata writes now use a screenshot-owned command
+that returns the updated job and explicit Query cache outcomes. The jobs domain
+owns the generated-contract transport, the shared API preserves its export
+identity, and only job-detail, processing, and history query families are
+updated or invalidated.
+
 Gate: every mutation has success, definite failure, ambiguous failure/recovery,
 and retry coverage.
 
