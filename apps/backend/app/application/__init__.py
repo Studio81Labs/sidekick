@@ -5,6 +5,9 @@ from app.application.jobs import (
     JobMutationService,
     JobQueryService,
     JobRecommendationService,
+    JobUploadPipelineRequest,
+    JobUploadRequest,
+    JobUploadService,
 )
 
 __all__ = [
@@ -12,4 +15,7 @@ __all__ = [
     "JobMutationService",
     "JobQueryService",
     "JobRecommendationService",
+    "JobUploadPipelineRequest",
+    "JobUploadRequest",
+    "JobUploadService",
 ]

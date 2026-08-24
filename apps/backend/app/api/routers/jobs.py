@@ -23,16 +23,16 @@ from app.api.dependencies import (
     JobUploadInputError,
     JobUploadParserConfigurationError,
     JobUploadParserProviderError,
-    JobUploadPipelineRequest,
-    JobUploadRequest,
     JobUploadUnexpectedParserError,
-    JobsUploadRuntime,
 )
 from app.api.response_contracts import SUPPORTED_IMAGE_RESPONSE_CONTENT
 from app.application.jobs import (
     JobMutationService,
     JobQueryService,
     JobRecommendationService,
+    JobUploadPipelineRequest,
+    JobUploadRequest,
+    JobUploadService,
 )
 from app.domain.poker import CanonicalState
 from app.domain.hands import JobQueue, JobRecord, ScreenshotMetadataRequest
@@ -78,7 +78,7 @@ def create_jobs_router(runtime: JobQueryService) -> APIRouter:
     return router
 
 
-def create_job_upload_router(runtime: JobsUploadRuntime) -> APIRouter:
+def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
     """Build the multipart processing-job upload router."""
 
     router = APIRouter()
