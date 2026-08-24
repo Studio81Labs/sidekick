@@ -2,11 +2,12 @@
 
 from fastapi import APIRouter, HTTPException
 
-from app.api.dependencies import ApiRuntime, PipelineCapabilitiesUnavailableError
+from app.api.dependencies import PipelineCapabilitiesUnavailableError
+from app.application.system import SystemQueryService
 from app.domain.pipeline import PipelineCapabilities
 
 
-def create_pipeline_router(runtime: ApiRuntime) -> APIRouter:
+def create_pipeline_router(runtime: SystemQueryService) -> APIRouter:
     """Build the pipeline router with its application-owned dependencies."""
 
     router = APIRouter()

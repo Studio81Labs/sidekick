@@ -2,11 +2,11 @@
 
 from fastapi import APIRouter
 
-from app.api.dependencies import ApiRuntime
+from app.application.system import SystemQueryService
 from app.domain.health import HealthResponse
 
 
-def create_health_router(runtime: ApiRuntime) -> APIRouter:
+def create_health_router(runtime: SystemQueryService) -> APIRouter:
     """Build the health router with its application-owned dependencies."""
 
     router = APIRouter()
