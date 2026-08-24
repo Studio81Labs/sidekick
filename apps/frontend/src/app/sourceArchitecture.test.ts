@@ -106,10 +106,17 @@ function domainCompatibilityFacadeImportAllowed(
   sourcePath: readonly string[],
   targetPath: readonly string[],
 ): boolean {
-  return (
-    sourcePath.join("/") === "shared/api/jobs.ts" &&
-    targetPath.slice(0, 3).join("/") === "domains/jobs/api" &&
-    ["jobsApi", "jobsApi.ts"].includes(targetPath[3] ?? "")
+  const facade = sourcePath.join("/");
+  const domain = targetPath.slice(0, 3).join("/");
+  const module = (targetPath[3] ?? "").replace(/\.ts$/, "");
+  return [
+    ["shared/api/jobs.ts", "domains/jobs/api", "jobsApi"],
+    ["shared/api/history.ts", "domains/history/api", "historyApi"],
+  ].some(
+    ([allowedFacade, allowedDomain, allowedModule]) =>
+      facade === allowedFacade &&
+      domain === allowedDomain &&
+      module === allowedModule,
   );
 }
 
@@ -799,11 +806,17 @@ describe("frontend source architecture", () => {
     ).toBeNull();
   });
 
-  it("limits domain compatibility imports to the job API facade", () => {
+  it("limits domain compatibility imports to declared API facades", () => {
     expect(
       domainCompatibilityFacadeImportAllowed(
         ["shared", "api", "jobs.ts"],
         ["domains", "jobs", "api", "jobsApi.ts"],
+      ),
+    ).toBe(true);
+    expect(
+      domainCompatibilityFacadeImportAllowed(
+        ["shared", "api", "history.ts"],
+        ["domains", "history", "api", "historyApi.ts"],
       ),
     ).toBe(true);
     expect(

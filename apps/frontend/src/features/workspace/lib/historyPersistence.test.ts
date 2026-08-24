@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getHistory } from "../../../shared/api/history";
+import { getHistory } from "../../../domains/history/api/historyApi";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
   HISTORY_CACHE_LIMIT,
@@ -11,7 +11,7 @@ import {
   writeHistoryTotal,
 } from "./historyPersistence";
 
-vi.mock("../../../shared/api/history", () => ({
+vi.mock("../../../domains/history/api/historyApi", () => ({
   getHistory: vi.fn(),
 }));
 
