@@ -44,6 +44,7 @@ import {
   useAnalyzerWorkflowProjections,
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
 import { useAnalyzerRecoveryRuntimeServices } from "../../features/workspace/hooks/useAnalyzerRecoveryRuntimeServices";
+import { useAnalyzerRequestRuntimeServices } from "../../features/workspace/hooks/useAnalyzerRequestRuntimeServices";
 import {
   fetchHistoryPageQuery,
   fetchJobQuery,
@@ -127,7 +128,6 @@ import {
   trainingReviewQueueStatus,
 } from "../../features/training/lib/trainingPresentation";
 import {
-  type ActiveRecommendationRequest,
   ERROR_TOAST_ID,
   autoApprovalState,
   createLocalErrorJob,
@@ -214,6 +214,13 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     processingRestoreRetryRequestedRef,
     processingStorageRestoreScheduledRef,
   } = useAnalyzerRecoveryRuntimeServices();
+  const {
+    activeRecommendationRequestsRef,
+    appMountedRef,
+    historySearchRequestRef,
+    queueAbortControllerRef,
+    queueAbortRequestedRef,
+  } = useAnalyzerRequestRuntimeServices();
   const [jobs, setJobs] = useState<JobRecord[]>(
     () => readProcessingQueue() ?? [],
   );
@@ -402,14 +409,7 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     jobs,
     onError: setError,
   });
-  const appMountedRef = useRef(true);
   const benchmarkDatasetInputRef = useRef<HTMLInputElement | null>(null);
-  const queueAbortControllerRef = useRef<AbortController | null>(null);
-  const queueAbortRequestedRef = useRef(false);
-  const activeRecommendationRequestsRef = useRef(
-    new Map<string, ActiveRecommendationRequest>(),
-  );
-  const historySearchRequestRef = useRef(0);
   const jobsRef = useRef(jobs);
   const processingCacheInitializedRef = useRef(false);
   const processingMembershipGenerationRef = useRef(0);

@@ -384,7 +384,10 @@ browser persistence now enters the workflow through a provider-injected
 projection adapter; the existing codecs, storage formats, and recovery policy
 remain unchanged. Pending restore promises, retry scheduling, in-flight restore
 IDs, and retry flags now live in a focused recovery runtime-service hook rather
-than being allocated by the analyzer page.
+than being allocated by the analyzer page. Queue cancellation, active
+recommendation controllers, mounted-state guards, and history request
+generations use a parallel request runtime-service hook. Capture stream
+ownership remains in the capture feature.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
