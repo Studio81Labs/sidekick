@@ -369,7 +369,9 @@ that are advanced at their existing effect boundaries. Active asynchronous
 lease recovery takes precedence over an overlapping retry timer until its
 request settles. Active job selection is now reducer-owned through a typed
 select/clear event, while hand-review form alignment and its synchronous service
-ref remain in the hand-review feature.
+ref remain in the hand-review feature. A focused selection hook exposes the
+selected ID and memoized command so page composition no longer constructs the
+raw workflow event.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
