@@ -7,6 +7,7 @@ import {
   useAnalyzerActiveSelection,
   useAnalyzerMutationLeases,
   useAnalyzerQueueWorkflow,
+  useAnalyzerRecoveryWorkflow,
 } from "./useAnalyzerWorkflow";
 
 function wrapper({ children }: PropsWithChildren) {
@@ -98,6 +99,48 @@ describe("analyzer workflow context", () => {
     expect(result.current.mutationLeases).toEqual({
       processing: null,
       history: null,
+    });
+  });
+
+  it("advances recovery requests and phases through focused commands", () => {
+    const { result } = renderHook(() => useAnalyzerRecoveryWorkflow(), {
+      wrapper,
+    });
+
+    expect(result.current.mutationLeaseRestoreRequest).toBe(0);
+    expect(result.current.processingRestoreRequest).toBe(0);
+    expect(result.current.recoveryPhases).toEqual({
+      mutationLease: "idle",
+      processing: "idle",
+    });
+
+    act(() => {
+      result.current.requestMutationLeaseRevalidation();
+      result.current.requestProcessingRecovery();
+    });
+    expect(result.current.mutationLeaseRestoreRequest).toBe(1);
+    expect(result.current.processingRestoreRequest).toBe(1);
+    expect(result.current.recoveryPhases).toEqual({
+      mutationLease: "requested",
+      processing: "requested",
+    });
+
+    act(() => {
+      result.current.scheduleRecoveryRetry("mutationLease");
+      result.current.startRecovery("processing");
+    });
+    expect(result.current.recoveryPhases).toEqual({
+      mutationLease: "retry-scheduled",
+      processing: "running",
+    });
+
+    act(() => {
+      result.current.finishRecovery("mutationLease");
+      result.current.finishRecovery("processing");
+    });
+    expect(result.current.recoveryPhases).toEqual({
+      mutationLease: "idle",
+      processing: "idle",
     });
   });
 });
