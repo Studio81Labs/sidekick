@@ -47,7 +47,6 @@ from app.api.dependencies import (
     JobUploadParserConfigurationError,
     JobUploadParserProviderError,
     JobUploadUnexpectedParserError,
-    McpAdminRuntime,
 )
 from app.application.backups import ApplicationBackupExport, BackupService
 from app.application.benchmarks import (
@@ -65,6 +64,7 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService,
 )
+from app.application.mcp_admin import McpAdminService
 from app.application.training import TrainingProgressQuery, TrainingService
 from app.application.system import SystemQueryService
 from app.api.dependencies import PipelineCapabilitiesUnavailableError
@@ -1341,7 +1341,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         list_history=list_history,
         archive_jobs=archive_jobs,
     )
-    mcp_admin_runtime = McpAdminRuntime(
+    mcp_admin_runtime = McpAdminService(
         get_config=get_mcp_access_config,
         list_principals=list_mcp_principals,
         create_principal=create_mcp_principal,

@@ -60,9 +60,9 @@ latest job record so slow OCR does not block unrelated jobs and deleted uploads
 cannot be recreated by parser completion.
 
 FastAPI composition remains in `app/bootstrap.py`, while extracted transport
-adapters live under `app/api/routers`. MCP administration routes receive a
-focused frozen runtime container. Health and pipeline queries dispatch through
-`app/application/system.py`.
+adapters live under `app/api/routers`. Health and pipeline queries dispatch
+through `app/application/system.py`; MCP configuration and principal operations
+dispatch through `app/application/mcp_admin.py`.
 Processing-job reads, uploads, short mutations, recommendation commands, and
 history list/archive operations dispatch through the storage-independent
 `app/application/jobs.py` services. Training review commands, progress queries,

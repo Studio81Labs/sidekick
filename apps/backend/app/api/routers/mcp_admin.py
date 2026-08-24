@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import JSONResponse
 
-from app.api.dependencies import McpAdminRuntime
+from app.application.mcp_admin import McpAdminService
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
     McpAccessConfig,
@@ -13,7 +13,7 @@ from app.mcp_access import (
 )
 
 
-def create_mcp_admin_router(runtime: McpAdminRuntime) -> APIRouter:
+def create_mcp_admin_router(runtime: McpAdminService) -> APIRouter:
     """Build the MCP administration router with application-owned operations."""
 
     router = APIRouter()
