@@ -36,6 +36,11 @@ import { updateScreenshotMetadataCommand } from "../../features/screenshots/serv
 import { deleteScreenshotCommand } from "../../features/screenshots/services/deleteScreenshotCommand";
 import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDialog";
 import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
+import {
+  completeTrainingReviewCommand,
+  recordTrainingDecisionCommand,
+  reopenTrainingReviewCommand,
+} from "../../features/training/services/trainingReviewCommands";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
 import {
   AnalyzerWorkflowProvider,
@@ -56,13 +61,10 @@ import {
   ApiResponseError,
   applicationBackupUrl,
   approveState,
-  completeTrainingReview,
   getBenchmarkDatasetImport,
   getTrainingProgress,
   humanReadableMessage,
   importBenchmarkDataset,
-  recordTrainingDecision,
-  reopenTrainingReview,
   requestRecommendation,
   restoreApplicationBackup,
   uploadScreenshot,
@@ -2925,11 +2927,14 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setError(null);
     try {
       if (decisionExpectation?.kind === "training-decision") {
-        const decided = await recordTrainingDecision(
-          job.id,
-          decisionExpectation.action,
-          decisionExpectation.sizing,
-          decisionExpectation.certainty,
+        const { job: decided } = await recordTrainingDecisionCommand(
+          queryClient,
+          {
+            jobId: job.id,
+            action: decisionExpectation.action,
+            sizing: decisionExpectation.sizing,
+            certainty: decisionExpectation.certainty,
+          },
         );
         if (
           recommendationController.signal.aborted ||
@@ -3013,14 +3018,16 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setBusy(true);
     setError(null);
     try {
-      replaceJob(
-        await recordTrainingDecision(
-          job.id,
-          trainingAction,
-          parsedSizing.sizing,
-          trainingCertainty || null,
-        ),
+      const { job: decided } = await recordTrainingDecisionCommand(
+        queryClient,
+        {
+          jobId: job.id,
+          action: trainingAction,
+          sizing: parsedSizing.sizing,
+          certainty: trainingCertainty || null,
+        },
       );
+      replaceJob(decided);
       toast.success("Training answer locked");
     } catch (decisionError) {
       if (mutationFailureMayHavePersistedSideEffect(decisionError)) {
@@ -3060,7 +3067,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setBusy(true);
     setError(null);
     try {
-      const reviewedJob = await completeTrainingReview(job.id, reviewNote);
+      const { job: reviewedJob } = await completeTrainingReviewCommand(
+        queryClient,
+        { jobId: job.id, note: reviewNote },
+      );
       replaceJob(reviewedJob);
       if (!continueReviewQueue) {
         toast.success("Training review completed");
@@ -3142,7 +3152,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setBusy(true);
     setError(null);
     try {
-      const reopenedJob = await reopenTrainingReview(job.id);
+      const { job: reopenedJob } = await reopenTrainingReviewCommand(
+        queryClient,
+        { jobId: job.id },
+      );
       replaceJob(reopenedJob);
       toast.success("Training review reopened");
     } catch (reviewError) {
@@ -3183,7 +3196,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setBusy(true);
     setError(null);
     try {
-      const updatedJob = await completeTrainingReview(job.id, note);
+      const { job: updatedJob } = await completeTrainingReviewCommand(
+        queryClient,
+        { jobId: job.id, note },
+      );
       replaceJob(updatedJob);
       setTrainingReviewNoteEditing(false);
       toast.success(note ? "Lesson note updated" : "Lesson note removed");
@@ -3220,7 +3236,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
         reviewed: false,
         note: null,
       });
-      const reopenedJob = await reopenTrainingReview(jobId);
+      const { job: reopenedJob } = await reopenTrainingReviewCommand(
+        queryClient,
+        { jobId },
+      );
       reviewPersisted = true;
       updateJobs((current) =>
         current.map((candidate) =>

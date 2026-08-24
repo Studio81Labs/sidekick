@@ -105,6 +105,12 @@ processing, history, and benchmark-overview families, and leaves immutable
 benchmark-report caches intact. The Analyzer retains mutation-lease recovery and
 local corpus-count presentation while the shared API export remains an
 identity-preserving compatibility alias.
+Training decisions and review completion/reopen operations now use a
+training-owned command family. The generated-contract adapters preserve the
+legacy positional function signatures, and confirmed responses update job
+detail while invalidating processing, history, and all filtered training
+progress keys. Commands cancel and supersede stale reads before applying those
+outcomes; Analyzer composition continues to own leases and review-queue flow.
 
 Provider-neutral pipeline selection and capability contracts live under
 `app/domain/pipeline`. Runtime configuration and HTTP adapters import that

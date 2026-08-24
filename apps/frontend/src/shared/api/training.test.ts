@@ -1,14 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getTrainingProgress as getDomainTrainingProgress } from "../../domains/training/api/trainingApi";
+import {
+  completeTrainingReview as completeDomainTrainingReview,
+  getTrainingProgress as getDomainTrainingProgress,
+  recordTrainingDecision as recordDomainTrainingDecision,
+  reopenTrainingReview as reopenDomainTrainingReview,
+} from "../../domains/training/api/trainingApi";
 import { jsonResponse, resetApiMocks } from "../../test/api";
-import { getTrainingProgress, trainingLessonsExportUrl } from "./training";
+import {
+  completeTrainingReview,
+  getTrainingProgress,
+  recordTrainingDecision,
+  reopenTrainingReview,
+  trainingLessonsExportUrl,
+} from "./training";
 
 afterEach(resetApiMocks);
 
 describe("training API", () => {
   it("preserves the domain progress adapter export identity", () => {
     expect(getTrainingProgress).toBe(getDomainTrainingProgress);
+    expect(recordTrainingDecision).toBe(recordDomainTrainingDecision);
+    expect(completeTrainingReview).toBe(completeDomainTrainingReview);
+    expect(reopenTrainingReview).toBe(reopenDomainTrainingReview);
   });
 
   it("keeps the default progress request backward compatible", async () => {

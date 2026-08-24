@@ -1,6 +1,9 @@
 import type { components } from "../../../shared/api/generated/openapi";
 import { requestJson } from "../../../shared/api/transport";
+import type { JobRecord } from "../../../shared/types/jobs";
+import type { RecommendationAction } from "../../../shared/types/recommendations";
 import type {
+  TrainingCertainty,
   TrainingCertaintyFilter,
   TrainingPositionFilter,
   TrainingProgress,
@@ -11,8 +14,19 @@ import type {
   TrainingSolverFilter,
   TrainingStreetFilter,
 } from "../../../shared/types/training";
+import { toJobRecord } from "../../jobs/api/jobsApi";
 
 type TrainingProgressResponse = components["schemas"]["TrainingProgress"];
+type JobRecordResponse = components["schemas"]["JobRecord"];
+export type TrainingDecisionUpdate = Required<
+  Pick<
+    components["schemas"]["TrainingDecisionRequest"],
+    "action" | "sizing" | "certainty"
+  >
+>;
+export type TrainingReviewUpdate = Required<
+  Pick<components["schemas"]["TrainingReviewRequest"], "note">
+>;
 
 export function toTrainingProgress(
   response: TrainingProgressResponse,
@@ -90,4 +104,46 @@ export async function getTrainingProgress(
     signal ? { signal } : undefined,
   );
   return toTrainingProgress(response);
+}
+
+export async function recordTrainingDecision(
+  jobId: string,
+  action: RecommendationAction,
+  sizing: number | null,
+  certainty: TrainingCertainty | null,
+): Promise<JobRecord> {
+  const update: TrainingDecisionUpdate = { action, sizing, certainty };
+  const response = await requestJson<JobRecordResponse>(
+    `/api/jobs/${jobId}/decision`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update),
+    },
+  );
+  return toJobRecord(response);
+}
+
+export async function completeTrainingReview(
+  jobId: string,
+  note: string | null,
+): Promise<JobRecord> {
+  const update: TrainingReviewUpdate = { note };
+  const response = await requestJson<JobRecordResponse>(
+    `/api/jobs/${jobId}/training-review`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update),
+    },
+  );
+  return toJobRecord(response);
+}
+
+export async function reopenTrainingReview(jobId: string): Promise<JobRecord> {
+  const response = await requestJson<JobRecordResponse>(
+    `/api/jobs/${jobId}/training-review`,
+    { method: "DELETE" },
+  );
+  return toJobRecord(response);
 }
