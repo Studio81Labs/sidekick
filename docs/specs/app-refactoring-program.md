@@ -430,6 +430,11 @@ reads for those keys so a stale pre-deletion response cannot repopulate cache.
 Batch archive now uses a history-owned command that preserves bounded transport
 batches, supersedes affected detail/processing/history reads, invalidates only
 those keys, and seeds returned detail records plus the default history page.
+Benchmark inclusion now uses a benchmark-owned generated-contract command that
+updates the returned job detail, invalidates processing/history/overview query
+families, and preserves existing lease recovery and corpus presentation. Prior
+benchmark report caches remain immutable, and the shared transport symbol is an
+identity-preserving compatibility alias.
 
 Gate: every mutation has success, definite failure, ambiguous failure/recovery,
 and retry coverage.

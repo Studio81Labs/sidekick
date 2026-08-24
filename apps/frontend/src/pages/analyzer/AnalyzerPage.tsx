@@ -65,7 +65,6 @@ import {
   reopenTrainingReview,
   requestRecommendation,
   restoreApplicationBackup,
-  setBenchmarkInclusion,
   uploadScreenshot,
 } from "../../shared/api/client";
 import {
@@ -75,6 +74,7 @@ import {
   type JobRecord,
 } from "../../shared/types";
 import { benchmarkCorpusFingerprintAfterLayoutMutation } from "../../features/benchmark/lib/benchmarkPresentation";
+import { setBenchmarkInclusionCommand } from "../../features/benchmark/services/setBenchmarkInclusionCommand";
 import {
   HISTORY_CACHE_LIMIT,
   type JobMutationExpectation,
@@ -3507,7 +3507,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setBenchmarkUpdating(true);
     setError(null);
     try {
-      const updated = await setBenchmarkInclusion(job.id, included);
+      const { job: updated } = await setBenchmarkInclusionCommand(queryClient, {
+        jobId: job.id,
+        included,
+      });
       replaceJob(updated);
       setBenchmarkOverview((current) => {
         const change = included ? 1 : -1;

@@ -99,6 +99,12 @@ Batch archive uses a history-owned command with the same stale-read boundary.
 It invalidates archived detail keys and processing/history families, then seeds
 returned job details and the authoritative default history page. The shared API
 archive export remains an identity-preserving domain alias.
+Benchmark ground-truth inclusion now uses a benchmark-owned command. Its
+generated-contract transport returns the updated job detail, invalidates only
+processing, history, and benchmark-overview families, and leaves immutable
+benchmark-report caches intact. The Analyzer retains mutation-lease recovery and
+local corpus-count presentation while the shared API export remains an
+identity-preserving compatibility alias.
 
 Provider-neutral pipeline selection and capability contracts live under
 `app/domain/pipeline`. Runtime configuration and HTTP adapters import that
