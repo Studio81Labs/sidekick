@@ -171,6 +171,7 @@ function AnalyzerWorkspace() {
   const queryClient = useQueryClient();
   const {
     state: {
+      activeJobId,
       attentionByJobId: jobAttention,
       queueProgress,
       recoveryRequests: {
@@ -203,7 +204,6 @@ function AnalyzerWorkspace() {
   const [error, setErrorMessage] = useState<string | null>(null);
   const [errorSequence, setErrorSequence] = useState(0);
   const {
-    activeJobId,
     activeJobIdRef,
     addCompletedPostflopAction,
     addPostflopAction,
@@ -250,7 +250,13 @@ function AnalyzerWorkspace() {
     updatePreflopAction,
     validation,
     warnings,
-  } = useHandReviewState({ jobs, onError: setError });
+  } = useHandReviewState({
+    activeJobId,
+    jobs,
+    onActiveJobChange: (jobId) =>
+      dispatchWorkflow({ type: "active-job-selected", jobId }),
+    onError: setError,
+  });
   const {
     certaintyFilter: trainingCertaintyFilter,
     dialogOpen: trainingDialogOpen,

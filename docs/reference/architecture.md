@@ -479,8 +479,10 @@ request ordering, and failed-filter rollback. Its outer controller owns only
 dialog lifecycle and opening a selected hand in the analyzer workspace.
 The analyzer route mounts a typed `AnalyzerWorkflowProvider`. Its pure reducer
 owns cross-feature workflow state without copying server job records; queue
-attention messages and queue-processing progress are the first migrated state
-families. The reducer derives abort progress while API, cancellation, and
+attention messages, queue-processing progress, and active job selection are
+reducer-owned state families. Selection stores only the job ID; hand-review form
+alignment, dirty tracking, and the synchronous service ref remain feature-owned.
+The reducer derives abort progress while API, cancellation, and
 browser-persistence side effects remain in commands and projection adapters.
 Processing restore and mutation-lease revalidation use independent typed
 request generations in the same store; promises, timers, and retry policy

@@ -33,15 +33,18 @@ import { requiresOpponentPosition } from "../lib/pokerStateForm";
 import type { CompletedPostflopStreet, JobRecord } from "../../../shared/types";
 
 interface UseHandReviewStateOptions {
+  activeJobId: string | null;
   jobs: JobRecord[];
+  onActiveJobChange: (jobId: string | null) => void;
   onError: (message: string | null) => void;
 }
 
 export function useHandReviewState({
+  activeJobId,
   jobs,
+  onActiveJobChange,
   onError,
 }: UseHandReviewStateOptions) {
-  const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [form, setForm] = useState<StateForm>(() => stateToForm(EMPTY_STATE));
   const [approvedStateKey, setApprovedStateKey] = useState<string | null>(null);
   const [trainingAction, setTrainingAction] =
@@ -53,6 +56,7 @@ export function useHandReviewState({
   const [trainingReviewNoteEditing, setTrainingReviewNoteEditing] =
     useState(false);
   const activeJobIdRef = useRef(activeJobId);
+  activeJobIdRef.current = activeJobId;
   const formBaselineRef = useRef(form);
   const formDirtyRef = useRef(false);
 
@@ -192,6 +196,11 @@ export function useHandReviewState({
     }
     toast.dismiss(VALIDATION_TOAST_ID);
   }, [job, validation.error]);
+
+  function setActiveJobId(nextActiveJobId: string | null) {
+    activeJobIdRef.current = nextActiveJobId;
+    onActiveJobChange(nextActiveJobId);
+  }
 
   function alignWorkspaceToJob(nextJob: JobRecord | null) {
     const nextState = nextJob ? stateFromJob(nextJob) : EMPTY_STATE;

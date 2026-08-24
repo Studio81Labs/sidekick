@@ -9,6 +9,7 @@ import {
 } from "react";
 
 export type AnalyzerWorkflowState = {
+  activeJobId: string | null;
   attentionByJobId: Readonly<Record<string, string>>;
   queueProgress: AnalyzerQueueProgress | null;
   recoveryRequests: {
@@ -37,6 +38,10 @@ export type AnalyzerQueueProgress = {
 };
 
 export type AnalyzerWorkflowEvent =
+  | {
+      type: "active-job-selected";
+      jobId: string | null;
+    }
   | {
       type: "job-attention-marked";
       jobId: string;
@@ -71,6 +76,7 @@ export type AnalyzerWorkflowEvent =
     };
 
 export const initialAnalyzerWorkflowState: AnalyzerWorkflowState = {
+  activeJobId: null,
   attentionByJobId: {},
   queueProgress: null,
   recoveryRequests: {
@@ -88,6 +94,12 @@ export function analyzerWorkflowReducer(
   event: AnalyzerWorkflowEvent,
 ): AnalyzerWorkflowState {
   switch (event.type) {
+    case "active-job-selected": {
+      if (state.activeJobId === event.jobId) {
+        return state;
+      }
+      return { ...state, activeJobId: event.jobId };
+    }
     case "job-attention-marked": {
       if (state.attentionByJobId[event.jobId] === event.message) {
         return state;

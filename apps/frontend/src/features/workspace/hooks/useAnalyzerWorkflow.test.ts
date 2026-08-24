@@ -53,6 +53,27 @@ describe("analyzer workflow reducer", () => {
     ).toBe(marked);
   });
 
+  it("selects and clears the active job idempotently", () => {
+    const selected = analyzerWorkflowReducer(initialAnalyzerWorkflowState, {
+      type: "active-job-selected",
+      jobId: "job-1",
+    });
+
+    expect(selected.activeJobId).toBe("job-1");
+    expect(
+      analyzerWorkflowReducer(selected, {
+        type: "active-job-selected",
+        jobId: "job-1",
+      }),
+    ).toBe(selected);
+    expect(
+      analyzerWorkflowReducer(selected, {
+        type: "active-job-selected",
+        jobId: null,
+      }),
+    ).toEqual(initialAnalyzerWorkflowState);
+  });
+
   it("tracks queue progress, derives abort state, and finishes cleanly", () => {
     const progress = {
       aborting: false,
