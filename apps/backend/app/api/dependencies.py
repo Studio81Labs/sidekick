@@ -17,6 +17,14 @@ from app.domain.hands import (
     ScreenshotMetadataRequest,
 )
 from app.domain.recommendations import RecommendationAction
+from app.domain.benchmarks import (
+    BenchmarkDatasetImportReceipt,
+    BenchmarkDatasetImportResult,
+    BenchmarkOverview,
+    BenchmarkReport,
+    BenchmarkRunRequest,
+    BenchmarkSelectionRequest,
+)
 from app.domain.training import (
     TrainingDecisionRequest,
     TrainingProgress,
@@ -33,12 +41,6 @@ from app.mcp_access import (
 )
 from app.models import (
     ApplicationBackupRestoreResult,
-    BenchmarkDatasetImportReceipt,
-    BenchmarkDatasetImportResult,
-    BenchmarkOverview,
-    BenchmarkReport,
-    BenchmarkRunRequest,
-    BenchmarkSelectionRequest,
     HealthResponse,
 )
 

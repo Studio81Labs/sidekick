@@ -19,6 +19,7 @@ from app.benchmark_corpus import (
     benchmark_layout_counts,
     benchmark_layout_profile,
 )
+from app.domain.benchmarks import BenchmarkDatasetImportResult
 from app.domain.hands import JobRecord
 from app.dataset_export import (
     DATASET_SCHEMA,
@@ -31,7 +32,6 @@ from app.dataset_export import (
     parser_dataset_archive_case,
 )
 from app.domain.poker import CanonicalState, DetectedState
-from app.models import BenchmarkDatasetImportResult
 from app.storage import FileJobStore, JobNotFoundError
 
 

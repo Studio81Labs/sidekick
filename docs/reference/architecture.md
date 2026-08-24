@@ -91,6 +91,12 @@ Upload/job-lifecycle contracts now live under `app/domain/hands`. `JobRecord`,
 `ArchiveJobsRequest` are owned there, while the compatibility shell in
 `app/models.py` keeps object-identity compatibility while migration continues.
 
+Parser benchmark data contracts now live under `app/domain/benchmarks`.
+`BenchmarkReport`, `BenchmarkCaseResult`, dataset import receipts and related
+normalization helpers (`normalize_benchmark_value`, `benchmark_values_match`,
+and canonical field constants) are owned there, while `app/models.py` re-exports
+the same contract objects during the migration period.
+
 Post-hand decisions, review requests, progress summaries, trends, and solver
 coverage contracts live under `app/domain/training`. Training aggregation and
 transport adapters import that domain directly, while `app/models.py`
