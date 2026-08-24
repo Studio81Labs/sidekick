@@ -387,7 +387,9 @@ IDs, and retry flags now live in a focused recovery runtime-service hook rather
 than being allocated by the analyzer page. Queue cancellation, active
 recommendation controllers, mounted-state guards, and history request
 generations use a parallel request runtime-service hook. Capture stream
-ownership remains in the capture feature.
+ownership remains in the capture feature. The raw workflow-store accessor is
+now module-private; production composition can consume only the focused
+selection, queue, lease, recovery, projection, and runtime hooks.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
@@ -548,7 +550,8 @@ Every implementation PR must include:
 | 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                    |
 | 5    | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; `app/models.py` is an exports-only compatibility facade             |
 | 6    | In progress | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` now owns repository composition, startup recovery, and lock ordering for imports, backups, and restore |
-| 7-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
+| 7    | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
+| 8-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
 
 ## Exit Criteria
 

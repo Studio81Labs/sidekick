@@ -505,6 +505,9 @@ the effects that consume those handles while the reducer remains serializable.
 Queue abort controllers, active recommendation requests, mounted-state guards,
 and stale history-request generations use a parallel request runtime-service
 hook. Media stream ownership remains inside `useCaptureSource`.
+The raw analyzer workflow context accessor is module-private. Production code
+can consume only the focused selection, queue, mutation-lease, recovery, and
+projection hooks, preventing page composition from bypassing command APIs.
 When benchmark-import recovery overlaps a lease retry timer, the active request
 keeps the mutation-lease channel in the running phase; request settlement then
 selects retry-scheduled or idle from the remaining lease state.
