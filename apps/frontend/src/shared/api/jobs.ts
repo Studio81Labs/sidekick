@@ -1,14 +1,15 @@
 export {
+  approveState,
   deleteJob,
   getJob,
   getProcessingJobs,
   imageUrl,
   updateJobMetadata,
 } from "../../domains/jobs/api/jobsApi";
+export { requestRecommendation } from "../../domains/recommendations/api/recommendationsApi";
 
 import type { JobRecord } from "../types/jobs";
 import type { PipelineSelection } from "../types/pipeline";
-import type { CanonicalState } from "../types/poker";
 import { apiUrl, readJson } from "./core";
 
 export async function uploadScreenshot(
@@ -38,33 +39,4 @@ export async function uploadScreenshot(
   return job.upload_request_id
     ? job
     : { ...job, upload_request_id: uploadRequestId };
-}
-
-export async function approveState(
-  jobId: string,
-  state: CanonicalState,
-  signal?: AbortSignal,
-): Promise<JobRecord> {
-  const response = await fetch(apiUrl(`/api/jobs/${jobId}/approve`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ ...state, user_approved: true }),
-    signal,
-    credentials: "include",
-  });
-  return readJson<JobRecord>(response);
-}
-
-export async function requestRecommendation(
-  jobId: string,
-  requestId: string,
-  signal?: AbortSignal,
-): Promise<JobRecord> {
-  const response = await fetch(apiUrl(`/api/jobs/${jobId}/recommend`), {
-    method: "POST",
-    headers: { "X-Recommendation-Request-ID": requestId },
-    signal,
-    credentials: "include",
-  });
-  return readJson<JobRecord>(response);
 }

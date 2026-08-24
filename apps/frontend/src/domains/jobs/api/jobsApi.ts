@@ -2,6 +2,7 @@ import type { components } from "../../../shared/api/generated/openapi";
 import { apiUrl, readJson } from "../../../shared/api/core";
 import { requestJson } from "../../../shared/api/transport";
 import type { JobQueue, JobRecord } from "../../../shared/types/jobs";
+import type { CanonicalState } from "../../../shared/types/poker";
 
 type JobQueueResponse = components["schemas"]["JobQueue"];
 type JobRecordResponse = components["schemas"]["JobRecord"];
@@ -55,6 +56,27 @@ export async function updateJobMetadata(
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(metadata),
+    },
+  );
+  return toJobRecord(response);
+}
+
+export async function approveState(
+  jobId: string,
+  state: CanonicalState,
+  signal?: AbortSignal,
+): Promise<JobRecord> {
+  const approval = {
+    ...state,
+    user_approved: true,
+  } satisfies components["schemas"]["CanonicalState"];
+  const response = await requestJson<JobRecordResponse>(
+    `/api/jobs/${jobId}/approve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(approval),
+      signal,
     },
   );
   return toJobRecord(response);

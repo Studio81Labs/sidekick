@@ -31,6 +31,10 @@ import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchm
 import { restoreApplicationBackupCommand } from "../../features/backups/services/restoreApplicationBackupCommand";
 import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource";
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
+import {
+  approveStateCommand,
+  requestRecommendationCommand,
+} from "../../features/hand-review/services/handWorkflowCommands";
 import { usePipelineSelection } from "../../features/pipeline/hooks/usePipelineSelection";
 import { useScreenshotDetails } from "../../features/screenshots/hooks/useScreenshotDetails";
 import { updateScreenshotMetadataCommand } from "../../features/screenshots/services/updateScreenshotMetadataCommand";
@@ -61,11 +65,9 @@ import {
 import {
   ApiResponseError,
   applicationBackupUrl,
-  approveState,
   getBenchmarkDatasetImport,
   getTrainingProgress,
   humanReadableMessage,
-  requestRecommendation,
   uploadScreenshot,
 } from "../../shared/api/client";
 import {
@@ -2479,7 +2481,13 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     const approvalState = autoApprovalState(created, automationAllowWarnings);
     markPersistedJobSessionUnsynced(created);
     const approved = preserveUploadRequestId(
-      await approveState(created.id, approvalState, signal),
+      (
+        await approveStateCommand(queryClient, {
+          jobId: created.id,
+          state: approvalState,
+          signal,
+        })
+      ).job,
       created,
     );
     applyApprovedJob(approved, approvalState);
@@ -2503,11 +2511,13 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     markPersistedJobSessionUnsynced(approved);
     try {
       const recommended = preserveUploadRequestId(
-        await requestRecommendation(
-          approved.id,
-          recommendationRequestId ?? createMutationRequestId(),
-          recommendationController.signal,
-        ),
+        (
+          await requestRecommendationCommand(queryClient, {
+            jobId: approved.id,
+            requestId: recommendationRequestId ?? createMutationRequestId(),
+            signal: recommendationController.signal,
+          })
+        ).job,
         approved,
       );
       if (jobsRef.current.some((candidate) => candidate.id === approved.id)) {
@@ -2869,7 +2879,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setBusy(true);
     setError(null);
     try {
-      const approved = await approveState(job.id, validation.state);
+      const { job: approved } = await approveStateCommand(queryClient, {
+        jobId: job.id,
+        state: validation.state,
+      });
       applyApprovedJob(approved, validation.state);
     } catch (approveError) {
       if (mutationFailureMayHavePersistedSideEffect(approveError)) {
@@ -2954,10 +2967,13 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
         return;
       }
       recommendationStarted = true;
-      const recommended = await requestRecommendation(
-        job.id,
-        recommendationRequestId,
-        recommendationController.signal,
+      const { job: recommended } = await requestRecommendationCommand(
+        queryClient,
+        {
+          jobId: job.id,
+          requestId: recommendationRequestId,
+          signal: recommendationController.signal,
+        },
       );
       if (jobsRef.current.some((candidate) => candidate.id === job.id)) {
         applyRecommendedJob(recommended);
