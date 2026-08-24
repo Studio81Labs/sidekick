@@ -83,7 +83,7 @@ export function useBenchmarkReportState({
       setComparisonReportLoading(false);
       return;
     }
-    cacheBenchmarkReport(reportCacheRef.current, report);
+    cacheBenchmarkReport(reportCacheRef.current, report, queryClient);
     setComparisonReportLoading(true);
     void loadCachedBenchmarkReport(
       previousReport.id,
@@ -121,7 +121,11 @@ export function useBenchmarkReportState({
 
   function cacheOverviewReport(nextOverview: BenchmarkOverview) {
     if (nextOverview.latest_report) {
-      cacheBenchmarkReport(reportCacheRef.current, nextOverview.latest_report);
+      cacheBenchmarkReport(
+        reportCacheRef.current,
+        nextOverview.latest_report,
+        queryClient,
+      );
     }
   }
 
@@ -216,7 +220,7 @@ export function useBenchmarkReportState({
 
   function applyReport(latestReport: BenchmarkReport, selectReport: boolean) {
     const latestSummary = benchmarkReportSummary(latestReport);
-    cacheBenchmarkReport(reportCacheRef.current, latestReport);
+    cacheBenchmarkReport(reportCacheRef.current, latestReport, queryClient);
     if (selectReport) {
       setSelectedReport(latestReport);
     }
