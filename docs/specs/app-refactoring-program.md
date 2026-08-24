@@ -435,6 +435,12 @@ updates the returned job detail, invalidates processing/history/overview query
 families, and preserves existing lease recovery and corpus presentation. Prior
 benchmark report caches remain immutable, and the shared transport symbol is an
 identity-preserving compatibility alias.
+Training decisions and training review completion, note updates, and reopen now
+use training-owned generated-contract commands. Confirmed responses guard
+against stale reads, update job detail, and invalidate processing, history, and
+all filtered training-progress keys; failures leave Query state untouched for
+the existing mutation-lease recovery flow. Shared API symbols retain their
+positional signatures and object identities.
 
 Gate: every mutation has success, definite failure, ambiguous failure/recovery,
 and retry coverage.
