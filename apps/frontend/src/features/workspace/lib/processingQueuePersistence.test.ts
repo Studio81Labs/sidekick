@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getProcessingJobs } from "../../../shared/api/jobs";
+import { getProcessingJobs } from "../../../domains/jobs/api/jobsApi";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
   getProcessingQueueExtent,
@@ -9,7 +9,7 @@ import {
   writeProcessingQueue,
 } from "./processingQueuePersistence";
 
-vi.mock("../../../shared/api/jobs", () => ({
+vi.mock("../../../domains/jobs/api/jobsApi", () => ({
   getProcessingJobs: vi.fn(),
 }));
 

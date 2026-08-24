@@ -1,0 +1,80 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { jsonResponse, resetApiMocks } from "../../../test/api";
+import type { components } from "../../../shared/api/generated/openapi";
+import { getJob, getProcessingJobs, toJobQueue, toJobRecord } from "./jobsApi";
+
+afterEach(resetApiMocks);
+
+const jobResponse = {
+  approved_state: null,
+  archived_at: null,
+  benchmark_included: false,
+  created_at: "2026-08-24T00:00:00Z",
+  error: null,
+  id: "job/123",
+  image_filename: "table.png",
+  notes: null,
+  original_filename: "table.png",
+  parser_auto_approval_eligible: null,
+  parser_layout_profile: "generic",
+  parser_provider: "mock",
+  parser_result: null,
+  recommendation: null,
+  recommendation_engine: null,
+  recommendation_pending: false,
+  recommendation_provider: "mock",
+  recommendation_request_id: null,
+  status: "created",
+  tags: [],
+  title: null,
+  training_decision: null,
+  training_review_note: null,
+  training_reviewed_at: null,
+  updated_at: "2026-08-24T00:00:00Z",
+  upload_request_id: null,
+} satisfies components["schemas"]["JobRecord"];
+
+describe("jobs API adapter", () => {
+  it("maps generated job and queue responses into stable domain values", () => {
+    expect(toJobRecord(jobResponse)).toEqual(jobResponse);
+    expect(
+      toJobQueue({
+        jobs: [jobResponse],
+        snapshot_version: "queue-snapshot",
+        total: 1,
+      }),
+    ).toEqual({
+      jobs: [jobResponse],
+      snapshot_version: "queue-snapshot",
+      total: 1,
+    });
+  });
+
+  it("reads a job through the shared transport", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getJob("job/123")).resolves.toEqual(jobResponse);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/jobs/job/123",
+      { credentials: "include" },
+    );
+  });
+
+  it("reads a processing page at the requested offset", async () => {
+    const queue = {
+      jobs: [jobResponse],
+      snapshot_version: "queue-snapshot",
+      total: 1,
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(queue));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(getProcessingJobs(100)).resolves.toEqual(queue);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/jobs?offset=100",
+      { credentials: "include" },
+    );
+  });
+});

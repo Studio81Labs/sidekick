@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { getJob, runParserBenchmark } from "../../../shared/api/client";
+import { getJob } from "../../../domains/jobs/api/jobsApi";
+import { runParserBenchmark } from "../../../shared/api/client";
 import {
   type BenchmarkComparisonProgress,
   benchmarkCorpusIsUnverified,

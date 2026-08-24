@@ -8,8 +8,14 @@ import {
   updateJobMetadata,
   uploadScreenshot,
 } from "./jobs";
+import { getJob as getDomainJob } from "../../domains/jobs/api/jobsApi";
+import { getJob as getCompatibilityJob } from "./jobs";
 
 afterEach(resetApiMocks);
+
+it("preserves the shared job-read compatibility export identity", () => {
+  expect(getCompatibilityJob).toBe(getDomainJob);
+});
 
 describe("screenshot management", () => {
   it("updates title, notes and tags on a screenshot", async () => {
