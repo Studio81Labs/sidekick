@@ -5,7 +5,9 @@ import type {
   BenchmarkOverview,
   BenchmarkReport,
 } from "../../../shared/types/benchmarks";
+import type { JobRecord } from "../../../shared/types/jobs";
 import type { PipelineSelection } from "../../../shared/types/pipeline";
+import { toJobRecord } from "../../jobs/api/jobsApi";
 
 export type ParserPipeline = Pick<
   PipelineSelection,
@@ -16,6 +18,10 @@ type BenchmarkOverviewResponse = components["schemas"]["BenchmarkOverview"];
 type BenchmarkReportResponse = components["schemas"]["BenchmarkReport"];
 type BenchmarkDatasetImportReceiptResponse =
   components["schemas"]["BenchmarkDatasetImportReceipt"];
+type JobRecordResponse = components["schemas"]["JobRecord"];
+export type BenchmarkInclusionUpdate = Required<
+  Pick<components["schemas"]["BenchmarkSelectionRequest"], "included">
+>;
 
 export function toBenchmarkOverview(
   response: BenchmarkOverviewResponse,
@@ -72,4 +78,20 @@ export async function getBenchmarkReport(
     signal ? { signal } : undefined,
   );
   return toBenchmarkReport(response);
+}
+
+export async function setBenchmarkInclusion(
+  jobId: string,
+  included: boolean,
+): Promise<JobRecord> {
+  const update: BenchmarkInclusionUpdate = { included };
+  const response = await requestJson<JobRecordResponse>(
+    `/api/jobs/${jobId}/benchmark`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(update),
+    },
+  );
+  return toJobRecord(response);
 }

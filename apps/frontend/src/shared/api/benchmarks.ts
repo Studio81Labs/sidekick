@@ -2,7 +2,6 @@ import type {
   BenchmarkDatasetImportResult,
   BenchmarkReport,
 } from "../types/benchmarks";
-import type { JobRecord } from "../types/jobs";
 import type { PipelineSelection } from "../types/pipeline";
 import { apiUrl, readJson } from "./core";
 
@@ -10,6 +9,7 @@ export {
   getBenchmarkDatasetImport,
   getBenchmarkOverview,
   getBenchmarkReport,
+  setBenchmarkInclusion,
 } from "../../domains/benchmarks/api/benchmarksApi";
 
 type ParserPipeline = Pick<
@@ -42,19 +42,6 @@ export async function importBenchmarkDataset(
     credentials: "include",
   });
   return readJson<BenchmarkDatasetImportResult>(response);
-}
-
-export async function setBenchmarkInclusion(
-  jobId: string,
-  included: boolean,
-): Promise<JobRecord> {
-  const response = await fetch(apiUrl(`/api/jobs/${jobId}/benchmark`), {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ included }),
-    credentials: "include",
-  });
-  return readJson<JobRecord>(response);
 }
 
 export async function runParserBenchmark(

@@ -6,6 +6,7 @@ import {
   getBenchmarkDatasetImport,
   getBenchmarkOverview,
   getBenchmarkReport,
+  setBenchmarkInclusion,
   toBenchmarkDatasetImportReceipt,
   toBenchmarkOverview,
   toBenchmarkReport,
@@ -67,6 +68,26 @@ describe("benchmark API adapter", () => {
       2,
       "http://localhost:8000/api/benchmarks/imports/request%2F1",
       { credentials: "include" },
+    );
+  });
+
+  it("updates benchmark inclusion through the generated request contract", async () => {
+    const jobId = "a".repeat(32);
+    const jobResponse = { id: jobId } as components["schemas"]["JobRecord"];
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await setBenchmarkInclusion(jobId, true);
+
+    expect(result).toEqual(jobResponse);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://localhost:8000/api/jobs/${jobId}/benchmark`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ included: true }),
+        credentials: "include",
+      },
     );
   });
 });
