@@ -9,7 +9,7 @@ import math
 from mimetypes import guess_type
 import re
 from secrets import compare_digest
-from threading import Lock, RLock
+from threading import Lock
 from time import perf_counter
 from typing import Any
 from uuid import uuid4
@@ -167,7 +167,6 @@ from app.rate_limiting import (
     rate_limit_category,
     request_rate_limit_identity,
 )
-from app.storage.file_benchmark_store import FileBenchmarkStore
 from app.storage.file_job_store import FileJobStore
 from app.storage.persistence import (
     BenchmarkImportNotFoundError,
@@ -179,15 +178,10 @@ from app.training import (
     summarize_training,
     training_outcome,
 )
+from app.workspace import DEFAULT_JOB_LOCK_STRIPES, WorkspaceCoordinator
 
+JOB_LOCK_STRIPES = DEFAULT_JOB_LOCK_STRIPES
 SUPPORTED_IMAGE_FORMATS = {"PNG", "JPEG", "GIF", "WEBP"}
-JOB_LOCK_STRIPES = 64
-INTERRUPTED_PARSER_ERROR = (
-    "Parsing was interrupted by a backend restart; upload the screenshot again"
-)
-INTERRUPTED_RECOMMENDATION_ERROR = (
-    "Recommendation was interrupted by a backend restart; request it again"
-)
 HISTORY_QUERY_TRANSLATION = str.maketrans({
     "♣": "c",
     "♦": "d",
@@ -568,35 +562,22 @@ def _json_safe_validation_content(value: Any) -> Any:
     return value
 
 
-def recover_interrupted_jobs(store: FileJobStore) -> None:
-    for job in store.list():
-        if job.status == "created":
-            job.recommendation_pending = False
-            job.status = "error"
-            job.error = INTERRUPTED_PARSER_ERROR
-            store.save(job)
-            continue
-        if job.recommendation_pending:
-            job.recommendation_pending = False
-            job.status = "error"
-            job.error = INTERRUPTED_RECOMMENDATION_ERROR
-            store.save(job)
-
-
 def create_app(settings: Settings | None = None) -> RequestObservabilityMiddleware:
     active_settings = settings or get_settings()
     configure_error_monitoring(active_settings)
-    data_lock = InterprocessDataLock(active_settings.data_dir)
-    with data_lock.hold(exclusive=False):
-        store = FileJobStore(active_settings.data_dir)
-        benchmark_store = FileBenchmarkStore(active_settings.data_dir)
-        recover_interrupted_jobs(store)
-    # Fixed stripes serialize each job without retaining caller-supplied IDs.
-    job_locks = tuple(Lock() for _ in range(JOB_LOCK_STRIPES))
-    history_lock = RLock()
-    dataset_import_lock = Lock()
-    benchmark_corpus_lock = Lock()
-    application_backup_lock = Lock()
+    workspace = WorkspaceCoordinator.open(
+        active_settings.data_dir,
+        job_lock_stripes=JOB_LOCK_STRIPES,
+        job_lock_factory=Lock,
+    )
+    data_lock = workspace.data_lock
+    store = workspace.jobs
+    benchmark_store = workspace.benchmarks
+    job_locks = workspace.job_locks
+    history_lock = workspace.history_lock
+    dataset_import_lock = workspace.dataset_import_lock
+    benchmark_corpus_lock = workspace.benchmark_corpus_lock
+    application_backup_lock = workspace.application_backup_lock
     rate_limiter = ApiRateLimiter(
         {
             "uploads": active_settings.api_rate_limit_uploads_per_minute,
@@ -620,16 +601,13 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
     hosted_mcp_runtime: HostedMcpRuntime | None = None
 
     def job_lock_index(job_id: str) -> int:
-        return hash(job_id) % len(job_locks)
+        return workspace.job_lock_index(job_id)
 
     def job_lock_for(job_id: str):
-        return job_locks[job_lock_index(job_id)]
+        return workspace.job_lock_for(job_id)
 
     def save_job(job: JobRecord) -> JobRecord:
-        if job.archived_at is None:
-            return store.save(job)
-        with history_lock:
-            return store.save(job)
+        return workspace.save_job(job)
 
     def require_benchmark_corpus_ready() -> None:
         if benchmark_store.has_pending_import():
@@ -684,26 +662,22 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                     * MAX_DATASET_EXPANSION_RATIO
                 ),
             )
-        lock_indexes = sorted(
-            {job_lock_index(case.job_id) for case in dataset.cases}
-        )
-        with benchmark_corpus_lock, ExitStack() as job_lock_stack:
-            for lock_index in lock_indexes:
-                job_lock_stack.enter_context(job_locks[lock_index])
-            with history_lock:
-                result = import_parser_dataset(
-                    dataset,
-                    store,
-                    recommendation_provider=active_settings.recommendation_provider,
-                    recommendation_engine=configured_recommendation_engine(
-                        active_settings
-                    ),
-                    default_layout_profile=active_settings.parser_layout_profile,
-                    max_archive_bytes=active_settings.max_dataset_upload_bytes,
-                    import_request_id=request_id,
-                )
-                benchmark_store.complete_import(request_id, result)
-                return result
+        with workspace.hold_benchmark_import(
+            case.job_id for case in dataset.cases
+        ):
+            result = import_parser_dataset(
+                dataset,
+                store,
+                recommendation_provider=active_settings.recommendation_provider,
+                recommendation_engine=configured_recommendation_engine(
+                    active_settings
+                ),
+                default_layout_profile=active_settings.parser_layout_profile,
+                max_archive_bytes=active_settings.max_dataset_upload_bytes,
+                import_request_id=request_id,
+            )
+            benchmark_store.complete_import(request_id, result)
+            return result
 
     def resume_benchmark_import(request_id: str) -> None:
         with dataset_import_lock:
@@ -825,32 +799,24 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                     * MAX_BACKUP_EXPANSION_RATIO
                 ),
             )
-            with (
-                application_backup_lock,
-                dataset_import_lock,
-                benchmark_corpus_lock,
-                ExitStack() as job_lock_stack,
-            ):
+            with workspace.hold_backup_transaction():
                 ensure_benchmark_corpus_ready()
-                for job_lock in job_locks:
-                    job_lock_stack.enter_context(job_lock)
-                with history_lock:
-                    if any(
-                        job.status == "created" or job.recommendation_pending
-                        for job in store.list()
-                    ):
-                        raise ApplicationBackupTransportError(
-                            (
-                                "Wait for active parsing and recommendations "
-                                "before restoring a backup"
-                            ),
-                            409,
-                        )
-                    return restore_application_backup(
-                        backup,
-                        job_store=store,
-                        benchmark_store=benchmark_store,
+                if any(
+                    job.status == "created" or job.recommendation_pending
+                    for job in store.list()
+                ):
+                    raise ApplicationBackupTransportError(
+                        (
+                            "Wait for active parsing and recommendations "
+                            "before restoring a backup"
+                        ),
+                        409,
                     )
+                return restore_application_backup(
+                    backup,
+                    job_store=store,
+                    benchmark_store=benchmark_store,
+                )
         except ApplicationBackupError as exc:
             raise ApplicationBackupTransportError(
                 str(exc),
@@ -1543,29 +1509,21 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         )
 
     def build_browser_application_backup():
-        with (
-            application_backup_lock,
-            dataset_import_lock,
-            benchmark_corpus_lock,
-            ExitStack() as job_lock_stack,
-        ):
+        with workspace.hold_backup_transaction():
             ensure_benchmark_corpus_ready()
-            for job_lock in job_locks:
-                job_lock_stack.enter_context(job_lock)
-            with history_lock:
-                try:
-                    return build_application_backup_archive(
-                        jobs=store.list(),
-                        benchmark_reports=benchmark_store.list(limit=None),
-                        image_path_for=store.image_path,
-                        max_archive_bytes=active_settings.max_backup_upload_bytes,
-                        max_image_bytes=active_settings.max_upload_bytes,
-                    )
-                except ApplicationBackupError as exc:
-                    raise ApplicationBackupTransportError(
-                        str(exc),
-                        exc.status_code,
-                    ) from exc
+            try:
+                return build_application_backup_archive(
+                    jobs=store.list(),
+                    benchmark_reports=benchmark_store.list(limit=None),
+                    image_path_for=store.image_path,
+                    max_archive_bytes=active_settings.max_backup_upload_bytes,
+                    max_image_bytes=active_settings.max_upload_bytes,
+                )
+            except ApplicationBackupError as exc:
+                raise ApplicationBackupTransportError(
+                    str(exc),
+                    exc.status_code,
+                ) from exc
 
     async def export_application_backup() -> ApplicationBackupExport:
         descriptor = await data_lock.acquire_async(
@@ -1697,26 +1655,22 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 ),
             )
 
-            lock_indexes = sorted(
-                {job_lock_index(case.job_id) for case in dataset.cases}
-            )
-            with benchmark_corpus_lock, ExitStack() as job_lock_stack:
+            with workspace.hold_benchmark_import(
+                case.job_id for case in dataset.cases
+            ):
                 require_benchmark_corpus_ready()
-                for lock_index in lock_indexes:
-                    job_lock_stack.enter_context(job_locks[lock_index])
-                with history_lock:
-                    return import_parser_dataset(
-                        dataset,
-                        store,
-                        recommendation_provider=active_settings.recommendation_provider,
-                        recommendation_engine=configured_recommendation_engine(
-                            active_settings
-                        ),
-                        default_layout_profile=(
-                            active_settings.parser_layout_profile
-                        ),
-                        max_archive_bytes=active_settings.max_dataset_upload_bytes,
-                    )
+                return import_parser_dataset(
+                    dataset,
+                    store,
+                    recommendation_provider=active_settings.recommendation_provider,
+                    recommendation_engine=configured_recommendation_engine(
+                        active_settings
+                    ),
+                    default_layout_profile=(
+                        active_settings.parser_layout_profile
+                    ),
+                    max_archive_bytes=active_settings.max_dataset_upload_bytes,
+                )
         except DatasetImportError as exc:
             raise BenchmarkDatasetInputError(str(exc), exc.status_code) from exc
 
