@@ -38,6 +38,7 @@ import { UserGuideDialog } from "../../features/system/components/UserGuideDialo
 import {
   AnalyzerWorkflowProvider,
   useAnalyzerActiveSelection,
+  useAnalyzerMutationLeases,
   useAnalyzerQueueWorkflow,
   useAnalyzerWorkflow,
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
@@ -161,14 +162,41 @@ import {
 } from "../../features/workspace/lib/workflow";
 
 export default function AnalyzerPage() {
+  const [mutationOwnerId] = useState(mutationLeaseOwnerId);
+  const [initialProcessingMutationLease] = useState(() =>
+    claimPersistedMutationLease("processing", mutationOwnerId),
+  );
+  const [initialHistoryMutationLease] = useState(() =>
+    claimPersistedMutationLease("history", mutationOwnerId),
+  );
+
   return (
-    <AnalyzerWorkflowProvider>
-      <AnalyzerWorkspace />
+    <AnalyzerWorkflowProvider
+      initialMutationLeases={{
+        processing: initialProcessingMutationLease,
+        history: initialHistoryMutationLease,
+      }}
+    >
+      <AnalyzerWorkspace
+        initialHistoryMutationLease={initialHistoryMutationLease}
+        initialProcessingMutationLease={initialProcessingMutationLease}
+        mutationOwnerId={mutationOwnerId}
+      />
     </AnalyzerWorkflowProvider>
   );
 }
 
-function AnalyzerWorkspace() {
+type AnalyzerWorkspaceProps = {
+  initialHistoryMutationLease: PersistedMutationLease | null;
+  initialProcessingMutationLease: PersistedMutationLease | null;
+  mutationOwnerId: string;
+};
+
+function AnalyzerWorkspace({
+  initialHistoryMutationLease,
+  initialProcessingMutationLease,
+  mutationOwnerId,
+}: AnalyzerWorkspaceProps) {
   const queryClient = useQueryClient();
   const {
     state: {
@@ -188,6 +216,8 @@ function AnalyzerWorkspace() {
     requestQueueAbort,
     setQueueProgress,
   } = useAnalyzerQueueWorkflow();
+  const { mutationLeases, setMutationLease: setWorkflowMutationLease } =
+    useAnalyzerMutationLeases();
   const [jobs, setJobs] = useState<JobRecord[]>(
     () => readProcessingQueue() ?? [],
   );
@@ -376,13 +406,6 @@ function AnalyzerWorkspace() {
     jobs,
     onError: setError,
   });
-  const [mutationOwnerId] = useState(mutationLeaseOwnerId);
-  const [initialProcessingMutationLease] = useState(() =>
-    claimPersistedMutationLease("processing", mutationOwnerId),
-  );
-  const [initialHistoryMutationLease] = useState(() =>
-    claimPersistedMutationLease("history", mutationOwnerId),
-  );
   const appMountedRef = useRef(true);
   const benchmarkDatasetInputRef = useRef<HTMLInputElement | null>(null);
   const queueAbortControllerRef = useRef<AbortController | null>(null);
@@ -424,8 +447,8 @@ function AnalyzerWorkspace() {
     useRef<Promise<ProcessingQueueRestore> | null>(null);
   const benchmarkImportRecoveryPending =
     benchmarkImportLeaseRequestId(
-      processingMutationLeaseRef.current,
-      historyMutationLeaseRef.current,
+      mutationLeases.processing,
+      mutationLeases.history,
     ) !== null;
   const {
     closeDialog: closeBenchmarkDialog,
@@ -708,7 +731,7 @@ function AnalyzerWorkspace() {
           processingLease.benchmarkImportReceiptObserved;
         if (Date.now() >= processingLease.expiresAt && !retainedImportLease) {
           clearPersistedMutationLease("processing", mutationOwnerId);
-          processingMutationLeaseRef.current = null;
+          setRuntimeMutationLease("processing", null);
           markProcessingQueueSessionUnsynced();
           if (processingMutationCountRef.current === 0) {
             scheduleProcessingQueueRestore();
@@ -742,7 +765,7 @@ function AnalyzerWorkspace() {
           historyLease.benchmarkImportReceiptObserved;
         if (Date.now() >= historyLease.expiresAt && !retainedImportLease) {
           clearPersistedMutationLease("history", mutationOwnerId);
-          historyMutationLeaseRef.current = null;
+          setRuntimeMutationLease("history", null);
           for (const jobId of historyLeaseJobIds) {
             historyUpdateCandidateIdsRef.current.delete(jobId);
           }
@@ -931,16 +954,28 @@ function AnalyzerWorkspace() {
     dispatchWorkflow({ type: "mutation-lease-revalidation-requested" });
   }
 
-  function installMutationLease(
+  function setRuntimeMutationLease(
     scope: PersistedJobMutationScope,
     lease: PersistedMutationLease | null,
   ) {
     if (scope === "processing") {
       processingMutationLeaseRef.current = lease;
+    } else {
+      historyMutationLeaseRef.current = lease;
+    }
+    setWorkflowMutationLease(scope, lease);
+  }
+
+  function installMutationLease(
+    scope: PersistedJobMutationScope,
+    lease: PersistedMutationLease | null,
+  ) {
+    if (scope === "processing") {
+      setRuntimeMutationLease(scope, lease);
       markProcessingQueueSessionUnsynced();
       return;
     }
-    historyMutationLeaseRef.current = lease;
+    setRuntimeMutationLease(scope, lease);
     for (const jobId of mutationLeaseJobIds(lease)) {
       historyUpdateCandidateIdsRef.current.add(jobId);
     }
@@ -954,7 +989,7 @@ function AnalyzerWorkspace() {
     clearPersistedMutationLease(scope, mutationOwnerId);
     if (scope === "processing") {
       if (processingMutationLeaseRef.current?.ownerId === mutationOwnerId) {
-        processingMutationLeaseRef.current = null;
+        setRuntimeMutationLease(scope, null);
       }
       return;
     }
@@ -963,7 +998,7 @@ function AnalyzerWorkspace() {
       for (const jobId of mutationLeaseJobIds(historyLease)) {
         historyUpdateCandidateIdsRef.current.delete(jobId);
       }
-      historyMutationLeaseRef.current = null;
+      setRuntimeMutationLease(scope, null);
     }
   }
 
@@ -983,7 +1018,7 @@ function AnalyzerWorkspace() {
         expiresAt: Date.now() + PERSISTED_MUTATION_LEASE_MS,
       };
       if (replacePersistedMutationLease(scope, lease, updatedLease)) {
-        leaseRef.current = updatedLease;
+        setRuntimeMutationLease(scope, updatedLease);
       }
     }
   }
@@ -1082,7 +1117,7 @@ function AnalyzerWorkspace() {
       expiresAt: Date.now() + PERSISTED_MUTATION_LEASE_MS,
     };
     if (replacePersistedMutationLease("processing", lease, updatedLease)) {
-      processingMutationLeaseRef.current = updatedLease;
+      setRuntimeMutationLease("processing", updatedLease);
       return updatedLease.expectedUploads.length - 1;
     }
     return null;
@@ -1115,7 +1150,7 @@ function AnalyzerWorkspace() {
       expiresAt: Date.now() + PERSISTED_MUTATION_LEASE_MS,
     };
     if (replacePersistedMutationLease("processing", lease, updatedLease)) {
-      processingMutationLeaseRef.current = updatedLease;
+      setRuntimeMutationLease("processing", updatedLease);
     }
   }
 
@@ -1139,7 +1174,7 @@ function AnalyzerWorkspace() {
       storedLease.kind !== lease.kind ||
       storedLease.expiresAt !== lease.expiresAt
     ) {
-      leaseRef.current = null;
+      setRuntimeMutationLease(scope, null);
       return false;
     }
 
@@ -1229,7 +1264,7 @@ function AnalyzerWorkspace() {
     }
 
     clearPersistedMutationLease(scope, mutationOwnerId);
-    leaseRef.current = null;
+    setRuntimeMutationLease(scope, null);
     const targetJobIds = mutationLeaseJobIds(lease);
     for (const jobId of targetJobIds) {
       processingUpdateCandidateIdsRef.current.delete(jobId);
@@ -1246,7 +1281,7 @@ function AnalyzerWorkspace() {
       matchingArchiveLeaseTargets(lease, historyMutationLeaseRef.current)
     ) {
       clearPersistedMutationLease("history", mutationOwnerId);
-      historyMutationLeaseRef.current = null;
+      setRuntimeMutationLease("history", null);
       historyMutationGenerationRef.current += 1;
       for (const jobId of lease.jobIds) {
         historyUpdateCandidateIdsRef.current.delete(jobId);
@@ -1485,11 +1520,11 @@ function AnalyzerWorkspace() {
       removalCandidateIds.includes(persistedJob.id),
     );
     if (scope === "history") {
-      historyMutationLeaseRef.current = lease;
+      setRuntimeMutationLease(scope, lease);
       beginHistoryMutation();
       return "history";
     }
-    processingMutationLeaseRef.current = lease;
+    setRuntimeMutationLease(scope, lease);
     beginProcessingMembershipMutation(removalCandidateIds);
     return "processing";
   }
@@ -1523,7 +1558,7 @@ function AnalyzerWorkspace() {
     if (!replacePersistedMutationLease(mutationScope, lease, armedLease)) {
       return false;
     }
-    leaseRef.current = armedLease;
+    setRuntimeMutationLease(mutationScope, armedLease);
     return true;
   }
 
@@ -1568,7 +1603,7 @@ function AnalyzerWorkspace() {
     } else {
       clearPersistedMutationLease(mutationScope, mutationOwnerId);
       if (lease?.ownerId === mutationOwnerId) {
-        leaseRef.current = null;
+        setRuntimeMutationLease(mutationScope, null);
       }
     }
     if (mutationScope === "processing") {

@@ -114,6 +114,43 @@ describe("analyzer workflow reducer", () => {
     ).toBe(initialAnalyzerWorkflowState);
   });
 
+  it("updates and clears mutation leases by scope", () => {
+    const lease = {
+      kind: "job" as const,
+      ownerId: "owner-1",
+      expiresAt: 100,
+      jobId: "job-1",
+      baselineUpdatedAt: "2026-08-24T00:00:00Z",
+      expectsRemoval: false,
+      expectedRecommendationRequestId: null,
+      expectedMutation: null,
+    };
+    const updated = analyzerWorkflowReducer(initialAnalyzerWorkflowState, {
+      type: "mutation-lease-updated",
+      scope: "processing",
+      lease,
+    });
+
+    expect(updated.mutationLeases).toEqual({
+      processing: lease,
+      history: null,
+    });
+    expect(
+      analyzerWorkflowReducer(updated, {
+        type: "mutation-lease-updated",
+        scope: "processing",
+        lease,
+      }),
+    ).toBe(updated);
+    expect(
+      analyzerWorkflowReducer(updated, {
+        type: "mutation-lease-updated",
+        scope: "processing",
+        lease: null,
+      }),
+    ).toEqual(initialAnalyzerWorkflowState);
+  });
+
   it("increments recovery requests independently", () => {
     const processingRequested = analyzerWorkflowReducer(
       initialAnalyzerWorkflowState,

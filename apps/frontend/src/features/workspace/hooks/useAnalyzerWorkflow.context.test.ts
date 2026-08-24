@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
   AnalyzerWorkflowProvider,
   useAnalyzerActiveSelection,
+  useAnalyzerMutationLeases,
   useAnalyzerQueueWorkflow,
 } from "./useAnalyzerWorkflow";
 
@@ -63,5 +64,40 @@ describe("analyzer workflow context", () => {
     });
     expect(result.current.attentionByJobId).toEqual({});
     expect(result.current.queueProgress).toBeNull();
+  });
+
+  it("seeds and updates mutation leases through focused commands", () => {
+    const lease = {
+      kind: "job" as const,
+      ownerId: "owner-1",
+      expiresAt: 100,
+      jobId: "job-1",
+      baselineUpdatedAt: "2026-08-24T00:00:00Z",
+      expectsRemoval: false,
+      expectedRecommendationRequestId: null,
+      expectedMutation: null,
+    };
+    const mutationLeaseWrapper = ({ children }: PropsWithChildren) =>
+      createElement(
+        AnalyzerWorkflowProvider,
+        {
+          initialMutationLeases: {
+            processing: lease,
+            history: null,
+          },
+        },
+        children,
+      );
+    const { result } = renderHook(() => useAnalyzerMutationLeases(), {
+      wrapper: mutationLeaseWrapper,
+    });
+
+    expect(result.current.mutationLeases.processing).toBe(lease);
+
+    act(() => result.current.setMutationLease("processing", null));
+    expect(result.current.mutationLeases).toEqual({
+      processing: null,
+      history: null,
+    });
   });
 });
