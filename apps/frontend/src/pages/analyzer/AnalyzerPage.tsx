@@ -38,6 +38,7 @@ import { UserGuideDialog } from "../../features/system/components/UserGuideDialo
 import {
   type AnalyzerQueueProgress,
   AnalyzerWorkflowProvider,
+  useAnalyzerActiveSelection,
   useAnalyzerWorkflow,
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
 import {
@@ -171,7 +172,6 @@ function AnalyzerWorkspace() {
   const queryClient = useQueryClient();
   const {
     state: {
-      activeJobId,
       attentionByJobId: jobAttention,
       queueProgress,
       recoveryRequests: {
@@ -181,6 +181,7 @@ function AnalyzerWorkspace() {
     },
     dispatch: dispatchWorkflow,
   } = useAnalyzerWorkflow();
+  const { activeJobId, selectActiveJob } = useAnalyzerActiveSelection();
   const [jobs, setJobs] = useState<JobRecord[]>(
     () => readProcessingQueue() ?? [],
   );
@@ -253,8 +254,7 @@ function AnalyzerWorkspace() {
   } = useHandReviewState({
     activeJobId,
     jobs,
-    onActiveJobChange: (jobId) =>
-      dispatchWorkflow({ type: "active-job-selected", jobId }),
+    onActiveJobChange: selectActiveJob,
     onError: setError,
   });
   const {

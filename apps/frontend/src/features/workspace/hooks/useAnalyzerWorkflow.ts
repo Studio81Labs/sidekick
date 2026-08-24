@@ -3,6 +3,7 @@ import {
   createElement,
   type Dispatch,
   type PropsWithChildren,
+  useCallback,
   useContext,
   useMemo,
   useReducer,
@@ -239,4 +240,17 @@ export function useAnalyzerWorkflow(): AnalyzerWorkflowStore {
     );
   }
   return store;
+}
+
+export function useAnalyzerActiveSelection() {
+  const {
+    state: { activeJobId },
+    dispatch,
+  } = useAnalyzerWorkflow();
+  const selectActiveJob = useCallback(
+    (jobId: string | null) => dispatch({ type: "active-job-selected", jobId }),
+    [dispatch],
+  );
+
+  return { activeJobId, selectActiveJob };
 }
