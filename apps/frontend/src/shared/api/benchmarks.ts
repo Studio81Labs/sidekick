@@ -1,7 +1,4 @@
-import type {
-  BenchmarkDatasetImportResult,
-  BenchmarkReport,
-} from "../types/benchmarks";
+import type { BenchmarkReport } from "../types/benchmarks";
 import type { PipelineSelection } from "../types/pipeline";
 import { apiUrl, readJson } from "./core";
 
@@ -9,6 +6,7 @@ export {
   getBenchmarkDatasetImport,
   getBenchmarkOverview,
   getBenchmarkReport,
+  importBenchmarkDataset,
   setBenchmarkInclusion,
 } from "../../domains/benchmarks/api/benchmarksApi";
 
@@ -27,21 +25,6 @@ export function benchmarkDatasetUrl(pipeline?: ParserPipeline): string {
     parser_layout_profile: pipeline.parser_layout_profile,
   });
   return `${url}?${search.toString()}`;
-}
-
-export async function importBenchmarkDataset(
-  file: File,
-  requestId: string,
-): Promise<BenchmarkDatasetImportResult> {
-  const form = new FormData();
-  form.append("file", file);
-  const response = await fetch(apiUrl("/api/benchmarks/import"), {
-    method: "POST",
-    headers: { "X-Benchmark-Import-Request-ID": requestId },
-    body: form,
-    credentials: "include",
-  });
-  return readJson<BenchmarkDatasetImportResult>(response);
 }
 
 export async function runParserBenchmark(

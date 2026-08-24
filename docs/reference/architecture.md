@@ -105,6 +105,11 @@ processing, history, and benchmark-overview families, and leaves immutable
 benchmark-report caches intact. The Analyzer retains mutation-lease recovery and
 local corpus-count presentation while the shared API export remains an
 identity-preserving compatibility alias.
+Benchmark dataset upload now uses a benchmark-owned multipart command that
+preserves the caller-generated import request ID. Confirmed imports guard and
+invalidate imported job details, processing, history, and benchmark overviews;
+reports remain immutable, failures leave Query state untouched, and Analyzer
+composition continues to own projection leases and imported-result rendering.
 Training decisions and review completion/reopen operations now use a
 training-owned command family. The generated-contract adapters preserve the
 legacy positional function signatures, and confirmed responses update job

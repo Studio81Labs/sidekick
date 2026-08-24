@@ -64,7 +64,6 @@ import {
   getBenchmarkDatasetImport,
   getTrainingProgress,
   humanReadableMessage,
-  importBenchmarkDataset,
   requestRecommendation,
   restoreApplicationBackup,
   uploadScreenshot,
@@ -76,6 +75,7 @@ import {
   type JobRecord,
 } from "../../shared/types";
 import { benchmarkCorpusFingerprintAfterLayoutMutation } from "../../features/benchmark/lib/benchmarkPresentation";
+import { importBenchmarkDatasetCommand } from "../../features/benchmark/services/importBenchmarkDatasetCommand";
 import { setBenchmarkInclusionCommand } from "../../features/benchmark/services/setBenchmarkInclusionCommand";
 import {
   HISTORY_CACHE_LIMIT,
@@ -3463,10 +3463,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setError(null);
     let restoreAfterImport = false;
     try {
-      const result = await importBenchmarkDataset(
-        datasetFile,
-        benchmarkImportRequestId,
-      );
+      const { result } = await importBenchmarkDatasetCommand(queryClient, {
+        file: datasetFile,
+        requestId: benchmarkImportRequestId,
+      });
       const readyCases = await applyBenchmarkDatasetImportResult(result);
       restoreAfterImport = true;
       clearOwnedMutationLease("processing");

@@ -4,6 +4,7 @@ import {
   getBenchmarkDatasetImport as getDomainBenchmarkDatasetImport,
   getBenchmarkOverview as getDomainBenchmarkOverview,
   getBenchmarkReport as getDomainBenchmarkReport,
+  importBenchmarkDataset as importDomainBenchmarkDataset,
   setBenchmarkInclusion as setDomainBenchmarkInclusion,
 } from "../../domains/benchmarks/api/benchmarksApi";
 import { jsonResponse, resetApiMocks } from "../../test/api";
@@ -12,6 +13,7 @@ import {
   getBenchmarkDatasetImport,
   getBenchmarkOverview,
   getBenchmarkReport,
+  importBenchmarkDataset,
   runParserBenchmark,
   setBenchmarkInclusion,
 } from "./benchmarks";
@@ -23,6 +25,7 @@ describe("benchmark read compatibility", () => {
     expect(getBenchmarkOverview).toBe(getDomainBenchmarkOverview);
     expect(getBenchmarkReport).toBe(getDomainBenchmarkReport);
     expect(getBenchmarkDatasetImport).toBe(getDomainBenchmarkDatasetImport);
+    expect(importBenchmarkDataset).toBe(importDomainBenchmarkDataset);
     expect(setBenchmarkInclusion).toBe(setDomainBenchmarkInclusion);
   });
 });
