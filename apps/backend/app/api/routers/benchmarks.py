@@ -13,13 +13,13 @@ from fastapi import (
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
+from app.application.benchmarks import BenchmarkService
 from app.api.dependencies import (
     BACKGROUND_TASK_STATE_KEY,
     BenchmarkConfigurationError,
     BenchmarkConflictError,
     BenchmarkDatasetInputError,
     BenchmarkInputError,
-    BenchmarksRuntime,
     BenchmarkTransportNotFoundError,
 )
 from app.api.response_contracts import ZIP_RESPONSE_CONTENT
@@ -35,7 +35,7 @@ from app.domain.benchmarks import (
 from app.domain.hands import JobRecord
 
 
-def create_benchmarks_router(runtime: BenchmarksRuntime) -> APIRouter:
+def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
     """Build the parser benchmark router with application-owned operations."""
 
     router = APIRouter()

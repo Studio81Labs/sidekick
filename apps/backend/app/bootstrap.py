@@ -37,11 +37,8 @@ from app.api.dependencies import (
     BackupsRuntime,
     BenchmarkConfigurationError,
     BenchmarkConflictError,
-    BenchmarkDatasetExport,
     BenchmarkDatasetInputError,
-    BenchmarkImportStatus,
     BenchmarkInputError,
-    BenchmarksRuntime,
     BenchmarkTransportNotFoundError,
     JobMutationConflictError,
     JobRecommendationConfigurationError,
@@ -54,6 +51,11 @@ from app.api.dependencies import (
     JobUploadParserProviderError,
     JobUploadUnexpectedParserError,
     McpAdminRuntime,
+)
+from app.application.benchmarks import (
+    BenchmarkDatasetExport,
+    BenchmarkImportStatus,
+    BenchmarkService,
 )
 from app.application.jobs import (
     JobHistoryService,
@@ -1749,7 +1751,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 raise BenchmarkConfigurationError(str(exc)) from exc
             return benchmark_store.save(report)
 
-    benchmarks_runtime = BenchmarksRuntime(
+    benchmarks_runtime = BenchmarkService(
         update_inclusion=set_benchmark_inclusion,
         get_overview=get_benchmark_overview,
         export_dataset=export_benchmark_dataset,
