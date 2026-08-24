@@ -79,7 +79,7 @@ export function trainingProgressQueryOptions(
         normalized.reviewPositionFilter,
         includeSignal ? signal : undefined,
       ),
-    retry: false,
+    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }

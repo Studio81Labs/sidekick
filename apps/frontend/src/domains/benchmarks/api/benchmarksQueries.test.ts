@@ -39,6 +39,19 @@ describe("benchmark query adapter", () => {
     ]);
   });
 
+  it("keeps configured retries for hooks and disables them for compatibility reads", () => {
+    expect(benchmarkOverviewQueryOptions().retry).toBeUndefined();
+    expect(benchmarkOverviewQueryOptions(undefined, false).retry).toBe(false);
+    expect(benchmarkReportQueryOptions("report-1").retry).toBeUndefined();
+    expect(benchmarkReportQueryOptions("report-1", false).retry).toBe(false);
+    expect(
+      benchmarkImportReceiptQueryOptions("request-1").retry,
+    ).toBeUndefined();
+    expect(benchmarkImportReceiptQueryOptions("request-1", false).retry).toBe(
+      false,
+    );
+  });
+
   it("aborts the transport request when its hook unmounts", async () => {
     const abortListener = vi.fn();
     const fetchMock = vi.fn(

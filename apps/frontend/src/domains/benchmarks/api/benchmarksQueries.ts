@@ -37,7 +37,7 @@ export function benchmarkOverviewQueryOptions(
     queryKey: benchmarkQueryKeys.overview(pipeline),
     queryFn: ({ signal }) =>
       getBenchmarkOverview(pipeline, includeSignal ? signal : undefined),
-    retry: false,
+    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }
@@ -50,7 +50,7 @@ export function benchmarkReportQueryOptions(
     queryKey: benchmarkQueryKeys.report(reportId),
     queryFn: ({ signal }) =>
       getBenchmarkReport(reportId, includeSignal ? signal : undefined),
-    retry: false,
+    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }
@@ -63,7 +63,7 @@ export function benchmarkImportReceiptQueryOptions(
     queryKey: benchmarkQueryKeys.importReceipt(requestId),
     queryFn: ({ signal }) =>
       getBenchmarkDatasetImport(requestId, includeSignal ? signal : undefined),
-    retry: false,
+    ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
 }
