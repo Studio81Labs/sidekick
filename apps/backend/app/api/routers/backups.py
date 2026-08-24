@@ -4,15 +4,13 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from app.api.dependencies import (
-    ApplicationBackupTransportError,
-    BackupsRuntime,
-)
-from app.domain.backups import ApplicationBackupRestoreResult
+from app.api.dependencies import ApplicationBackupTransportError
 from app.api.response_contracts import ZIP_RESPONSE_CONTENT
+from app.application.backups import BackupService
+from app.domain.backups import ApplicationBackupRestoreResult
 
 
-def create_backups_router(runtime: BackupsRuntime) -> APIRouter:
+def create_backups_router(runtime: BackupService) -> APIRouter:
     """Build the application backup router with application-owned operations."""
 
     router = APIRouter()

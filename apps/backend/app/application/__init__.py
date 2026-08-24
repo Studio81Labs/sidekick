@@ -1,5 +1,6 @@
 """Backend application-service boundaries."""
 
+from app.application.backups import ApplicationBackupExport, BackupService
 from app.application.benchmarks import (
     BenchmarkDatasetExport,
     BenchmarkImportStatus,
@@ -18,6 +19,8 @@ from app.application.jobs import (
 from app.application.training import TrainingProgressQuery, TrainingService
 
 __all__ = [
+    "ApplicationBackupExport",
+    "BackupService",
     "BenchmarkDatasetExport",
     "BenchmarkImportStatus",
     "BenchmarkService",
