@@ -7,6 +7,11 @@ container. Routers receive only the use-case callables they need.
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 
+from app.application.benchmarks import (
+    BenchmarkDatasetExport,
+    BenchmarkImportStatus,
+    BenchmarkService as BenchmarksRuntime,
+)
 from app.application.jobs import (
     JobHistoryService as HistoryRuntime,
     JobUploadPipelineRequest,
@@ -26,14 +31,6 @@ from app.domain.hands import (
     ScreenshotMetadataRequest,
 )
 from app.domain.backups import ApplicationBackupRestoreResult
-from app.domain.benchmarks import (
-    BenchmarkDatasetImportReceipt,
-    BenchmarkDatasetImportResult,
-    BenchmarkOverview,
-    BenchmarkReport,
-    BenchmarkRunRequest,
-    BenchmarkSelectionRequest,
-)
 from app.domain.training import TrainingDecisionRequest
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
@@ -166,37 +163,6 @@ class JobsRecommendationRuntime:
     """Dependencies required by the processing job recommendation endpoint."""
 
     recommend: Callable[[str, str | None], JobRecord]
-
-
-@dataclass(frozen=True)
-class BenchmarkDatasetExport:
-    """A prepared parser dataset archive ready for an HTTP response."""
-
-    content: Iterator[bytes]
-    filename: str
-
-
-@dataclass(frozen=True)
-class BenchmarkImportStatus:
-    """A persisted import receipt plus its recovery scheduling state."""
-
-    receipt: BenchmarkDatasetImportReceipt
-    should_resume: bool
-
-
-@dataclass(frozen=True)
-class BenchmarksRuntime:
-    """Dependencies required by parser benchmark transport endpoints."""
-
-    update_inclusion: Callable[[str, BenchmarkSelectionRequest], JobRecord]
-    get_overview: Callable[[str | None, str | None], BenchmarkOverview]
-    export_dataset: Callable[[str | None, str | None], BenchmarkDatasetExport]
-    max_dataset_upload_bytes: int
-    import_dataset: Callable[[bytes, str | None], BenchmarkDatasetImportResult]
-    get_import: Callable[[str], BenchmarkImportStatus]
-    resume_import: Callable[[str], None]
-    get_report: Callable[[str], BenchmarkReport]
-    run: Callable[[BenchmarkRunRequest | None], BenchmarkReport]
 
 
 @dataclass(frozen=True)
