@@ -6,6 +6,7 @@ import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import { trainingQueryKeys } from "../../../domains/training/api/trainingQueries";
 import { canonicalState, jobRecord } from "../../../test/analyzerHarness";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
+import { supersedeLatestQueryWrites } from "../../../shared/api/queryCache";
 import {
   approveStateCommand,
   requestRecommendationCommand,
@@ -50,6 +51,7 @@ describe("hand workflow commands", () => {
           historyQueryKeys.all,
           trainingQueryKeys.all,
         ],
+        detailSeeded: true,
       },
     });
     expect(
@@ -134,6 +136,38 @@ describe("hand workflow commands", () => {
       tags: current.tags,
       updated_at: current.updated_at,
     });
+  });
+
+  it("does not reseed job detail after concurrent permanent deletion", async () => {
+    const seeded = seedCaches("e".repeat(32));
+    const detailKey = jobQueryKeys.detail(seeded.job.id);
+    const recommended = jobRecord({
+      ...seeded.job,
+      status: "recommended",
+    });
+    let resolveRecommendation!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveRecommendation = resolve;
+          }),
+      ),
+    );
+
+    const recommendation = requestRecommendationCommand(seeded.queryClient, {
+      jobId: seeded.job.id,
+      requestId: "recommendation-4",
+    });
+    supersedeLatestQueryWrites(seeded.queryClient, detailKey);
+    seeded.queryClient.removeQueries({ queryKey: detailKey, exact: true });
+    resolveRecommendation(jsonResponse(recommended));
+
+    const outcome = await recommendation;
+
+    expect(outcome.cache.detailSeeded).toBe(false);
+    expect(seeded.queryClient.getQueryState(detailKey)).toBeUndefined();
   });
 
   it.each([

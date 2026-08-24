@@ -12,6 +12,11 @@ import {
 } from "../../../domains/jobs/api/jobsQueries";
 import { jobRecord } from "../../../test/analyzerHarness";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
+import {
+  beginLatestQueryWrite,
+  finishLatestQueryWrite,
+  latestQueryWriteIsCurrent,
+} from "../../../shared/api/queryCache";
 import { deleteScreenshotCommand } from "./deleteScreenshotCommand";
 
 afterEach(resetApiMocks);
@@ -50,6 +55,8 @@ describe("delete screenshot command", () => {
       )
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
+    const detailKey = jobQueryKeys.detail(job.id);
+    const pendingWrite = beginLatestQueryWrite(queryClient, detailKey);
     const staleReads = [
       fetchJobQuery(queryClient, job.id),
       fetchProcessingJobsQuery(queryClient),
@@ -62,6 +69,10 @@ describe("delete screenshot command", () => {
     resolveHistory(jsonResponse({ jobs: [job], total: 1 }));
     await Promise.all(staleReads);
 
+    expect(
+      latestQueryWriteIsCurrent(queryClient, detailKey, pendingWrite),
+    ).toBe(false);
+    finishLatestQueryWrite(queryClient, detailKey, pendingWrite);
     expect(outcome).toEqual({
       jobId: job.id,
       cache: {
