@@ -373,7 +373,10 @@ ref remain in the hand-review feature. A focused selection hook exposes the
 selected ID and memoized command so page composition no longer constructs the
 raw workflow event. Queue progress, abort requests, and attention markers now
 have the same focused state-and-command boundary; abort-controller ownership
-and upload side effects remain in the analyzer runtime.
+and upload side effects remain in the analyzer runtime. Claimed processing and
+history mutation leases are seeded into reducer state and updated through a
+focused command; synchronous refs remain runtime services while persistence
+claims, compare-and-swap writes, settlement, and retry effects stay external.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.

@@ -486,6 +486,10 @@ A focused provider hook exposes the selection value and command, keeping its raw
 event out of the analyzer composition root. Queue progress and attention use a
 parallel focused hook for mark, clear, progress, finish, and abort commands;
 abort controllers and upload effects remain runtime services outside the store.
+Claimed processing and history mutation leases are initialized in provider state
+and updated through a focused command. Runtime refs preserve synchronous reads,
+while lease storage, compare-and-swap, settlement, timers, and recovery requests
+remain outside the reducer.
 The reducer derives abort progress while API, cancellation, and
 browser-persistence side effects remain in commands and projection adapters.
 Processing restore and mutation-lease revalidation use independent typed

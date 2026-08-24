@@ -9,9 +9,20 @@ import {
   useReducer,
 } from "react";
 
+import type {
+  PersistedJobMutationScope,
+  PersistedMutationLease,
+} from "../lib/mutationLeases";
+
+export type AnalyzerMutationLeases = Record<
+  PersistedJobMutationScope,
+  PersistedMutationLease | null
+>;
+
 export type AnalyzerWorkflowState = {
   activeJobId: string | null;
   attentionByJobId: Readonly<Record<string, string>>;
+  mutationLeases: AnalyzerMutationLeases;
   queueProgress: AnalyzerQueueProgress | null;
   recoveryRequests: {
     mutationLease: number;
@@ -53,6 +64,11 @@ export type AnalyzerWorkflowEvent =
       jobIds: readonly string[];
     }
   | {
+      type: "mutation-lease-updated";
+      scope: PersistedJobMutationScope;
+      lease: PersistedMutationLease | null;
+    }
+  | {
       type: "queue-progress-updated";
       progress: AnalyzerQueueProgress;
     }
@@ -79,6 +95,10 @@ export type AnalyzerWorkflowEvent =
 export const initialAnalyzerWorkflowState: AnalyzerWorkflowState = {
   activeJobId: null,
   attentionByJobId: {},
+  mutationLeases: {
+    processing: null,
+    history: null,
+  },
   queueProgress: null,
   recoveryRequests: {
     mutationLease: 0,
@@ -125,6 +145,18 @@ export function analyzerWorkflowReducer(
         delete attentionByJobId[jobId];
       }
       return { ...state, attentionByJobId };
+    }
+    case "mutation-lease-updated": {
+      if (state.mutationLeases[event.scope] === event.lease) {
+        return state;
+      }
+      return {
+        ...state,
+        mutationLeases: {
+          ...state.mutationLeases,
+          [event.scope]: event.lease,
+        },
+      };
     }
     case "queue-progress-updated": {
       if (state.queueProgress === event.progress) {
@@ -218,10 +250,22 @@ const AnalyzerWorkflowContext = createContext<AnalyzerWorkflowStore | null>(
   null,
 );
 
-export function AnalyzerWorkflowProvider({ children }: PropsWithChildren) {
+type AnalyzerWorkflowProviderProps = PropsWithChildren<{
+  initialMutationLeases?: AnalyzerMutationLeases;
+}>;
+
+export function AnalyzerWorkflowProvider({
+  children,
+  initialMutationLeases,
+}: AnalyzerWorkflowProviderProps) {
   const [state, dispatch] = useReducer(
     analyzerWorkflowReducer,
-    initialAnalyzerWorkflowState,
+    initialMutationLeases
+      ? {
+          ...initialAnalyzerWorkflowState,
+          mutationLeases: initialMutationLeases,
+        }
+      : initialAnalyzerWorkflowState,
   );
   const store = useMemo(() => ({ state, dispatch }), [state]);
 
@@ -292,4 +336,18 @@ export function useAnalyzerQueueWorkflow() {
     requestQueueAbort,
     setQueueProgress,
   };
+}
+
+export function useAnalyzerMutationLeases() {
+  const {
+    state: { mutationLeases },
+    dispatch,
+  } = useAnalyzerWorkflow();
+  const setMutationLease = useCallback(
+    (scope: PersistedJobMutationScope, lease: PersistedMutationLease | null) =>
+      dispatch({ type: "mutation-lease-updated", scope, lease }),
+    [dispatch],
+  );
+
+  return { mutationLeases, setMutationLease };
 }
