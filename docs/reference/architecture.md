@@ -502,6 +502,9 @@ advanced by those runtime effects without storing the effects themselves.
 Pending restore promises, retry timers, active restore IDs, and retry flags are
 stable refs owned by a focused recovery runtime-service hook; the page retains
 the effects that consume those handles while the reducer remains serializable.
+Queue abort controllers, active recommendation requests, mounted-state guards,
+and stale history-request generations use a parallel request runtime-service
+hook. Media stream ownership remains inside `useCaptureSource`.
 When benchmark-import recovery overlaps a lease retry timer, the active request
 keeps the mutation-lease channel in the running phase; request settlement then
 selects retry-scheduled or idle from the remaining lease state.
