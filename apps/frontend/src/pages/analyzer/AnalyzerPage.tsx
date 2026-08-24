@@ -495,6 +495,10 @@ function AnalyzerWorkspace() {
       if (restoreTimer !== null) {
         window.clearTimeout(restoreTimer);
       }
+      dispatchWorkflow({
+        type: "recovery-retry-scheduled",
+        recovery: "processing",
+      });
       restoreTimer = window.setTimeout(() => {
         restoreTimer = null;
         if (processingMutationCountRef.current === 0) {

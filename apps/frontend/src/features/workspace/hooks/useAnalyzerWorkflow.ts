@@ -150,7 +150,10 @@ export function analyzerWorkflowReducer(
         },
         recoveryPhases: {
           ...state.recoveryPhases,
-          processing: "requested",
+          processing:
+            state.recoveryPhases.processing === "running"
+              ? "running"
+              : "requested",
         },
       };
     }
@@ -163,7 +166,10 @@ export function analyzerWorkflowReducer(
         },
         recoveryPhases: {
           ...state.recoveryPhases,
-          mutationLease: "requested",
+          mutationLease:
+            state.recoveryPhases.mutationLease === "running"
+              ? "running"
+              : "requested",
         },
       };
     }
