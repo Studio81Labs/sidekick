@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { createElement, type PropsWithChildren } from "react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   AnalyzerWorkflowProvider,
@@ -9,6 +9,7 @@ import {
   useAnalyzerQueueWorkflow,
   useAnalyzerRecoveryWorkflow,
 } from "./useAnalyzerWorkflow";
+import { browserAnalyzerWorkflowProjections } from "../services/browserAnalyzerWorkflowProjections";
 
 function wrapper({ children }: PropsWithChildren) {
   return createElement(AnalyzerWorkflowProvider, null, children);
@@ -98,6 +99,52 @@ describe("analyzer workflow context", () => {
     act(() => result.current.setMutationLease("processing", null));
     expect(result.current.mutationLeases).toEqual({
       processing: null,
+      history: null,
+    });
+  });
+
+  it("claims initial mutation leases through injected projections", () => {
+    const lease = {
+      kind: "job" as const,
+      ownerId: "owner-2",
+      expiresAt: 100,
+      jobId: "job-2",
+      baselineUpdatedAt: "2026-08-24T00:00:00Z",
+      expectsRemoval: false,
+      expectedRecommendationRequestId: null,
+      expectedMutation: null,
+    };
+    const claimPersistedMutationLease = vi.fn((scope: string) =>
+      scope === "processing" ? lease : null,
+    );
+    const projectionWrapper = ({ children }: PropsWithChildren) =>
+      createElement(
+        AnalyzerWorkflowProvider,
+        {
+          mutationOwnerId: "owner-2",
+          projections: {
+            ...browserAnalyzerWorkflowProjections,
+            claimPersistedMutationLease,
+          },
+        },
+        children,
+      );
+    const { result } = renderHook(() => useAnalyzerMutationLeases(), {
+      wrapper: projectionWrapper,
+    });
+
+    expect(claimPersistedMutationLease).toHaveBeenNthCalledWith(
+      1,
+      "processing",
+      "owner-2",
+    );
+    expect(claimPersistedMutationLease).toHaveBeenNthCalledWith(
+      2,
+      "history",
+      "owner-2",
+    );
+    expect(result.current.mutationLeases).toEqual({
+      processing: lease,
       history: null,
     });
   });

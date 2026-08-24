@@ -13,6 +13,10 @@ import type {
   PersistedJobMutationScope,
   PersistedMutationLease,
 } from "../lib/mutationLeases";
+import {
+  browserAnalyzerWorkflowProjections,
+  type AnalyzerWorkflowProjectionAdapters,
+} from "../services/browserAnalyzerWorkflowProjections";
 
 export type AnalyzerMutationLeases = Record<
   PersistedJobMutationScope,
@@ -244,6 +248,7 @@ export function analyzerWorkflowReducer(
 type AnalyzerWorkflowStore = {
   state: AnalyzerWorkflowState;
   dispatch: Dispatch<AnalyzerWorkflowEvent>;
+  projections: AnalyzerWorkflowProjectionAdapters;
 };
 
 const AnalyzerWorkflowContext = createContext<AnalyzerWorkflowStore | null>(
@@ -252,22 +257,57 @@ const AnalyzerWorkflowContext = createContext<AnalyzerWorkflowStore | null>(
 
 type AnalyzerWorkflowProviderProps = PropsWithChildren<{
   initialMutationLeases?: AnalyzerMutationLeases;
+  mutationOwnerId?: string;
+  projections?: AnalyzerWorkflowProjectionAdapters;
 }>;
+
+type AnalyzerWorkflowInitialization = {
+  initialMutationLeases?: AnalyzerMutationLeases;
+  mutationOwnerId?: string;
+  projections: AnalyzerWorkflowProjectionAdapters;
+};
+
+function initializeAnalyzerWorkflowState({
+  initialMutationLeases,
+  mutationOwnerId,
+  projections,
+}: AnalyzerWorkflowInitialization): AnalyzerWorkflowState {
+  const mutationLeases =
+    initialMutationLeases ??
+    (mutationOwnerId
+      ? {
+          processing: projections.claimPersistedMutationLease(
+            "processing",
+            mutationOwnerId,
+          ),
+          history: projections.claimPersistedMutationLease(
+            "history",
+            mutationOwnerId,
+          ),
+        }
+      : initialAnalyzerWorkflowState.mutationLeases);
+
+  return {
+    ...initialAnalyzerWorkflowState,
+    mutationLeases,
+  };
+}
 
 export function AnalyzerWorkflowProvider({
   children,
   initialMutationLeases,
+  mutationOwnerId,
+  projections = browserAnalyzerWorkflowProjections,
 }: AnalyzerWorkflowProviderProps) {
   const [state, dispatch] = useReducer(
     analyzerWorkflowReducer,
-    initialMutationLeases
-      ? {
-          ...initialAnalyzerWorkflowState,
-          mutationLeases: initialMutationLeases,
-        }
-      : initialAnalyzerWorkflowState,
+    { initialMutationLeases, mutationOwnerId, projections },
+    initializeAnalyzerWorkflowState,
   );
-  const store = useMemo(() => ({ state, dispatch }), [state]);
+  const store = useMemo(
+    () => ({ state, dispatch, projections }),
+    [projections, state],
+  );
 
   return createElement(
     AnalyzerWorkflowContext.Provider,
@@ -284,6 +324,10 @@ export function useAnalyzerWorkflow(): AnalyzerWorkflowStore {
     );
   }
   return store;
+}
+
+export function useAnalyzerWorkflowProjections() {
+  return useAnalyzerWorkflow().projections;
 }
 
 export function useAnalyzerActiveSelection() {

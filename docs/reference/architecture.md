@@ -507,7 +507,10 @@ Workspace persistence is implemented by focused cache-validation,
 mutation-lease, processing-queue, history, and reconciliation modules. The
 `features/workspace/lib/persistence.ts` barrel preserves the coordinator-facing
 contract while preventing cache schemas and recovery algorithms from sharing
-one implementation file.
+one implementation file. Browser-facing processing, history, and mutation-lease
+operations are grouped in a stable projection adapter injected by
+`AnalyzerWorkflowProvider`; the analyzer consumes that adapter through a focused
+hook, while tests may replace it without patching browser globals.
 Cache validation keeps primitive bounds, poker and completed-street state,
 recommendation and training payloads, and parser/job records in focused modules
 behind the stable `features/workspace/lib/cacheValidation.ts` barrel.
