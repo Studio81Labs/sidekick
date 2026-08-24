@@ -480,6 +480,8 @@ function AnalyzerWorkspace() {
     writeProcessingQueue(jobs, !processingQueueSessionSynced());
   }, [jobs]);
 
+  const processingStorageRestoreScheduledRef = useRef(false);
+
   useEffect(() => {
     let restoreTimer: number | null = null;
     const onStorage = (event: StorageEvent) => {
@@ -499,8 +501,10 @@ function AnalyzerWorkspace() {
         type: "recovery-retry-scheduled",
         recovery: "processing",
       });
+      processingStorageRestoreScheduledRef.current = true;
       restoreTimer = window.setTimeout(() => {
         restoreTimer = null;
+        processingStorageRestoreScheduledRef.current = false;
         if (processingMutationCountRef.current === 0) {
           scheduleProcessingQueueRestore();
         } else {
@@ -514,6 +518,7 @@ function AnalyzerWorkspace() {
       if (restoreTimer !== null) {
         window.clearTimeout(restoreTimer);
       }
+      processingStorageRestoreScheduledRef.current = false;
     };
   }, []);
 
@@ -1660,7 +1665,9 @@ function AnalyzerWorkspace() {
       !cachedJobs?.some(isProcessingJobInProgress)
     ) {
       dispatchWorkflow({
-        type: "recovery-finished",
+        type: processingStorageRestoreScheduledRef.current
+          ? "recovery-retry-scheduled"
+          : "recovery-finished",
         recovery: "processing",
       });
       return;
@@ -1864,7 +1871,9 @@ function AnalyzerWorkspace() {
           markProcessingQueueSessionUnsynced();
         }
         dispatchWorkflow({
-          type: "recovery-finished",
+          type: processingStorageRestoreScheduledRef.current
+            ? "recovery-retry-scheduled"
+            : "recovery-finished",
           recovery: "processing",
         });
       })
