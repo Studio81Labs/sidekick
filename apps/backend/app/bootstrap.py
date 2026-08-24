@@ -167,11 +167,11 @@ from app.rate_limiting import (
     rate_limit_category,
     request_rate_limit_identity,
 )
-from app.storage import (
+from app.storage.file_benchmark_store import FileBenchmarkStore
+from app.storage.file_job_store import FileJobStore
+from app.storage.persistence import (
     BenchmarkImportNotFoundError,
     BenchmarkNotFoundError,
-    FileBenchmarkStore,
-    FileJobStore,
     JobNotFoundError,
 )
 from app.training import (

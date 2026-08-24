@@ -8,7 +8,7 @@ from threading import Event, Lock, Thread
 import pytest
 
 import app.backup_cli as backup_cli_module
-import app.storage as storage_module
+import app.storage.persistence as storage_module
 from app.backup_cli import (
     BACKUP_FILENAME_PATTERN,
     BackupCliError,

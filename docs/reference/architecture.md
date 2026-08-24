@@ -102,6 +102,13 @@ Health and backup transport contracts live in `app/domain/health` and
 `ApplicationBackupRestoreResult` are currently re-exported from `app/models.py`
 for legacy compatibility while HTTP transport imports move directly to domain.
 
+File-backed persistence is organized under `app/storage`. Repository contracts
+live in `app/storage/ports.py`, job and benchmark adapters are split between
+`file_job_store.py` and `file_benchmark_store.py`, and shared durability and
+legacy-decoding helpers live in `persistence.py`. The package root preserves the
+historical `app.storage` import surface while production code can depend on the
+owned modules directly.
+
 Post-hand decisions, review requests, progress summaries, trends, and solver
 coverage contracts live under `app/domain/training`. Training aggregation and
 transport adapters import that domain directly, while `app/models.py`

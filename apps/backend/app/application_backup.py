@@ -24,12 +24,9 @@ from app.dataset_export import MAX_DATASET_CASES
 from app.domain.backups import ApplicationBackupRestoreResult
 from app.domain.benchmarks import BenchmarkReport
 from app.domain.hands import JobRecord
-from app.storage import (
-    FileBenchmarkStore,
-    FileJobStore,
-    JobNotFoundError,
-    load_persisted_job_record,
-)
+from app.storage.file_benchmark_store import FileBenchmarkStore
+from app.storage.file_job_store import FileJobStore
+from app.storage.persistence import JobNotFoundError, load_persisted_job_record
 
 
 BACKUP_SCHEMA = "poker-hero-application-backup"

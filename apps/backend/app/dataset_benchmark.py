@@ -19,7 +19,7 @@ from app.dataset_import import (
 from app.parsers.base import ParserConfigurationError
 from app.parsers.registry import build_parser
 from app.pipeline import configured_recommendation_engine
-from app.storage import FileJobStore
+from app.storage.file_job_store import FileJobStore
 
 
 class DatasetBenchmarkError(RuntimeError):
