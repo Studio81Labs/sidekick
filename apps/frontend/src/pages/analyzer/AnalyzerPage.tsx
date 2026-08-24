@@ -16,10 +16,7 @@ import { HandReviewPanel } from "../../features/hand-review/components/HandRevie
 import { type HistoryItem } from "../../features/history/lib/historyPresentation";
 import { InfoDialog } from "../../features/system/components/InfoDialog";
 import { PipelineDialog } from "../../features/pipeline/components/PipelineDialog";
-import {
-  QueueProcessingDialog,
-  type QueueProgress,
-} from "../../features/queue/components/QueueProcessingDialog";
+import { QueueProcessingDialog } from "../../features/queue/components/QueueProcessingDialog";
 import { ScreenshotDetailsDialog } from "../../features/screenshots/components/ScreenshotDetailsDialog";
 import {
   parseScreenshotTags,
@@ -39,6 +36,7 @@ import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDi
 import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
 import {
+  type AnalyzerQueueProgress,
   AnalyzerWorkflowProvider,
   useAnalyzerWorkflow,
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
@@ -172,7 +170,7 @@ export default function AnalyzerPage() {
 function AnalyzerWorkspace() {
   const queryClient = useQueryClient();
   const {
-    state: { attentionByJobId: jobAttention },
+    state: { attentionByJobId: jobAttention, queueProgress },
     dispatch: dispatchWorkflow,
   } = useAnalyzerWorkflow();
   const [jobs, setJobs] = useState<JobRecord[]>(
@@ -194,9 +192,6 @@ function AnalyzerWorkspace() {
   const [historySearchTotal, setHistorySearchTotal] = useState(0);
   const [historySearchSnapshotVersion, setHistorySearchSnapshotVersion] =
     useState<string | null>(null);
-  const [queueProgress, setQueueProgress] = useState<QueueProgress | null>(
-    null,
-  );
   const [processingRestoreRequest, setProcessingRestoreRequest] = useState(0);
   const [mutationLeaseRestoreRequest, setMutationLeaseRestoreRequest] =
     useState(0);
@@ -1855,6 +1850,14 @@ function AnalyzerWorkspace() {
     });
   }
 
+  function setQueueProgress(progress: AnalyzerQueueProgress | null) {
+    dispatchWorkflow(
+      progress
+        ? { type: "queue-progress-updated", progress }
+        : { type: "queue-processing-finished" },
+    );
+  }
+
   function clearJobAttention(jobId: string) {
     clearJobAttentionEntries(new Set([jobId]));
   }
@@ -3506,15 +3509,7 @@ function AnalyzerWorkspace() {
   function onAbortQueue() {
     queueAbortRequestedRef.current = true;
     queueAbortControllerRef.current?.abort();
-    setQueueProgress((current) =>
-      current
-        ? {
-            ...current,
-            aborting: true,
-            skipped: Math.max(current.total - current.completed, 0),
-          }
-        : current,
-    );
+    dispatchWorkflow({ type: "queue-abort-requested" });
   }
 
   async function saveScreenshotMetadata() {
