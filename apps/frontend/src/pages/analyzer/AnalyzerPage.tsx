@@ -170,7 +170,14 @@ export default function AnalyzerPage() {
 function AnalyzerWorkspace() {
   const queryClient = useQueryClient();
   const {
-    state: { attentionByJobId: jobAttention, queueProgress },
+    state: {
+      attentionByJobId: jobAttention,
+      queueProgress,
+      recoveryRequests: {
+        mutationLease: mutationLeaseRestoreRequest,
+        processing: processingRestoreRequest,
+      },
+    },
     dispatch: dispatchWorkflow,
   } = useAnalyzerWorkflow();
   const [jobs, setJobs] = useState<JobRecord[]>(
@@ -192,9 +199,6 @@ function AnalyzerWorkspace() {
   const [historySearchTotal, setHistorySearchTotal] = useState(0);
   const [historySearchSnapshotVersion, setHistorySearchSnapshotVersion] =
     useState<string | null>(null);
-  const [processingRestoreRequest, setProcessingRestoreRequest] = useState(0);
-  const [mutationLeaseRestoreRequest, setMutationLeaseRestoreRequest] =
-    useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setErrorMessage] = useState<string | null>(null);
   const [errorSequence, setErrorSequence] = useState(0);
@@ -856,11 +860,11 @@ function AnalyzerWorkspace() {
   function scheduleProcessingQueueRestore() {
     processingRestoreRetryRequestedRef.current = false;
     processingRestorePromiseRef.current = null;
-    setProcessingRestoreRequest((current) => current + 1);
+    dispatchWorkflow({ type: "processing-recovery-requested" });
   }
 
   function scheduleMutationLeaseRevalidation() {
-    setMutationLeaseRestoreRequest((current) => current + 1);
+    dispatchWorkflow({ type: "mutation-lease-revalidation-requested" });
   }
 
   function installMutationLease(

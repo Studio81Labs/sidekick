@@ -40,10 +40,10 @@ describe("analyzer workflow reducer", () => {
         jobIds: ["job-1", "missing-job"],
       }),
     ).toEqual({
+      ...initialAnalyzerWorkflowState,
       attentionByJobId: {
         "job-2": "Recommendation failed",
       },
-      queueProgress: null,
     });
     expect(
       analyzerWorkflowReducer(marked, {
@@ -91,5 +91,30 @@ describe("analyzer workflow reducer", () => {
         type: "queue-processing-finished",
       }),
     ).toBe(initialAnalyzerWorkflowState);
+  });
+
+  it("increments recovery requests independently", () => {
+    const processingRequested = analyzerWorkflowReducer(
+      initialAnalyzerWorkflowState,
+      { type: "processing-recovery-requested" },
+    );
+    const leaseRequested = analyzerWorkflowReducer(processingRequested, {
+      type: "mutation-lease-revalidation-requested",
+    });
+
+    expect(processingRequested.recoveryRequests).toEqual({
+      mutationLease: 0,
+      processing: 1,
+    });
+    expect(leaseRequested.recoveryRequests).toEqual({
+      mutationLease: 1,
+      processing: 1,
+    });
+    expect(leaseRequested.attentionByJobId).toBe(
+      processingRequested.attentionByJobId,
+    );
+    expect(leaseRequested.queueProgress).toBe(
+      processingRequested.queueProgress,
+    );
   });
 });
