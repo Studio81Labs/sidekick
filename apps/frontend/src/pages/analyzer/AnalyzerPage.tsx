@@ -1715,6 +1715,11 @@ function AnalyzerWorkspace() {
           processingRestoreRetryRequestedRef.current = true;
           if (processingMutationCountRef.current === 0) {
             scheduleProcessingQueueRestore();
+          } else {
+            dispatchWorkflow({
+              type: "recovery-retry-scheduled",
+              recovery: "processing",
+            });
           }
           return;
         }
