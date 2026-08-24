@@ -37,6 +37,7 @@ import { useScreenshotDetails } from "../../features/screenshots/hooks/useScreen
 import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDialog";
 import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
+import { getJob } from "../../shared/api/jobs";
 import {
   ApiResponseError,
   applicationBackupUrl,
@@ -46,7 +47,6 @@ import {
   deleteJob,
   getBenchmarkDatasetImport,
   getHistory,
-  getJob,
   getTrainingProgress,
   humanReadableMessage,
   importBenchmarkDataset,

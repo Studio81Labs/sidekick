@@ -334,6 +334,11 @@ configuration, principal listing, issuance, rotation, and revocation dispatch
 through `app/application/mcp_admin.py`. Application services still receive
 bootstrap-composed callbacks pending deeper repository and service slices.
 
+Wave 8 progress: job-detail and paged processing-queue reads now have a typed
+domain API adapter plus cancellable TanStack Query options. Existing imperative
+workflows import the domain adapter directly, while `shared/api/jobs.ts` remains
+an identity-preserving compatibility facade during migration.
+
 Gate: crash/recovery, stale recommendation, deletion during parsing,
 multiprocess locking, backup, and import tests pass.
 

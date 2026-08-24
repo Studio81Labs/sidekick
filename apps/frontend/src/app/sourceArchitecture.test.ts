@@ -102,6 +102,17 @@ function isGeneratedOpenApiPath(sourcePath: readonly string[]): boolean {
   );
 }
 
+function domainCompatibilityFacadeImportAllowed(
+  sourcePath: readonly string[],
+  targetPath: readonly string[],
+): boolean {
+  return (
+    sourcePath.join("/") === "shared/api/jobs.ts" &&
+    targetPath.slice(0, 3).join("/") === "domains/jobs/api" &&
+    ["jobsApi", "jobsApi.ts"].includes(targetPath[3] ?? "")
+  );
+}
+
 function generatedOpenApiImportAllowed(sourcePath: readonly string[]): boolean {
   if (sourcePath[0] === "domains" && sourcePath[2] === "api") {
     return true;
@@ -460,7 +471,10 @@ function layerViolations(): string[] {
       }
 
       const allowedTargets = ALLOWED_LAYER_IMPORTS[currentSourceLayer];
-      if (!allowedTargets.has(targetLayer)) {
+      if (
+        !allowedTargets.has(targetLayer) &&
+        !domainCompatibilityFacadeImportAllowed(sourcePath, targetPath)
+      ) {
         violations.push(
           `${currentSourceLayer} may not depend on ${targetLayer}: ${importDescription}`,
         );
@@ -783,6 +797,21 @@ describe("frontend source architecture", () => {
     expect(
       featureArea(["features", "capture", "utils", "format.ts"]),
     ).toBeNull();
+  });
+
+  it("limits domain compatibility imports to the job API facade", () => {
+    expect(
+      domainCompatibilityFacadeImportAllowed(
+        ["shared", "api", "jobs.ts"],
+        ["domains", "jobs", "api", "jobsApi.ts"],
+      ),
+    ).toBe(true);
+    expect(
+      domainCompatibilityFacadeImportAllowed(
+        ["shared", "api", "client.ts"],
+        ["domains", "jobs", "api", "jobsApi.ts"],
+      ),
+    ).toBe(false);
   });
 
   it("includes Vite JavaScript modules in the TypeScript-only source audit", () => {

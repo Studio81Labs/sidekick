@@ -1,4 +1,4 @@
-import { getProcessingJobs } from "../../../shared/api/jobs";
+import { getProcessingJobs } from "../../../domains/jobs/api/jobsApi";
 import type { JobQueue, JobRecord } from "../../../shared/types/jobs";
 import {
   isCachedJobRecord,

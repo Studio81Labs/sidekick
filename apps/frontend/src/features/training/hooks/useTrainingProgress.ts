@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { getJob } from "../../../shared/api/jobs";
+import { getJob } from "../../../domains/jobs/api/jobsApi";
 import type { JobRecord } from "../../../shared/types/jobs";
 import { messageFromError } from "../../workspace/lib/workflow";
 import { useTrainingProgressState } from "./useTrainingProgressState";

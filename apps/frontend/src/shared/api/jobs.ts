@@ -1,18 +1,13 @@
-import type { JobQueue, JobRecord } from "../types/jobs";
+export {
+  getJob,
+  getProcessingJobs,
+  imageUrl,
+} from "../../domains/jobs/api/jobsApi";
+
+import type { JobRecord } from "../types/jobs";
 import type { PipelineSelection } from "../types/pipeline";
 import type { CanonicalState } from "../types/poker";
 import { apiUrl, readJson } from "./core";
-
-export function imageUrl(jobId: string): string {
-  return apiUrl(`/api/jobs/${jobId}/image`);
-}
-
-export async function getJob(jobId: string): Promise<JobRecord> {
-  const response = await fetch(apiUrl(`/api/jobs/${jobId}`), {
-    credentials: "include",
-  });
-  return readJson<JobRecord>(response);
-}
 
 export async function updateJobMetadata(
   jobId: string,
@@ -41,14 +36,6 @@ export async function deleteJob(jobId: string): Promise<void> {
   if (!response.ok && response.status !== 404) {
     await readJson<never>(response);
   }
-}
-
-export async function getProcessingJobs(offset = 0): Promise<JobQueue> {
-  const query = offset > 0 ? `?offset=${offset}` : "";
-  const response = await fetch(apiUrl(`/api/jobs${query}`), {
-    credentials: "include",
-  });
-  return readJson<JobQueue>(response);
 }
 
 export async function uploadScreenshot(

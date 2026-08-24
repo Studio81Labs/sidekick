@@ -77,6 +77,11 @@ concrete dependencies. Backup transport owns multipart limits and streaming
 responses, while archive creation, restore coordination, and interprocess lock
 timing remain behind application-owned callbacks.
 
+Frontend job-detail and processing-page reads are owned by
+`domains/jobs/api/jobsApi.ts`, with stable TanStack Query keys and options in
+`domains/jobs/api/jobsQueries.ts`. The legacy `shared/api/jobs.ts` read exports
+remain identity-preserving compatibility aliases while consumers migrate.
+
 Provider-neutral pipeline selection and capability contracts live under
 `app/domain/pipeline`. Runtime configuration and HTTP adapters import that
 domain package directly, while `app/models.py` temporarily re-exports the same
