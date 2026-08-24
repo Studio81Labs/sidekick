@@ -361,7 +361,9 @@ Wave 7 progress: the analyzer now mounts a route-scoped
 `AnalyzerWorkflowProvider` backed by a typed pure reducer. Queue attention
 messages and queue-processing progress now use typed mark, clear, progress,
 abort, and finish events. The abort transition derives its skipped count in the
-reducer, with no server job records or side effects stored there.
+reducer. Processing restore and mutation-lease revalidation triggers are also
+typed, independently incremented workflow request generations, with no server
+job records or recovery side effects stored in the reducer.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.

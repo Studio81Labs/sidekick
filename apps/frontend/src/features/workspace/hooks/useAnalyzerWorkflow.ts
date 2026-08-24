@@ -11,6 +11,10 @@ import {
 export type AnalyzerWorkflowState = {
   attentionByJobId: Readonly<Record<string, string>>;
   queueProgress: AnalyzerQueueProgress | null;
+  recoveryRequests: {
+    mutationLease: number;
+    processing: number;
+  };
 };
 
 export type AnalyzerQueueProgress = {
@@ -42,11 +46,21 @@ export type AnalyzerWorkflowEvent =
     }
   | {
       type: "queue-processing-finished";
+    }
+  | {
+      type: "processing-recovery-requested";
+    }
+  | {
+      type: "mutation-lease-revalidation-requested";
     };
 
 export const initialAnalyzerWorkflowState: AnalyzerWorkflowState = {
   attentionByJobId: {},
   queueProgress: null,
+  recoveryRequests: {
+    mutationLease: 0,
+    processing: 0,
+  },
 };
 
 export function analyzerWorkflowReducer(
@@ -106,6 +120,24 @@ export function analyzerWorkflowReducer(
         return state;
       }
       return { ...state, queueProgress: null };
+    }
+    case "processing-recovery-requested": {
+      return {
+        ...state,
+        recoveryRequests: {
+          ...state.recoveryRequests,
+          processing: state.recoveryRequests.processing + 1,
+        },
+      };
+    }
+    case "mutation-lease-revalidation-requested": {
+      return {
+        ...state,
+        recoveryRequests: {
+          ...state.recoveryRequests,
+          mutationLease: state.recoveryRequests.mutationLease + 1,
+        },
+      };
     }
   }
 }

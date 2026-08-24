@@ -482,6 +482,9 @@ owns cross-feature workflow state without copying server job records; queue
 attention messages and queue-processing progress are the first migrated state
 families. The reducer derives abort progress while API, cancellation, and
 browser-persistence side effects remain in commands and projection adapters.
+Processing restore and mutation-lease revalidation use independent typed
+request generations in the same store; promises, timers, and retry policy
+remain runtime concerns outside the reducer.
 
 Workspace persistence is implemented by focused cache-validation,
 mutation-lease, processing-queue, history, and reconciliation modules. The
