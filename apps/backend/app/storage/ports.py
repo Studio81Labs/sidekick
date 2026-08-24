@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Protocol
 
 from app.domain.benchmarks import (
@@ -43,7 +44,7 @@ class JobRepository(Protocol):
 
     def write_image(self, job: JobRecord, image_bytes: bytes) -> None: ...
 
-    def image_path(self, job: JobRecord): ...
+    def image_path(self, job: JobRecord) -> Path: ...
 
     def get(self, job_id: str) -> JobRecord: ...
 
