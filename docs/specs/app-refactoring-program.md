@@ -441,6 +441,12 @@ invalidates imported detail, processing, history, and overview keys only after
 confirmed success. Existing projection leases and receipt-based ambiguous
 failure recovery remain Analyzer-owned, and the shared transport symbol retains
 its signature and object identity.
+Application backup restore now uses a backup-owned multipart command. Confirmed
+restore removes job, history, training, and benchmark Query families after
+guarding against stale reads, while Analyzer composition retains projection
+reset and recovery scheduling. Failure leaves caches untouched and preserves
+the existing same-file idempotent retry path; the shared API remains an
+identity-preserving alias.
 Training decisions and training review completion, note updates, and reopen now
 use training-owned generated-contract commands. Confirmed responses guard
 against stale reads, update job detail, and invalidate processing, history, and

@@ -1,0 +1,39 @@
+import type { QueryClient, QueryKey } from "@tanstack/react-query";
+
+import { restoreApplicationBackup } from "../../../domains/backups/api/backupsApi";
+import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQueries";
+import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
+import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
+import { trainingQueryKeys } from "../../../domains/training/api/trainingQueries";
+import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
+
+export type RestoreApplicationBackupCommand = {
+  file: File;
+};
+
+export async function restoreApplicationBackupCommand(
+  queryClient: QueryClient,
+  command: RestoreApplicationBackupCommand,
+) {
+  const result = await restoreApplicationBackup(command.file);
+  const cache = {
+    removed: [
+      jobQueryKeys.all,
+      historyQueryKeys.all,
+      trainingQueryKeys.all,
+      benchmarkQueryKeys.all,
+    ] as readonly QueryKey[],
+  };
+
+  await Promise.all(
+    cache.removed.map((queryKey) =>
+      queryClient.cancelQueries({ queryKey, exact: false }),
+    ),
+  );
+  cache.removed.forEach((queryKey) => {
+    supersedeLatestQueryResults(queryClient, queryKey);
+    queryClient.removeQueries({ queryKey, exact: false });
+  });
+
+  return { result, cache };
+}
