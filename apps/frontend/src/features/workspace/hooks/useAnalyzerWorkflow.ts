@@ -316,25 +316,25 @@ export function AnalyzerWorkflowProvider({
   );
 }
 
-export function useAnalyzerWorkflow(): AnalyzerWorkflowStore {
+function useAnalyzerWorkflowStore(): AnalyzerWorkflowStore {
   const store = useContext(AnalyzerWorkflowContext);
   if (!store) {
     throw new Error(
-      "useAnalyzerWorkflow must be used within AnalyzerWorkflowProvider",
+      "Analyzer workflow hooks must be used within AnalyzerWorkflowProvider",
     );
   }
   return store;
 }
 
 export function useAnalyzerWorkflowProjections() {
-  return useAnalyzerWorkflow().projections;
+  return useAnalyzerWorkflowStore().projections;
 }
 
 export function useAnalyzerActiveSelection() {
   const {
     state: { activeJobId },
     dispatch,
-  } = useAnalyzerWorkflow();
+  } = useAnalyzerWorkflowStore();
   const selectActiveJob = useCallback(
     (jobId: string | null) => dispatch({ type: "active-job-selected", jobId }),
     [dispatch],
@@ -347,7 +347,7 @@ export function useAnalyzerQueueWorkflow() {
   const {
     state: { attentionByJobId, queueProgress },
     dispatch,
-  } = useAnalyzerWorkflow();
+  } = useAnalyzerWorkflowStore();
   const markJobAttention = useCallback(
     (jobId: string, message: string) =>
       dispatch({ type: "job-attention-marked", jobId, message }),
@@ -386,7 +386,7 @@ export function useAnalyzerMutationLeases() {
   const {
     state: { mutationLeases },
     dispatch,
-  } = useAnalyzerWorkflow();
+  } = useAnalyzerWorkflowStore();
   const setMutationLease = useCallback(
     (scope: PersistedJobMutationScope, lease: PersistedMutationLease | null) =>
       dispatch({ type: "mutation-lease-updated", scope, lease }),
@@ -400,7 +400,7 @@ export function useAnalyzerRecoveryWorkflow() {
   const {
     state: { recoveryPhases, recoveryRequests },
     dispatch,
-  } = useAnalyzerWorkflow();
+  } = useAnalyzerWorkflowStore();
   const requestProcessingRecovery = useCallback(
     () => dispatch({ type: "processing-recovery-requested" }),
     [dispatch],
