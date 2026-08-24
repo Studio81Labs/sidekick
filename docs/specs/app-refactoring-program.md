@@ -377,6 +377,9 @@ and upload side effects remain in the analyzer runtime. Claimed processing and
 history mutation leases are seeded into reducer state and updated through a
 focused command; synchronous refs remain runtime services while persistence
 claims, compare-and-swap writes, settlement, and retry effects stay external.
+Recovery request generations and phases now have a focused hook with memoized
+request, start, retry, and finish commands, so the analyzer page no longer
+constructs raw workflow recovery events.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.

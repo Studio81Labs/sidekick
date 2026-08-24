@@ -494,9 +494,11 @@ The reducer derives abort progress while API, cancellation, and
 browser-persistence side effects remain in commands and projection adapters.
 Processing restore and mutation-lease revalidation use independent typed
 request generations in the same store; promises, timers, and retry policy
-remain runtime concerns outside the reducer. Each channel also exposes explicit
-idle, requested, running, and retry-scheduled phases advanced by those runtime
-effects without storing the effects themselves.
+remain runtime concerns outside the reducer. A focused recovery hook exposes
+both generations and phases plus memoized request, start, retry, and finish
+commands, keeping raw recovery events out of page composition. Each channel
+also exposes explicit idle, requested, running, and retry-scheduled phases
+advanced by those runtime effects without storing the effects themselves.
 When benchmark-import recovery overlaps a lease retry timer, the active request
 keeps the mutation-lease channel in the running phase; request settlement then
 selects retry-scheduled or idle from the remaining lease state.

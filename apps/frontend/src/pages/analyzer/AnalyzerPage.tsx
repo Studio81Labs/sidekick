@@ -40,7 +40,7 @@ import {
   useAnalyzerActiveSelection,
   useAnalyzerMutationLeases,
   useAnalyzerQueueWorkflow,
-  useAnalyzerWorkflow,
+  useAnalyzerRecoveryWorkflow,
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
 import {
   fetchHistoryPageQuery,
@@ -199,14 +199,14 @@ function AnalyzerWorkspace({
 }: AnalyzerWorkspaceProps) {
   const queryClient = useQueryClient();
   const {
-    state: {
-      recoveryRequests: {
-        mutationLease: mutationLeaseRestoreRequest,
-        processing: processingRestoreRequest,
-      },
-    },
-    dispatch: dispatchWorkflow,
-  } = useAnalyzerWorkflow();
+    finishRecovery,
+    mutationLeaseRestoreRequest,
+    processingRestoreRequest,
+    requestMutationLeaseRevalidation,
+    requestProcessingRecovery,
+    scheduleRecoveryRetry,
+    startRecovery,
+  } = useAnalyzerRecoveryWorkflow();
   const { activeJobId, selectActiveJob } = useAnalyzerActiveSelection();
   const {
     attentionByJobId: jobAttention,
@@ -532,10 +532,7 @@ function AnalyzerWorkspace({
       if (restoreTimer !== null) {
         window.clearTimeout(restoreTimer);
       }
-      dispatchWorkflow({
-        type: "recovery-retry-scheduled",
-        recovery: "processing",
-      });
+      scheduleRecoveryRetry("processing");
       processingStorageRestoreScheduledRef.current = true;
       restoreTimer = window.setTimeout(() => {
         restoreTimer = null;
@@ -562,10 +559,7 @@ function AnalyzerWorkspace({
       return;
     }
     markProcessingQueueSessionUnsynced();
-    dispatchWorkflow({
-      type: "recovery-retry-scheduled",
-      recovery: "processing",
-    });
+    scheduleRecoveryRetry("processing");
     const revalidationTimer = window.setTimeout(() => {
       if (processingMutationCountRef.current === 0) {
         scheduleProcessingQueueRestore();
@@ -581,10 +575,7 @@ function AnalyzerWorkspace({
       processingMutationLeaseRef.current === null &&
       historyMutationLeaseRef.current === null
     ) {
-      dispatchWorkflow({
-        type: "recovery-finished",
-        recovery: "mutationLease",
-      });
+      finishRecovery("mutationLease");
       return;
     }
     let retryTimer: number | null = null;
@@ -592,10 +583,7 @@ function AnalyzerWorkspace({
     let benchmarkImportRetryNotBefore = 0;
     const revalidateLeases = () => {
       retryTimer = null;
-      dispatchWorkflow({
-        type: "recovery-started",
-        recovery: "mutationLease",
-      });
+      startRecovery("mutationLease");
       let leasePending = false;
       const linkedArchiveLeases = matchingArchiveLeaseTargets(
         processingMutationLeaseRef.current,
@@ -710,14 +698,14 @@ function AnalyzerWorkspace({
             if (benchmarkImportRecoveryPromiseRef.current === recovery) {
               benchmarkImportRecoveryPromiseRef.current = null;
               if (appMountedRef.current) {
-                dispatchWorkflow({
-                  type:
-                    processingMutationLeaseRef.current !== null ||
-                    historyMutationLeaseRef.current !== null
-                      ? "recovery-retry-scheduled"
-                      : "recovery-finished",
-                  recovery: "mutationLease",
-                });
+                if (
+                  processingMutationLeaseRef.current !== null ||
+                  historyMutationLeaseRef.current !== null
+                ) {
+                  scheduleRecoveryRetry("mutationLease");
+                } else {
+                  finishRecovery("mutationLease");
+                }
               }
             }
           });
@@ -803,16 +791,10 @@ function AnalyzerWorkspace({
           Math.max(retryDelay, benchmarkImportRetryNotBefore - Date.now()),
         );
         if (benchmarkImportRecoveryPromiseRef.current === null) {
-          dispatchWorkflow({
-            type: "recovery-retry-scheduled",
-            recovery: "mutationLease",
-          });
+          scheduleRecoveryRetry("mutationLease");
         }
       } else {
-        dispatchWorkflow({
-          type: "recovery-finished",
-          recovery: "mutationLease",
-        });
+        finishRecovery("mutationLease");
       }
     };
     if (
@@ -820,10 +802,7 @@ function AnalyzerWorkspace({
       (processingMutationLeaseRef.current !== null ||
         historyMutationLeaseRef.current !== null)
     ) {
-      dispatchWorkflow({
-        type: "recovery-retry-scheduled",
-        recovery: "mutationLease",
-      });
+      scheduleRecoveryRetry("mutationLease");
     }
     retryTimer = window.setTimeout(revalidateLeases, retryDelay);
     return () => {
@@ -947,11 +926,11 @@ function AnalyzerWorkspace({
   function scheduleProcessingQueueRestore() {
     processingRestoreRetryRequestedRef.current = false;
     processingRestorePromiseRef.current = null;
-    dispatchWorkflow({ type: "processing-recovery-requested" });
+    requestProcessingRecovery();
   }
 
   function scheduleMutationLeaseRevalidation() {
-    dispatchWorkflow({ type: "mutation-lease-revalidation-requested" });
+    requestMutationLeaseRevalidation();
   }
 
   function setRuntimeMutationLease(
@@ -1711,18 +1690,14 @@ function AnalyzerWorkspace({
       readCachedProcessingQueueTotal(cachedJobs) !== null &&
       !cachedJobs?.some(isProcessingJobInProgress)
     ) {
-      dispatchWorkflow({
-        type: processingStorageRestoreScheduledRef.current
-          ? "recovery-retry-scheduled"
-          : "recovery-finished",
-        recovery: "processing",
-      });
+      if (processingStorageRestoreScheduledRef.current) {
+        scheduleRecoveryRetry("processing");
+      } else {
+        finishRecovery("processing");
+      }
       return;
     }
-    dispatchWorkflow({
-      type: "recovery-started",
-      recovery: "processing",
-    });
+    startRecovery("processing");
     markProcessingQueueSessionUnsynced();
 
     const cachedIds = new Set(
@@ -1774,10 +1749,7 @@ function AnalyzerWorkspace({
           if (processingMutationCountRef.current === 0) {
             scheduleProcessingQueueRestore();
           } else {
-            dispatchWorkflow({
-              type: "recovery-retry-scheduled",
-              recovery: "processing",
-            });
+            scheduleRecoveryRetry("processing");
           }
           return;
         }
@@ -1917,12 +1889,11 @@ function AnalyzerWorkspace({
         } else {
           markProcessingQueueSessionUnsynced();
         }
-        dispatchWorkflow({
-          type: processingStorageRestoreScheduledRef.current
-            ? "recovery-retry-scheduled"
-            : "recovery-finished",
-          recovery: "processing",
-        });
+        if (processingStorageRestoreScheduledRef.current) {
+          scheduleRecoveryRetry("processing");
+        } else {
+          finishRecovery("processing");
+        }
       })
       .catch((processingError) => {
         if (active) {
@@ -1941,10 +1912,7 @@ function AnalyzerWorkspace({
               processingRestoreRetryRequestedRef.current = true;
             }
           }, PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS);
-          dispatchWorkflow({
-            type: "recovery-retry-scheduled",
-            recovery: "processing",
-          });
+          scheduleRecoveryRetry("processing");
         }
       });
 

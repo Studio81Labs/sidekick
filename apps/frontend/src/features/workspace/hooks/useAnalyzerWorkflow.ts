@@ -351,3 +351,44 @@ export function useAnalyzerMutationLeases() {
 
   return { mutationLeases, setMutationLease };
 }
+
+export function useAnalyzerRecoveryWorkflow() {
+  const {
+    state: { recoveryPhases, recoveryRequests },
+    dispatch,
+  } = useAnalyzerWorkflow();
+  const requestProcessingRecovery = useCallback(
+    () => dispatch({ type: "processing-recovery-requested" }),
+    [dispatch],
+  );
+  const requestMutationLeaseRevalidation = useCallback(
+    () => dispatch({ type: "mutation-lease-revalidation-requested" }),
+    [dispatch],
+  );
+  const startRecovery = useCallback(
+    (recovery: AnalyzerRecoveryKind) =>
+      dispatch({ type: "recovery-started", recovery }),
+    [dispatch],
+  );
+  const scheduleRecoveryRetry = useCallback(
+    (recovery: AnalyzerRecoveryKind) =>
+      dispatch({ type: "recovery-retry-scheduled", recovery }),
+    [dispatch],
+  );
+  const finishRecovery = useCallback(
+    (recovery: AnalyzerRecoveryKind) =>
+      dispatch({ type: "recovery-finished", recovery }),
+    [dispatch],
+  );
+
+  return {
+    finishRecovery,
+    mutationLeaseRestoreRequest: recoveryRequests.mutationLease,
+    processingRestoreRequest: recoveryRequests.processing,
+    recoveryPhases,
+    requestMutationLeaseRevalidation,
+    requestProcessingRecovery,
+    scheduleRecoveryRetry,
+    startRecovery,
+  };
+}
