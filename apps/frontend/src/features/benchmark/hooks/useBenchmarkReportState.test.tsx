@@ -1,3 +1,4 @@
+import { createElement, type PropsWithChildren } from "react";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,6 +10,10 @@ import {
 } from "../../../test/analyzerHarness";
 import type { BenchmarkOverview } from "../../../shared/types";
 import { useBenchmarkReportState } from "./useBenchmarkReportState";
+
+function wrapper({ children }: PropsWithChildren) {
+  return createElement(AppProviders, null, children);
+}
 
 function overview(jobId: string): BenchmarkOverview {
   return benchmarkOverviewForJob(
@@ -25,8 +30,9 @@ describe("benchmark report state", () => {
   it("loads and selects the latest benchmark report", async () => {
     fetchMock().mockResolvedValueOnce(jsonResponse(overview("job-1")));
     const onError = vi.fn();
-    const { result } = renderHook(() =>
-      useBenchmarkReportState({ dialogOpen: false, onError }),
+    const { result } = renderHook(
+      () => useBenchmarkReportState({ dialogOpen: false, onError }),
+      { wrapper },
     );
 
     act(() => result.current.loadOverview(null));
@@ -42,8 +48,9 @@ describe("benchmark report state", () => {
     fetchMock()
       .mockImplementationOnce(() => first.promise)
       .mockResolvedValueOnce(jsonResponse(overview("job-2")));
-    const { result } = renderHook(() =>
-      useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+    const { result } = renderHook(
+      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      { wrapper },
     );
 
     act(() => {
@@ -64,8 +71,9 @@ describe("benchmark report state", () => {
   it("cancels pending overview state updates when the dialog closes", async () => {
     const pending = deferredResponse();
     fetchMock().mockImplementationOnce(() => pending.promise);
-    const { result } = renderHook(() =>
-      useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+    const { result } = renderHook(
+      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      { wrapper },
     );
 
     act(() => {
@@ -84,8 +92,9 @@ describe("benchmark report state", () => {
   it("applies a completed report to an empty catalog", () => {
     const latestReport = overview("job-1").latest_report;
     expect(latestReport).not.toBeNull();
-    const { result } = renderHook(() =>
-      useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+    const { result } = renderHook(
+      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      { wrapper },
     );
 
     act(() => result.current.applyReport(latestReport!, true));
@@ -95,3 +104,4 @@ describe("benchmark report state", () => {
     expect(result.current.recentReports[0]?.id).toBe("benchmark-job-1");
   });
 });
+import { AppProviders } from "../../../app/providers/AppProviders";

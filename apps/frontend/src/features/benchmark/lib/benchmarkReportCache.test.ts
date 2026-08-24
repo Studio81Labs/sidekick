@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { createQueryClient } from "../../../app/providers/queryClient";
 import type { BenchmarkReport } from "../../../shared/types";
 import {
   BENCHMARK_REPORT_CACHE_LIMIT,
@@ -36,7 +37,12 @@ describe("benchmark report cache", () => {
     const cached = cache.get("report-1");
     expect(cached).toBeDefined();
     await expect(
-      loadCachedBenchmarkReport("report-1", cache, new Map()),
+      loadCachedBenchmarkReport(
+        "report-1",
+        cache,
+        new Map(),
+        createQueryClient(),
+      ),
     ).resolves.toBe(cached);
     const cachedIds = [...cache.keys()];
     expect(cachedIds[cachedIds.length - 1]).toBe("report-1");
@@ -48,7 +54,12 @@ describe("benchmark report cache", () => {
     const pendingRequests = new Map([["pending", pending]]);
 
     expect(
-      loadCachedBenchmarkReport("pending", new Map(), pendingRequests),
+      loadCachedBenchmarkReport(
+        "pending",
+        new Map(),
+        pendingRequests,
+        createQueryClient(),
+      ),
     ).toBe(pending);
   });
 });
