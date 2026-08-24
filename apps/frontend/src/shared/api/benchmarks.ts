@@ -1,32 +1,21 @@
 import type {
-  BenchmarkDatasetImportReceipt,
   BenchmarkDatasetImportResult,
-  BenchmarkOverview,
   BenchmarkReport,
 } from "../types/benchmarks";
 import type { JobRecord } from "../types/jobs";
 import type { PipelineSelection } from "../types/pipeline";
 import { apiUrl, readJson } from "./core";
 
+export {
+  getBenchmarkDatasetImport,
+  getBenchmarkOverview,
+  getBenchmarkReport,
+} from "../../domains/benchmarks/api/benchmarksApi";
+
 type ParserPipeline = Pick<
   PipelineSelection,
   "parser_provider" | "parser_layout_profile"
 >;
-
-export async function getBenchmarkOverview(
-  pipeline?: ParserPipeline,
-): Promise<BenchmarkOverview> {
-  const search = new URLSearchParams();
-  if (pipeline) {
-    search.set("parser_provider", pipeline.parser_provider);
-    search.set("parser_layout_profile", pipeline.parser_layout_profile);
-  }
-  const query = search.size > 0 ? `?${search.toString()}` : "";
-  const response = await fetch(apiUrl(`/api/benchmarks${query}`), {
-    credentials: "include",
-  });
-  return readJson<BenchmarkOverview>(response);
-}
 
 export function benchmarkDatasetUrl(pipeline?: ParserPipeline): string {
   const url = apiUrl("/api/benchmarks/export");
@@ -53,25 +42,6 @@ export async function importBenchmarkDataset(
     credentials: "include",
   });
   return readJson<BenchmarkDatasetImportResult>(response);
-}
-
-export async function getBenchmarkDatasetImport(
-  requestId: string,
-): Promise<BenchmarkDatasetImportReceipt> {
-  const response = await fetch(
-    apiUrl(`/api/benchmarks/imports/${encodeURIComponent(requestId)}`),
-    { credentials: "include" },
-  );
-  return readJson<BenchmarkDatasetImportReceipt>(response);
-}
-
-export async function getBenchmarkReport(
-  reportId: string,
-): Promise<BenchmarkReport> {
-  const response = await fetch(apiUrl(`/api/benchmarks/${reportId}`), {
-    credentials: "include",
-  });
-  return readJson<BenchmarkReport>(response);
 }
 
 export async function setBenchmarkInclusion(

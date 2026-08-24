@@ -1,13 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import {
+  getBenchmarkDatasetImport as getDomainBenchmarkDatasetImport,
+  getBenchmarkOverview as getDomainBenchmarkOverview,
+  getBenchmarkReport as getDomainBenchmarkReport,
+} from "../../domains/benchmarks/api/benchmarksApi";
 import { jsonResponse, resetApiMocks } from "../../test/api";
 import {
   benchmarkDatasetUrl,
+  getBenchmarkDatasetImport,
   getBenchmarkOverview,
+  getBenchmarkReport,
   runParserBenchmark,
 } from "./benchmarks";
 
 afterEach(resetApiMocks);
+
+describe("benchmark read compatibility", () => {
+  it("preserves domain adapter export identities", () => {
+    expect(getBenchmarkOverview).toBe(getDomainBenchmarkOverview);
+    expect(getBenchmarkReport).toBe(getDomainBenchmarkReport);
+    expect(getBenchmarkDatasetImport).toBe(getDomainBenchmarkDatasetImport);
+  });
+});
 
 describe("benchmarkDatasetUrl", () => {
   it("keeps the deployment-default export URL when no pipeline is selected", () => {
