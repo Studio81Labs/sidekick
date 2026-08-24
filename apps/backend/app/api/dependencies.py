@@ -4,7 +4,7 @@ The application factory wires concrete settings, stores, and plugins into this
 container. Routers receive only the use-case callables they need.
 """
 
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from app.application.benchmarks import (
@@ -30,7 +30,7 @@ from app.domain.hands import (
     JobRecord,
     ScreenshotMetadataRequest,
 )
-from app.domain.backups import ApplicationBackupRestoreResult
+from app.application.backups import ApplicationBackupExport, BackupService
 from app.domain.training import TrainingDecisionRequest
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
@@ -165,21 +165,7 @@ class JobsRecommendationRuntime:
     recommend: Callable[[str, str | None], JobRecord]
 
 
-@dataclass(frozen=True)
-class ApplicationBackupExport:
-    """A prepared full application backup ready for an HTTP response."""
-
-    content: Iterator[bytes]
-    filename: str
-
-
-@dataclass(frozen=True)
-class BackupsRuntime:
-    """Dependencies required by application backup transport endpoints."""
-
-    max_upload_bytes: int
-    export_backup: Callable[[], Awaitable[ApplicationBackupExport]]
-    restore_backup: Callable[[bytes], ApplicationBackupRestoreResult]
+BackupsRuntime = BackupService
 
 
 @dataclass(frozen=True)

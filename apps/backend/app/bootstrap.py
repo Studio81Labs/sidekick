@@ -32,9 +32,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.api.dependencies import (
     BACKGROUND_TASK_STATE_KEY,
     ApiRuntime,
-    ApplicationBackupExport,
     ApplicationBackupTransportError,
-    BackupsRuntime,
     BenchmarkConfigurationError,
     BenchmarkConflictError,
     BenchmarkDatasetInputError,
@@ -52,6 +50,7 @@ from app.api.dependencies import (
     JobUploadUnexpectedParserError,
     McpAdminRuntime,
 )
+from app.application.backups import ApplicationBackupExport, BackupService
 from app.application.benchmarks import (
     BenchmarkDatasetExport,
     BenchmarkImportStatus,
@@ -1545,7 +1544,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
             filename=f"poker-hero-backup-{timestamp}.zip",
         )
 
-    backups_runtime = BackupsRuntime(
+    backups_runtime = BackupService(
         max_upload_bytes=active_settings.max_backup_upload_bytes,
         export_backup=export_application_backup,
         restore_backup=restore_uploaded_application_backup,
