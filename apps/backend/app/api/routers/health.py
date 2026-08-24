@@ -3,7 +3,7 @@
 from fastapi import APIRouter
 
 from app.api.dependencies import ApiRuntime
-from app.models import HealthResponse
+from app.domain.health import HealthResponse
 
 
 def create_health_router(runtime: ApiRuntime) -> APIRouter:

@@ -8,8 +8,8 @@ from app.api.dependencies import (
     ApplicationBackupTransportError,
     BackupsRuntime,
 )
+from app.domain.backups import ApplicationBackupRestoreResult
 from app.api.response_contracts import ZIP_RESPONSE_CONTENT
-from app.models import ApplicationBackupRestoreResult
 
 
 def create_backups_router(runtime: BackupsRuntime) -> APIRouter:

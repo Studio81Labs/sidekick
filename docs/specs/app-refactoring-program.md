@@ -293,10 +293,12 @@ review integration suites pass.
 
 Dependencies: Wave 3
 
-- Split poker state, job lifecycle, recommendation, training, pipeline, and
-  benchmark models into owned modules.
-- Pipeline, poker, recommendation, training, and benchmark contracts now live
-  under `app/domain` (`app/domain/benchmarks` owns benchmark contracts); `app/models.py`
+- Split poker state, job lifecycle, recommendation, training, pipeline,
+  benchmark, health, and backup models into owned modules.
+- Pipeline, poker, recommendation, training, benchmark, health, and backup
+  contracts now live under `app/domain` (`app/domain/benchmarks` owns
+  benchmark contracts, `app/domain/health` owns health response contracts, and
+  `app/domain/backups` owns backup response contracts); `app/models.py`
   preserves compatibility exports.
 - Add `app/domain/hands` with job lifecycle contracts (`JobRecord`,
   `JobQueue`, `JobHistory`, `ArchiveJobsRequest`,
@@ -484,15 +486,15 @@ Every implementation PR must include:
 
 ## Implementation Status
 
-| Wave | Status      | Current work                                                                                                                                                                                                         |
-| ---- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                                          |
-| 1    | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                                  |
-| 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                                |
-| 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                                              |
-| 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                                    |
-| 5    | In progress | Pipeline, poker state, recommendation, training, job-lifecycle, and benchmark contracts moved under `app/domain` (`app/domain/benchmarks` owns benchmark contracts); compatibility exports remain in `app/models.py` |
-| 6-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                                  |
+| Wave | Status      | Current work                                                                                                                                                                                                                                                                                                          |
+| ---- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                                                                                                                                           |
+| 1    | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                                                                                                                                   |
+| 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                                                                                                                                 |
+| 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                                                                                                                                               |
+| 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                                                                                                                                     |
+| 5    | In progress | Pipeline, poker state, recommendation, training, job-lifecycle, health, and benchmark contracts moved under `app/domain` (`app/domain/benchmarks` owns benchmark contracts, `app/domain/health` owns health response, and `app/domain/backups` owns backup response); compatibility exports remain in `app/models.py` |
+| 6-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                                                                                                                                   |
 
 ## Exit Criteria
 
