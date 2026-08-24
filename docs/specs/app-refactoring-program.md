@@ -367,7 +367,9 @@ job records or recovery side effects stored in the reducer. Both recovery
 channels expose explicit idle, requested, running, and retry-scheduled phases
 that are advanced at their existing effect boundaries. Active asynchronous
 lease recovery takes precedence over an overlapping retry timer until its
-request settles.
+request settles. Active job selection is now reducer-owned through a typed
+select/clear event, while hand-review form alignment and its synchronous service
+ref remain in the hand-review feature.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
