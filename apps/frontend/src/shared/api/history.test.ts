@@ -1,12 +1,19 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { getHistory as getDomainHistory } from "../../domains/history/api/historyApi";
+import {
+  archiveJobs as archiveDomainJobs,
+  getHistory as getDomainHistory,
+} from "../../domains/history/api/historyApi";
 import { jsonResponse, resetApiMocks } from "../../test/api";
 import { archiveJobs, getHistory } from "./history";
 
 afterEach(resetApiMocks);
 
 describe("archiveJobs", () => {
+  it("preserves the domain adapter export identity", () => {
+    expect(archiveJobs).toBe(archiveDomainJobs);
+  });
+
   it("archives queues larger than the backend request limit in bounded batches", async () => {
     const jobIds = Array.from({ length: 205 }, (_, index) => `job-${index}`);
     const fetchMock = vi
