@@ -18,13 +18,13 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService as JobsUploadRuntime,
 )
+from app.application.system import SystemQueryService
 from app.application.training import (
     TrainingProgressQuery,
     TrainingService as TrainingRuntime,
 )
-from app.domain.pipeline import PipelineCapabilities, PipelineSelection
+from app.domain.pipeline import PipelineSelection
 from app.domain.poker import CanonicalState
-from app.domain.health import HealthResponse
 from app.domain.hands import (
     JobQueue,
     JobRecord,
@@ -123,12 +123,7 @@ class ApplicationBackupTransportError(Exception):
         self.status_code = status_code
 
 
-@dataclass(frozen=True)
-class ApiRuntime:
-    """Read-only dependencies shared by the first extracted API routers."""
-
-    get_health: Callable[[], HealthResponse]
-    get_pipeline_capabilities: Callable[[], PipelineCapabilities]
+ApiRuntime = SystemQueryService
 
 
 @dataclass(frozen=True)

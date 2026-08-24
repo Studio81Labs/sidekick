@@ -31,7 +31,6 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.dependencies import (
     BACKGROUND_TASK_STATE_KEY,
-    ApiRuntime,
     ApplicationBackupTransportError,
     BenchmarkConfigurationError,
     BenchmarkConflictError,
@@ -67,6 +66,7 @@ from app.application.jobs import (
     JobUploadService,
 )
 from app.application.training import TrainingProgressQuery, TrainingService
+from app.application.system import SystemQueryService
 from app.api.dependencies import PipelineCapabilitiesUnavailableError
 from app.api.routers.backups import create_backups_router
 from app.api.routers.benchmarks import create_benchmarks_router
@@ -1333,7 +1333,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
             current.error = None
             return save_job(current)
 
-    api_runtime = ApiRuntime(
+    api_runtime = SystemQueryService(
         get_health=get_health,
         get_pipeline_capabilities=get_pipeline_capabilities,
     )
