@@ -41,6 +41,7 @@ import {
   useAnalyzerMutationLeases,
   useAnalyzerQueueWorkflow,
   useAnalyzerRecoveryWorkflow,
+  useAnalyzerWorkflowProjections,
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
 import {
   fetchHistoryPageQuery,
@@ -79,29 +80,20 @@ import {
   PERSISTED_JOB_ID_PATTERN,
   PERSISTED_MUTATION_LEASE_MS,
   PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS,
-  PROCESSING_QUEUE_STORAGE_KEY,
-  PROCESSING_QUEUE_TOTAL_STORAGE_KEY,
   type PersistedJobMutationScope,
   type PersistedMutationLease,
   type ProcessingQueueRestore,
   type ProjectionMutationLease,
   type ProjectionMutationTarget,
   benchmarkImportLeaseRequestId,
-  claimPersistedMutationLease,
-  clearPersistedMutationLease,
   createMutationRequestId,
   getHistorySearchExtent,
   getProcessingQueueExtent,
   historyItemsFromPage,
-  historySessionSynced,
   isBenchmarkImportLease,
   isLocalUploadError,
   isPristineBenchmarkImport,
   jobMutationExpectationReached,
-  markHistorySessionSynced,
-  markHistorySessionUnsynced,
-  markProcessingQueueSessionSynced,
-  markProcessingQueueSessionUnsynced,
   matchingArchiveLeaseTargets,
   mergeHistoryItems,
   mutationLeaseJobIds,
@@ -110,25 +102,11 @@ import {
   newerHistoryJob,
   preserveUploadRequestId,
   processingJobsForCache,
-  processingQueueSessionSynced,
   projectionMutationLeaseTargetReached,
   projectionMutationTarget,
   projectionMutationTargetReached,
-  readCachedHistoryTotal,
-  readCachedProcessingQueueTotal,
-  readHistory,
-  readHistoryTotal,
-  readPersistedMutationLease,
-  readProcessingQueue,
   reconcileHistoryItems,
   reconcileProcessingJobs,
-  replacePersistedMutationLease,
-  startArchiveMutationLease,
-  startPersistedMutationLease,
-  startProjectionMutationLease,
-  writeHistory,
-  writeHistoryTotal,
-  writeProcessingQueue,
 } from "../../features/workspace/lib/persistence";
 import {
   compatiblePipelineLayouts,
@@ -163,40 +141,19 @@ import {
 
 export default function AnalyzerPage() {
   const [mutationOwnerId] = useState(mutationLeaseOwnerId);
-  const [initialProcessingMutationLease] = useState(() =>
-    claimPersistedMutationLease("processing", mutationOwnerId),
-  );
-  const [initialHistoryMutationLease] = useState(() =>
-    claimPersistedMutationLease("history", mutationOwnerId),
-  );
 
   return (
-    <AnalyzerWorkflowProvider
-      initialMutationLeases={{
-        processing: initialProcessingMutationLease,
-        history: initialHistoryMutationLease,
-      }}
-    >
-      <AnalyzerWorkspace
-        initialHistoryMutationLease={initialHistoryMutationLease}
-        initialProcessingMutationLease={initialProcessingMutationLease}
-        mutationOwnerId={mutationOwnerId}
-      />
+    <AnalyzerWorkflowProvider mutationOwnerId={mutationOwnerId}>
+      <AnalyzerWorkspace mutationOwnerId={mutationOwnerId} />
     </AnalyzerWorkflowProvider>
   );
 }
 
 type AnalyzerWorkspaceProps = {
-  initialHistoryMutationLease: PersistedMutationLease | null;
-  initialProcessingMutationLease: PersistedMutationLease | null;
   mutationOwnerId: string;
 };
 
-function AnalyzerWorkspace({
-  initialHistoryMutationLease,
-  initialProcessingMutationLease,
-  mutationOwnerId,
-}: AnalyzerWorkspaceProps) {
+function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
   const queryClient = useQueryClient();
   const {
     finishRecovery,
@@ -218,6 +175,31 @@ function AnalyzerWorkspace({
   } = useAnalyzerQueueWorkflow();
   const { mutationLeases, setMutationLease: setWorkflowMutationLease } =
     useAnalyzerMutationLeases();
+  const initialProcessingMutationLease = mutationLeases.processing;
+  const initialHistoryMutationLease = mutationLeases.history;
+  const {
+    clearPersistedMutationLease,
+    historySessionSynced,
+    isProcessingQueueStorageEvent,
+    markHistorySessionSynced,
+    markHistorySessionUnsynced,
+    markProcessingQueueSessionSynced,
+    markProcessingQueueSessionUnsynced,
+    processingQueueSessionSynced,
+    readCachedHistoryTotal,
+    readCachedProcessingQueueTotal,
+    readHistory,
+    readHistoryTotal,
+    readPersistedMutationLease,
+    readProcessingQueue,
+    replacePersistedMutationLease,
+    startArchiveMutationLease,
+    startPersistedMutationLease,
+    startProjectionMutationLease,
+    writeHistory,
+    writeHistoryTotal,
+    writeProcessingQueue,
+  } = useAnalyzerWorkflowProjections();
   const [jobs, setJobs] = useState<JobRecord[]>(
     () => readProcessingQueue() ?? [],
   );
@@ -520,12 +502,7 @@ function AnalyzerWorkspace({
   useEffect(() => {
     let restoreTimer: number | null = null;
     const onStorage = (event: StorageEvent) => {
-      if (
-        (event.key !== PROCESSING_QUEUE_STORAGE_KEY &&
-          event.key !== PROCESSING_QUEUE_TOTAL_STORAGE_KEY) ||
-        (event.storageArea !== null &&
-          event.storageArea !== window.localStorage)
-      ) {
+      if (!isProcessingQueueStorageEvent(event)) {
         return;
       }
       markProcessingQueueSessionUnsynced();

@@ -379,7 +379,10 @@ focused command; synchronous refs remain runtime services while persistence
 claims, compare-and-swap writes, settlement, and retry effects stay external.
 Recovery request generations and phases now have a focused hook with memoized
 request, start, retry, and finish commands, so the analyzer page no longer
-constructs raw workflow recovery events.
+constructs raw workflow recovery events. Processing, history, and mutation-lease
+browser persistence now enters the workflow through a provider-injected
+projection adapter; the existing codecs, storage formats, and recovery policy
+remain unchanged.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
