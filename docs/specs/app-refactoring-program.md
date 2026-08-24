@@ -382,7 +382,9 @@ request, start, retry, and finish commands, so the analyzer page no longer
 constructs raw workflow recovery events. Processing, history, and mutation-lease
 browser persistence now enters the workflow through a provider-injected
 projection adapter; the existing codecs, storage formats, and recovery policy
-remain unchanged.
+remain unchanged. Pending restore promises, retry scheduling, in-flight restore
+IDs, and retry flags now live in a focused recovery runtime-service hook rather
+than being allocated by the analyzer page.
 
 Gate: reducer transition table tests plus existing upload, recovery, archive,
 delete, and cross-tab integration tests pass.
