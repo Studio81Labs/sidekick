@@ -325,7 +325,9 @@ Progress: application-owned processing-job services now dispatch queries,
 uploads, short mutations, recommendation commands, and history list/archive from
 `app/application/jobs.py`. HTTP job routes depend on those services directly,
 and hosted MCP reaches the same boundaries through its internal ASGI API client.
-The remaining use-case domains still use bootstrap-composed runtime callbacks.
+Training review, progress, and lesson-export use cases now dispatch through
+`app/application/training.py`. The remaining use-case domains still use
+bootstrap-composed runtime callbacks.
 
 Gate: crash/recovery, stale recommendation, deletion during parsing,
 multiprocess locking, backup, and import tests pass.
