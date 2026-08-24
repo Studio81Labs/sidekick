@@ -1,12 +1,21 @@
 from typing import cast
 
+from app.api.dependencies import (
+    JobUploadPipelineRequest as CompatibilityJobUploadPipelineRequest,
+)
+from app.api.dependencies import JobUploadRequest as CompatibilityJobUploadRequest
+from app.api.dependencies import JobsUploadRuntime
 from app.application.jobs import (
     JobImage,
     JobMutationService,
     JobQueryService,
     JobRecommendationService,
+    JobUploadPipelineRequest,
+    JobUploadRequest,
+    JobUploadService,
 )
 from app.domain.hands import JobQueue, JobRecord, ScreenshotMetadataRequest
+from app.domain.pipeline import PipelineSelection
 from app.domain.poker import CanonicalState
 from app.domain.training import TrainingDecisionRequest
 
@@ -116,3 +125,50 @@ def test_job_recommendation_service_dispatches_request_ids() -> None:
     assert service.recommend(job.id, "recommend-1") is job
     assert service.recommend(job.id, None) is job
     assert calls == [(job.id, "recommend-1"), (job.id, None)]
+
+
+def test_job_upload_service_dispatches_selection_and_processing() -> None:
+    calls: list[tuple[str, object]] = []
+    selection = cast(PipelineSelection, object())
+    job = JobRecord(
+        original_filename="table.png",
+        image_filename="image.png",
+        parser_provider="mock",
+        recommendation_provider="mock",
+    )
+    pipeline_request = JobUploadPipelineRequest(
+        parser_provider="mock",
+        parser_layout_profile=None,
+        recommendation_provider="mock",
+        recommendation_engine=None,
+    )
+    upload_request = JobUploadRequest(
+        original_filename="table.png",
+        image_bytes=b"image",
+        upload_request_id="upload-1",
+        selection=selection,
+    )
+
+    def resolve_pipeline(request: JobUploadPipelineRequest) -> PipelineSelection:
+        calls.append(("resolve", request))
+        return selection
+
+    def process_upload(request: JobUploadRequest) -> JobRecord:
+        calls.append(("process", request))
+        return job
+
+    service = JobUploadService(1024, resolve_pipeline, process_upload)
+
+    assert service.max_upload_bytes == 1024
+    assert service.resolve_pipeline(pipeline_request) is selection
+    assert service.process_upload(upload_request) is job
+    assert calls == [
+        ("resolve", pipeline_request),
+        ("process", upload_request),
+    ]
+
+
+def test_job_upload_transport_contracts_preserve_application_identity() -> None:
+    assert CompatibilityJobUploadPipelineRequest is JobUploadPipelineRequest
+    assert CompatibilityJobUploadRequest is JobUploadRequest
+    assert JobsUploadRuntime is JobUploadService

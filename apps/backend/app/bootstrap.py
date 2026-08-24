@@ -53,10 +53,7 @@ from app.api.dependencies import (
     JobUploadInputError,
     JobUploadParserConfigurationError,
     JobUploadParserProviderError,
-    JobUploadPipelineRequest,
-    JobUploadRequest,
     JobUploadUnexpectedParserError,
-    JobsUploadRuntime,
     McpAdminRuntime,
     TrainingProgressQuery,
     TrainingRuntime,
@@ -66,6 +63,9 @@ from app.application.jobs import (
     JobMutationService,
     JobQueryService,
     JobRecommendationService,
+    JobUploadPipelineRequest,
+    JobUploadRequest,
+    JobUploadService,
 )
 from app.api.dependencies import PipelineCapabilitiesUnavailableError
 from app.api.routers.backups import create_backups_router
@@ -1368,7 +1368,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
     jobs_recommendation_runtime = JobRecommendationService(
         recommend=recommend_processing_job,
     )
-    jobs_upload_runtime = JobsUploadRuntime(
+    jobs_upload_runtime = JobUploadService(
         max_upload_bytes=active_settings.max_upload_bytes,
         resolve_pipeline=resolve_upload_pipeline,
         process_upload=process_uploaded_image,

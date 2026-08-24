@@ -7,6 +7,11 @@ container. Routers receive only the use-case callables they need.
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 
+from app.application.jobs import (
+    JobUploadPipelineRequest,
+    JobUploadRequest,
+    JobUploadService as JobsUploadRuntime,
+)
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 from app.domain.poker import CanonicalState, Street
 from app.domain.health import HealthResponse
@@ -173,35 +178,6 @@ class JobsRecommendationRuntime:
     """Dependencies required by the processing job recommendation endpoint."""
 
     recommend: Callable[[str, str | None], JobRecord]
-
-
-@dataclass(frozen=True)
-class JobUploadPipelineRequest:
-    """Pipeline selectors validated from an upload multipart request."""
-
-    parser_provider: str | None
-    parser_layout_profile: str | None
-    recommendation_provider: str | None
-    recommendation_engine: str | None
-
-
-@dataclass(frozen=True)
-class JobUploadRequest:
-    """Bounded upload data passed to the synchronous processing use case."""
-
-    original_filename: str
-    image_bytes: bytes
-    upload_request_id: str | None
-    selection: PipelineSelection
-
-
-@dataclass(frozen=True)
-class JobsUploadRuntime:
-    """Dependencies required by the processing job upload endpoint."""
-
-    max_upload_bytes: int
-    resolve_pipeline: Callable[[JobUploadPipelineRequest], PipelineSelection]
-    process_upload: Callable[[JobUploadRequest], JobRecord]
 
 
 @dataclass(frozen=True)

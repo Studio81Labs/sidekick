@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from app.domain.pipeline import PipelineSelection
 from app.domain.hands import (
     JobQueue,
     JobRecord,
@@ -21,6 +22,8 @@ DeleteJob = Callable[[str], None]
 ApproveJob = Callable[[str, CanonicalState], JobRecord]
 RecordTrainingDecision = Callable[[str, TrainingDecisionRequest], JobRecord]
 RecommendJob = Callable[[str, str | None], JobRecord]
+ResolveUploadPipeline = Callable[["JobUploadPipelineRequest"], PipelineSelection]
+ProcessUpload = Callable[["JobUploadRequest"], JobRecord]
 
 
 @dataclass(frozen=True)
@@ -29,6 +32,26 @@ class JobImage:
 
     content: bytes
     media_type: str
+
+
+@dataclass(frozen=True)
+class JobUploadPipelineRequest:
+    """Requested parser and recommendation pipeline overrides for an upload."""
+
+    parser_provider: str | None
+    parser_layout_profile: str | None
+    recommendation_provider: str | None
+    recommendation_engine: str | None
+
+
+@dataclass(frozen=True)
+class JobUploadRequest:
+    """Validated image upload passed to application processing."""
+
+    original_filename: str
+    image_bytes: bytes
+    upload_request_id: str | None
+    selection: PipelineSelection
 
 
 class JobQueryService:
@@ -102,3 +125,26 @@ class JobRecommendationService:
         recommendation_request_id: str | None,
     ) -> JobRecord:
         return self._recommend(job_id, recommendation_request_id)
+
+
+class JobUploadService:
+    """Dispatch upload pipeline selection and processing through the application."""
+
+    def __init__(
+        self,
+        max_upload_bytes: int,
+        resolve_pipeline: ResolveUploadPipeline,
+        process_upload: ProcessUpload,
+    ) -> None:
+        self.max_upload_bytes = max_upload_bytes
+        self._resolve_pipeline = resolve_pipeline
+        self._process_upload = process_upload
+
+    def resolve_pipeline(
+        self,
+        request: JobUploadPipelineRequest,
+    ) -> PipelineSelection:
+        return self._resolve_pipeline(request)
+
+    def process_upload(self, request: JobUploadRequest) -> JobRecord:
+        return self._process_upload(request)
