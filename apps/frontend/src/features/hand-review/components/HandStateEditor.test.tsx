@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { StateForm } from "../lib/pokerStateForm";
+import type { StateForm } from "../../../domains/poker/model/pokerStateForm";
 import { HandStateEditor, type HandStateEditorProps } from "./HandStateEditor";
 
 afterEach(cleanup);

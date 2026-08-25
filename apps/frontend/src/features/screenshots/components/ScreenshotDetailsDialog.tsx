@@ -14,7 +14,7 @@ import {
   MAX_SCREENSHOT_NOTES_LENGTH,
   MAX_SCREENSHOT_TAG_INPUT_LENGTH,
   MAX_SCREENSHOT_TITLE_LENGTH,
-} from "../lib/screenshotMetadata";
+} from "../../../shared/lib/screenshotMetadata";
 import type { JobRecord } from "../../../shared/types/jobs";
 
 export interface ScreenshotDetailsDialogProps {

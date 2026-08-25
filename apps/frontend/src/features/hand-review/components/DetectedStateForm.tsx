@@ -14,7 +14,7 @@ import {
   type StateForm,
   type StateFormChange,
   type StreetOption,
-} from "../lib/pokerStateForm";
+} from "../../../domains/poker/model/pokerStateForm";
 
 export interface DetectedStateFormProps {
   children?: ReactNode;

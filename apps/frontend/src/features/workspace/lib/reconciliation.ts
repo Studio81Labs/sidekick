@@ -1,7 +1,7 @@
 import type { JobRecord } from "../../../shared/types/jobs";
 import type { HistoryItem } from "../../../domains/history/model/historyItem";
 import { isPristineBenchmarkImport } from "./cachedJobValidation";
-import { PERSISTED_JOB_ID_PATTERN } from "./cacheValidationPrimitives";
+import { PERSISTED_JOB_ID_PATTERN } from "../../../shared/lib/jobIdentity";
 
 export const LOCAL_UPLOAD_RECONCILIATION_WINDOW_MS = 2 * 60 * 1000;
 

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
-  PERSISTED_JOB_ID_PATTERN,
   PROCESSING_CACHE_FUTURE_SKEW_MS,
   isNullableCachedNumber,
   isSafeProcessingCacheTimestamp,
@@ -10,12 +9,6 @@ import {
 describe("cache validation primitives", () => {
   afterEach(() => {
     vi.useRealTimers();
-  });
-
-  it("accepts only lowercase 32-character persisted job ids", () => {
-    expect(PERSISTED_JOB_ID_PATTERN.test("a".repeat(32))).toBe(true);
-    expect(PERSISTED_JOB_ID_PATTERN.test("A".repeat(32))).toBe(false);
-    expect(PERSISTED_JOB_ID_PATTERN.test("a".repeat(31))).toBe(false);
   });
 
   it("applies inclusive and exclusive nullable numeric bounds", () => {

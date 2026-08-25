@@ -4,8 +4,11 @@ import {
   approvalKey,
   benchmarkApprovalKey,
   toCanonicalState,
-} from "./canonicalPokerState";
-import { CONFIDENCE_KEYS, EMPTY_STATE } from "./pokerStateConstants";
+} from "../../../domains/poker/model/canonicalPokerState";
+import {
+  CONFIDENCE_KEYS,
+  EMPTY_STATE,
+} from "../../../domains/poker/model/pokerStateConstants";
 import { summarizeConfidences } from "./pokerStateConfidence";
 import { normalizePreflopPosition } from "../../../domains/poker/model/preflopPosition";
 

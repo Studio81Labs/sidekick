@@ -10,7 +10,7 @@ import {
   RANKS,
   STREETS,
   SUITS,
-} from "../../hand-review/lib/pokerState";
+} from "../../../domains/poker/model/pokerStateConstants";
 import {
   isCachedCompletedPostflopHistory,
   isCachedPostflopAction,

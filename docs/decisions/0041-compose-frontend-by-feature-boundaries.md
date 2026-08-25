@@ -77,11 +77,11 @@ Training progress delegates report loading, query filters, stale-response
 protection, and optimistic-filter rollback to a focused state hook. Its
 controller retains dialog commands and opening a selected training hand.
 
-Hand-review state separates card and number parsing, form/canonical conversion,
-confidence summaries, stable identity keys, and preflop position normalization.
-`hand-review/lib/pokerState.ts` remains the compatibility barrel. Benchmark
-presentation consumes the position model from hand review, removing the prior
-hand-review-to-benchmark dependency cycle.
+Poker state separates card and number parsing, form/canonical conversion,
+stable identity keys, constants, and preflop position normalization under the
+poker domain model. Hand review retains confidence presentation and imports the
+precise domain owners; the former `hand-review/lib/pokerState.ts` compatibility
+barrel is removed.
 
 The parser benchmark dialog composes focused owners for pipeline comparison,
 report overview, result sections, expandable case review, and dataset/run

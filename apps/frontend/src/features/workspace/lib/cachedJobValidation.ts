@@ -7,10 +7,8 @@ import {
   isCachedRecommendation,
   isCachedTrainingDecision,
 } from "./cachedRecommendationValidation";
-import {
-  PERSISTED_JOB_ID_PATTERN,
-  isSafeProcessingCacheTimestamp,
-} from "./cacheValidationPrimitives";
+import { PERSISTED_JOB_ID_PATTERN } from "../../../shared/lib/jobIdentity";
+import { isSafeProcessingCacheTimestamp } from "./cacheValidationPrimitives";
 
 export function isCachedParserResult(value: unknown): boolean {
   if (value === null) {

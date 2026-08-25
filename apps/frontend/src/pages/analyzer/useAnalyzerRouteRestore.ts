@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 
-import { PERSISTED_JOB_ID_PATTERN } from "../../features/workspace/lib/cacheValidationPrimitives";
+import { PERSISTED_JOB_ID_PATTERN } from "../../shared/lib/jobIdentity";
 import { isLocalUploadError } from "../../features/workspace/lib/reconciliation";
 import type { JobRecord } from "../../shared/types/jobs";
 import type { AnalyzerRouteState, AnalyzerSurface } from "./analyzerRouteState";

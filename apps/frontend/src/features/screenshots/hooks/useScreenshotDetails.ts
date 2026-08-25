@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
-import { PERSISTED_JOB_ID_PATTERN } from "../../workspace/lib/cacheValidation";
+import { PERSISTED_JOB_ID_PATTERN } from "../../../shared/lib/jobIdentity";
 import type { HistoryItem } from "../../../domains/history/model/historyItem";
-import { screenshotTags } from "../lib/screenshotMetadata";
+import { screenshotTags } from "../../../shared/lib/screenshotMetadata";
 import type { JobRecord } from "../../../shared/types/jobs";
 
 interface UseScreenshotDetailsOptions {
