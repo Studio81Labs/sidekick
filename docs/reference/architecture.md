@@ -550,6 +550,14 @@ Pipeline, benchmark, recommendation, and training features consume the same
 provider-neutral model; the analyzer page receives display-ready values from
 the pipeline feature hook rather than importing domain internals.
 
+Training action/certainty options, sizing reconciliation, solver-line
+comparison, and decision labels live under `domains/training/model`.
+Recommendation metadata guards live under `domains/recommendations/model` and
+are shared by recommendation evidence and training comparison without a
+feature-to-feature dependency. Training focus and queue presentation remain
+feature-owned, while the former training presentation compatibility barrel has
+been removed.
+
 The persisted analyzer history projection uses
 `domains/history/model/historyItem.ts` as its shared domain shape. Screenshot
 label formatting and the reusable screenshot rail row live under `shared/lib`
@@ -654,19 +662,19 @@ Mutation-lease contracts, job and projection expectations, lease matching,
 legacy decoding, browser storage, and lease factories are separate modules
 behind the stable `features/workspace/lib/mutationLeases.ts` barrel.
 
-Recommendation metadata validation, parser routing, preflop context, postflop
-range evidence, candidate ranking, and display formatting live in focused
-feature-library modules. `features/recommendation/lib/recommendationPresentation.ts`
-is the stable compatibility barrel; it contains no evidence parsing behavior.
+Recommendation parser routing, preflop context, postflop range evidence,
+candidate ranking, and display formatting live in focused feature-library
+modules. `features/recommendation/lib/recommendationPresentation.ts` remains a
+temporary compatibility barrel while its peer consumers migrate.
 Postflop evidence keeps solve-tree metadata, generic range context, limped-pot
 derivations, raised-pot derivations, and final composition in focused modules
 behind `postflopEvidencePresentation.ts`.
 Preflop evidence keeps stack and commitment context, limp and isolation lines,
 raised-pot actors and sizing, response ranges, and final composition in focused
 modules behind `preflopEvidencePresentation.ts`.
-Training options, decision comparison, review-queue copy, and suggested-focus
-ranking follow the same pattern behind
-`features/training/lib/trainingPresentation.ts`.
+Training review-queue copy and suggested-focus ranking remain in focused
+feature-library modules; reusable options and decision comparison import the
+training domain model directly, with no presentation barrel.
 Hand-review card parsing, form conversion, canonical identity, confidence
 summaries, and preflop-position normalization live in focused modules behind
 `features/hand-review/lib/pokerState.ts`. Benchmark presentation consumes the

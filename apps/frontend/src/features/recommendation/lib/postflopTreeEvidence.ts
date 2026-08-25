@@ -10,7 +10,7 @@ import {
   metadataRatio,
   metadataRecord,
   metadataStringList,
-} from "./recommendationMetadata";
+} from "../../../domains/recommendations/model/recommendationMetadata";
 
 export function appendPostflopTreeEvidence(
   raw: Record<string, unknown>,

@@ -6,12 +6,14 @@ import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection
 import {
   trainingCertaintyLabel,
   trainingDecisionLabel,
-  type TrainingActionDifferenceFocus,
-  type TrainingCertaintyFocus,
-  type TrainingFocus,
-  type TrainingPositionFocus,
-  type TrainingProgressView,
-} from "../lib/trainingPresentation";
+} from "../../../domains/training/model/trainingDecision";
+import type {
+  TrainingActionDifferenceFocus,
+  TrainingCertaintyFocus,
+  TrainingFocus,
+  TrainingPositionFocus,
+  TrainingProgressView,
+} from "../lib/trainingPresentationTypes";
 import { DialogFooter } from "../../../shared/components/DialogFooter";
 import { DialogFrame } from "../../../shared/components/DialogFrame";
 import { DialogHeader } from "../../../shared/components/DialogHeader";

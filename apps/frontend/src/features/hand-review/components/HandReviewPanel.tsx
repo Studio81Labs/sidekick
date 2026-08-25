@@ -5,13 +5,13 @@ import type { RecommendationEvidence } from "../../recommendation/lib/recommenda
 import type {
   TrainingActionOption,
   TrainingCertaintyOption,
-} from "../../training/lib/trainingPresentation";
+} from "../../../domains/training/model/trainingDecision";
 import { ButtonControl } from "../../../shared/components/FormControls";
 import { HandStateEditor, type HandStateEditorProps } from "./HandStateEditor";
 import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
 import { RecommendationPanel } from "../../recommendation/components/RecommendationPanel";
 import { TrainingDecisionPanel } from "../../training/components/TrainingDecisionPanel";
-import { trainingDecisionComparison } from "../../training/lib/trainingPresentation";
+import { trainingDecisionComparison } from "../../../domains/training/model/trainingDecision";
 import type { JobRecord } from "../../../shared/types/jobs";
 import type { RecommendationResult } from "../../../shared/types/recommendations";
 import type { TrainingDecision } from "../../../shared/types/training";

@@ -1,21 +1,13 @@
 [
   "features/benchmark/components/BenchmarkCaseResults.tsx -> features/recommendation/lib/recommendationPresentation.ts",
-  "features/benchmark/lib/benchmarkCaseComparison.ts -> features/training/lib/trainingPresentation.ts",
   "features/benchmark/lib/benchmarkRoutePresentation.ts -> features/recommendation/lib/recommendationPresentation.ts",
   "features/hand-review/components/HandReviewPanel.tsx -> features/recommendation/components/RecommendationPanel.tsx",
   "features/hand-review/components/HandReviewPanel.tsx -> features/recommendation/lib/recommendationPresentation.ts",
   "features/hand-review/components/HandReviewPanel.tsx -> features/training/components/TrainingDecisionPanel.tsx",
-  "features/hand-review/components/HandReviewPanel.tsx -> features/training/lib/trainingPresentation.ts",
   "features/hand-review/hooks/useHandReviewState.ts -> features/recommendation/lib/recommendationPresentation.ts",
-  "features/hand-review/hooks/useHandReviewState.ts -> features/training/lib/trainingPresentation.ts",
-  "features/recommendation/components/RecommendationPanel.tsx -> features/training/lib/trainingPresentation.ts",
   "features/screenshots/hooks/useScreenshotDetails.ts -> features/workspace/lib/cacheValidation.ts",
-  "features/training/lib/trainingDecisionPresentation.ts -> features/recommendation/lib/recommendationMetadata.ts",
   "features/workspace/lib/cachedPokerStateValidation.ts -> features/hand-review/lib/pokerState.ts",
-  "features/workspace/lib/cachedPostflopValidation.ts -> features/training/lib/trainingPresentation.ts",
-  "features/workspace/lib/cachedRecommendationValidation.ts -> features/training/lib/trainingPresentation.ts",
   "features/workspace/lib/mutationLeaseExpectations.ts -> features/hand-review/lib/pokerState.ts",
   "features/workspace/lib/mutationLeaseExpectations.ts -> features/screenshots/lib/screenshotMetadata.ts",
-  "features/workspace/lib/mutationLeaseValidation.ts -> features/training/lib/trainingPresentation.ts",
   "features/workspace/lib/workflow.ts -> features/hand-review/lib/pokerState.ts"
 ]

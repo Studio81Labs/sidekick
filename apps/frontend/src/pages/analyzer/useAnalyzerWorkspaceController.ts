@@ -110,13 +110,12 @@ import {
 } from "../../features/hand-review/lib/pokerState";
 import { parserRoutingFromRaw } from "../../features/recommendation/lib/recommendationPresentation";
 import {
-  parseTrainingSizing,
   suggestedActionDifferenceFocus,
   suggestedCertaintyFocus,
   suggestedPositionFocus,
   suggestedTrainingFocus,
-  trainingReviewQueueStatus,
-} from "../../features/training/lib/trainingPresentation";
+} from "../../features/training/lib/trainingFocusPresentation";
+import { trainingReviewQueueStatus } from "../../features/training/lib/trainingQueuePresentation";
 import {
   autoApprovalState,
   createLocalErrorJob,
@@ -248,6 +247,7 @@ export function useAnalyzerWorkspaceController({
     formBaselineRef,
     formDirtyRef,
     job,
+    parseTrainingSizing,
     recommendation: activeRecommendation,
     removeCompletedPostflopAction,
     removePostflopAction,

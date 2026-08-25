@@ -7,7 +7,7 @@ import {
   metadataLabel,
   metadataNumber,
   metadataRatio,
-} from "./recommendationMetadata";
+} from "../../../domains/recommendations/model/recommendationMetadata";
 
 export function appendPostflopRaisedRangeEvidence(
   rangeSource: string | null,

@@ -63,9 +63,10 @@ Mutation leases further separate their persisted contracts, job and projection
 expectations, lease matching, legacy decoding, browser storage, and factories.
 `workspace/lib/mutationLeases.ts` remains the stable lease compatibility barrel.
 
-Recommendation presentation follows the same pattern: metadata validation,
-parser routing, preflop and postflop evidence, candidate ranking, and formatting
-are separate feature-library modules. The existing
+Recommendation presentation follows the same pattern: parser routing, preflop
+and postflop evidence, candidate ranking, and formatting are separate
+feature-library modules, while reusable metadata validation lives in the
+recommendation domain model. The existing
 `recommendation/lib/recommendationPresentation.ts` path remains a compatibility
 barrel so consumers keep a stable contract without becoming coupled to those
 implementations.
@@ -78,10 +79,10 @@ isolation lines, raised-pot actors and sizing, response ranges, and final
 composition. `recommendation/lib/preflopEvidencePresentation.ts` remains its
 single-export compatibility barrel.
 
-Training presentation separates decision comparison and sizing, queue status,
-focus ranking, and shared option definitions. Its existing
-`training/lib/trainingPresentation.ts` import path remains a compatibility
-barrel.
+Training presentation separates queue status and focus ranking into focused
+feature modules. Decision comparison, sizing, and shared option definitions
+live in the training domain model; the former
+`training/lib/trainingPresentation.ts` compatibility barrel is removed.
 Training progress delegates report loading, query filters, stale-response
 protection, and optimistic-filter rollback to a focused state hook. Its
 controller retains dialog commands and opening a selected training hand.

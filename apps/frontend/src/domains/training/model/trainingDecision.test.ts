@@ -7,7 +7,7 @@ import {
   recommendationPolicySupport,
   trainingDecisionComparison,
   trainingSizingMatches,
-} from "./trainingDecisionPresentation";
+} from "./trainingDecision";
 
 const recommendation: RecommendationResult = {
   action: "bet",

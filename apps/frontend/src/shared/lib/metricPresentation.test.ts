@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   accessiblePointDelta,
+  benchmarkFieldLabel,
   benchmarkPercent,
   formatAccuracyDelta,
   formatCandidateValue,
@@ -16,6 +17,7 @@ describe("metric presentation", () => {
     expect(formatCandidateValue(1.23456)).toBe("1.235");
     expect(formatCandidateValue(2)).toBe("2");
     expect(benchmarkPercent(0.754)).toBe("75%");
+    expect(benchmarkFieldLabel("hero_cards")).toBe("hero cards");
     expect(formatEvLossBb(0.0432)).toBe("0.043 BB");
   });
 

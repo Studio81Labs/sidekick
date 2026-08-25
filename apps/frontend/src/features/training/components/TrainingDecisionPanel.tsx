@@ -4,9 +4,11 @@ import "./TrainingDecisionPanel.css";
 import {
   TRAINING_ACTION_OPTIONS,
   TRAINING_CERTAINTY_OPTIONS,
-  type TrainingActionOption,
-  type TrainingCertaintyOption,
-} from "../lib/trainingPresentation";
+} from "../../../domains/training/model/trainingOptions";
+import type {
+  TrainingActionOption,
+  TrainingCertaintyOption,
+} from "../../../domains/training/model/trainingDecision";
 import {
   ButtonControl,
   FormField,

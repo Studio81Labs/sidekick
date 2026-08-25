@@ -8,11 +8,11 @@ import {
   type RecommendationEvidence,
 } from "../lib/recommendationPresentation";
 import {
-  MAX_TRAINING_REVIEW_NOTE_LENGTH,
   trainingCertaintyLabel,
   trainingDecisionComparison,
   trainingDecisionLabel,
-} from "../../training/lib/trainingPresentation";
+} from "../../../domains/training/model/trainingDecision";
+import { MAX_TRAINING_REVIEW_NOTE_LENGTH } from "../../../domains/training/model/trainingOptions";
 import {
   ButtonControl,
   TextAreaControl,

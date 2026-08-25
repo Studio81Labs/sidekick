@@ -8,12 +8,15 @@ import {
   metadataNumber,
   metadataRatio,
   metadataRecord,
-} from "../../recommendation/lib/recommendationMetadata";
+} from "../../recommendations/model/recommendationMetadata";
 import {
   MIN_SUPPORTED_FREQUENCY,
   SIZING_MATCH_TOLERANCE,
 } from "./trainingOptions";
-import type { TrainingActionOption } from "./trainingPresentationTypes";
+
+export type TrainingActionOption = "" | RecommendationAction;
+
+export type TrainingCertaintyOption = "" | TrainingCertainty;
 
 export function trainingDecisionLabel(
   action: RecommendationAction,

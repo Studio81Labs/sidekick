@@ -4749,12 +4749,11 @@ function preflopEvidenceBoundaryViolations(): string[] {
   });
 }
 
-function trainingPresentationBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
-    barrelPath: "features/training/lib/trainingPresentation.ts",
-    label: "training presentation",
-    namedExportsAllowed: true,
-  });
+function retiredTrainingPresentationFacadeViolations(): string[] {
+  const facadePath = "features/training/lib/trainingPresentation.ts";
+  return existsSync(resolve(SOURCE_ROOT, facadePath))
+    ? [`retired training presentation facade exists: ${facadePath}`]
+    : [];
 }
 
 function handReviewPokerStateBoundaryViolations(): string[] {
@@ -5039,8 +5038,8 @@ describe("frontend source architecture", () => {
     expect(preflopEvidenceBoundaryViolations()).toEqual([]);
   });
 
-  it("keeps training presentation in focused modules", () => {
-    expect(trainingPresentationBoundaryViolations()).toEqual([]);
+  it("keeps the retired training presentation facade removed", () => {
+    expect(retiredTrainingPresentationFacadeViolations()).toEqual([]);
   });
 
   it("keeps hand-review poker state in focused modules", () => {
