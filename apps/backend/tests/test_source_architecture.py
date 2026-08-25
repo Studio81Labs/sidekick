@@ -62,6 +62,23 @@ def imported_modules(path: Path) -> list[str]:
     return modules
 
 
+def imports_app_models(path: Path) -> bool:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(
+            alias.name == "app.models" for alias in node.names
+        ):
+            return True
+        if isinstance(node, ast.ImportFrom):
+            if node.module == "app.models":
+                return True
+            if node.module == "app" and any(
+                alias.name == "models" for alias in node.names
+            ):
+                return True
+    return False
+
+
 def package_target(module: str, path: Path) -> str | None:
     if module.startswith("."):
         relative_parts = list(path.relative_to(APP_ROOT).parts[:-1])
@@ -105,4 +122,15 @@ def test_api_routers_do_not_import_runtime_wiring_dependencies() -> None:
                 for prefix in ROUTER_FORBIDDEN_IMPORT_PREFIXES
             ):
                 violations.append(f"{path}: {module}")
+    assert violations == []
+
+
+def test_models_compatibility_facade_is_retired() -> None:
+    assert not (APP_ROOT / "models.py").exists()
+
+    violations = [
+        str(path)
+        for path in sorted(APP_ROOT.parent.rglob("*.py"))
+        if imports_app_models(path)
+    ]
     assert violations == []

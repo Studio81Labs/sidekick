@@ -3,19 +3,6 @@ from pydantic import ValidationError
 
 from app.domain.backups import ApplicationBackupRestoreResult
 from app.domain.health import HealthResponse, DeploymentEnvironment
-from app.models import (
-    ApplicationBackupRestoreResult as CompatibilityApplicationBackupRestoreResult,
-    DeploymentEnvironment as CompatibilityDeploymentEnvironment,
-    HealthResponse as CompatibilityHealthResponse,
-)
-
-
-def test_health_and_backup_contracts_reexported_from_app_models() -> None:
-    assert CompatibilityHealthResponse is HealthResponse
-    assert CompatibilityApplicationBackupRestoreResult is ApplicationBackupRestoreResult
-    assert CompatibilityDeploymentEnvironment == DeploymentEnvironment
-
-
 def test_health_response_validates_literal_status_and_payload_shape() -> None:
     health = HealthResponse(
         status="ok",

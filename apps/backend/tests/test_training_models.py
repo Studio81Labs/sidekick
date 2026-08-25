@@ -23,9 +23,6 @@ from app.domain.training import (
     TrainingStreetSummary,
     TrainingTrend,
 )
-from app import models as compatibility_models
-
-
 TRAINING_MODEL_TYPES = (
     TrainingActionDifference,
     TrainingCertaintySummary,
@@ -42,20 +39,6 @@ TRAINING_MODEL_TYPES = (
     TrainingStreetSummary,
     TrainingTrend,
 )
-
-
-@pytest.mark.parametrize("model_type", TRAINING_MODEL_TYPES)
-def test_models_compatibility_surface_reexports_training_contracts(
-    model_type: type,
-) -> None:
-    assert getattr(compatibility_models, model_type.__name__) is model_type
-
-
-def test_models_compatibility_surface_reexports_training_aliases() -> None:
-    assert compatibility_models.TrainingCertainty == TrainingCertainty
-    assert compatibility_models.TrainingOutcome == TrainingOutcome
-    assert compatibility_models.TrainingReviewCertainty == TrainingReviewCertainty
-    assert compatibility_models.TrainingReviewOrder == TrainingReviewOrder
 
 
 def test_training_decision_json_round_trip_preserves_utc_timestamp() -> None:

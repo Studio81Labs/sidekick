@@ -299,8 +299,9 @@ Dependencies: Wave 3
 - Pipeline, poker, recommendation, training, benchmark, health, and backup
   contracts now live under `app/domain` (`app/domain/benchmarks` owns
   benchmark contracts, `app/domain/health` owns health response contracts, and
-  `app/domain/backups` owns backup response contracts); `app/models.py`
-  preserves compatibility exports.
+  `app/domain/backups` owns backup response contracts); the former
+  `app/models.py` compatibility facade has been removed and guarded by source
+  architecture tests.
 - Add `app/domain/hands` with job lifecycle contracts (`JobRecord`,
   `JobQueue`, `JobHistory`, `ArchiveJobsRequest`,
   `ScreenshotMetadataRequest`) as the ownership target, and migrate production
@@ -644,7 +645,7 @@ Every implementation PR must include:
 | 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                |
 | 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                              |
 | 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                    |
-| 5    | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; `app/models.py` is an exports-only compatibility facade             |
+| 5    | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; the `app/models.py` facade is retired and guarded                   |
 | 6    | In progress | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` now owns repository composition, startup recovery, and lock ordering for imports, backups, and restore |
 | 7    | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
 | 8    | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |

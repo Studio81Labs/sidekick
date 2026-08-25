@@ -6,19 +6,6 @@ from app.domain.pipeline import (
     PipelineOption,
     PipelineSelection,
 )
-from app.models import (
-    PipelineCapabilities as CompatibilityPipelineCapabilities,
-)
-from app.models import PipelineOption as CompatibilityPipelineOption
-from app.models import PipelineSelection as CompatibilityPipelineSelection
-
-
-def test_models_compatibility_surface_reexports_domain_contracts() -> None:
-    assert CompatibilityPipelineOption is PipelineOption
-    assert CompatibilityPipelineSelection is PipelineSelection
-    assert CompatibilityPipelineCapabilities is PipelineCapabilities
-
-
 def test_pipeline_capabilities_parse_nested_contracts() -> None:
     capabilities = PipelineCapabilities(
         defaults={

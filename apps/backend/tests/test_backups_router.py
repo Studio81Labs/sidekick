@@ -7,7 +7,7 @@ from app.api.dependencies import (
     BackupsRuntime,
 )
 from app.api.routers.backups import create_backups_router
-from app.models import ApplicationBackupRestoreResult
+from app.domain.backups import ApplicationBackupRestoreResult
 
 
 def restore_result() -> ApplicationBackupRestoreResult:

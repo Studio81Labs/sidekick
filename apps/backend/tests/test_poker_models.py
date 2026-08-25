@@ -11,29 +11,6 @@ from app.domain.poker import (
     PostflopAction,
     PreflopAction,
 )
-from app.models import Card as CompatibilityCard
-from app.models import CanonicalState as CompatibilityCanonicalState
-from app.models import CompletedPostflopAction as CompatibilityCompletedAction
-from app.models import (
-    CompletedPostflopStreetHistory as CompatibilityCompletedHistory,
-)
-from app.models import DetectedState as CompatibilityDetectedState
-from app.models import ParserResult as CompatibilityParserResult
-from app.models import PostflopAction as CompatibilityPostflopAction
-from app.models import PreflopAction as CompatibilityPreflopAction
-
-
-def test_models_compatibility_surface_reexports_poker_contracts() -> None:
-    assert CompatibilityCard is Card
-    assert CompatibilityPostflopAction is PostflopAction
-    assert CompatibilityCompletedAction is CompletedPostflopAction
-    assert CompatibilityCompletedHistory is CompletedPostflopStreetHistory
-    assert CompatibilityPreflopAction is PreflopAction
-    assert CompatibilityDetectedState is DetectedState
-    assert CompatibilityParserResult is ParserResult
-    assert CompatibilityCanonicalState is CanonicalState
-
-
 def test_card_codes_retain_normalization_and_serialization() -> None:
     card = Card.from_code("10H")
 

@@ -13,28 +13,7 @@ from app.domain.benchmarks import (
     benchmark_values_match,
     normalize_benchmark_value,
 )
-from app.models import (
-    BENCHMARK_FIELDS as CompatibilityBenchmarkFields,
-    BENCHMARK_IMPORT_REQUEST_ID_PATTERN as CompatibilityBenchmarkRequestIdPattern,
-    BENCHMARK_POSITION_ALIASES as CompatibilityBenchmarkPositionAliases,
-    BenchmarkCaseResult as CompatibilityBenchmarkCaseResult,
-    BenchmarkDatasetImportReceipt as CompatibilityBenchmarkDatasetImportReceipt,
-    BenchmarkDatasetImportResult as CompatibilityBenchmarkDatasetImportResult,
-    BenchmarkReport as CompatibilityBenchmarkReport,
-    BenchmarkSelectionRequest as CompatibilityBenchmarkSelectionRequest,
-)
 from app.storage import FileBenchmarkStore
-
-
-def test_benchmarks_contracts_reexported_from_app_models() -> None:
-    assert CompatibilityBenchmarkFields is BENCHMARK_FIELDS
-    assert CompatibilityBenchmarkRequestIdPattern == BENCHMARK_IMPORT_REQUEST_ID_PATTERN
-    assert CompatibilityBenchmarkPositionAliases == BENCHMARK_POSITION_ALIASES
-    assert CompatibilityBenchmarkCaseResult is BenchmarkCaseResult
-    assert CompatibilityBenchmarkDatasetImportReceipt is BenchmarkDatasetImportReceipt
-    assert CompatibilityBenchmarkDatasetImportResult is BenchmarkDatasetImportResult
-    assert CompatibilityBenchmarkReport is BenchmarkReport
-    assert CompatibilityBenchmarkSelectionRequest is BenchmarkSelectionRequest
 
 
 def test_benchmark_dataset_import_receipt_validation() -> None:

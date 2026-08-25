@@ -7,15 +7,15 @@ import httpx
 import pytest
 
 from app.config import KNOWN_RECOMMENDATION_PROVIDERS, Settings
-from app.models import (
+from app.domain.poker import (
     CanonicalState,
     Card,
     CompletedPostflopAction,
     CompletedPostflopStreetHistory,
     PostflopAction,
     PreflopAction,
-    RecommendationRequest,
 )
+from app.domain.recommendations import RecommendationRequest
 from app.providers.base import (
     ProviderConfigurationError,
     ProviderError,

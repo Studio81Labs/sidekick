@@ -3,16 +3,10 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.models import (
-    CanonicalState,
-    Card,
-    JobRecord,
-    RecommendationAction,
-    RecommendationResult,
-    Street,
-    TrainingCertainty,
-    TrainingDecision,
-)
+from app.domain.hands import JobRecord
+from app.domain.poker import CanonicalState, Card, Street
+from app.domain.recommendations import RecommendationAction, RecommendationResult
+from app.domain.training import TrainingCertainty, TrainingDecision
 from app.training import build_training_lessons_markdown, summarize_training
 
 

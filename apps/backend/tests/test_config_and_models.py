@@ -5,9 +5,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings, get_settings
-from app.models import (
-    BenchmarkFieldComparison,
-    BenchmarkOverview,
+from app.domain.benchmarks import BenchmarkFieldComparison, BenchmarkOverview
+from app.domain.poker import (
     Card,
     CanonicalState,
     CompletedPostflopAction,
@@ -16,10 +15,9 @@ from app.models import (
     ParserResult,
     PreflopAction,
     PostflopAction,
-    RecommendationAction,
-    RecommendationResult,
-    TrainingDecisionRequest,
 )
+from app.domain.recommendations import RecommendationAction, RecommendationResult
+from app.domain.training import TrainingDecisionRequest
 
 
 def test_benchmark_overview_requires_consistent_layout_counts() -> None:

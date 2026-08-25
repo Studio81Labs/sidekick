@@ -2,14 +2,14 @@ from collections.abc import Callable
 
 import pytest
 
-from app.models import (
+from app.domain.poker import (
     CanonicalState,
     Card,
     FacingAction,
     PreflopAction,
     PreflopPosition,
-    RecommendationRequest,
 )
+from app.domain.recommendations import RecommendationRequest
 from app.solvers.preflop_chart import (
     COLD_FOUR_BET_DEFENSE_POLICIES,
     COLD_FOUR_BET_POLICY_NAME,

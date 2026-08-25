@@ -139,15 +139,13 @@ outcomes; Analyzer composition continues to own leases and review-queue flow.
 
 Provider-neutral pipeline selection and capability contracts live under
 `app/domain/pipeline`. Runtime configuration and HTTP adapters import that
-domain package directly, while `app/models.py` temporarily re-exports the same
-class objects for legacy callers during the contract migration.
+domain package directly.
 
 Poker card values, constrained numeric types, and validated preflop and
 postflop action histories live under `app/domain/poker`. Parsers, solvers, and
 training adapters import those primitives directly. The same domain owns
 detected parser state, parser evidence, and canonical user-approved state plus
-their cross-field wager and history validation. `app/models.py` temporarily
-re-exports the same class objects for persisted-data and caller compatibility.
+their cross-field wager and history validation.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, benchmarks, and
@@ -156,19 +154,17 @@ continues to re-export the same objects while dependent domains migrate.
 
 Upload/job-lifecycle contracts now live under `app/domain/hands`. `JobRecord`,
 `JobQueue`, `JobHistory`, `ScreenshotMetadataRequest`, and
-`ArchiveJobsRequest` are owned there, while the compatibility shell in
-`app/models.py` keeps object-identity compatibility while migration continues.
+`ArchiveJobsRequest` are owned there and imported directly by consumers.
 
 Parser benchmark data contracts now live under `app/domain/benchmarks`.
 `BenchmarkReport`, `BenchmarkCaseResult`, dataset import receipts and related
 normalization helpers (`normalize_benchmark_value`, `benchmark_values_match`,
-and canonical field constants) are owned there, while `app/models.py` re-exports
-the same contract objects during the migration period.
+and canonical field constants) are owned there.
 
 Health and backup transport contracts live in `app/domain/health` and
 `app/domain/backups`. `HealthResponse` and
-`ApplicationBackupRestoreResult` are currently re-exported from `app/models.py`
-for legacy compatibility while HTTP transport imports move directly to domain.
+`ApplicationBackupRestoreResult` are imported directly from their owning domain
+packages.
 
 File-backed persistence is organized under `app/storage`. Repository contracts
 live in `app/storage/ports.py`, job and benchmark adapters are split between
@@ -184,8 +180,9 @@ and restore transactions; transport callbacks continue to own HTTP error mapping
 
 Post-hand decisions, review requests, progress summaries, trends, and solver
 coverage contracts live under `app/domain/training`. Training aggregation and
-transport adapters import that domain directly, while `app/models.py`
-temporarily re-exports the same objects for persisted job compatibility.
+transport adapters import that domain directly. The former `app/models.py`
+compatibility facade has been retired; source-architecture tests prevent it or
+its imports from returning.
 
 Backend API integration tests share transport setup through
 `tests/api_test_support.py`, and route-domain suites live in focused modules.

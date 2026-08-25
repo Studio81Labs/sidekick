@@ -17,7 +17,8 @@ from app.mcp_gateway import (
     PokerMcpGateway,
     build_mcp_server,
 )
-from app.models import CanonicalState, TrainingDecisionRequest
+from app.domain.poker import CanonicalState
+from app.domain.training import TrainingDecisionRequest
 
 VALID_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
