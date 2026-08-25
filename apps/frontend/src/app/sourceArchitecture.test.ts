@@ -1261,14 +1261,16 @@ function waveNineMutationBoundaryViolations(): string[] {
         );
         continue;
       }
-      if (ts.isComputedPropertyName(property.name)) {
+      const propertyName = ts.isComputedPropertyName(property.name)
+        ? constantStringValue(property.name.expression)
+        : ts.isIdentifier(property.name) ||
+            ts.isStringLiteralLike(property.name)
+          ? property.name.text
+          : null;
+      if (propertyName === null) {
         states = new Set(["write"]);
         continue;
       }
-      const propertyName =
-        ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name)
-          ? property.name.text
-          : null;
       if (propertyName !== "method") {
         continue;
       }
@@ -2800,6 +2802,47 @@ function waveNineMutationBoundaryViolations(): string[] {
     function installedValues(
       node: ts.CallExpression,
     ): { target: ts.Expression; values: ts.Expression[] } | null {
+      if (
+        ts.isPropertyAccessExpression(node.expression) ||
+        ts.isElementAccessExpression(node.expression)
+      ) {
+        const receiver = node.expression.expression;
+        const method = ts.isPropertyAccessExpression(node.expression)
+          ? node.expression.name.text
+          : constantStringValue(node.expression.argumentExpression);
+        const receiverType = checker.getTypeAtLocation(receiver);
+        const collectionName = resolvedAliasSymbol(
+          receiverType.aliasSymbol ?? receiverType.getSymbol(),
+        )?.getName();
+        if (
+          (checker.isArrayType(receiverType) ||
+            checker.isTupleType(receiverType)) &&
+          method &&
+          ["fill", "push", "splice", "unshift"].includes(method)
+        ) {
+          const values =
+            method === "splice"
+              ? node.arguments.slice(2)
+              : method === "fill"
+                ? node.arguments.slice(0, 1)
+                : [...node.arguments];
+          return { target: receiver, values };
+        }
+        if (
+          ["Set", "WeakSet"].includes(collectionName ?? "") &&
+          method === "add" &&
+          node.arguments[0]
+        ) {
+          return { target: receiver, values: [node.arguments[0]] };
+        }
+        if (
+          ["Map", "WeakMap"].includes(collectionName ?? "") &&
+          method === "set" &&
+          node.arguments.length >= 2
+        ) {
+          return { target: receiver, values: node.arguments.slice(0, 2) };
+        }
+      }
       if (
         !ts.isPropertyAccessExpression(node.expression) ||
         !ts.isIdentifier(node.expression.expression) ||
