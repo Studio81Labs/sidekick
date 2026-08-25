@@ -496,6 +496,12 @@ compatibility/provider wrapper. `useAnalyzerWorkspaceController.ts` retains the
 queue/history mutation protocol because those transactions span capture,
 automation, review, benchmark labels, and recovery, while
 `AnalyzerWorkspaceComposition.tsx` owns only the grouped feature render tree.
+The controller invokes Query-aware commands and consumes an injected workflow
+projection interface; it neither owns raw HTTP transport nor imports concrete
+browser persistence. Source-architecture tests reject any production module
+that directly owns or imports both transport and browser persistence.
+Snapshot-consistent history-search and processing-queue extent reads live in
+`features/workspace/lib/queryReads.ts`, separate from browser cache codecs.
 `src/pages/analyzer/AnalyzerLayout.tsx` owns only the page shell, notification
 host, workspace landmarks, control rail, and dialog layer; it receives rendered
 feature content and has no workflow, transport, or persistence authority.

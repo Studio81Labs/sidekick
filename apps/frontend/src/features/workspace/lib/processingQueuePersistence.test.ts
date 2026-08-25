@@ -5,11 +5,11 @@ import { getProcessingJobs } from "../../../domains/jobs/api/jobsApi";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
-  getProcessingQueueExtent,
   readCachedProcessingQueueTotal,
   readProcessingQueue,
   writeProcessingQueue,
 } from "./processingQueuePersistence";
+import { getProcessingQueueExtent } from "./queryReads";
 
 vi.mock("../../../domains/jobs/api/jobsApi", () => ({
   getProcessingJobs: vi.fn(),

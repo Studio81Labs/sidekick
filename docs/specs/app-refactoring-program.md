@@ -542,7 +542,9 @@ principal writes use feature commands. The backend `app.models`, `app.api`, and
 `app.storage` compatibility exports are retired. The remaining workspace and
 benchmark feature-library barrels are also retired, leaving controller
 ownership, final release audits, and final documentation for subsequent bounded
-slices.
+slices. The controller ownership audit now proves that Query-aware command
+orchestration and injected browser projections do not create a module that owns
+both raw HTTP transport and browser persistence.
 The first peer-dependency cleanup moved shared error primitives out of the
 workspace feature and reduced the explicit peer-feature baseline from 41 to 34
 edges. Moving preflop-position normalization into the poker domain removed two
@@ -656,7 +658,7 @@ Every implementation PR must include:
 | 9    | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
 | 10   | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands  |
 | 11   | Complete    | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain               |
-| 12   | In progress | Frontend endpoint/library facades and backend compatibility exports are removed; the peer-feature baseline is empty; controller ownership, release audits, and final docs remain                     |
+| 12   | In progress | Frontend/backend compatibility exports are removed, peer-feature baseline is empty, and transport/persistence ownership is guarded; release audits and final docs remain                             |
 
 ## Exit Criteria
 
