@@ -1601,26 +1601,94 @@ function waveNineMutationBoundaryViolations(): string[] {
       ts.SyntaxKind.QuestionQuestionEqualsToken,
     ]);
 
+    function expressionReferencesExport(
+      expression: ts.Expression,
+      seen = new Set<ts.Symbol>(),
+    ): boolean {
+      while (
+        ts.isParenthesizedExpression(expression) ||
+        ts.isAsExpression(expression) ||
+        ts.isSatisfiesExpression(expression) ||
+        ts.isNonNullExpression(expression)
+      ) {
+        expression = expression.expression;
+      }
+      const expressionSymbol = resolvedSymbol(expression);
+      if (expressionSymbol === symbol) {
+        return true;
+      }
+      if (!expressionSymbol || seen.has(expressionSymbol)) {
+        return false;
+      }
+      seen.add(expressionSymbol);
+      return (expressionSymbol.declarations ?? []).some(
+        (declaration) =>
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer &&
+          expressionReferencesExport(declaration.initializer, seen),
+      );
+    }
+
+    function assignmentTarget(
+      expression: ts.Expression,
+    ): { label: string; topLevel: boolean } | null {
+      if (resolvedSymbol(expression) === symbol) {
+        return { label: exportName, topLevel: true };
+      }
+      const path: string[] = [];
+      while (
+        ts.isPropertyAccessExpression(expression) ||
+        ts.isElementAccessExpression(expression)
+      ) {
+        path.unshift(
+          ts.isPropertyAccessExpression(expression)
+            ? expression.name.text
+            : ts.isStringLiteralLike(expression.argumentExpression) ||
+                ts.isNumericLiteral(expression.argumentExpression)
+              ? expression.argumentExpression.text
+              : "[computed]",
+        );
+        expression = expression.expression;
+      }
+      if (path.length === 0 || !expressionReferencesExport(expression)) {
+        return null;
+      }
+      return {
+        label: exportName + "." + path.join("."),
+        topLevel: false,
+      };
+    }
+
     function visit(node: ts.Node): void {
       if (
         ts.isBinaryExpression(node) &&
-        assignmentOperators.has(node.operatorToken.kind) &&
-        resolvedSymbol(node.left) === symbol
+        assignmentOperators.has(node.operatorToken.kind)
       ) {
-        const implementation =
-          ts.isArrowFunction(node.right) || ts.isFunctionExpression(node.right)
-            ? node.right
-            : callableImplementation(resolvedSymbol(node.right));
-        if (implementation) {
-          callables.push({
-            callable: implementation,
-            label: exportName,
-            topLevel: true,
-          });
-        }
-        callables.push(...typedValueCallables(node.right, exportName));
-        if (ts.isCallExpression(node.right)) {
-          callables.push(...callExpressionCallables(node.right, exportName));
+        const target = assignmentTarget(node.left);
+        if (target) {
+          const implementation =
+            ts.isArrowFunction(node.right) ||
+            ts.isFunctionExpression(node.right)
+              ? node.right
+              : callableImplementation(resolvedSymbol(node.right));
+          if (implementation) {
+            callables.push({
+              callable: implementation,
+              label: target.label,
+              topLevel: target.topLevel,
+            });
+          }
+          callables.push(...typedValueCallables(node.right, target.label));
+          if (ts.isCallExpression(node.right)) {
+            callables.push(
+              ...callExpressionCallables(node.right, target.label).map(
+                (callable) => ({
+                  ...callable,
+                  topLevel: target.topLevel,
+                }),
+              ),
+            );
+          }
         }
       }
       ts.forEachChild(node, visit);
