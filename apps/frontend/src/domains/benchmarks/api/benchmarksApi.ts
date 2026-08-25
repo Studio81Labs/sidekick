@@ -1,5 +1,9 @@
 import type { components } from "../../../shared/api/generated/openapi";
-import { requestJson } from "../../../shared/api/transport";
+import { apiUrl } from "../../../shared/api/core";
+import {
+  type JsonRequestOptions,
+  requestJson,
+} from "../../../shared/api/transport";
 import type {
   BenchmarkDatasetImportResult,
   BenchmarkDatasetImportReceipt,
@@ -14,6 +18,18 @@ export type ParserPipeline = Pick<
   PipelineSelection,
   "parser_provider" | "parser_layout_profile"
 >;
+
+export function benchmarkDatasetUrl(pipeline?: ParserPipeline): string {
+  const url = apiUrl("/api/benchmarks/export");
+  if (!pipeline) {
+    return url;
+  }
+  const search = new URLSearchParams({
+    parser_provider: pipeline.parser_provider,
+    parser_layout_profile: pipeline.parser_layout_profile,
+  });
+  return `${url}?${search.toString()}`;
+}
 
 type BenchmarkOverviewResponse = components["schemas"]["BenchmarkOverview"];
 type BenchmarkReportResponse = components["schemas"]["BenchmarkReport"];
@@ -85,6 +101,24 @@ export async function getBenchmarkReport(
   const response = await requestJson<BenchmarkReportResponse>(
     `/api/benchmarks/${reportId}`,
     signal ? { signal } : undefined,
+  );
+  return toBenchmarkReport(response);
+}
+
+export async function runParserBenchmark(
+  pipeline?: ParserPipeline,
+): Promise<BenchmarkReport> {
+  const request: JsonRequestOptions = { method: "POST" };
+  if (pipeline) {
+    request.headers = { "Content-Type": "application/json" };
+    request.body = JSON.stringify({
+      parser_provider: pipeline.parser_provider,
+      parser_layout_profile: pipeline.parser_layout_profile,
+    });
+  }
+  const response = await requestJson<BenchmarkReportResponse>(
+    "/api/benchmarks/run",
+    request,
   );
   return toBenchmarkReport(response);
 }

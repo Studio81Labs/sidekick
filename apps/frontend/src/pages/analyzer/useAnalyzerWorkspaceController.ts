@@ -48,10 +48,10 @@ import { useAnalyzerRecoveryRuntimeServices } from "../../features/workspace/hoo
 import { useAnalyzerRequestRuntimeServices } from "../../features/workspace/hooks/useAnalyzerRequestRuntimeServices";
 import { archiveJobsCommand } from "../../features/history/services/archiveJobsCommand";
 import {
+  fetchBenchmarkImportReceiptQuery,
   fetchHistoryPageQuery,
   fetchJobQuery,
 } from "../../features/workspace/lib/queryReads";
-import { getBenchmarkDatasetImport } from "../../shared/api/benchmarks";
 import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
 import { applicationBackupUrl } from "../../shared/api/system";
 import { getTrainingProgress } from "../../shared/api/training";
@@ -601,7 +601,10 @@ export function useAnalyzerWorkspaceController({
         benchmarkImportRecoveryPromiseRef.current === null &&
         Date.now() >= benchmarkImportRetryNotBefore
       ) {
-        const recovery = getBenchmarkDatasetImport(benchmarkImportRequestId)
+        const recovery = fetchBenchmarkImportReceiptQuery(
+          queryClient,
+          benchmarkImportRequestId,
+        )
           .then(async (receipt) => {
             benchmarkImportRetryNotBefore = 0;
             if (

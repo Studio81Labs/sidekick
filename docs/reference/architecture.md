@@ -513,6 +513,12 @@ colocated tests. The former `src/shared/api/client.ts` compatibility facade has
 been removed; consumers import the focused endpoint or transport owner
 directly, and the source-architecture suite prevents the facade from being
 recreated.
+
+Benchmark HTTP transport and dataset-export URL construction are owned by
+`domains/benchmarks/api/benchmarksApi.ts`. Parser benchmark writes pass through
+`features/benchmark/services/runParserBenchmarkCommand.ts`, which declares the
+benchmark-overview Query invalidation outcome. The former
+`shared/api/benchmarks.ts` facade has been removed.
 Shared API data contracts mirror those domains under `src/shared/types`.
 The former `src/shared/types.ts` compatibility barrel has been removed;
 production and test code import narrowly owned domain contract modules directly.

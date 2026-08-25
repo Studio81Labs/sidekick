@@ -3,10 +3,12 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../shared/api/generated/openapi";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import {
+  benchmarkDatasetUrl,
   getBenchmarkDatasetImport,
   getBenchmarkOverview,
   getBenchmarkReport,
   importBenchmarkDataset,
+  runParserBenchmark,
   setBenchmarkInclusion,
   toBenchmarkDatasetImportReceipt,
   toBenchmarkDatasetImportResult,
@@ -37,6 +39,45 @@ describe("benchmark API adapter", () => {
     );
     expect(toBenchmarkDatasetImportResult(importResultResponse)).toBe(
       importResultResponse,
+    );
+  });
+
+  it("builds default and pipeline-scoped dataset export URLs", () => {
+    expect(benchmarkDatasetUrl()).toBe(
+      "http://localhost:8000/api/benchmarks/export",
+    );
+    expect(
+      benchmarkDatasetUrl({
+        parser_provider: "llm_vision",
+        parser_layout_profile: "pokerstars",
+      }),
+    ).toBe(
+      "http://localhost:8000/api/benchmarks/export?parser_provider=llm_vision&parser_layout_profile=pokerstars",
+    );
+  });
+
+  it("runs only the selected parser and layout", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ id: "benchmark-1" }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await runParserBenchmark({
+      parser_provider: "ocr_cv",
+      parser_layout_profile: "fortuna_nations",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/benchmarks/run",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          parser_provider: "ocr_cv",
+          parser_layout_profile: "fortuna_nations",
+        }),
+        credentials: "include",
+      },
     );
   });
 
