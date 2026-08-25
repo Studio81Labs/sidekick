@@ -916,6 +916,12 @@ function waveNineMutationBoundaryViolations(): string[] {
     const boundary = executionBoundary(reference);
     const referenceStart = reference.getStart();
     const sourceFile = reference.getSourceFile();
+    const aliases = new Set<ts.Symbol>([symbol]);
+
+    function referencesOptionAlias(node: ts.Node): boolean {
+      const nodeSymbol = resolvedSymbol(node);
+      return nodeSymbol !== null && aliases.has(nodeSymbol);
+    }
 
     function precedesReferenceInScope(node: ts.Node): boolean {
       const nodeBoundary = executionBoundary(node);
@@ -1092,6 +1098,33 @@ function waveNineMutationBoundaryViolations(): string[] {
 
     function visit(node: ts.Node): void {
       if (
+        precedesReferenceInScope(node) &&
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer
+      ) {
+        const aliasSymbol = resolvedSymbol(node.name);
+        const initializerSymbol = resolvedSymbol(node.initializer);
+        if (
+          aliasSymbol &&
+          initializerSymbol &&
+          aliases.has(initializerSymbol)
+        ) {
+          aliases.add(aliasSymbol);
+        }
+      } else if (
+        precedesReferenceInScope(node) &&
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left)
+      ) {
+        const aliasSymbol = resolvedSymbol(node.left);
+        const valueSymbol = resolvedSymbol(node.right);
+        if (aliasSymbol && valueSymbol && aliases.has(valueSymbol)) {
+          aliases.add(aliasSymbol);
+        }
+      }
+      if (
         ts.isBinaryExpression(node) &&
         node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
         node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
@@ -1105,7 +1138,12 @@ function waveNineMutationBoundaryViolations(): string[] {
           : ts.isStringLiteralLike(node.left.argumentExpression)
             ? node.left.argumentExpression.text
             : null;
-        if (resolvedSymbol(receiver) === symbol && propertyName === "method") {
+        const receiverSymbol = resolvedSymbol(receiver);
+        if (
+          receiverSymbol &&
+          aliases.has(receiverSymbol) &&
+          propertyName === "method"
+        ) {
           const nextState =
             node.operatorToken.kind === ts.SyntaxKind.EqualsToken
               ? methodValueState(node.right)
@@ -1121,7 +1159,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         ts.isCallExpression(node) &&
         precedesReferenceInScope(node) &&
         node.arguments[0] &&
-        resolvedSymbol(node.arguments[0]) === symbol
+        referencesOptionAlias(node.arguments[0])
       ) {
         const installer = globalInstaller(node);
         if (installer?.owner === "Object" && installer.method === "assign") {
@@ -1189,7 +1227,8 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
       if (ts.isCallExpression(node) && precedesReferenceInScope(node)) {
         node.arguments.forEach((argument, argumentIndex) => {
-          if (resolvedSymbol(argument) !== symbol) {
+          const argumentSymbol = resolvedSymbol(argument);
+          if (!argumentSymbol || !aliases.has(argumentSymbol)) {
             return;
           }
           for (const implementation of invocationTargetCallables(
