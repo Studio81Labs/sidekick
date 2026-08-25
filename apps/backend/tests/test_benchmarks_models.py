@@ -13,7 +13,7 @@ from app.domain.benchmarks import (
     benchmark_values_match,
     normalize_benchmark_value,
 )
-from app.storage import FileBenchmarkStore
+from app.storage.file_benchmark_store import FileBenchmarkStore
 
 
 def test_benchmark_dataset_import_receipt_validation() -> None:

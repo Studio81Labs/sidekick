@@ -4,7 +4,9 @@ from threading import Event, Lock as ThreadLock, Thread
 import pytest
 
 from app.providers.base import ProviderError, ProviderInputError
-from app.storage import FileBenchmarkStore, FileJobStore, JobNotFoundError
+from app.storage.file_benchmark_store import FileBenchmarkStore
+from app.storage.file_job_store import FileJobStore
+from app.storage.persistence import JobNotFoundError
 from api_test_support import (
     APPROVED_STATE,
     VALID_PNG,

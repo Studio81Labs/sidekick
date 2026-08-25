@@ -22,7 +22,7 @@ DEFAULT_OUTPUT = (
 
 sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.api import create_openapi_document  # noqa: E402
+from app.bootstrap import create_openapi_document  # noqa: E402
 from app.config import Settings  # noqa: E402
 
 

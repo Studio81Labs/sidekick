@@ -3,7 +3,7 @@ from threading import Event, Thread
 
 import pytest
 
-from app.storage import FileJobStore
+from app.storage.file_job_store import FileJobStore
 from api_test_support import APPROVED_STATE, approve_job, make_client, upload_job
 
 

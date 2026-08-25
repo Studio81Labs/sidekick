@@ -538,8 +538,10 @@ Wave 12 is in progress. The frontend shared-type barrel and shared API client,
 jobs/history, benchmark, training, and system facades have been retired, and
 architecture checks prevent production code from recreating or importing those
 compatibility surfaces. MCP transport now belongs to its domain adapter and
-principal writes use feature commands, leaving peer-feature exceptions, backend
-compatibility modules, and final release audits for subsequent bounded slices.
+principal writes use feature commands. The backend `app.models`, `app.api`, and
+`app.storage` compatibility exports are retired, leaving controller ownership,
+the training aggregation monolith, and final release audits for subsequent
+bounded slices.
 The first peer-dependency cleanup moved shared error primitives out of the
 workspace feature and reduced the explicit peer-feature baseline from 41 to 34
 edges. Moving preflop-position normalization into the poker domain removed two
@@ -653,7 +655,7 @@ Every implementation PR must include:
 | 9    | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
 | 10   | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands  |
 | 11   | Complete    | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain               |
-| 12   | In progress | All frontend shared endpoint facades are removed and the peer-feature exception baseline is empty; backend facades, controller ownership audits, release audits, and final docs remain               |
+| 12   | In progress | Frontend shared endpoint facades and backend compatibility exports are removed; the peer-feature baseline is empty; controller ownership, release audits, and final docs remain                      |
 
 ## Exit Criteria
 

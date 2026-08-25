@@ -10,9 +10,9 @@ from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
 
 import app.bootstrap as bootstrap_module
-from app.api import create_app
+from app.bootstrap import create_app
 from app.config import Settings
-from app.storage import FileBenchmarkStore
+from app.storage.file_benchmark_store import FileBenchmarkStore
 from api_test_support import make_client
 
 CORS_EXPOSED_HEADERS = (

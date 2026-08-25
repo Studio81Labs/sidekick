@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api import create_app
+from app.bootstrap import create_app
 from app.config import Settings
 from app.mcp_access import McpPrincipalStore
 from app.mcp_http import HostedMcpAuthMiddleware, _McpBodyReadLimiter

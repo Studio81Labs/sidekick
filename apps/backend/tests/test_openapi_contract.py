@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.api import create_openapi_document
+from app.bootstrap import create_openapi_document
 from app.config import Settings
 
 

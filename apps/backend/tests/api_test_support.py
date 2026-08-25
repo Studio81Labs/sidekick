@@ -5,9 +5,9 @@ from zipfile import ZipFile
 
 from fastapi.testclient import TestClient
 
-from app.api import create_app
+from app.bootstrap import create_app
 from app.config import Settings
-from app.storage import FileJobStore
+from app.storage.file_job_store import FileJobStore
 
 
 VALID_PNG = (

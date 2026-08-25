@@ -1396,11 +1396,3 @@ for module_name in (
     )
 
     assert result.returncode == 0, result.stderr
-
-
-def test_public_api_facade_retains_bootstrap_factory_compatibility() -> None:
-    from app import api
-    from app import bootstrap
-
-    assert api.create_app is bootstrap.create_app
-    assert api.create_openapi_document is bootstrap.create_openapi_document

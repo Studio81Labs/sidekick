@@ -18,7 +18,9 @@ from app.backup_cli import (
 from app.config import Settings
 from app.data_lock import InterprocessDataLock
 from app.domain.benchmarks import BenchmarkReport
-from app.storage import FileBenchmarkStore, FileJobStore, initialize_data_volume
+from app.storage.file_benchmark_store import FileBenchmarkStore
+from app.storage.file_job_store import FileJobStore
+from app.storage.persistence import initialize_data_volume
 
 
 VALID_PNG = base64.b64decode(

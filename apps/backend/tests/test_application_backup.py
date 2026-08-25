@@ -16,9 +16,10 @@ from PIL import Image
 
 import app.bootstrap as bootstrap_module
 import app.application_backup as application_backup_module
-from app.api import create_app
+from app.bootstrap import create_app
 from app.config import Settings
-from app.storage import FileBenchmarkStore, FileJobStore
+from app.storage.file_benchmark_store import FileBenchmarkStore
+from app.storage.file_job_store import FileJobStore
 
 
 VALID_PNG = base64.b64decode(

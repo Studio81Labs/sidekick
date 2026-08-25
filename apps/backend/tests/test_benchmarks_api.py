@@ -14,12 +14,9 @@ from app import dataset_import as dataset_import_module
 from app.config import Settings
 from app.parsers.base import ParserConfigurationError, ParserError
 from app.parsers.mock import MockParser
-from app.storage import (
-    BenchmarkImportNotFoundError,
-    FileBenchmarkStore,
-    FileJobStore,
-    JobNotFoundError,
-)
+from app.storage.file_benchmark_store import FileBenchmarkStore
+from app.storage.file_job_store import FileJobStore
+from app.storage.persistence import BenchmarkImportNotFoundError, JobNotFoundError
 from api_test_support import (
     APPROVED_STATE,
     VALID_PNG,

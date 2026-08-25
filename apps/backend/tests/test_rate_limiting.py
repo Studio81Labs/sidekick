@@ -6,7 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 import app.bootstrap as bootstrap_module
-from app.api import PROXY_SHARED_SECRET_HEADER, create_app
+from app.bootstrap import PROXY_SHARED_SECRET_HEADER, create_app
 from app.config import Settings
 from app.rate_limiting import (
     CONNECTING_IP_HEADER,
@@ -15,7 +15,7 @@ from app.rate_limiting import (
     rate_limit_category,
     request_rate_limit_identity,
 )
-from app.storage import FileBenchmarkStore
+from app.storage.file_benchmark_store import FileBenchmarkStore
 
 
 VALID_PNG = base64.b64decode(

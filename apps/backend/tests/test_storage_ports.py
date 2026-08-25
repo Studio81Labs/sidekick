@@ -1,6 +1,7 @@
 from inspect import getmembers, isfunction
 
-from app.storage import FileBenchmarkStore, FileJobStore
+from app.storage.file_benchmark_store import FileBenchmarkStore
+from app.storage.file_job_store import FileJobStore
 from app.storage.file_benchmark_store import FileBenchmarkStore as DirectFileBenchmarkStore
 from app.storage.file_job_store import FileJobStore as DirectFileJobStore
 from app.storage.ports import BenchmarkRepository, JobRepository
