@@ -894,6 +894,7 @@ function waveNineMutationBoundaryViolations(): string[] {
           ].includes(parent.operatorToken.kind)) ||
         ts.isCaseClause(parent) ||
         ts.isDefaultClause(parent) ||
+        ts.isCatchClause(parent) ||
         ((ts.isForStatement(parent) ||
           ts.isForInStatement(parent) ||
           ts.isForOfStatement(parent) ||
@@ -2621,6 +2622,178 @@ function waveNineMutationBoundaryViolations(): string[] {
     return [...callables];
   }
 
+  function implementationReturnsParameter(
+    implementation: CallableImplementation,
+    parameterIndex: number,
+    seenParameters = new Set<ts.Symbol>(),
+  ): boolean {
+    if (!ts.isFunctionLike(implementation)) {
+      return false;
+    }
+    const parameter = implementation.parameters[parameterIndex];
+    const parameterSymbol = parameter ? resolvedSymbol(parameter.name) : null;
+    if (!parameterSymbol || seenParameters.has(parameterSymbol)) {
+      return false;
+    }
+    const activeParameters = new Set(seenParameters);
+    activeParameters.add(parameterSymbol);
+    const aliases = new Set<ts.Symbol>([parameterSymbol]);
+
+    function referencesAlias(value: ts.Node): boolean {
+      while (
+        ts.isParenthesizedExpression(value) ||
+        ts.isAsExpression(value) ||
+        ts.isSatisfiesExpression(value) ||
+        ts.isNonNullExpression(value)
+      ) {
+        value = value.expression;
+      }
+      const valueSymbol = resolvedSymbol(value);
+      return valueSymbol !== null && aliases.has(valueSymbol);
+    }
+
+    function returnedExpressionCarriesAlias(value: ts.Expression): boolean {
+      while (
+        ts.isParenthesizedExpression(value) ||
+        ts.isAsExpression(value) ||
+        ts.isSatisfiesExpression(value) ||
+        ts.isNonNullExpression(value) ||
+        ts.isAwaitExpression(value)
+      ) {
+        value = value.expression;
+      }
+      if (referencesAlias(value)) {
+        return true;
+      }
+      if (ts.isConditionalExpression(value)) {
+        return (
+          returnedExpressionCarriesAlias(value.whenTrue) ||
+          returnedExpressionCarriesAlias(value.whenFalse)
+        );
+      }
+      if (
+        ts.isBinaryExpression(value) &&
+        [
+          ts.SyntaxKind.AmpersandAmpersandToken,
+          ts.SyntaxKind.BarBarToken,
+          ts.SyntaxKind.CommaToken,
+          ts.SyntaxKind.QuestionQuestionToken,
+        ].includes(value.operatorToken.kind)
+      ) {
+        return (
+          returnedExpressionCarriesAlias(value.left) ||
+          returnedExpressionCarriesAlias(value.right)
+        );
+      }
+      if (ts.isObjectLiteralExpression(value)) {
+        return value.properties.some((property) => {
+          if (ts.isPropertyAssignment(property)) {
+            return returnedExpressionCarriesAlias(property.initializer);
+          }
+          if (ts.isShorthandPropertyAssignment(property)) {
+            return referencesAlias(property.name);
+          }
+          return (
+            ts.isSpreadAssignment(property) &&
+            returnedExpressionCarriesAlias(property.expression)
+          );
+        });
+      }
+      if (ts.isArrayLiteralExpression(value)) {
+        return value.elements.some(
+          (element) =>
+            !ts.isOmittedExpression(element) &&
+            returnedExpressionCarriesAlias(
+              ts.isSpreadElement(element) ? element.expression : element,
+            ),
+        );
+      }
+      if (ts.isCallExpression(value)) {
+        const methodName =
+          ts.isPropertyAccessExpression(value.expression) ||
+          ts.isElementAccessExpression(value.expression)
+            ? ts.isPropertyAccessExpression(value.expression)
+              ? value.expression.name.text
+              : constantStringValue(value.expression.argumentExpression)
+            : null;
+        const receiver = invocationHelperReceiver(value);
+        if (
+          methodName === "bind" &&
+          receiver !== null &&
+          referencesAlias(receiver)
+        ) {
+          return true;
+        }
+        const factories = new Set(invocationTargetCallables(value.expression));
+        const directFactory = callableImplementation(
+          resolvedSymbol(callReference(value)),
+        );
+        if (directFactory) {
+          factories.add(directFactory);
+        }
+        return [...factories].some((factory) =>
+          value.arguments.some(
+            (argument, index) =>
+              referencesAlias(argument) &&
+              implementationReturnsParameter(factory, index, activeParameters),
+          ),
+        );
+      }
+      return false;
+    }
+
+    if (
+      ts.isArrowFunction(implementation) &&
+      !ts.isBlock(implementation.body)
+    ) {
+      return returnedExpressionCarriesAlias(implementation.body);
+    }
+
+    let returns = false;
+    function visit(node: ts.Node): void {
+      if (returns || (node !== implementation && ts.isFunctionLike(node))) {
+        return;
+      }
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer
+      ) {
+        const aliasSymbol = resolvedSymbol(node.name);
+        const initializerSymbol = resolvedSymbol(node.initializer);
+        if (
+          aliasSymbol &&
+          initializerSymbol &&
+          aliases.has(initializerSymbol)
+        ) {
+          aliases.add(aliasSymbol);
+        }
+      } else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left)
+      ) {
+        const aliasSymbol = resolvedSymbol(node.left);
+        const valueSymbol = resolvedSymbol(node.right);
+        if (aliasSymbol && valueSymbol && aliases.has(valueSymbol)) {
+          aliases.add(aliasSymbol);
+        }
+      }
+      if (
+        (ts.isReturnStatement(node) || ts.isYieldExpression(node)) &&
+        node.expression &&
+        returnedExpressionCarriesAlias(node.expression)
+      ) {
+        returns = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(implementation);
+    return returns;
+  }
+
   function returnedValueCallables(
     callable: CallableImplementation,
     label: string,
@@ -2668,6 +2841,22 @@ function waveNineMutationBoundaryViolations(): string[] {
             callable: implementation,
             label: returnLabel,
             topLevel: false,
+          });
+        }
+      }
+      if (ts.isCallExpression(value)) {
+        const factories = new Set(invocationTargetCallables(value.expression));
+        const directFactory = callableImplementation(
+          resolvedSymbol(callReference(value)),
+        );
+        if (directFactory) {
+          factories.add(directFactory);
+        }
+        for (const factory of factories) {
+          value.arguments.forEach((argument, index) => {
+            if (implementationReturnsParameter(factory, index)) {
+              inspect(argument);
+            }
           });
         }
       }
