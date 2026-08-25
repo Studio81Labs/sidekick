@@ -23,8 +23,8 @@ vi.mock("../../features/history/components/HistoryPanel", () => ({
 vi.mock("../../features/capture/components/TablePreview", () => ({
   TablePreview: () => <div>Preview slot</div>,
 }));
-vi.mock("../../features/hand-review/components/HandReviewPanel", () => ({
-  HandReviewPanel: () => <div>Review slot</div>,
+vi.mock("./components/HandReviewWorkspace", () => ({
+  HandReviewWorkspace: () => <div>Review slot</div>,
 }));
 vi.mock("../../features/system/components/UserGuideDialog", () => ({
   UserGuideDialog: () => <div role="dialog">Help slot</div>,

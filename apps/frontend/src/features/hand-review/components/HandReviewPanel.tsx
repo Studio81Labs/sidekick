@@ -1,83 +1,34 @@
 import { Check, Play, RefreshCcw } from "lucide-react";
+import type { ReactNode } from "react";
 import "./HandReviewPanel.css";
 
-import type { RecommendationEvidence } from "../../../domains/recommendations/model/recommendationEvidenceTypes";
-import type {
-  TrainingActionOption,
-  TrainingCertaintyOption,
-} from "../../../domains/training/model/trainingDecision";
 import { ButtonControl } from "../../../shared/components/FormControls";
 import { HandStateEditor, type HandStateEditorProps } from "./HandStateEditor";
 import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
-import { RecommendationPanel } from "../../recommendation/components/RecommendationPanel";
-import { TrainingDecisionPanel } from "../../training/components/TrainingDecisionPanel";
-import { trainingDecisionComparison } from "../../../domains/training/model/trainingDecision";
 import type { JobRecord } from "../../../shared/types/jobs";
-import type { RecommendationResult } from "../../../shared/types/recommendations";
-import type { TrainingDecision } from "../../../shared/types/training";
 
 export interface HandReviewPanelProps {
   busy: boolean;
   canApprove: boolean;
   canRecommend: boolean;
-  currentStateApproved: boolean;
-  decisionComparison: ReturnType<typeof trainingDecisionComparison> | null;
-  decisionEvidence: RecommendationEvidence | null;
+  children?: ReactNode;
   editor: HandStateEditorProps;
   job: JobRecord | null;
   onApprove: () => void | Promise<void>;
-  onCancelTrainingReviewNoteEdit: () => void;
-  onCompleteTrainingReview: () => void | Promise<void>;
   onRecommend: () => void | Promise<void>;
-  onReopenTrainingReview: () => void | Promise<void>;
   onResetToParser: () => void;
-  onSaveTrainingDecision: () => void | Promise<void>;
-  onStartTrainingReviewNoteEdit: () => void;
-  onTrainingActionChange: (action: TrainingActionOption) => void;
-  onTrainingCertaintyChange: (certainty: TrainingCertaintyOption) => void;
-  onTrainingReviewNoteChange: (note: string) => void;
-  onTrainingSizingChange: (sizing: string) => void;
-  onUpdateTrainingReviewNote: () => void | Promise<void>;
-  recommendation: RecommendationResult | null;
-  trainingAction: TrainingActionOption;
-  trainingCertainty: TrainingCertaintyOption;
-  trainingDecision: TrainingDecision | null;
-  trainingReviewNote: string;
-  trainingReviewNoteEditing: boolean;
-  trainingReviewQueueJobId: string | null;
-  trainingSizing: string;
 }
 
 export function HandReviewPanel({
   busy,
   canApprove,
   canRecommend,
-  currentStateApproved,
-  decisionComparison,
-  decisionEvidence,
+  children,
   editor,
   job,
   onApprove,
-  onCancelTrainingReviewNoteEdit,
-  onCompleteTrainingReview,
   onRecommend,
-  onReopenTrainingReview,
   onResetToParser,
-  onSaveTrainingDecision,
-  onStartTrainingReviewNoteEdit,
-  onTrainingActionChange,
-  onTrainingCertaintyChange,
-  onTrainingReviewNoteChange,
-  onTrainingSizingChange,
-  onUpdateTrainingReviewNote,
-  recommendation,
-  trainingAction,
-  trainingCertainty,
-  trainingDecision,
-  trainingReviewNote,
-  trainingReviewNoteEditing,
-  trainingReviewQueueJobId,
-  trainingSizing,
 }: HandReviewPanelProps) {
   return (
     <section className="review-column" aria-label="Hand review">
@@ -88,40 +39,7 @@ export function HandReviewPanel({
 
       <div className="review-scroll">
         <HandStateEditor {...editor} />
-
-        {currentStateApproved && !recommendation ? (
-          <TrainingDecisionPanel
-            action={trainingAction}
-            busy={busy}
-            certainty={trainingCertainty}
-            decision={trainingDecision}
-            onActionChange={onTrainingActionChange}
-            onCertaintyChange={onTrainingCertaintyChange}
-            onSave={onSaveTrainingDecision}
-            onSizingChange={onTrainingSizingChange}
-            sizing={trainingSizing}
-          />
-        ) : null}
-
-        {job && recommendation ? (
-          <RecommendationPanel
-            busy={busy}
-            decision={trainingDecision}
-            decisionComparison={decisionComparison}
-            evidence={decisionEvidence}
-            job={job}
-            note={trainingReviewNote}
-            noteEditing={trainingReviewNoteEditing}
-            onCancelNoteEdit={onCancelTrainingReviewNoteEdit}
-            onCompleteReview={onCompleteTrainingReview}
-            onNoteChange={onTrainingReviewNoteChange}
-            onReopenReview={onReopenTrainingReview}
-            onSaveNote={onUpdateTrainingReviewNote}
-            onStartNoteEdit={onStartTrainingReviewNoteEdit}
-            recommendation={recommendation}
-            reviewQueueJobId={trainingReviewQueueJobId}
-          />
-        ) : null}
+        {children}
       </div>
 
       <div className="review-actions">
