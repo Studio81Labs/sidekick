@@ -92,6 +92,21 @@ function isWaveNineMutation(value: string): boolean {
   return Object.prototype.hasOwnProperty.call(WAVE_NINE_MUTATION_OWNERS, value);
 }
 
+const LEGACY_RAW_TRANSPORT_OWNERS = new Set([
+  "shared/api/benchmarks.ts",
+  "shared/api/mcp.ts",
+  "shared/api/system.ts",
+  "shared/api/transport.ts",
+]);
+
+function ownsRawTransport(sourcePath: string): boolean {
+  const segments = sourcePath.split("/");
+  return (
+    (segments[0] === "domains" && segments[2] === "api") ||
+    LEGACY_RAW_TRANSPORT_OWNERS.has(sourcePath)
+  );
+}
+
 const SOURCE_EXTENSIONS = new Set([
   ".cjs",
   ".css",
@@ -332,6 +347,24 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
 
     function visit(node: ts.Node): void {
+      if (!ownsRawTransport(sourcePath)) {
+        const rawTransport =
+          ts.isIdentifier(node) &&
+          (node.text === "fetch" || node.text === "requestJson")
+            ? node.text
+            : ts.isElementAccessExpression(node) &&
+                ts.isStringLiteralLike(node.argumentExpression) &&
+                (node.argumentExpression.text === "fetch" ||
+                  node.argumentExpression.text === "requestJson")
+              ? node.argumentExpression.text
+              : null;
+        if (rawTransport) {
+          violations.add(
+            `${rawTransport} referenced outside a domain transport boundary: ${sourcePath}`,
+          );
+        }
+      }
+
       let referencedMutation: string | null = null;
       if (
         ts.isPropertyAccessExpression(node) &&
