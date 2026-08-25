@@ -1029,6 +1029,8 @@ function waveNineMutationBoundaryViolations(): string[] {
         }
         if (
           ts.isBinaryExpression(node) &&
+          node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+          node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
           (ts.isPropertyAccessExpression(node.left) ||
             ts.isElementAccessExpression(node.left))
         ) {
@@ -1081,6 +1083,8 @@ function waveNineMutationBoundaryViolations(): string[] {
     function visit(node: ts.Node): void {
       if (
         ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
         node.getEnd() <= referenceStart &&
         executionBoundary(node) === boundary &&
         (ts.isPropertyAccessExpression(node.left) ||
