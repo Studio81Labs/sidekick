@@ -115,6 +115,15 @@ confirmed restore cancels and supersedes stale reads, then removes job, history,
 training, and benchmark Query families before Analyzer composition schedules
 projection recovery. System and pipeline caches remain intact; transport
 failure leaves every cache untouched so the same archive can be retried.
+Approval and recommendation writes now use abort-aware hand-review commands.
+Generated-contract job and recommendation adapters preserve the legacy signals
+and caller-generated recommendation request ID; confirmed results seed job
+detail and invalidate processing/history/training. Cache seeding preserves newer
+concurrent screenshot metadata from an older workflow response, while a
+delete-superseded write generation prevents late approval/recommendation
+responses from recreating permanently removed detail entries. Analyzer
+composition retains automation,
+lease handoff, abort registration, and optional training-decision sequencing.
 Training decisions and review completion/reopen operations now use a
 training-owned command family. The generated-contract adapters preserve the
 legacy positional function signatures, and confirmed responses update job

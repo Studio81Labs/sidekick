@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { jsonResponse, resetApiMocks } from "../../test/api";
 import {
+  approveState,
   deleteJob,
   getProcessingJobs,
   requestRecommendation,
@@ -9,18 +10,22 @@ import {
   uploadScreenshot,
 } from "./jobs";
 import {
+  approveState as approveDomainState,
   deleteJob as deleteDomainJob,
   getJob as getDomainJob,
   updateJobMetadata as updateDomainJobMetadata,
 } from "../../domains/jobs/api/jobsApi";
+import { requestRecommendation as requestDomainRecommendation } from "../../domains/recommendations/api/recommendationsApi";
 import { getJob as getCompatibilityJob } from "./jobs";
 
 afterEach(resetApiMocks);
 
 it("preserves the shared job-read compatibility export identity", () => {
   expect(deleteJob).toBe(deleteDomainJob);
+  expect(approveState).toBe(approveDomainState);
   expect(getCompatibilityJob).toBe(getDomainJob);
   expect(updateJobMetadata).toBe(updateDomainJobMetadata);
+  expect(requestRecommendation).toBe(requestDomainRecommendation);
 });
 
 describe("screenshot management", () => {

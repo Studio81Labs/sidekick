@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { jsonResponse, resetApiMocks } from "../../../test/api";
+import { canonicalState } from "../../../test/analyzerHarness";
 import type { components } from "../../../shared/api/generated/openapi";
 import {
+  approveState,
   deleteJob,
   getJob,
   getProcessingJobs,
@@ -112,6 +114,27 @@ describe("jobs API adapter", () => {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(metadata),
+        credentials: "include",
+      },
+    );
+  });
+
+  it("approves canonical state through the generated request contract", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
+    vi.stubGlobal("fetch", fetchMock);
+    const controller = new AbortController();
+    const state = { ...canonicalState(), user_approved: false };
+
+    await expect(
+      approveState("job/123", state, controller.signal),
+    ).resolves.toEqual(jobResponse);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/jobs/job/123/approve",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...state, user_approved: true }),
+        signal: controller.signal,
         credentials: "include",
       },
     );

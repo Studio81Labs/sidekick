@@ -111,6 +111,7 @@ function domainCompatibilityFacadeImportAllowed(
   const module = (targetPath[3] ?? "").replace(/\.ts$/, "");
   return [
     ["shared/api/jobs.ts", "domains/jobs/api", "jobsApi"],
+    ["shared/api/jobs.ts", "domains/recommendations/api", "recommendationsApi"],
     ["shared/api/history.ts", "domains/history/api", "historyApi"],
     ["shared/api/training.ts", "domains/training/api", "trainingApi"],
     ["shared/api/benchmarks.ts", "domains/benchmarks/api", "benchmarksApi"],
