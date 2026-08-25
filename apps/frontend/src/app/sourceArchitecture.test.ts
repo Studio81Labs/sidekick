@@ -829,6 +829,57 @@ function waveNineMutationBoundaryViolations(): string[] {
     return members;
   }
 
+  function typedValueCallables(
+    value: ts.Expression,
+    label: string,
+    seen = new Set<ts.Symbol>(),
+  ): ExportedCallable[] {
+    const members: ExportedCallable[] = [];
+    const valueType = checker.getTypeAtLocation(value);
+    for (const property of checker.getPropertiesOfType(valueType)) {
+      members.push(
+        ...callableAliasMembers(
+          resolvedAliasSymbol(property),
+          label + "." + property.getName(),
+          seen,
+        ),
+      );
+    }
+
+    if (ts.isNewExpression(value)) {
+      if (ts.isClassExpression(value.expression)) {
+        members.push(...callableMembers(value.expression, label, seen));
+      } else {
+        const constructorSymbol = resolvedSymbol(value.expression);
+        for (const declaration of constructorSymbol?.declarations ?? []) {
+          if (
+            ts.isClassDeclaration(declaration) ||
+            ts.isClassExpression(declaration)
+          ) {
+            members.push(...callableMembers(declaration, label, seen));
+          }
+        }
+      }
+    }
+
+    const valueSymbol = resolvedSymbol(value);
+    if (valueSymbol && !seen.has(valueSymbol)) {
+      seen.add(valueSymbol);
+      for (const declaration of valueSymbol.declarations ?? []) {
+        if (
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer &&
+          declaration.initializer !== value
+        ) {
+          members.push(
+            ...typedValueCallables(declaration.initializer, label, seen),
+          );
+        }
+      }
+    }
+    return members;
+  }
+
   function callableMembers(
     value: ts.Expression | ts.ClassDeclaration,
     label: string,
@@ -972,6 +1023,9 @@ function waveNineMutationBoundaryViolations(): string[] {
             topLevel: true,
           });
         }
+        callables.push(
+          ...typedValueCallables(declaration.initializer, exportName),
+        );
       } else if (
         ts.isVariableDeclaration(declaration) &&
         declaration.initializer &&
