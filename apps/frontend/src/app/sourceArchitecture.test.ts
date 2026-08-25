@@ -248,6 +248,26 @@ function waveNineMutationBoundaryViolations(): string[] {
 
     for (const statement of sourceFile.statements) {
       if (
+        ts.isExportDeclaration(statement) &&
+        !statement.isTypeOnly &&
+        statement.exportClause &&
+        ts.isNamedExports(statement.exportClause)
+      ) {
+        for (const binding of statement.exportClause.elements) {
+          const originalName = (binding.propertyName ?? binding.name).text;
+          if (
+            !binding.isTypeOnly &&
+            isWaveNineMutation(originalName) &&
+            binding.name.text !== originalName
+          ) {
+            violations.add(
+              `${originalName} re-exported as ${binding.name.text} outside its owned identity: ${sourcePath}`,
+            );
+          }
+        }
+      }
+
+      if (
         !ts.isImportDeclaration(statement) ||
         !ts.isStringLiteral(statement.moduleSpecifier) ||
         sourceImportTarget(file, statement.moduleSpecifier.text) === null
@@ -258,6 +278,9 @@ function waveNineMutationBoundaryViolations(): string[] {
       const bindings = statement.importClause?.namedBindings;
       if (bindings && ts.isNamedImports(bindings)) {
         for (const binding of bindings.elements) {
+          if (statement.importClause?.isTypeOnly || binding.isTypeOnly) {
+            continue;
+          }
           const importedName = (binding.propertyName ?? binding.name).text;
           if (isWaveNineMutation(importedName)) {
             importedMutations.set(binding.name.text, importedName);
