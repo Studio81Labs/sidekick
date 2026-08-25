@@ -396,6 +396,28 @@ function waveNineMutationBoundaryViolations(): string[] {
     );
   }
 
+  function reflectedBoundaryName(node: ts.CallExpression): string | null {
+    if (
+      !ts.isPropertyAccessExpression(node.expression) ||
+      node.expression.name.text !== "get" ||
+      !ts.isIdentifier(node.expression.expression) ||
+      node.arguments.length < 2 ||
+      !ts.isStringLiteralLike(node.arguments[1])
+    ) {
+      return null;
+    }
+    const reflectSymbol = resolvedSymbol(node.expression.expression);
+    const isGlobalReflect = reflectSymbol?.declarations?.some((declaration) =>
+      declaration.getSourceFile().fileName.endsWith("lib.es2015.reflect.d.ts"),
+    );
+    const propertyName = node.arguments[1].text;
+    return isGlobalReflect &&
+      (isWaveNineMutation(propertyName) ||
+        RAW_TRANSPORT_REFERENCES.has(propertyName))
+      ? propertyName
+      : null;
+  }
+
   for (const file of scriptFiles) {
     const sourcePath = sourceSegments(file).join("/");
     const sourceFile = program.getSourceFile(file);
@@ -425,6 +447,17 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
 
     function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node)) {
+        const reflectedName = reflectedBoundaryName(node);
+        if (reflectedName) {
+          violations.add(
+            reflectedName +
+              " retrieved through reflection outside its owned identity: " +
+              sourcePath,
+          );
+        }
+      }
+
       if (
         ts.isCallExpression(node) &&
         node.expression.kind === ts.SyntaxKind.ImportKeyword &&
