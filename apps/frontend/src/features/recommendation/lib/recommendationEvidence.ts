@@ -13,7 +13,7 @@ import {
   metadataRatio,
   metadataRecord,
   metadataString,
-} from "./recommendationMetadata";
+} from "../../../domains/recommendations/model/recommendationMetadata";
 
 export function recommendationEvidenceFromRaw(
   raw: Record<string, unknown>,

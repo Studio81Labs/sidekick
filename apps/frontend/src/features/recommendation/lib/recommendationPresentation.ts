@@ -15,15 +15,6 @@ export {
   recommendationContextLabel,
 } from "./recommendationFormatting";
 export {
-  metadataExactString,
-  metadataLabel,
-  metadataNumber,
-  metadataRatio,
-  metadataRecord,
-  metadataString,
-  metadataStringList,
-} from "./recommendationMetadata";
-export {
   parserRoutingEvidence,
   parserRoutingFromRaw,
 } from "./parserRoutingPresentation";

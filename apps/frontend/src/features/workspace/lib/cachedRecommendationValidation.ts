@@ -2,7 +2,7 @@ import type { RecommendationResult } from "../../../shared/types/recommendations
 import {
   TRAINING_ACTIONS,
   TRAINING_CERTAINTIES,
-} from "../../training/lib/trainingPresentation";
+} from "../../../domains/training/model/trainingOptions";
 
 export function isCachedActionSizing(
   action: unknown,

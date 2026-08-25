@@ -1,7 +1,7 @@
 import {
   TRAINING_ACTIONS,
   TRAINING_CERTAINTIES,
-} from "../../training/lib/trainingPresentation";
+} from "../../../domains/training/model/trainingOptions";
 import { isCachedActionSizing } from "./cachedRecommendationValidation";
 import type { JobMutationExpectation } from "./mutationLeaseTypes";
 

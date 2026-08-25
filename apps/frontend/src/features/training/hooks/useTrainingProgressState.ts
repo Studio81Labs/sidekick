@@ -20,10 +20,8 @@ import type {
   TrainingStreetFilter,
 } from "../../../shared/types/training";
 import { messageFromError } from "../../../shared/lib/errors";
-import {
-  sameTrainingPositionFilter,
-  type TrainingProgressView,
-} from "../lib/trainingPresentation";
+import { sameTrainingPositionFilter } from "../lib/trainingQueuePresentation";
+import type { TrainingProgressView } from "../lib/trainingPresentationTypes";
 
 interface UseTrainingProgressStateOptions {
   onError: (message: string | null) => void;

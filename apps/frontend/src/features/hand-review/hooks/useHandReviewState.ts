@@ -17,10 +17,11 @@ import {
 } from "../lib/pokerState";
 import { recommendationEvidenceFromRaw } from "../../recommendation/lib/recommendationPresentation";
 import {
+  parseTrainingSizing,
   type TrainingActionOption,
   type TrainingCertaintyOption,
   trainingDecisionComparison,
-} from "../../training/lib/trainingPresentation";
+} from "../../../domains/training/model/trainingDecision";
 import {
   messageFromError,
   VALIDATION_TOAST_ID,
@@ -466,6 +467,7 @@ export function useHandReviewState({
     formBaselineRef,
     formDirtyRef,
     job,
+    parseTrainingSizing,
     recommendation,
     removeCompletedPostflopAction,
     removePostflopAction,

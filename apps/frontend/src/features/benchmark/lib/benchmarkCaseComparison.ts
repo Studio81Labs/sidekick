@@ -1,10 +1,12 @@
 import { humanReadableMessage } from "../../../shared/api/core";
-import { benchmarkPercent } from "../../../shared/lib/metricPresentation";
+import {
+  benchmarkFieldLabel,
+  benchmarkPercent,
+} from "../../../shared/lib/metricPresentation";
 import type {
   BenchmarkCaseResult,
   BenchmarkReport,
 } from "../../../shared/types/benchmarks";
-import { benchmarkFieldLabel } from "../../training/lib/trainingPresentation";
 import { benchmarkReportsAreComparable } from "./benchmarkReportPresentation";
 
 export type BenchmarkCaseTrend =

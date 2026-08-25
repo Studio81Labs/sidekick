@@ -8,11 +8,11 @@ import {
   TRAINING_CERTAINTY_FOCUS_ORDER,
   TRAINING_POSITION_FOCUS_ORDER,
   TRAINING_STREET_ORDER,
-} from "./trainingOptions";
+} from "../../../domains/training/model/trainingOptions";
 import {
   trainingCertaintyLabel,
   trainingDecisionLabel,
-} from "./trainingDecisionPresentation";
+} from "../../../domains/training/model/trainingDecision";
 import type {
   TrainingActionDifferenceFocus,
   TrainingCertaintyFocus,

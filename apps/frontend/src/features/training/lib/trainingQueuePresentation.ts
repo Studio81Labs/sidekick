@@ -9,12 +9,9 @@ import type {
   TrainingSolverFilter,
   TrainingStreetFilter,
 } from "../../../shared/types/training";
-import { trainingDecisionLabel } from "./trainingDecisionPresentation";
+import { benchmarkFieldLabel } from "../../../shared/lib/metricPresentation";
+import { trainingDecisionLabel } from "../../../domains/training/model/trainingDecision";
 import type { TrainingProgressView } from "./trainingPresentationTypes";
-
-export function benchmarkFieldLabel(field: string): string {
-  return field.replace(/_/g, " ");
-}
 
 export function sameTrainingPositionFilter(
   left: TrainingPositionFilter | null,

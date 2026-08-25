@@ -8,6 +8,10 @@ export function benchmarkPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+export function benchmarkFieldLabel(field: string): string {
+  return field.replace(/_/g, " ");
+}
+
 export function formatEvLossBb(value: number): string {
   return `${formatCandidateValue(value)} BB`;
 }
