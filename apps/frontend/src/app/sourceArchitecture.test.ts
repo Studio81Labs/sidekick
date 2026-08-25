@@ -1151,6 +1151,16 @@ function waveNineMutationBoundaryViolations(): string[] {
             );
           }
         }
+      } else if (ts.isTaggedTemplateExpression(node)) {
+        const referenceSymbol = resolvedSymbol(node.tag);
+        const localCallable = callableImplementation(referenceSymbol);
+        writes =
+          mutationSymbol(node.tag) !== null ||
+          rawTransportNameForSymbol(referenceSymbol) === "sendBeacon" ||
+          (localCallable !== null && callableWrites(localCallable, active)) ||
+          assignedImplementationsForSymbol(referenceSymbol).some(
+            (implementation) => callableWrites(implementation, active),
+          );
       }
       if (ts.isNewExpression(node)) {
         writes = constructorImplementations(node.expression).some(
@@ -2269,6 +2279,16 @@ function waveNineMutationBoundaryViolations(): string[] {
             argumentCallableWrites(argument, new Set()),
           );
         }
+      } else if (ts.isTaggedTemplateExpression(node)) {
+        const referenceSymbol = resolvedSymbol(node.tag);
+        const directCallable = callableImplementation(referenceSymbol);
+        writes =
+          mutationSymbol(node.tag) !== null ||
+          rawTransportNameForSymbol(referenceSymbol) === "sendBeacon" ||
+          (directCallable !== null && callableWrites(directCallable)) ||
+          assignedImplementationsForSymbol(referenceSymbol).some(
+            (implementation) => callableWrites(implementation),
+          );
       } else if (ts.isNewExpression(node)) {
         writes = constructorImplementations(node.expression).some(
           (implementation) => callableWrites(implementation),
