@@ -192,10 +192,7 @@ function domainCompatibilityFacadeImportAllowed(
   const facade = sourcePath.join("/");
   const domain = targetPath.slice(0, 3).join("/");
   const module = (targetPath[3] ?? "").replace(/\.ts$/, "");
-  return [
-    ["shared/api/training.ts", "domains/training/api", "trainingApi"],
-    ["shared/api/system.ts", "domains/backups/api", "backupsApi"],
-  ].some(
+  return [["shared/api/system.ts", "domains/backups/api", "backupsApi"]].some(
     ([allowedFacade, allowedDomain, allowedModule]) =>
       facade === allowedFacade &&
       domain === allowedDomain &&
@@ -4592,6 +4589,7 @@ function sharedApiFacadeBoundaryViolations(): string[] {
     "client.ts",
     "history.ts",
     "jobs.ts",
+    "training.ts",
   ].map((name) => resolve(SOURCE_ROOT, "shared/api", name));
   const retiredFacadeTargets = new Set(
     retiredFacades.flatMap((facade) => [
@@ -4825,7 +4823,7 @@ describe("frontend source architecture", () => {
         ["shared", "api", "training.ts"],
         ["domains", "training", "api", "trainingApi.ts"],
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       domainCompatibilityFacadeImportAllowed(
         ["shared", "api", "history.ts"],

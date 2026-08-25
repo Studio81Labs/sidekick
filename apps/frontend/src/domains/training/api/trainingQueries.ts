@@ -1,4 +1,8 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  queryOptions,
+  useQuery,
+} from "@tanstack/react-query";
 
 import type {
   TrainingCertaintyFilter,
@@ -82,6 +86,13 @@ export function trainingProgressQueryOptions(
     ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
+}
+
+export function fetchTrainingProgressQuery(
+  queryClient: QueryClient,
+  query: TrainingProgressQuery = {},
+) {
+  return queryClient.fetchQuery(trainingProgressQueryOptions(query, false));
 }
 
 export function useTrainingProgressQuery(
