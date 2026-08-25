@@ -108,7 +108,6 @@ import {
   benchmarkApprovalKey,
   stateToForm,
 } from "../../features/hand-review/lib/pokerState";
-import { parserRoutingFromRaw } from "../../features/recommendation/lib/recommendationPresentation";
 import {
   suggestedActionDifferenceFocus,
   suggestedCertaintyFocus,
@@ -248,6 +247,7 @@ export function useAnalyzerWorkspaceController({
     formDirtyRef,
     job,
     parseTrainingSizing,
+    parserRoutingFromRaw,
     recommendation: activeRecommendation,
     removeCompletedPostflopAction,
     removePostflopAction,

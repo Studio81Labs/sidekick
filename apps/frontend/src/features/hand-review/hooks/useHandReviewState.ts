@@ -15,7 +15,8 @@ import {
   stateToForm,
   summarizeConfidences,
 } from "../lib/pokerState";
-import { recommendationEvidenceFromRaw } from "../../recommendation/lib/recommendationPresentation";
+import { recommendationEvidenceFromRaw } from "../../../domains/recommendations/model/recommendationEvidence";
+import { parserRoutingFromRaw } from "../../../domains/recommendations/model/parserRoutingPresentation";
 import {
   parseTrainingSizing,
   type TrainingActionOption,
@@ -468,6 +469,7 @@ export function useHandReviewState({
     formDirtyRef,
     job,
     parseTrainingSizing,
+    parserRoutingFromRaw,
     recommendation,
     removeCompletedPostflopAction,
     removePostflopAction,

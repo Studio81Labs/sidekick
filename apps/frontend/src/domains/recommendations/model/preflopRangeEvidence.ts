@@ -3,10 +3,7 @@ import {
   formatEvidenceBb,
   formatEvidenceRatio,
 } from "./recommendationFormatting";
-import {
-  metadataNumber,
-  metadataRatio,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+import { metadataNumber, metadataRatio } from "./recommendationMetadata";
 
 export function appendPreflopRangeEvidence(
   raw: Record<string, unknown>,

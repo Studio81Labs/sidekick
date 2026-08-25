@@ -9,7 +9,7 @@ import {
   metadataNumber,
   metadataRatio,
   metadataStringList,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+} from "./recommendationMetadata";
 
 export function appendPreflopLimpEvidence(
   raw: Record<string, unknown>,

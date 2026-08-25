@@ -6,7 +6,7 @@ import {
   metadataNumber,
   metadataRecord,
   metadataString,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+} from "./recommendationMetadata";
 import { appendPostflopRangeContextEvidence } from "./postflopRangeContextEvidence";
 import {
   isContextualPostflopRangeSource,

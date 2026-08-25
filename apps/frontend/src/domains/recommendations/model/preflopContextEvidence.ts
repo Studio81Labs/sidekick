@@ -1,9 +1,6 @@
 import type { RecommendationEvidenceDetail } from "./recommendationEvidenceTypes";
 import { formatEvidenceBb } from "./recommendationFormatting";
-import {
-  metadataLabel,
-  metadataNumber,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+import { metadataLabel, metadataNumber } from "./recommendationMetadata";
 
 export function appendPreflopContextEvidence(
   raw: Record<string, unknown>,
