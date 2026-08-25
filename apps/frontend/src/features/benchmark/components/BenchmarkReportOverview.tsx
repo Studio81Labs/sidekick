@@ -15,7 +15,7 @@ import type { PipelineCapabilities } from "../../../shared/types/pipeline";
 import {
   benchmarkPointChange,
   benchmarkReportOption,
-} from "../lib/benchmarkPresentation";
+} from "../lib/benchmarkReportPresentation";
 
 export interface BenchmarkReportOverviewProps {
   onSelectReport: (reportId: string) => void | Promise<void>;

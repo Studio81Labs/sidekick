@@ -53,15 +53,15 @@ cross-domain type barrel is retained.
 
 The workspace feature separates browser-cache validation, mutation leases,
 processing-queue persistence, history persistence, and reconciliation into
-focused library modules. `workspace/lib/persistence.ts` remains a compatibility
-barrel for the page coordinator, not an owner of persistence behavior.
-Cache validation further separates primitive bounds, poker and completed-street
-state, recommendation and training payloads, and full parser/job records.
-`workspace/lib/cacheValidation.ts` remains the stable validation compatibility
-barrel.
+focused library modules. Cache validation further separates primitive bounds,
+poker and completed-street state, recommendation and training payloads, and full
+parser/job records.
+The former `workspace/lib/persistence.ts` and
+`workspace/lib/cacheValidation.ts` barrels are removed; consumers import the
+focused owners directly.
 Mutation leases further separate their persisted contracts, job and projection
 expectations, lease matching, legacy decoding, browser storage, and factories.
-`workspace/lib/mutationLeases.ts` remains the stable lease compatibility barrel.
+The former `workspace/lib/mutationLeases.ts` compatibility barrel is removed.
 
 Recommendation presentation follows the same pattern under the recommendation
 domain model: parser routing, preflop and postflop evidence, candidate ranking,
@@ -98,7 +98,8 @@ focused report-state hook. It retains parser selection, benchmark execution,
 dialog commands, and opening benchmark hands.
 Benchmark report comparison, case trends, report caching, parser-route
 aggregation, and value formatting are separate library modules behind the
-stable `benchmark/lib/benchmarkPresentation.ts` compatibility barrel.
+former `benchmark/lib/benchmarkPresentation.ts` barrel. Consumers now import
+those focused modules directly.
 
 `App.tsx` remains deliberately small and mounts the route registry. The
 analyzer page passes explicit state and commands into feature hooks and
@@ -128,10 +129,10 @@ orchestration. New top-level experiences receive their own page and route.
 - The shared transport barrel remains a compatibility surface rather than an
   implementation owner. Type definitions have no compatibility barrel and are
   imported from matching domain modules.
-- Workspace recovery keeps one public import surface while storage schemas,
-  lease durability, pagination, and reconciliation can be tested independently.
-- Benchmark components and controller code keep one presentation import surface
-  without coupling report caching, case comparison, or route aggregation.
+- Workspace recovery imports focused storage-schema, lease, pagination, and
+  reconciliation owners directly.
+- Benchmark components and controller code import focused report caching, case
+  comparison, route aggregation, and value presentation modules directly.
 - A source-architecture test enforces downward imports between app, page,
   feature, and shared layers. It also keeps feature library and hook code
   independent from UI components and requires colocated component tests. The

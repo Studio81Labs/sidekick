@@ -4621,69 +4621,28 @@ function sharedApiFacadeBoundaryViolations(): string[] {
   return violations;
 }
 
-interface FeatureLibraryBarrelBoundary {
+interface RetiredFeatureLibraryBarrelBoundary {
   barrelPath: string;
   label: string;
-  namedExportsAllowed: boolean;
 }
 
-function featureLibraryBarrelViolations({
+function retiredFeatureLibraryBarrelViolations({
   barrelPath,
   label,
-  namedExportsAllowed,
-}: FeatureLibraryBarrelBoundary): string[] {
+}: RetiredFeatureLibraryBarrelBoundary): string[] {
   const violations: string[] = [];
   const barrel = resolve(SOURCE_ROOT, barrelPath);
   const barrelTargets = new Set([
     barrel,
     barrel.slice(0, -extname(barrel).length),
   ]);
-  const sourceFile = ts.createSourceFile(
-    barrel,
-    readFileSync(barrel, "utf8"),
-    ts.ScriptTarget.Latest,
-    true,
-  );
-  const exportedModules = new Set<string>();
 
-  if (sourceFile.statements.length === 0) {
-    violations.push(`${label} must export focused modules`);
+  if (existsSync(barrel)) {
+    violations.push(`${label} compatibility barrel must remain removed`);
   }
 
-  for (const statement of sourceFile.statements) {
-    if (
-      !ts.isExportDeclaration(statement) ||
-      (!namedExportsAllowed && statement.exportClause !== undefined) ||
-      !statement.moduleSpecifier ||
-      !ts.isStringLiteralLike(statement.moduleSpecifier) ||
-      !statement.moduleSpecifier.text.startsWith("./")
-    ) {
-      violations.push(`${label} barrel must contain only module re-exports`);
-      continue;
-    }
-
-    const moduleSpecifier = statement.moduleSpecifier.text;
-    if (exportedModules.has(moduleSpecifier)) {
-      violations.push(
-        `${label} module is exported more than once: ${moduleSpecifier}`,
-      );
-    }
-    exportedModules.add(moduleSpecifier);
-    const target = resolve(dirname(barrel), `${moduleSpecifier}.ts`);
-    if (target === barrel) {
-      violations.push(`${label} barrel may not re-export itself`);
-    } else if (!existsSync(target)) {
-      violations.push(
-        `${label} barrel target does not exist: ${moduleSpecifier}`,
-      );
-    }
-  }
-
-  for (const file of filesBelow(dirname(barrel)).filter(
-    (candidate) =>
-      candidate !== barrel &&
-      extname(candidate) === ".ts" &&
-      !isTestSupportPath(sourceSegments(candidate)),
+  for (const file of sourceFiles().filter((candidate) =>
+    [".cts", ".mts", ".ts", ".tsx"].includes(extname(candidate)),
   )) {
     const importsBarrel = scriptImports(readFileSync(file, "utf8"), file).some(
       (specifier) => {
@@ -4693,7 +4652,7 @@ function featureLibraryBarrelViolations({
     );
     if (importsBarrel) {
       violations.push(
-        `${label} libraries may not import their compatibility barrel: ${sourceSegments(file).join("/")}`,
+        `production source may not import retired ${label} barrel: ${sourceSegments(file).join("/")}`,
       );
     }
   }
@@ -4702,26 +4661,23 @@ function featureLibraryBarrelViolations({
 }
 
 function workspacePersistenceBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
+  return retiredFeatureLibraryBarrelViolations({
     barrelPath: "features/workspace/lib/persistence.ts",
     label: "workspace persistence",
-    namedExportsAllowed: false,
   });
 }
 
 function cacheValidationBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
+  return retiredFeatureLibraryBarrelViolations({
     barrelPath: "features/workspace/lib/cacheValidation.ts",
     label: "workspace cache validation",
-    namedExportsAllowed: true,
   });
 }
 
 function mutationLeaseBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
+  return retiredFeatureLibraryBarrelViolations({
     barrelPath: "features/workspace/lib/mutationLeases.ts",
     label: "workspace mutation leases",
-    namedExportsAllowed: true,
   });
 }
 
@@ -4752,10 +4708,9 @@ function retiredHandReviewPokerStateFacadeViolations(): string[] {
 }
 
 function benchmarkPresentationBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
+  return retiredFeatureLibraryBarrelViolations({
     barrelPath: "features/benchmark/lib/benchmarkPresentation.ts",
     label: "benchmark presentation",
-    namedExportsAllowed: true,
   });
 }
 
@@ -5001,15 +4956,15 @@ describe("frontend source architecture", () => {
     expect(sharedApiFacadeBoundaryViolations()).toEqual([]);
   });
 
-  it("keeps workspace persistence in focused modules", () => {
+  it("keeps the retired workspace persistence barrel removed", () => {
     expect(workspacePersistenceBoundaryViolations()).toEqual([]);
   });
 
-  it("keeps workspace cache validation in focused modules", () => {
+  it("keeps the retired workspace cache validation barrel removed", () => {
     expect(cacheValidationBoundaryViolations()).toEqual([]);
   });
 
-  it("keeps workspace mutation leases in focused modules", () => {
+  it("keeps the retired workspace mutation leases barrel removed", () => {
     expect(mutationLeaseBoundaryViolations()).toEqual([]);
   });
 
@@ -5025,7 +4980,7 @@ describe("frontend source architecture", () => {
     expect(retiredHandReviewPokerStateFacadeViolations()).toEqual([]);
   });
 
-  it("keeps benchmark presentation in focused modules", () => {
+  it("keeps the retired benchmark presentation barrel removed", () => {
     expect(benchmarkPresentationBoundaryViolations()).toEqual([]);
   });
 });

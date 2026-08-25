@@ -8,11 +8,11 @@ import type {
   BenchmarkReport,
 } from "../../../shared/types/benchmarks";
 import type { PipelineSelection } from "../../../shared/types/pipeline";
-import type { BenchmarkComparisonProgress } from "../lib/benchmarkPresentation";
 import {
+  type BenchmarkComparisonProgress,
   benchmarkCorpusIsUnverified,
   benchmarkPipelinePointChange,
-} from "../lib/benchmarkPresentation";
+} from "../lib/benchmarkReportPresentation";
 
 export interface BenchmarkPipelineComparisonProps {
   comparisonProgress: BenchmarkComparisonProgress | null;

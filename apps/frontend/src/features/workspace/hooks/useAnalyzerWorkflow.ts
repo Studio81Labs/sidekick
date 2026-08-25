@@ -12,7 +12,7 @@ import {
 import type {
   PersistedJobMutationScope,
   PersistedMutationLease,
-} from "../lib/mutationLeases";
+} from "../lib/mutationLeaseTypes";
 import {
   browserAnalyzerWorkflowProjections,
   type AnalyzerWorkflowProjectionAdapters,

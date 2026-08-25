@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { jobRecord } from "../../../test/analyzerHarness";
+import { projectionMutationTargetReached } from "./mutationLeaseExpectations";
+import { startPersistedMutationLease } from "./mutationLeaseFactories";
 import {
   PROCESSING_MUTATION_LEASE_KEY,
   claimPersistedMutationLease,
   clearPersistedMutationLease,
-  projectionMutationTargetReached,
   readPersistedMutationLease,
-  startPersistedMutationLease,
-} from "./mutationLeases";
+} from "./mutationLeaseStorage";
 
 describe("workspace mutation leases", () => {
   beforeEach(() => {

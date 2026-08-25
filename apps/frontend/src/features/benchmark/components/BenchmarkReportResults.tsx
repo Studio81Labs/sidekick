@@ -5,11 +5,11 @@ import type {
   BenchmarkReportSummary,
 } from "../../../shared/types/benchmarks";
 import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection";
+import { benchmarkParserRouteSummary } from "../lib/benchmarkRoutePresentation";
 import {
-  benchmarkParserRouteSummary,
   benchmarkPointChange,
   previousBenchmarkFieldMetric,
-} from "../lib/benchmarkPresentation";
+} from "../lib/benchmarkReportPresentation";
 import { BenchmarkCaseResults } from "./BenchmarkCaseResults";
 
 export interface BenchmarkReportResultsProps {

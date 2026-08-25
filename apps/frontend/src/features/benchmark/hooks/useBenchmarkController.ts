@@ -5,7 +5,7 @@ import { getJob } from "../../../domains/jobs/api/jobsApi";
 import {
   type BenchmarkComparisonProgress,
   benchmarkCorpusIsUnverified,
-} from "../lib/benchmarkPresentation";
+} from "../lib/benchmarkReportPresentation";
 import {
   providerLabel,
   reconcilePipelineSelection,

@@ -6,11 +6,11 @@ import {
   recommendation,
 } from "../../../test/analyzerHarness";
 import {
-  isCachedDetectedState,
   isCachedJobRecord,
-  isCachedRecommendation,
   isPristineBenchmarkImport,
-} from "./cacheValidation";
+} from "./cachedJobValidation";
+import { isCachedDetectedState } from "./cachedPokerStateValidation";
+import { isCachedRecommendation } from "./cachedRecommendationValidation";
 
 const persistedJobId = "a".repeat(32);
 
