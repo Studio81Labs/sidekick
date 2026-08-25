@@ -464,9 +464,14 @@ function waveNineMutationBoundaryViolations(): string[] {
 
   type CallableImplementation =
     | ts.ArrowFunction
+    | ts.ClassStaticBlockDeclaration
+    | ts.ConstructorDeclaration
     | ts.FunctionDeclaration
     | ts.FunctionExpression
-    | ts.MethodDeclaration;
+    | ts.GetAccessorDeclaration
+    | ts.MethodDeclaration
+    | ts.PropertyDeclaration
+    | ts.SetAccessorDeclaration;
 
   function callableImplementation(
     symbol: ts.Symbol | null,
@@ -480,7 +485,10 @@ function waveNineMutationBoundaryViolations(): string[] {
       if (
         ts.isFunctionDeclaration(declaration) ||
         ts.isFunctionExpression(declaration) ||
-        ts.isMethodDeclaration(declaration)
+        ts.isMethodDeclaration(declaration) ||
+        ts.isGetAccessorDeclaration(declaration) ||
+        ts.isSetAccessorDeclaration(declaration) ||
+        ts.isConstructorDeclaration(declaration)
       ) {
         return declaration;
       }
@@ -491,6 +499,12 @@ function waveNineMutationBoundaryViolations(): string[] {
           ts.isFunctionExpression(declaration.initializer))
       ) {
         return declaration.initializer;
+      }
+      if (ts.isPropertyDeclaration(declaration) && declaration.initializer) {
+        return ts.isArrowFunction(declaration.initializer) ||
+          ts.isFunctionExpression(declaration.initializer)
+          ? declaration.initializer
+          : declaration;
       }
       if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
         const implementation = callableImplementation(
@@ -827,14 +841,32 @@ function waveNineMutationBoundaryViolations(): string[] {
         ? value.members
         : [];
     for (const declaration of declarations) {
-      if (ts.isMethodDeclaration(declaration)) {
+      if (
+        ts.isMethodDeclaration(declaration) ||
+        ts.isGetAccessorDeclaration(declaration) ||
+        ts.isSetAccessorDeclaration(declaration)
+      ) {
         members.push({
           callable: declaration,
           label: label + "." + staticMemberName(declaration.name),
           topLevel: false,
         });
+      } else if (ts.isConstructorDeclaration(declaration)) {
+        members.push({
+          callable: declaration,
+          label: label + ".constructor",
+          topLevel: false,
+        });
+      } else if (ts.isClassStaticBlockDeclaration(declaration)) {
+        members.push({
+          callable: declaration,
+          label: label + ".[static]",
+          topLevel: false,
+        });
       } else if (
-        ts.isPropertyAssignment(declaration) &&
+        (ts.isPropertyAssignment(declaration) ||
+          ts.isPropertyDeclaration(declaration)) &&
+        declaration.initializer &&
         (ts.isArrowFunction(declaration.initializer) ||
           ts.isFunctionExpression(declaration.initializer))
       ) {
@@ -854,7 +886,9 @@ function waveNineMutationBoundaryViolations(): string[] {
           ),
         );
       } else if (
-        ts.isPropertyAssignment(declaration) &&
+        (ts.isPropertyAssignment(declaration) ||
+          ts.isPropertyDeclaration(declaration)) &&
+        declaration.initializer &&
         !ts.isObjectLiteralExpression(declaration.initializer) &&
         !ts.isClassExpression(declaration.initializer)
       ) {
@@ -865,8 +899,17 @@ function waveNineMutationBoundaryViolations(): string[] {
             seen,
           ),
         );
+        if (ts.isPropertyDeclaration(declaration)) {
+          members.push({
+            callable: declaration,
+            label: label + "." + staticMemberName(declaration.name),
+            topLevel: false,
+          });
+        }
       } else if (
-        ts.isPropertyAssignment(declaration) &&
+        (ts.isPropertyAssignment(declaration) ||
+          ts.isPropertyDeclaration(declaration)) &&
+        declaration.initializer &&
         (ts.isObjectLiteralExpression(declaration.initializer) ||
           ts.isClassExpression(declaration.initializer))
       ) {
@@ -969,6 +1012,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         if (
           !exportedCallable.topLevel ||
           !isWaveNineMutation(exportName) ||
+          mutationNameForSymbol(symbol) !== exportName ||
           !WAVE_NINE_MUTATION_OWNERS[exportName].has(sourcePath)
         ) {
           violations.add(
