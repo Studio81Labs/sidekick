@@ -16,7 +16,7 @@ import type {
   PipelineCapabilities,
   PipelineSelection,
 } from "../../../shared/types/pipeline";
-import type { BenchmarkComparisonProgress } from "../lib/benchmarkPresentation";
+import type { BenchmarkComparisonProgress } from "../lib/benchmarkReportPresentation";
 import { BenchmarkDialogActions } from "./BenchmarkDialogActions";
 import { BenchmarkPipelineComparison } from "./BenchmarkPipelineComparison";
 import { BenchmarkReportOverview } from "./BenchmarkReportOverview";

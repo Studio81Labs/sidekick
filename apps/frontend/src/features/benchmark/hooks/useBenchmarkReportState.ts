@@ -13,12 +13,14 @@ import type {
 import type { PipelineSelection } from "../../../shared/types/pipeline";
 import { messageFromError } from "../../../shared/lib/errors";
 import {
-  benchmarkReportSummary,
-  benchmarkReportsAreComparable,
   cacheBenchmarkReport,
   loadCachedBenchmarkReport,
+} from "../lib/benchmarkReportCache";
+import {
+  benchmarkReportSummary,
+  benchmarkReportsAreComparable,
   previousComparableBenchmarkReport,
-} from "../lib/benchmarkPresentation";
+} from "../lib/benchmarkReportPresentation";
 
 interface UseBenchmarkReportStateOptions {
   dialogOpen: boolean;

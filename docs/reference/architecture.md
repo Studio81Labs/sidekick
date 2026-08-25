@@ -647,18 +647,16 @@ selects retry-scheduled or idle from the remaining lease state.
 
 Workspace persistence is implemented by focused cache-validation,
 mutation-lease, processing-queue, history, and reconciliation modules. The
-`features/workspace/lib/persistence.ts` barrel preserves the coordinator-facing
-contract while preventing cache schemas and recovery algorithms from sharing
-one implementation file. Browser-facing processing, history, and mutation-lease
+former persistence, cache-validation, and mutation-lease compatibility barrels
+are removed; consumers import those owners directly. Browser-facing processing,
+history, and mutation-lease
 operations are grouped in a stable projection adapter injected by
 `AnalyzerWorkflowProvider`; the analyzer consumes that adapter through a focused
 hook, while tests may replace it without patching browser globals.
 Cache validation keeps primitive bounds, poker and completed-street state,
-recommendation and training payloads, and parser/job records in focused modules
-behind the stable `features/workspace/lib/cacheValidation.ts` barrel.
+recommendation and training payloads, and parser/job records in focused modules.
 Mutation-lease contracts, job and projection expectations, lease matching,
-legacy decoding, browser storage, and lease factories are separate modules
-behind the stable `features/workspace/lib/mutationLeases.ts` barrel.
+legacy decoding, browser storage, and lease factories are separate modules.
 
 Recommendation parser routing, metadata validation, preflop context, postflop
 range evidence, candidate ranking, and display formatting live in focused
@@ -688,8 +686,8 @@ caching and selection, and previous-run comparison into
 `useBenchmarkReportState`; parser selection, benchmark execution, dialog
 commands, and case review remain in `useBenchmarkController`.
 Benchmark report comparison, case trends, report caching, parser-route
-aggregation, and value formatting live in focused modules behind
-`features/benchmark/lib/benchmarkPresentation.ts`.
+aggregation, and value formatting live in focused modules; the former
+`features/benchmark/lib/benchmarkPresentation.ts` barrel is removed.
 
 Vitest enforces the source layout: shared code cannot depend on upper layers,
 features and pages cannot depend on the application shell, feature libraries

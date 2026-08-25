@@ -68,41 +68,51 @@ import {
 import type { BenchmarkDatasetImportResult } from "../../shared/types/benchmarks";
 import type { CanonicalState } from "../../shared/types/poker";
 import type { JobHistory, JobRecord } from "../../shared/types/jobs";
-import { benchmarkCorpusFingerprintAfterLayoutMutation } from "../../features/benchmark/lib/benchmarkPresentation";
+import { benchmarkCorpusFingerprintAfterLayoutMutation } from "../../features/benchmark/lib/benchmarkReportPresentation";
 import { importBenchmarkDatasetCommand } from "../../features/benchmark/services/importBenchmarkDatasetCommand";
 import { setBenchmarkInclusionCommand } from "../../features/benchmark/services/setBenchmarkInclusionCommand";
+import { isPristineBenchmarkImport } from "../../features/workspace/lib/cachedJobValidation";
 import {
   HISTORY_CACHE_LIMIT,
-  type JobMutationExpectation,
-  type JobMutationLease,
-  PERSISTED_MUTATION_LEASE_MS,
-  PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS,
-  type PersistedJobMutationScope,
-  type PersistedMutationLease,
-  type ProjectionMutationLease,
-  type ProjectionMutationTarget,
-  benchmarkImportLeaseRequestId,
-  createMutationRequestId,
   getHistorySearchExtent,
-  getProcessingQueueExtent,
   historyItemsFromPage,
-  isBenchmarkImportLease,
-  isLocalUploadError,
-  isPristineBenchmarkImport,
+} from "../../features/workspace/lib/historyPersistence";
+import {
   jobMutationExpectationReached,
-  matchingArchiveLeaseTargets,
-  mergeHistoryItems,
-  mutationLeaseJobIds,
-  mutationLeaseTargetsJob,
-  newerHistoryJob,
-  preserveUploadRequestId,
-  processingJobsForCache,
   projectionMutationLeaseTargetReached,
   projectionMutationTarget,
   projectionMutationTargetReached,
+} from "../../features/workspace/lib/mutationLeaseExpectations";
+import { createMutationRequestId } from "../../features/workspace/lib/mutationLeaseFactories";
+import {
+  benchmarkImportLeaseRequestId,
+  isBenchmarkImportLease,
+  matchingArchiveLeaseTargets,
+  mutationLeaseJobIds,
+  mutationLeaseTargetsJob,
+} from "../../features/workspace/lib/mutationLeaseMatching";
+import { PERSISTED_MUTATION_LEASE_MS } from "../../features/workspace/lib/mutationLeaseStorage";
+import type {
+  JobMutationExpectation,
+  JobMutationLease,
+  PersistedJobMutationScope,
+  PersistedMutationLease,
+  ProjectionMutationLease,
+  ProjectionMutationTarget,
+} from "../../features/workspace/lib/mutationLeaseTypes";
+import {
+  PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS,
+  getProcessingQueueExtent,
+  processingJobsForCache,
+} from "../../features/workspace/lib/processingQueuePersistence";
+import {
+  isLocalUploadError,
+  mergeHistoryItems,
+  newerHistoryJob,
+  preserveUploadRequestId,
   reconcileHistoryItems,
   reconcileProcessingJobs,
-} from "../../features/workspace/lib/persistence";
+} from "../../features/workspace/lib/reconciliation";
 import {
   suggestedActionDifferenceFocus,
   suggestedCertaintyFocus,

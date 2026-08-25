@@ -17,10 +17,12 @@ import {
   type BenchmarkCaseFilter,
   benchmarkCaseChanges,
   benchmarkCaseTrendMap,
+} from "../lib/benchmarkCaseComparison";
+import { benchmarkReportsAreComparable } from "../lib/benchmarkReportPresentation";
+import {
   benchmarkComparisonValue,
   benchmarkMismatchLabel,
-  benchmarkReportsAreComparable,
-} from "../lib/benchmarkPresentation";
+} from "../lib/benchmarkValuePresentation";
 
 export interface BenchmarkCaseResultsProps {
   comparisonReport: BenchmarkReport | null;
