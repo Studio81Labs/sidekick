@@ -87,6 +87,11 @@ const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
       "features/capture/services/uploadScreenshotCommand.ts",
     ]),
   };
+
+function isWaveNineMutation(value: string): boolean {
+  return Object.prototype.hasOwnProperty.call(WAVE_NINE_MUTATION_OWNERS, value);
+}
+
 const SOURCE_EXTENSIONS = new Set([
   ".cjs",
   ".css",
@@ -216,29 +221,82 @@ function sourceFiles(): string[] {
 }
 
 function waveNineMutationBoundaryViolations(): string[] {
-  const violations: string[] = [];
+  const violations = new Set<string>();
 
   for (const file of sourceFiles().filter((candidate) =>
     [".ts", ".tsx"].includes(extname(candidate)),
   )) {
     const sourcePath = sourceSegments(file).join("/");
     const source = readFileSync(file, "utf8");
+    const sourceFile = ts.createSourceFile(
+      file,
+      source,
+      ts.ScriptTarget.Latest,
+      true,
+      extname(file) === ".tsx" ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+    );
+    const importedMutations = new Map<string, string>();
 
-    for (const [mutation, owners] of Object.entries(
-      WAVE_NINE_MUTATION_OWNERS,
-    )) {
+    for (const statement of sourceFile.statements) {
       if (
-        !owners.has(sourcePath) &&
-        new RegExp(`\\b${mutation}\\s*\\(`).test(source)
+        !ts.isImportDeclaration(statement) ||
+        !ts.isStringLiteral(statement.moduleSpecifier) ||
+        sourceImportTarget(file, statement.moduleSpecifier.text) === null
       ) {
-        violations.push(
-          `${mutation} called outside its owned boundary: ${sourcePath}`,
-        );
+        continue;
+      }
+
+      const bindings = statement.importClause?.namedBindings;
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const binding of bindings.elements) {
+          const importedName = (binding.propertyName ?? binding.name).text;
+          if (isWaveNineMutation(importedName)) {
+            importedMutations.set(binding.name.text, importedName);
+          }
+        }
       }
     }
+
+    function mutationForCall(node: ts.CallExpression): string | null {
+      let expression: ts.Expression = node.expression;
+      while (ts.isParenthesizedExpression(expression)) {
+        expression = expression.expression;
+      }
+
+      if (ts.isIdentifier(expression)) {
+        return (
+          importedMutations.get(expression.text) ??
+          (isWaveNineMutation(expression.text) ? expression.text : null)
+        );
+      }
+
+      if (
+        ts.isPropertyAccessExpression(expression) &&
+        isWaveNineMutation(expression.name.text)
+      ) {
+        return expression.name.text;
+      }
+
+      return null;
+    }
+
+    function visit(node: ts.Node): void {
+      if (ts.isCallExpression(node)) {
+        const mutation = mutationForCall(node);
+        const owners = mutation ? WAVE_NINE_MUTATION_OWNERS[mutation] : null;
+        if (owners && !owners.has(sourcePath)) {
+          violations.add(
+            `${mutation} called outside its owned boundary: ${sourcePath}`,
+          );
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
   }
 
-  return violations.sort();
+  return [...violations].sort();
 }
 
 function stylesheetImports(source: string, file: string): string[] {
