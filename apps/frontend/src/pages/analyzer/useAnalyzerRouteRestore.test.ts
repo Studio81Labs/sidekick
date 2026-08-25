@@ -98,6 +98,34 @@ describe("useAnalyzerRouteRestore", () => {
     expect(current.loadJob).toHaveBeenCalledWith(loadedJob.id);
   });
 
+  it("reconciles the durable job after its active projection changes", async () => {
+    const routedJob = job("job-123");
+    const initial = options({
+      activeJobId: routedJob.id,
+      jobs: [routedJob],
+      loadJob: vi.fn().mockResolvedValue(routedJob),
+      route: analyzerRouteState("job", routedJob.id),
+    });
+    const { rerender } = renderHook(
+      ({ current }: { current: AnalyzerRouteRestoreOptions }) =>
+        useAnalyzerRouteRestore(current),
+      { initialProps: { current: initial } },
+    );
+
+    rerender({
+      current: {
+        ...initial,
+        activeJobId: "fallback-job",
+        jobs: [job("fallback-job")],
+      },
+    });
+
+    await waitFor(() =>
+      expect(initial.activateJob).toHaveBeenCalledWith(routedJob),
+    );
+    expect(initial.loadJob).toHaveBeenCalledWith(routedJob.id);
+  });
+
   it("surfaces a durable job load failure", async () => {
     const failure = new Error("missing job");
     const current = options({
