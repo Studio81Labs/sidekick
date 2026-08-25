@@ -533,6 +533,12 @@ Shared API data contracts mirror those domains under `src/shared/types`.
 The former `src/shared/types.ts` compatibility barrel has been removed;
 production and test code import narrowly owned domain contract modules directly.
 
+Cross-feature error formatting, abort classification, uncertain-write
+classification, and stable toast IDs live in `src/shared/lib/errors.ts`.
+Feature hooks import those primitives downward instead of depending on the
+workspace feature; workspace workflow helpers retain only workspace-specific
+automation and job-state behavior.
+
 A feature must not move unrelated persistence orchestration into its hook merely
 to make the page coordinator shorter. New feature behavior should extend the
 closest feature boundary, while future top-level experiences such as account or

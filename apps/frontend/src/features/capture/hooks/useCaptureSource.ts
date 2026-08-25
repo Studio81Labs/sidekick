@@ -9,7 +9,7 @@ import {
   stopMediaStream,
   wrongShareModeMessage,
 } from "../lib/screenCapture";
-import { messageFromError } from "../../workspace/lib/workflow";
+import { messageFromError } from "../../../shared/lib/errors";
 import {
   shareModeLabel,
   type InputMode,

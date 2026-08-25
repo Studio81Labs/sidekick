@@ -19,7 +19,7 @@ import type {
   TrainingSolverFilter,
   TrainingStreetFilter,
 } from "../../../shared/types/training";
-import { messageFromError } from "../../workspace/lib/workflow";
+import { messageFromError } from "../../../shared/lib/errors";
 import {
   sameTrainingPositionFilter,
   type TrainingProgressView,

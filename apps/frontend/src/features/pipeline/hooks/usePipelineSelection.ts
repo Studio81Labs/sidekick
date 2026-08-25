@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { usePipelineCapabilitiesQuery } from "../../../domains/pipeline/api/pipelineQueries";
 import { reconcilePipelineSelection } from "../lib/pipelineSelection";
-import { messageFromError } from "../../workspace/lib/workflow";
+import { messageFromError } from "../../../shared/lib/errors";
 import type {
   PipelineCapabilities,
   PipelineSelection,

@@ -22,7 +22,7 @@ import {
 import {
   messageFromError,
   VALIDATION_TOAST_ID,
-} from "../../workspace/lib/workflow";
+} from "../../../shared/lib/errors";
 import type {
   CompletedPostflopActionForm,
   PostflopActionForm,
