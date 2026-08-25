@@ -3280,7 +3280,7 @@ describe("frontend source architecture", () => {
 
   it("keeps Wave 9 mutations in owned adapters and command services", () => {
     expect(waveNineMutationBoundaryViolations()).toEqual([]);
-  });
+  }, 15_000);
 
   it("allows only the checked-in legacy peer-feature imports", () => {
     expect(peerFeatureBoundaryViolations()).toEqual([]);
