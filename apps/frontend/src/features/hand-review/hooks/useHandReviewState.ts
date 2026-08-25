@@ -3,10 +3,12 @@ import { toast } from "sonner";
 
 import { imageUrl } from "../../../domains/jobs/api/jobsApi";
 import { humanReadableMessage } from "../../../shared/api/core";
-import { normalizePreflopPosition } from "../lib/preflopPosition";
+import {
+  PREFLOP_POSITIONS,
+  normalizePreflopPosition,
+} from "../../../domains/poker/model/preflopPosition";
 import {
   EMPTY_STATE,
-  PREFLOP_POSITIONS,
   approvalKey,
   formToCanonical,
   stateFromJob,

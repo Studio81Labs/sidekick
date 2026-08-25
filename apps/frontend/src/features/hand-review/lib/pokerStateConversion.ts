@@ -7,7 +7,7 @@ import type {
   PostflopAction,
   PreflopAction,
 } from "../../../shared/types/poker";
-import { normalizePreflopPosition } from "./preflopPosition";
+import { normalizePreflopPosition } from "../../../domains/poker/model/preflopPosition";
 import {
   formatCards,
   parseCards,

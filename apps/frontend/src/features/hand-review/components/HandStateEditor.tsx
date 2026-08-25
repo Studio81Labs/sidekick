@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
 
 import { ActionHistoryField, ActionHistoryRow } from "./ActionHistoryField";
-import { PREFLOP_POSITIONS } from "../lib/pokerState";
+import { PREFLOP_POSITIONS } from "../../../domains/poker/model/preflopPosition";
 import { DetectedStateField } from "./DetectedStateField";
 import { DetectedStateForm } from "./DetectedStateForm";
 import {

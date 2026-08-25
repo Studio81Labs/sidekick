@@ -9,8 +9,6 @@ describe("poker state compatibility barrel", () => {
         "CONFIDENCE_KEYS",
         "EMPTY_STATE",
         "FACING_ACTIONS",
-        "PREFLOP_POSITIONS",
-        "PREFLOP_POSITION_ALIASES",
         "RANKS",
         "RANK_VALUES",
         "STREETS",

@@ -539,6 +539,11 @@ Feature hooks import those primitives downward instead of depending on the
 workspace feature; workspace workflow helpers retain only workspace-specific
 automation and job-state behavior.
 
+Preflop position labels, aliases, and normalization live in
+`domains/poker/model/preflopPosition.ts`. Hand-review and benchmark features
+consume that poker-domain model directly; no benchmark or hand-review peer
+adapter owns the shared primitive.
+
 A feature must not move unrelated persistence orchestration into its hook merely
 to make the page coordinator shorter. New feature behavior should extend the
 closest feature boundary, while future top-level experiences such as account or
