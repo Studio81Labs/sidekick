@@ -936,6 +936,10 @@ function waveNineMutationBoundaryViolations(): string[] {
             seen,
           ),
         );
+      } else if (ts.isSpreadAssignment(declaration)) {
+        members.push(
+          ...typedValueCallables(declaration.expression, label, seen),
+        );
       } else if (
         (ts.isPropertyAssignment(declaration) ||
           ts.isPropertyDeclaration(declaration)) &&
@@ -974,6 +978,62 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
     }
     return members;
+  }
+
+  function returnedValueCallables(
+    callable: CallableImplementation,
+    label: string,
+  ): ExportedCallable[] {
+    const returned: ExportedCallable[] = [];
+
+    function inspect(value: ts.Expression): void {
+      while (
+        ts.isParenthesizedExpression(value) ||
+        ts.isAsExpression(value) ||
+        ts.isSatisfiesExpression(value) ||
+        ts.isAwaitExpression(value)
+      ) {
+        value = value.expression;
+      }
+      if (ts.isConditionalExpression(value)) {
+        inspect(value.whenTrue);
+        inspect(value.whenFalse);
+        return;
+      }
+      const returnLabel = label + ".[return]";
+      if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+        returned.push({ callable: value, label: returnLabel, topLevel: false });
+      } else {
+        const implementation = callableImplementation(resolvedSymbol(value));
+        if (implementation) {
+          returned.push({
+            callable: implementation,
+            label: returnLabel,
+            topLevel: false,
+          });
+        }
+      }
+      returned.push(...typedValueCallables(value, returnLabel));
+    }
+
+    if (ts.isArrowFunction(callable) && !ts.isBlock(callable.body)) {
+      inspect(callable.body);
+      return returned;
+    }
+
+    function visit(node: ts.Node): void {
+      if (node !== callable && ts.isFunctionLike(node)) {
+        return;
+      }
+      if (ts.isReturnStatement(node) && node.expression) {
+        inspect(node.expression);
+        return;
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(callable);
+    return returned;
   }
 
   function exportedCallables(
@@ -1035,6 +1095,16 @@ function waveNineMutationBoundaryViolations(): string[] {
         callables.push(...callableMembers(declaration.initializer, exportName));
       } else if (ts.isClassDeclaration(declaration)) {
         callables.push(...callableMembers(declaration, exportName));
+      }
+    }
+    for (const exportedCallable of [...callables]) {
+      if (exportedCallable.topLevel) {
+        callables.push(
+          ...returnedValueCallables(
+            exportedCallable.callable,
+            exportedCallable.label,
+          ),
+        );
       }
     }
     return callables;
