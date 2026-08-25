@@ -1795,6 +1795,23 @@ function waveNineMutationBoundaryViolations(): string[] {
         inspect(value.whenFalse);
         return;
       }
+      if (ts.isBinaryExpression(value)) {
+        if (value.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+          inspect(value.right);
+          return;
+        }
+        if (
+          [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(value.operatorToken.kind)
+        ) {
+          inspect(value.left);
+          inspect(value.right);
+          return;
+        }
+      }
       const returnLabel = label + ".[return]";
       if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
         returned.push({ callable: value, label: returnLabel, topLevel: false });
