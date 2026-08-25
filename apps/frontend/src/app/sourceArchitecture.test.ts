@@ -944,6 +944,107 @@ function waveNineMutationBoundaryViolations(): string[] {
       return "write";
     }
 
+    function localHelperMethodStates(
+      implementation: CallableImplementation,
+      parameterIndex: number,
+      initial: Set<RequestMethodState>,
+      seenHelpers = new Set<CallableImplementation>(),
+    ): Set<RequestMethodState> | null {
+      if (
+        !ts.isFunctionLike(implementation) ||
+        seenHelpers.has(implementation)
+      ) {
+        return null;
+      }
+      const parameter = implementation.parameters[parameterIndex];
+      const parameterSymbol = parameter ? resolvedSymbol(parameter.name) : null;
+      if (!parameterSymbol) {
+        return null;
+      }
+      seenHelpers.add(implementation);
+      const aliases = new Set<ts.Symbol>([parameterSymbol]);
+      let helperStates = new Set(initial);
+      let mutated = false;
+
+      function update(node: ts.Node, nextState: RequestMethodState): void {
+        mutated = true;
+        if (maySkipExecution(node, implementation)) {
+          helperStates.add(nextState);
+        } else {
+          helperStates = new Set([nextState]);
+        }
+      }
+
+      function visitHelper(node: ts.Node): void {
+        if (node !== implementation && ts.isFunctionLike(node)) {
+          return;
+        }
+        if (
+          ts.isVariableDeclaration(node) &&
+          ts.isIdentifier(node.name) &&
+          node.initializer
+        ) {
+          const initializerSymbol = resolvedSymbol(node.initializer);
+          const aliasSymbol = resolvedSymbol(node.name);
+          if (
+            initializerSymbol &&
+            aliasSymbol &&
+            aliases.has(initializerSymbol)
+          ) {
+            aliases.add(aliasSymbol);
+          }
+        }
+        if (
+          ts.isBinaryExpression(node) &&
+          (ts.isPropertyAccessExpression(node.left) ||
+            ts.isElementAccessExpression(node.left))
+        ) {
+          const receiverSymbol = resolvedSymbol(node.left.expression);
+          const propertyName = ts.isPropertyAccessExpression(node.left)
+            ? node.left.name.text
+            : constantStringValue(node.left.argumentExpression);
+          if (
+            receiverSymbol &&
+            aliases.has(receiverSymbol) &&
+            propertyName === "method"
+          ) {
+            update(
+              node,
+              node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+                ? methodValueState(node.right)
+                : "write",
+            );
+          }
+        }
+        if (ts.isCallExpression(node)) {
+          node.arguments.forEach((argument, argumentIndex) => {
+            const argumentSymbol = resolvedSymbol(argument);
+            if (!argumentSymbol || !aliases.has(argumentSymbol)) {
+              return;
+            }
+            for (const nested of invocationTargetCallables(node.expression)) {
+              const nestedStates = localHelperMethodStates(
+                nested,
+                argumentIndex,
+                helperStates,
+                new Set(seenHelpers),
+              );
+              if (nestedStates) {
+                mutated = true;
+                helperStates = maySkipExecution(node, implementation)
+                  ? new Set([...helperStates, ...nestedStates])
+                  : nestedStates;
+              }
+            }
+          });
+        }
+        ts.forEachChild(node, visitHelper);
+      }
+
+      visitHelper(implementation);
+      return mutated ? helperStates : null;
+    }
+
     function visit(node: ts.Node): void {
       if (
         ts.isBinaryExpression(node) &&
@@ -1040,6 +1141,29 @@ function waveNineMutationBoundaryViolations(): string[] {
             );
           }
         }
+      }
+      if (
+        ts.isCallExpression(node) &&
+        node.getEnd() <= referenceStart &&
+        executionBoundary(node) === boundary
+      ) {
+        node.arguments.forEach((argument, argumentIndex) => {
+          if (resolvedSymbol(argument) !== symbol) {
+            return;
+          }
+          for (const implementation of invocationTargetCallables(
+            node.expression,
+          )) {
+            const nextStates = localHelperMethodStates(
+              implementation,
+              argumentIndex,
+              states,
+            );
+            if (nextStates) {
+              applyStates(node, nextStates);
+            }
+          }
+        });
       }
       ts.forEachChild(node, visit);
     }
@@ -1439,6 +1563,131 @@ function waveNineMutationBoundaryViolations(): string[] {
     return writes;
   }
 
+  function implementationInvokesParameter(
+    implementation: CallableImplementation,
+    parameterIndex: number,
+  ): boolean {
+    if (!ts.isFunctionLike(implementation)) {
+      return false;
+    }
+    const parameter = implementation.parameters[parameterIndex];
+    const parameterSymbol = parameter ? resolvedSymbol(parameter.name) : null;
+    if (!parameterSymbol) {
+      return false;
+    }
+    let invokes = false;
+
+    function visit(node: ts.Node): void {
+      if (invokes || (node !== implementation && ts.isFunctionLike(node))) {
+        return;
+      }
+      if (ts.isCallExpression(node)) {
+        const receiver = invocationHelperReceiver(node);
+        invokes =
+          resolvedSymbol(callReference(node)) === parameterSymbol ||
+          (receiver !== null && resolvedSymbol(receiver) === parameterSymbol);
+      } else if (ts.isTaggedTemplateExpression(node)) {
+        invokes = resolvedSymbol(node.tag) === parameterSymbol;
+      } else if (ts.isNewExpression(node)) {
+        invokes = resolvedSymbol(node.expression) === parameterSymbol;
+      }
+      if (!invokes) {
+        ts.forEachChild(node, visit);
+      }
+    }
+
+    visit(implementation);
+    return invokes;
+  }
+
+  function callExecutesArgument(
+    node: ts.CallExpression,
+    argumentIndex: number,
+  ): boolean {
+    if (
+      invocationTargetCallables(node.expression).some((implementation) =>
+        implementationInvokesParameter(implementation, argumentIndex),
+      )
+    ) {
+      return true;
+    }
+    const methodName =
+      ts.isPropertyAccessExpression(node.expression) ||
+      ts.isElementAccessExpression(node.expression)
+        ? ts.isPropertyAccessExpression(node.expression)
+          ? node.expression.name.text
+          : constantStringValue(node.expression.argumentExpression)
+        : null;
+    const callbackMethods = new Set([
+      "catch",
+      "every",
+      "filter",
+      "finally",
+      "find",
+      "findIndex",
+      "findLast",
+      "findLastIndex",
+      "flatMap",
+      "forEach",
+      "map",
+      "reduce",
+      "reduceRight",
+      "some",
+      "sort",
+      "then",
+      "toSorted",
+    ]);
+    if (methodName && callbackMethods.has(methodName)) {
+      return methodName === "then" ? argumentIndex <= 1 : argumentIndex === 0;
+    }
+    if (!ts.isIdentifier(node.expression) || argumentIndex !== 0) {
+      return false;
+    }
+    const scheduler = node.expression.text;
+    if (
+      ![
+        "queueMicrotask",
+        "requestAnimationFrame",
+        "setImmediate",
+        "setInterval",
+        "setTimeout",
+      ].includes(scheduler)
+    ) {
+      return false;
+    }
+    const schedulerSymbol = resolvedSymbol(node.expression);
+    return (
+      schedulerSymbol?.declarations?.some((declaration) => {
+        const file = declaration.getSourceFile().fileName;
+        return file.includes("/typescript/lib/lib.");
+      }) ?? false
+    );
+  }
+
+  function newExecutesArgument(
+    node: ts.NewExpression,
+    argumentIndex: number,
+  ): boolean {
+    if (
+      constructorImplementations(node.expression).some((implementation) =>
+        implementationInvokesParameter(implementation, argumentIndex),
+      )
+    ) {
+      return true;
+    }
+    const constructorSymbol = resolvedSymbol(node.expression);
+    return (
+      argumentIndex === 0 &&
+      constructorSymbol?.getName() === "Promise" &&
+      (constructorSymbol.declarations?.some((declaration) =>
+        declaration
+          .getSourceFile()
+          .fileName.endsWith("lib.es2015.promise.d.ts"),
+      ) ??
+        false)
+    );
+  }
+
   function constructorImplementations(
     expression: ts.Expression,
     seen = new Set<ts.Symbol>(),
@@ -1568,8 +1817,10 @@ function waveNineMutationBoundaryViolations(): string[] {
             (receiverCallable !== null &&
               callableWrites(receiverCallable, active));
           if (!writes) {
-            writes = node.arguments.some((argument) =>
-              argumentCallableWrites(argument, active),
+            writes = node.arguments.some(
+              (argument, index) =>
+                callExecutesArgument(node, index) &&
+                argumentCallableWrites(argument, active),
             );
           }
         }
@@ -1593,8 +1844,10 @@ function waveNineMutationBoundaryViolations(): string[] {
           ...proxyCallables(node),
         ].some((implementation) => callableWrites(implementation, active));
         if (!writes) {
-          writes = (node.arguments ?? []).some((argument) =>
-            argumentCallableWrites(argument, active),
+          writes = (node.arguments ?? []).some(
+            (argument, index) =>
+              newExecutesArgument(node, index) &&
+              argumentCallableWrites(argument, active),
           );
         }
       }
@@ -2804,8 +3057,10 @@ function waveNineMutationBoundaryViolations(): string[] {
           (directCallable !== null && callableWrites(directCallable)) ||
           (receiverCallable !== null && callableWrites(receiverCallable));
         if (!writes) {
-          writes = node.arguments.some((argument) =>
-            argumentCallableWrites(argument, new Set()),
+          writes = node.arguments.some(
+            (argument, index) =>
+              callExecutesArgument(node, index) &&
+              argumentCallableWrites(argument, new Set()),
           );
         }
       } else if (ts.isTaggedTemplateExpression(node)) {
@@ -2827,8 +3082,10 @@ function waveNineMutationBoundaryViolations(): string[] {
           ...proxyCallables(node),
         ].some((implementation) => callableWrites(implementation));
         if (!writes) {
-          writes = (node.arguments ?? []).some((argument) =>
-            argumentCallableWrites(argument, new Set()),
+          writes = (node.arguments ?? []).some(
+            (argument, index) =>
+              newExecutesArgument(node, index) &&
+              argumentCallableWrites(argument, new Set()),
           );
         }
       }
