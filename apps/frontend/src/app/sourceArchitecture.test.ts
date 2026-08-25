@@ -963,6 +963,7 @@ function waveNineMutationBoundaryViolations(): string[] {
 
   function requestInputMethodStates(
     value: ts.Expression | undefined,
+    seen = new Set<ts.Symbol>(),
   ): Set<RequestMethodState> {
     if (!value) {
       return new Set(["absent"]);
@@ -970,9 +971,49 @@ function waveNineMutationBoundaryViolations(): string[] {
     while (
       ts.isParenthesizedExpression(value) ||
       ts.isAsExpression(value) ||
-      ts.isSatisfiesExpression(value)
+      ts.isSatisfiesExpression(value) ||
+      ts.isNonNullExpression(value)
     ) {
       value = value.expression;
+    }
+    if (ts.isConditionalExpression(value)) {
+      return new Set([
+        ...requestInputMethodStates(value.whenTrue, new Set(seen)),
+        ...requestInputMethodStates(value.whenFalse, new Set(seen)),
+      ]);
+    }
+    if (ts.isBinaryExpression(value)) {
+      if (value.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+        return requestInputMethodStates(value.right, seen);
+      }
+      if (
+        [
+          ts.SyntaxKind.AmpersandAmpersandToken,
+          ts.SyntaxKind.BarBarToken,
+          ts.SyntaxKind.QuestionQuestionToken,
+        ].includes(value.operatorToken.kind)
+      ) {
+        return new Set([
+          ...requestInputMethodStates(value.left, new Set(seen)),
+          ...requestInputMethodStates(value.right, new Set(seen)),
+        ]);
+      }
+    }
+    if (ts.isIdentifier(value)) {
+      const symbol = resolvedSymbol(value);
+      if (symbol && !seen.has(symbol)) {
+        seen.add(symbol);
+        for (const declaration of symbol.declarations ?? []) {
+          if (
+            ts.isVariableDeclaration(declaration) &&
+            declaration.initializer &&
+            ts.isVariableDeclarationList(declaration.parent) &&
+            (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+          ) {
+            return requestInputMethodStates(declaration.initializer, seen);
+          }
+        }
+      }
     }
     if (
       ts.isNewExpression(value) &&
@@ -1069,6 +1110,36 @@ function waveNineMutationBoundaryViolations(): string[] {
       return symbol;
     }
 
+    function maySkipBeforeSend(node: ts.Node): boolean {
+      let current = node;
+      while (current.parent && current.parent !== callable) {
+        const parent = current.parent;
+        if (
+          (ts.isIfStatement(parent) && current !== parent.expression) ||
+          (ts.isConditionalExpression(parent) &&
+            current !== parent.condition) ||
+          (ts.isBinaryExpression(parent) &&
+            current === parent.right &&
+            [
+              ts.SyntaxKind.AmpersandAmpersandToken,
+              ts.SyntaxKind.BarBarToken,
+              ts.SyntaxKind.QuestionQuestionToken,
+            ].includes(parent.operatorToken.kind)) ||
+          ts.isCaseClause(parent) ||
+          ts.isDefaultClause(parent) ||
+          ((ts.isForStatement(parent) ||
+            ts.isForInStatement(parent) ||
+            ts.isForOfStatement(parent) ||
+            ts.isWhileStatement(parent)) &&
+            current === parent.statement)
+        ) {
+          return true;
+        }
+        current = parent;
+      }
+      return false;
+    }
+
     function visit(node: ts.Node): void {
       if (
         ts.isCallExpression(node) &&
@@ -1100,9 +1171,12 @@ function waveNineMutationBoundaryViolations(): string[] {
             if (methodName === "send") {
               operation.send = true;
             } else {
-              operation.writeOpen = node.arguments[0]
+              const writeOpen = node.arguments[0]
                 ? methodValueState(node.arguments[0]) === "write"
                 : true;
+              operation.writeOpen = maySkipBeforeSend(node)
+                ? operation.writeOpen || writeOpen
+                : writeOpen;
             }
             operations.set(canonicalSymbol, operation);
           }
