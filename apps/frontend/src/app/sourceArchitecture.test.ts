@@ -1534,6 +1534,17 @@ function waveNineMutationBoundaryViolations(): string[] {
         ? value.members
         : [];
     for (const declaration of declarations) {
+      if (ts.isPropertyDeclaration(declaration)) {
+        for (const implementation of assignedImplementationsForSymbol(
+          resolvedSymbol(declaration.name),
+        )) {
+          members.push({
+            callable: implementation,
+            label: label + "." + staticMemberName(declaration.name),
+            topLevel: false,
+          });
+        }
+      }
       if (
         ts.isMethodDeclaration(declaration) ||
         ts.isGetAccessorDeclaration(declaration) ||
