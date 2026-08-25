@@ -1457,14 +1457,20 @@ function waveNineMutationBoundaryViolations(): string[] {
       return symbol;
     }
 
-    function visit(node: ts.Node): void {
-      if (node !== callable && ts.isFunctionLike(node)) {
+    const activeHelpers = new Set<CallableImplementation>([callable]);
+
+    function visit(
+      node: ts.Node,
+      root: CallableImplementation = callable,
+      conditionalContext = false,
+    ): void {
+      if (node !== root && ts.isFunctionLike(node)) {
         return;
       }
       if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
         for (const member of node.members) {
           if (ts.isClassStaticBlockDeclaration(member)) {
-            visit(member);
+            visit(member, root, conditionalContext);
           } else if (
             ts.isPropertyDeclaration(member) &&
             member.initializer &&
@@ -1472,10 +1478,69 @@ function waveNineMutationBoundaryViolations(): string[] {
               (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
             )
           ) {
-            visit(member.initializer);
+            visit(member.initializer, root, conditionalContext);
           }
         }
         return;
+      }
+      if (ts.isCallExpression(node)) {
+        for (const implementation of invocationTargetCallables(
+          node.expression,
+        )) {
+          if (
+            !ts.isFunctionLike(implementation) ||
+            activeHelpers.has(implementation)
+          ) {
+            continue;
+          }
+          const restoredAliases = new Map<ts.Symbol, ts.Symbol | undefined>();
+          implementation.parameters.forEach((parameter, index) => {
+            const argument = node.arguments[index];
+            if (!argument) {
+              return;
+            }
+            const parameterSymbol = resolvedSymbol(parameter.name);
+            const argumentSymbol = resolvedSymbol(argument);
+            if (
+              parameterSymbol &&
+              argumentSymbol &&
+              typeContainsGlobalDomType(
+                checker.getTypeAtLocation(parameter.name),
+                "XMLHttpRequest",
+              ) &&
+              typeContainsGlobalDomType(
+                checker.getTypeAtLocation(argument),
+                "XMLHttpRequest",
+              )
+            ) {
+              restoredAliases.set(
+                parameterSymbol,
+                receiverAliases.get(parameterSymbol),
+              );
+              receiverAliases.set(
+                parameterSymbol,
+                canonicalReceiverSymbol(argumentSymbol),
+              );
+            }
+          });
+          if (restoredAliases.size > 0) {
+            activeHelpers.add(implementation);
+            collectReceiverAliases(implementation);
+            visit(
+              implementation,
+              implementation,
+              conditionalContext || maySkipExecution(node, root),
+            );
+            activeHelpers.delete(implementation);
+            restoredAliases.forEach((previous, parameterSymbol) => {
+              if (previous) {
+                receiverAliases.set(parameterSymbol, previous);
+              } else {
+                receiverAliases.delete(parameterSymbol);
+              }
+            });
+          }
+        }
       }
       if (
         ts.isCallExpression(node) &&
@@ -1508,15 +1573,16 @@ function waveNineMutationBoundaryViolations(): string[] {
               const writeOpen = node.arguments[0]
                 ? methodValueState(node.arguments[0]) === "write"
                 : true;
-              operation.writeOpen = maySkipExecution(node, callable)
-                ? operation.writeOpen || writeOpen
-                : writeOpen;
+              operation.writeOpen =
+                conditionalContext || maySkipExecution(node, root)
+                  ? operation.writeOpen || writeOpen
+                  : writeOpen;
             }
             operations.set(canonicalSymbol, operation);
           }
         }
       }
-      ts.forEachChild(node, visit);
+      ts.forEachChild(node, (child) => visit(child, root, conditionalContext));
     }
 
     collectReceiverAliases(callable);
@@ -1918,9 +1984,21 @@ function waveNineMutationBoundaryViolations(): string[] {
     label: string,
     seen = new Set<ts.Symbol>(),
   ): ExportedCallable[] {
+    while (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isSatisfiesExpression(value) ||
+      ts.isNonNullExpression(value)
+    ) {
+      value = value.expression;
+    }
     const members: ExportedCallable[] = [];
     const valueType = checker.getTypeAtLocation(value);
     members.push(...reachableTypeCallables(valueType, label, seen));
+
+    if (ts.isObjectLiteralExpression(value) || ts.isClassExpression(value)) {
+      members.push(...callableMembers(value, label, seen));
+    }
 
     if (ts.isArrayLiteralExpression(value)) {
       for (const element of value.elements) {
