@@ -1153,6 +1153,15 @@ function waveNineMutationBoundaryViolations(): string[] {
     seen = new Set<ts.Symbol>(),
   ): ExportedCallable[] {
     const members: ExportedCallable[] = [];
+    if (ts.isClassDeclaration(value) || ts.isClassExpression(value)) {
+      const classSymbol = resolvedSymbol(value.name ?? value);
+      if (classSymbol && seen.has(classSymbol)) {
+        return members;
+      }
+      if (classSymbol) {
+        seen.add(classSymbol);
+      }
+    }
     const declarations = ts.isObjectLiteralExpression(value)
       ? value.properties
       : ts.isClassDeclaration(value) || ts.isClassExpression(value)
@@ -1242,6 +1251,26 @@ function waveNineMutationBoundaryViolations(): string[] {
             seen,
           ),
         );
+      }
+    }
+    if (ts.isClassDeclaration(value) || ts.isClassExpression(value)) {
+      const classType = checker.getTypeAtLocation(value);
+      if ((classType.flags & ts.TypeFlags.Object) !== 0) {
+        for (const baseType of checker.getBaseTypes(
+          classType as ts.InterfaceType,
+        )) {
+          const baseSymbol = resolvedAliasSymbol(
+            baseType.aliasSymbol ?? baseType.getSymbol(),
+          );
+          for (const declaration of baseSymbol?.declarations ?? []) {
+            if (
+              ts.isClassDeclaration(declaration) ||
+              ts.isClassExpression(declaration)
+            ) {
+              members.push(...callableMembers(declaration, label, seen));
+            }
+          }
+        }
       }
     }
     return members;
