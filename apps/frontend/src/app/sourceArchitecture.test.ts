@@ -4504,16 +4504,21 @@ function componentsMissingTests(): string[] {
     .map((file) => sourceSegments(file).join("/"));
 }
 
-function analyzerRouteBoundaryViolations(): string[] {
-  const routePath = resolve(SOURCE_ROOT, "pages/analyzer/AnalyzerRoute.tsx");
-  const routeSource = readFileSync(routePath, "utf8");
+const ANALYZER_COMPOSITION_ROOTS = [
+  "pages/analyzer/AnalyzerPage.tsx",
+  "pages/analyzer/AnalyzerRoute.tsx",
+  "pages/analyzer/AnalyzerWorkspaceComposition.tsx",
+] as const;
+
+function sourceLineCount(source: string): number {
+  const withoutTrailingNewline = source.replace(/\r?\n$/, "");
+  return withoutTrailingNewline === ""
+    ? 0
+    : withoutTrailingNewline.split(/\r?\n/).length;
+}
+
+function analyzerCompositionBoundaryViolations(): string[] {
   const violations: string[] = [];
-  const lineCount = routeSource.split(/\r?\n/).length;
-
-  if (lineCount > 300) {
-    violations.push(`AnalyzerRoute.tsx exceeds 300 lines: ${lineCount}`);
-  }
-
   const prohibitedBoundaries: ReadonlyArray<
     readonly [label: string, pattern: RegExp]
   > = [
@@ -4526,9 +4531,20 @@ function analyzerRouteBoundaryViolations(): string[] {
       /\b(?:parserRoutingFromRaw|stateToForm|validationFromForm)\b/,
     ],
   ];
-  for (const [label, pattern] of prohibitedBoundaries) {
-    if (pattern.test(routeSource)) {
-      violations.push(`AnalyzerRoute.tsx may not own ${label}`);
+
+  for (const sourcePath of ANALYZER_COMPOSITION_ROOTS) {
+    const source = readFileSync(resolve(SOURCE_ROOT, sourcePath), "utf8");
+    const lineCount = sourceLineCount(source);
+    const sourceSegments = sourcePath.split("/");
+    const label = sourceSegments[sourceSegments.length - 1] ?? sourcePath;
+
+    if (lineCount > 300) {
+      violations.push(`${label} exceeds 300 lines: ${lineCount}`);
+    }
+    for (const [boundary, pattern] of prohibitedBoundaries) {
+      if (pattern.test(source)) {
+        violations.push(`${label} may not own ${boundary}`);
+      }
     }
   }
 
@@ -5008,8 +5024,8 @@ describe("frontend source architecture", () => {
     expect(componentsMissingTests()).toEqual([]);
   });
 
-  it("keeps AnalyzerRoute a thin composition root", () => {
-    expect(analyzerRouteBoundaryViolations()).toEqual([]);
+  it("keeps analyzer composition roots thin", () => {
+    expect(analyzerCompositionBoundaryViolations()).toEqual([]);
   });
 
   it("keeps shared API contracts in domain type modules", () => {

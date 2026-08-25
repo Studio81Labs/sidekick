@@ -18,16 +18,16 @@ being smaller is useful evidence, but it is not the goal by itself.
 The existing refactor established useful frontend feature boundaries and stable
 compatibility barrels. The remaining concentration is now visible:
 
-| Area                  | Current concentration                                             | Main risk                                                                  |
-| --------------------- | ----------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| Frontend page         | `pages/analyzer/AnalyzerPage.tsx`, about 4,200 lines              | Queue, history, recovery, automation, and mutations share one render owner |
-| Frontend server state | Handwritten fetch modules plus page and hook state                | Repeated loading, cancellation, cache, and stale-response behavior         |
-| Frontend contracts    | Handwritten TypeScript interfaces mirror Pydantic models          | Backend and frontend can drift silently                                    |
-| Backend API           | `app/api.py`, about 2,300 lines                                   | Bootstrap, middleware, routes, locks, stores, and use cases are coupled    |
-| Backend contracts     | `app/models.py`, about 1,500 lines                                | Poker rules, persistence records, and wire schemas share one module        |
-| Backend persistence   | `app/storage.py`, about 900 lines                                 | Repository behavior, blobs, serialization, and import journals are coupled |
-| Training backend      | `app/training.py`, about 1,200 lines                              | Filtering, summaries, grading, and Markdown export share one module        |
-| Tests                 | Several frontend and backend integration files exceed 2,000 lines | Fixtures and assertions are expensive to reuse or diagnose                 |
+| Area                  | Current concentration                                                 | Main risk                                                                       |
+| --------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Frontend controller   | `pages/analyzer/useAnalyzerWorkspaceController.ts`, about 4,400 lines | Queue, history, recovery, automation, and mutation protocols remain coordinated |
+| Frontend server state | Handwritten fetch modules plus page and hook state                    | Repeated loading, cancellation, cache, and stale-response behavior              |
+| Frontend contracts    | Handwritten TypeScript interfaces mirror Pydantic models              | Backend and frontend can drift silently                                         |
+| Backend API           | `app/api.py`, about 2,300 lines                                       | Bootstrap, middleware, routes, locks, stores, and use cases are coupled         |
+| Backend contracts     | `app/models.py`, about 1,500 lines                                    | Poker rules, persistence records, and wire schemas share one module             |
+| Backend persistence   | `app/storage.py`, about 900 lines                                     | Repository behavior, blobs, serialization, and import journals are coupled      |
+| Training backend      | `app/training.py`, about 1,200 lines                                  | Filtering, summaries, grading, and Markdown export share one module             |
+| Tests                 | Several frontend and backend integration files exceed 2,000 lines     | Fixtures and assertions are expensive to reuse or diagnose                      |
 
 Large static poker policy tables and solver data are not split solely to meet a
 line-count target. They are split only when ownership, generation, or testing
@@ -485,10 +485,12 @@ Wave 10 is complete. The application route shell owns canonical analyzer,
 job, training, and benchmark URLs, with `/` retained as a compatibility redirect.
 Typed analyzer route state restores the represented surface and optional job
 identity, while UI selections and closes update the same durable URLs. Transient
-dialog internals and draft state remain outside the URL. The route mounts the
-workflow provider and behavior-free page layout; existing feature components own
-the input, queue/history, preview, review, toolbar status, and dialog content.
-The full browser workflow matrix runs at desktop and mobile viewports.
+dialog internals and draft state remain outside the URL. A thin compatibility
+page mounts the workflow provider, a non-rendering controller retains the
+cross-feature protocols, and a guarded composition component owns the
+behavior-free page layout. Existing feature components own the input,
+queue/history, preview, review, toolbar status, and dialog content. The full
+browser workflow matrix runs at desktop and mobile viewports.
 
 - Replace `AnalyzerPage` with a thin `AnalyzerRoute` that mounts providers,
   layout, derived selectors, and feature composition.
@@ -619,7 +621,7 @@ Every implementation PR must include:
 | 7     | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
 | 8     | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |
 | 9     | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
-| 10    | Complete    | Durable routes restore and update typed state in both directions; the thin route, page shell, workspace landmarks, feature panes, toolbar status, and dialog layer are architecture-tested           |
+| 10    | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands  |
 | 11-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
 
 ## Exit Criteria
