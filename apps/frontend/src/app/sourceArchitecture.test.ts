@@ -101,7 +101,6 @@ function isWaveNineMutation(value: string): boolean {
 
 const LEGACY_RAW_TRANSPORT_OWNERS = new Set([
   "shared/api/mcp.ts",
-  "shared/api/system.ts",
   "shared/api/transport.ts",
 ]);
 const RAW_TRANSPORT_REFERENCES = new Set([
@@ -186,18 +185,10 @@ function isGeneratedOpenApiPath(sourcePath: readonly string[]): boolean {
 }
 
 function domainCompatibilityFacadeImportAllowed(
-  sourcePath: readonly string[],
-  targetPath: readonly string[],
+  _sourcePath: readonly string[],
+  _targetPath: readonly string[],
 ): boolean {
-  const facade = sourcePath.join("/");
-  const domain = targetPath.slice(0, 3).join("/");
-  const module = (targetPath[3] ?? "").replace(/\.ts$/, "");
-  return [["shared/api/system.ts", "domains/backups/api", "backupsApi"]].some(
-    ([allowedFacade, allowedDomain, allowedModule]) =>
-      facade === allowedFacade &&
-      domain === allowedDomain &&
-      module === allowedModule,
-  );
+  return false;
 }
 
 function generatedOpenApiImportAllowed(sourcePath: readonly string[]): boolean {
@@ -4589,6 +4580,7 @@ function sharedApiFacadeBoundaryViolations(): string[] {
     "client.ts",
     "history.ts",
     "jobs.ts",
+    "system.ts",
     "training.ts",
   ].map((name) => resolve(SOURCE_ROOT, "shared/api", name));
   const retiredFacadeTargets = new Set(

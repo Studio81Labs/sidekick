@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "../../../shared/api/generated/openapi";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import {
+  applicationBackupUrl,
   restoreApplicationBackup,
   toApplicationBackupRestoreResult,
 } from "./backupsApi";
@@ -22,6 +23,12 @@ const restoreResponse = {
 afterEach(resetApiMocks);
 
 describe("backup API adapter", () => {
+  it("builds the deployment-aware backup download URL", () => {
+    expect(applicationBackupUrl()).toBe(
+      "http://localhost:8000/api/backups/export",
+    );
+  });
+
   it("preserves the generated response object and JSON shape", () => {
     expect(toApplicationBackupRestoreResult(restoreResponse)).toBe(
       restoreResponse,
