@@ -885,6 +885,71 @@ function waveNineMutationBoundaryViolations(): string[] {
     return writes;
   }
 
+  function constructorImplementations(
+    expression: ts.Expression,
+    seen = new Set<ts.Symbol>(),
+  ): CallableImplementation[] {
+    const implementations: CallableImplementation[] = [];
+    const initialSymbol = resolvedSymbol(expression);
+
+    function collectClass(
+      declaration: ts.ClassDeclaration | ts.ClassExpression,
+    ): void {
+      const classSymbol = resolvedSymbol(declaration.name ?? declaration);
+      if (classSymbol && seen.has(classSymbol)) {
+        return;
+      }
+      if (classSymbol) {
+        seen.add(classSymbol);
+      }
+      for (const member of declaration.members) {
+        if (ts.isConstructorDeclaration(member) && member.body) {
+          implementations.push(member);
+        }
+      }
+      const classType = checker.getTypeAtLocation(declaration);
+      if ((classType.flags & ts.TypeFlags.Object) !== 0) {
+        for (const baseType of checker.getBaseTypes(
+          classType as ts.InterfaceType,
+        )) {
+          const baseSymbol = resolvedAliasSymbol(
+            baseType.aliasSymbol ?? baseType.getSymbol(),
+          );
+          collectSymbol(baseSymbol);
+        }
+      }
+    }
+
+    function collectSymbol(symbol: ts.Symbol | null): void {
+      if (!symbol || seen.has(symbol)) {
+        return;
+      }
+      const classDeclarations = (symbol.declarations ?? []).filter(
+        (
+          declaration,
+        ): declaration is ts.ClassDeclaration | ts.ClassExpression =>
+          ts.isClassDeclaration(declaration) ||
+          ts.isClassExpression(declaration),
+      );
+      if (classDeclarations.length > 0) {
+        classDeclarations.forEach(collectClass);
+        return;
+      }
+      seen.add(symbol);
+      const implementation = callableImplementation(symbol);
+      if (implementation) {
+        implementations.push(implementation);
+      }
+    }
+
+    if (ts.isClassExpression(expression)) {
+      collectClass(expression);
+    } else {
+      collectSymbol(initialSymbol);
+    }
+    return implementations;
+  }
+
   function callableWrites(
     callable: CallableImplementation,
     active = new Set<CallableImplementation>(),
@@ -926,6 +991,16 @@ function waveNineMutationBoundaryViolations(): string[] {
               argumentCallableWrites(argument, active),
             );
           }
+        }
+      }
+      if (ts.isNewExpression(node)) {
+        writes = constructorImplementations(node.expression).some(
+          (implementation) => callableWrites(implementation, active),
+        );
+        if (!writes) {
+          writes = (node.arguments ?? []).some((argument) =>
+            argumentCallableWrites(argument, active),
+          );
         }
       }
       ts.forEachChild(node, visit);
