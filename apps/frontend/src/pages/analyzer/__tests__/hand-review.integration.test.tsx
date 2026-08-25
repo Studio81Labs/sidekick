@@ -1233,6 +1233,7 @@ describe("Analyzer hand review", () => {
     expect(
       within(failedItem).getByText("Upload must contain supported image data"),
     ).toBeInTheDocument();
+    await waitFor(() => expect(failedItem).toHaveClass("active"));
   });
 
   it("sends corrected approval payload with user_approved forced true", async () => {

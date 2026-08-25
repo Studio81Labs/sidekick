@@ -3,6 +3,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import "./AnalyzerPage.css";
+import type {
+  AnalyzerRouteNavigation,
+  AnalyzerRouteState,
+} from "./analyzerRouteState";
+import { useAnalyzerRouteRestore } from "./useAnalyzerRouteRestore";
 import { AnalyzerToolbar } from "./components/AnalyzerToolbar";
 import { AutomationDialog } from "../../features/automation/components/AutomationDialog";
 import { BenchmarkDialog } from "../../features/benchmark/components/BenchmarkDialog";
@@ -143,22 +148,57 @@ import {
   recommendationAttemptMayHavePersistedSideEffect,
 } from "../../features/workspace/lib/workflow";
 
-export default function AnalyzerPage() {
+const DEFAULT_ANALYZER_ROUTE: AnalyzerRouteState = {
+  jobId: null,
+  surface: "workspace",
+};
+const ignoreRouteNavigation = () => undefined;
+const DEFAULT_ANALYZER_NAVIGATION: AnalyzerRouteNavigation = {
+  closeSurface: ignoreRouteNavigation,
+  managed: false,
+  openBenchmarks: ignoreRouteNavigation,
+  openJob: ignoreRouteNavigation,
+  openTraining: ignoreRouteNavigation,
+  openWorkspace: ignoreRouteNavigation,
+};
+type JobNavigationMode = "push" | "replace" | false;
+
+interface AnalyzerPageProps {
+  navigation?: AnalyzerRouteNavigation;
+  route?: AnalyzerRouteState;
+}
+
+export default function AnalyzerPage({
+  navigation = DEFAULT_ANALYZER_NAVIGATION,
+  route = DEFAULT_ANALYZER_ROUTE,
+}: AnalyzerPageProps) {
   const [mutationOwnerId] = useState(mutationLeaseOwnerId);
 
   return (
     <AnalyzerWorkflowProvider mutationOwnerId={mutationOwnerId}>
-      <AnalyzerWorkspace mutationOwnerId={mutationOwnerId} />
+      <AnalyzerWorkspace
+        mutationOwnerId={mutationOwnerId}
+        navigation={navigation}
+        route={route}
+      />
     </AnalyzerWorkflowProvider>
   );
 }
 
 type AnalyzerWorkspaceProps = {
   mutationOwnerId: string;
+  navigation: AnalyzerRouteNavigation;
+  route: AnalyzerRouteState;
 };
 
-function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
+function AnalyzerWorkspace({
+  mutationOwnerId,
+  navigation,
+  route,
+}: AnalyzerWorkspaceProps) {
   const queryClient = useQueryClient();
+  const routeRef = useRef(route);
+  routeRef.current = route;
   const {
     finishRecovery,
     mutationLeaseRestoreRequest,
@@ -485,6 +525,47 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     pipelineSelection,
     loadPipelineCapabilities,
     setPipelineSelection,
+  });
+
+  useAnalyzerRouteRestore({
+    activateJob: (nextJob) => upsertAndActivateJob(nextJob, false),
+    activeJobId,
+    benchmarksOpen: benchmarkDialogOpen,
+    closeBenchmarks: closeBenchmarkDialog,
+    closeTraining: () => setTrainingDialogOpen(false),
+    jobs,
+    loadJob: (jobId) => fetchJobQuery(queryClient, jobId),
+    onError: (routeError) =>
+      setError(
+        messageFromError(
+          routeError,
+          "The requested analyzer job could not load",
+        ),
+      ),
+    onJobLoading: (jobId) => {
+      alignWorkspaceToJob(null);
+      selectActiveJob(jobId);
+    },
+    onJobUnavailable: () => {
+      alignWorkspaceToJob(null);
+      navigation.openWorkspace({ replace: true });
+    },
+    openBenchmarks: openBenchmarkDialog,
+    openTraining: openTrainingDialog,
+    route,
+    restoreWorkspace: () => {
+      const activeWorkspaceJob = jobsRef.current.find(
+        (candidate) => candidate.id === activeJobIdRef.current,
+      );
+      const workspaceJob =
+        activeWorkspaceJob && isLocalUploadError(activeWorkspaceJob)
+          ? activeWorkspaceJob
+          : (processingJobsForCache(jobsRef.current)[0] ?? null);
+      if (activeJobIdRef.current !== (workspaceJob?.id ?? null)) {
+        alignWorkspaceToJob(workspaceJob);
+      }
+    },
+    trainingOpen: trainingDialogOpen,
   });
 
   useEffect(() => {
@@ -1831,6 +1912,13 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
           formDirtyRef.current &&
           reconciledActiveJob !== null &&
           !activeJobUpdatedAuthoritatively;
+        const currentRoute = routeRef.current;
+        const pendingRouteJob =
+          currentActiveId !== null &&
+          currentActiveJob === null &&
+          reconciledActiveJob === null &&
+          currentRoute.surface === "job" &&
+          currentRoute.jobId === currentActiveId;
         for (const removalCandidateId of processingRemovalCandidateIdsRef.current) {
           if (
             !mutationLeaseTargetsJob(
@@ -1853,8 +1941,16 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
         }
         jobsRef.current = nextJobs;
         setJobs(nextJobs);
-        if (!preserveDirtyForm) {
-          alignWorkspaceToJob(reconciledActiveJob ?? nextJobs[0] ?? null);
+        if (!preserveDirtyForm && !pendingRouteJob) {
+          const nextActiveJob = reconciledActiveJob ?? nextJobs[0] ?? null;
+          alignWorkspaceToJob(nextActiveJob);
+          if (
+            currentActiveJob !== null &&
+            currentActiveId !== null &&
+            !nextJobs.some((candidate) => candidate.id === currentActiveId)
+          ) {
+            replaceRemovedJobRoute(currentActiveId, nextActiveJob);
+          }
         }
         const processingInProgress = nextJobs.some(isProcessingJobInProgress);
         const authoritativeJobIds = new Set(
@@ -1905,10 +2001,39 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     };
   }, [processingRestoreRequest]);
 
-  function activateJob(nextJob: JobRecord) {
+  function navigateToJobOrWorkspace(
+    nextJob: JobRecord | null,
+    navigationMode: Exclude<JobNavigationMode, false>,
+  ) {
+    if (!nextJob || isLocalUploadError(nextJob)) {
+      navigation.openWorkspace({ replace: true });
+      return;
+    }
+    navigation.openJob(nextJob.id, {
+      replace: navigationMode === "replace",
+    });
+  }
+
+  function replaceRemovedJobRoute(
+    removedJobId: string,
+    fallbackJob: JobRecord | null,
+  ) {
+    const currentRoute = routeRef.current;
+    if (currentRoute.surface === "job" && currentRoute.jobId === removedJobId) {
+      navigateToJobOrWorkspace(fallbackJob, "replace");
+    }
+  }
+
+  function activateJob(
+    nextJob: JobRecord,
+    navigationMode: JobNavigationMode = "push",
+  ) {
     alignWorkspaceToJob(nextJob);
     setLivePreviewVisible(false);
     setError(null);
+    if (navigationMode) {
+      navigateToJobOrWorkspace(nextJob, navigationMode);
+    }
   }
 
   function updateJobs(updater: (current: JobRecord[]) => JobRecord[]) {
@@ -1944,7 +2069,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     setActiveJobId(updatedJob.id);
   }
 
-  function upsertAndActivateJob(nextJob: JobRecord) {
+  function upsertAndActivateJob(
+    nextJob: JobRecord,
+    navigationMode: JobNavigationMode = "push",
+  ) {
     updateJobs((current) => {
       const existing = current.some((candidate) => candidate.id === nextJob.id);
       return existing
@@ -1954,7 +2082,7 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
         : [nextJob, ...current];
     });
     updateHistoryJob(nextJob, false);
-    activateJob(nextJob);
+    activateJob(nextJob, navigationMode);
   }
 
   function updateHistoryJob(updatedJob: JobRecord, revalidateSearch = true) {
@@ -2392,7 +2520,7 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
 
   function appendJob(created: JobRecord) {
     updateJobs((current) => [...current, created]);
-    activateJob(created);
+    activateJob(created, "replace");
   }
 
   function applyApprovedJob(
@@ -2687,7 +2815,7 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
       });
     }
     if (completedJobs.length > 1) {
-      activateJob(completedJobs[0]);
+      activateJob(completedJobs[0], "replace");
     }
     if (controller.signal.aborted || queueAbortRequestedRef.current) {
       setError(
@@ -3113,12 +3241,13 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
           setTrainingReviewQueueJobId(null);
           setTrainingProgressView("review");
           setTrainingDialogOpen(true);
+          navigation.openTraining();
           toast.success("Review queue completed");
           return;
         }
 
         const nextJob = await fetchJobQuery(queryClient, nextHand.job_id);
-        upsertAndActivateJob(nextJob);
+        upsertAndActivateJob(nextJob, "replace");
         setTrainingReviewQueueJobId(nextJob.id);
         toast.success("Training review completed. Next hand ready");
       } catch (continueError) {
@@ -3397,12 +3526,15 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
       }
       return [];
     });
+    const removedActiveJobId = activeJobIdRef.current;
     const activeJobRemoved =
-      activeJobIdRef.current !== null &&
-      !nextJobs.some((candidate) => candidate.id === activeJobIdRef.current);
+      removedActiveJobId !== null &&
+      !nextJobs.some((candidate) => candidate.id === removedActiveJobId);
     updateJobs(() => nextJobs);
     if (activeJobRemoved) {
-      alignWorkspaceToJob(nextJobs[0] ?? null);
+      const fallbackJob = nextJobs[0] ?? null;
+      alignWorkspaceToJob(fallbackJob);
+      replaceRemovedJobRoute(removedActiveJobId, fallbackJob);
     }
     setHistory((current) => {
       const next = current.map((item) =>
@@ -3734,7 +3866,9 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
         Math.max(deletedIndex, 0),
         nextJobs.length - 1,
       );
-      alignWorkspaceToJob(nextJobs[fallbackIndex] ?? null);
+      const fallbackJob = nextJobs[fallbackIndex] ?? null;
+      alignWorkspaceToJob(fallbackJob);
+      replaceRemovedJobRoute(jobId, fallbackJob);
     }
     if (writeProcessingQueue(nextJobs)) {
       markProcessingQueueSessionSynced();
@@ -3928,9 +4062,11 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
         activateJob(
           remainingJobs.find((candidate) => candidate.id === activeJobId) ??
             remainingJobs[0],
+          "replace",
         );
       } else {
         alignWorkspaceToJob(null);
+        navigation.openWorkspace({ replace: true });
         setError(null);
       }
     } catch (historyError) {
@@ -3989,10 +4125,16 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
         liveStatusLabel={liveStatusLabel}
         onConfigureAutomation={() => setAutomationDialogOpen(true)}
         onConfigurePipeline={openPipelineDialog}
-        onOpenBenchmark={openBenchmarkDialog}
+        onOpenBenchmark={() => {
+          openBenchmarkDialog();
+          navigation.openBenchmarks();
+        }}
         onOpenHelp={() => setHelpDialogOpen(true)}
         onOpenInfo={openInfoDialog}
-        onOpenTraining={openTrainingDialog}
+        onOpenTraining={() => {
+          openTrainingDialog();
+          navigation.openTraining();
+        }}
         onToggleAutomation={() =>
           updateAutomationSettings((current) => ({
             ...current,
@@ -4238,7 +4380,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
           lessonsExportDisabled={trainingLessonsExportDisabled}
           nextReviewHand={nextReviewHand}
           onCertaintyFilterChange={updateTrainingCertaintyFilter}
-          onClose={() => setTrainingDialogOpen(false)}
+          onClose={() => {
+            setTrainingDialogOpen(false);
+            navigation.closeSurface();
+          }}
           onFocusActionDifference={focusTrainingActionDifference}
           onFocusCertainty={focusTrainingReviewCertainty}
           onFocusPosition={focusTrainingReviewPosition}
@@ -4286,7 +4431,10 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
           onChooseDatasetImport={() =>
             benchmarkDatasetInputRef.current?.click()
           }
-          onClose={closeBenchmarkDialog}
+          onClose={() => {
+            closeBenchmarkDialog();
+            navigation.closeSurface();
+          }}
           onDatasetImport={onBenchmarkDatasetImport}
           onReviewCase={reviewBenchmarkCase}
           onRun={onRunBenchmark}

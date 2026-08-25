@@ -1,0 +1,206 @@
+import { StrictMode } from "react";
+import { renderHook, waitFor } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
+
+import type { JobRecord } from "../../shared/types";
+import { analyzerRouteState } from "./analyzerRouteState";
+import {
+  type AnalyzerRouteRestoreOptions,
+  useAnalyzerRouteRestore,
+} from "./useAnalyzerRouteRestore";
+
+function job(id: string): JobRecord {
+  return { id } as JobRecord;
+}
+
+const PERSISTED_JOB_ID = "a".repeat(32);
+
+function options(
+  overrides: Partial<AnalyzerRouteRestoreOptions> = {},
+): AnalyzerRouteRestoreOptions {
+  return {
+    activateJob: vi.fn(),
+    activeJobId: null,
+    benchmarksOpen: false,
+    closeBenchmarks: vi.fn(),
+    closeTraining: vi.fn(),
+    jobs: [],
+    loadJob: vi.fn(async (jobId) => job(jobId)),
+    onError: vi.fn(),
+    onJobLoading: vi.fn(),
+    onJobUnavailable: vi.fn(),
+    openBenchmarks: vi.fn(),
+    openTraining: vi.fn(),
+    route: analyzerRouteState("workspace"),
+    restoreWorkspace: vi.fn(),
+    trainingOpen: false,
+    ...overrides,
+  };
+}
+
+describe("useAnalyzerRouteRestore", () => {
+  it("restores the canonical workspace selection", () => {
+    const current = options();
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.restoreWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("opens only the durable training surface", () => {
+    const current = options({ route: analyzerRouteState("training") });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.closeBenchmarks).toHaveBeenCalledOnce();
+    expect(current.closeTraining).not.toHaveBeenCalled();
+    expect(current.openTraining).toHaveBeenCalledOnce();
+    expect(current.openBenchmarks).not.toHaveBeenCalled();
+  });
+
+  it("opens only the durable benchmark surface", () => {
+    const current = options({ route: analyzerRouteState("benchmarks") });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.closeTraining).toHaveBeenCalledOnce();
+    expect(current.closeBenchmarks).not.toHaveBeenCalled();
+    expect(current.openBenchmarks).toHaveBeenCalledOnce();
+    expect(current.openTraining).not.toHaveBeenCalled();
+  });
+
+  it("does not reopen an already open durable surface", () => {
+    const current = options({
+      route: analyzerRouteState("training"),
+      trainingOpen: true,
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.openTraining).not.toHaveBeenCalled();
+  });
+
+  it("opens a direct durable surface once under Strict Mode", () => {
+    const current = options({ route: analyzerRouteState("training") });
+    renderHook(() => useAnalyzerRouteRestore(current), { wrapper: StrictMode });
+
+    expect(current.openTraining).toHaveBeenCalledOnce();
+  });
+
+  it("activates a cached durable job without loading it", () => {
+    const cachedJob = job(PERSISTED_JOB_ID);
+    const current = options({
+      jobs: [cachedJob],
+      route: analyzerRouteState("job", cachedJob.id),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.activateJob).toHaveBeenCalledWith(cachedJob);
+    expect(current.loadJob).not.toHaveBeenCalled();
+  });
+
+  it("rejects a cached transient job route", () => {
+    const transientJob = {
+      id: "local-error-request",
+      parser_provider: "client",
+      status: "error",
+    } as JobRecord;
+    const current = options({
+      jobs: [transientJob],
+      route: analyzerRouteState("job", transientJob.id),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.onJobUnavailable).toHaveBeenCalledOnce();
+    expect(current.activateJob).not.toHaveBeenCalled();
+    expect(current.loadJob).not.toHaveBeenCalled();
+  });
+
+  it("rejects a malformed persisted job route before loading", () => {
+    const malformedJobId = `${PERSISTED_JOB_ID}?junk`;
+    const current = options({
+      route: analyzerRouteState("job", malformedJobId),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.onJobUnavailable).toHaveBeenCalledOnce();
+    expect(current.onJobLoading).not.toHaveBeenCalled();
+    expect(current.loadJob).not.toHaveBeenCalled();
+  });
+
+  it("loads and activates a missing durable job", async () => {
+    const loadedJob = job(PERSISTED_JOB_ID);
+    const current = options({
+      loadJob: vi.fn().mockResolvedValue(loadedJob),
+      route: analyzerRouteState("job", loadedJob.id),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    await waitFor(() =>
+      expect(current.activateJob).toHaveBeenCalledWith(loadedJob),
+    );
+    expect(current.onJobLoading).toHaveBeenCalledWith(loadedJob.id);
+    expect(current.loadJob).toHaveBeenCalledWith(loadedJob.id);
+  });
+
+  it("reattaches a pending job load after leaving and returning", async () => {
+    const loadedJob = job(PERSISTED_JOB_ID);
+    let resolveJob: (job: JobRecord) => void = () => undefined;
+    const pendingJob = new Promise<JobRecord>((resolve) => {
+      resolveJob = resolve;
+    });
+    const loadJob = vi.fn(() => pendingJob);
+    let current = options({
+      activeJobId: loadedJob.id,
+      loadJob,
+      route: analyzerRouteState("job", loadedJob.id),
+    });
+    const view = renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(loadJob).toHaveBeenCalledOnce();
+    current = { ...current, route: analyzerRouteState("training") };
+    view.rerender();
+    current = {
+      ...current,
+      route: analyzerRouteState("job", loadedJob.id),
+    };
+    view.rerender();
+    expect(loadJob).toHaveBeenCalledOnce();
+
+    resolveJob(loadedJob);
+    await waitFor(() =>
+      expect(current.activateJob).toHaveBeenCalledWith(loadedJob),
+    );
+    expect(current.activateJob).toHaveBeenCalledOnce();
+  });
+
+  it("deduplicates an uncached job load under Strict Mode", async () => {
+    const loadedJob = job(PERSISTED_JOB_ID);
+    let resolveJob: (job: JobRecord) => void = () => undefined;
+    const pendingJob = new Promise<JobRecord>((resolve) => {
+      resolveJob = resolve;
+    });
+    const current = options({
+      loadJob: vi.fn(() => pendingJob),
+      route: analyzerRouteState("job", loadedJob.id),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current), { wrapper: StrictMode });
+
+    expect(current.loadJob).toHaveBeenCalledOnce();
+    resolveJob(loadedJob);
+    await waitFor(() =>
+      expect(current.activateJob).toHaveBeenCalledWith(loadedJob),
+    );
+    expect(current.activateJob).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces a durable job load failure", async () => {
+    const failure = new Error("missing job");
+    const current = options({
+      loadJob: vi.fn().mockRejectedValue(failure),
+      route: analyzerRouteState("job", PERSISTED_JOB_ID),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    await waitFor(() => expect(current.onError).toHaveBeenCalledWith(failure));
+    expect(current.onJobLoading).toHaveBeenCalledWith(PERSISTED_JOB_ID);
+    expect(current.onJobUnavailable).toHaveBeenCalledOnce();
+    expect(current.activateJob).not.toHaveBeenCalled();
+  });
+});
