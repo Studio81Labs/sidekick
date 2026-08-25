@@ -16,6 +16,7 @@ export interface AnalyzerRouteRestoreOptions {
   openBenchmarks: () => void;
   openTraining: () => void;
   route: AnalyzerRouteState;
+  restoreWorkspace: () => void;
   trainingOpen: boolean;
 }
 
@@ -38,7 +39,9 @@ export function useAnalyzerRouteRestore(
     if (current.route.surface !== "benchmarks") {
       current.closeBenchmarks();
     }
-    if (
+    if (current.route.surface === "workspace") {
+      current.restoreWorkspace();
+    } else if (
       current.route.surface === "training" &&
       !current.trainingOpen &&
       surfaceChanged

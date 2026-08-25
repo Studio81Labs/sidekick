@@ -29,12 +29,20 @@ function options(
     openBenchmarks: vi.fn(),
     openTraining: vi.fn(),
     route: analyzerRouteState("workspace"),
+    restoreWorkspace: vi.fn(),
     trainingOpen: false,
     ...overrides,
   };
 }
 
 describe("useAnalyzerRouteRestore", () => {
+  it("restores the canonical workspace selection", () => {
+    const current = options();
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.restoreWorkspace).toHaveBeenCalledOnce();
+  });
+
   it("opens only the durable training surface", () => {
     const current = options({ route: analyzerRouteState("training") });
     renderHook(() => useAnalyzerRouteRestore(current));

@@ -547,6 +547,7 @@ function AnalyzerWorkspace({
     openBenchmarks: openBenchmarkDialog,
     openTraining: openTrainingDialog,
     route,
+    restoreWorkspace: () => alignWorkspaceToJob(jobsRef.current[0] ?? null),
     trainingOpen: trainingDialogOpen,
   });
 
