@@ -1933,13 +1933,11 @@ function AnalyzerWorkspace({
         if (!preserveDirtyForm) {
           const nextActiveJob = reconciledActiveJob ?? nextJobs[0] ?? null;
           alignWorkspaceToJob(nextActiveJob);
-          const currentRoute = routeRef.current;
-          const activeRouteJobRemoved =
-            currentRoute.surface === "job" &&
-            currentRoute.jobId === currentActiveId &&
-            !nextJobs.some((candidate) => candidate.id === currentRoute.jobId);
-          if (activeRouteJobRemoved) {
-            navigateToJobOrWorkspace(nextActiveJob, "replace");
+          if (
+            currentActiveId !== null &&
+            !nextJobs.some((candidate) => candidate.id === currentActiveId)
+          ) {
+            replaceRemovedJobRoute(currentActiveId, nextActiveJob);
           }
         }
         const processingInProgress = nextJobs.some(isProcessingJobInProgress);
@@ -2002,6 +2000,16 @@ function AnalyzerWorkspace({
     navigation.openJob(nextJob.id, {
       replace: navigationMode === "replace",
     });
+  }
+
+  function replaceRemovedJobRoute(
+    removedJobId: string,
+    fallbackJob: JobRecord | null,
+  ) {
+    const currentRoute = routeRef.current;
+    if (currentRoute.surface === "job" && currentRoute.jobId === removedJobId) {
+      navigateToJobOrWorkspace(fallbackJob, "replace");
+    }
   }
 
   function activateJob(
@@ -3506,14 +3514,15 @@ function AnalyzerWorkspace({
       }
       return [];
     });
+    const removedActiveJobId = activeJobIdRef.current;
     const activeJobRemoved =
-      activeJobIdRef.current !== null &&
-      !nextJobs.some((candidate) => candidate.id === activeJobIdRef.current);
+      removedActiveJobId !== null &&
+      !nextJobs.some((candidate) => candidate.id === removedActiveJobId);
     updateJobs(() => nextJobs);
     if (activeJobRemoved) {
       const fallbackJob = nextJobs[0] ?? null;
       alignWorkspaceToJob(fallbackJob);
-      navigateToJobOrWorkspace(fallbackJob, "replace");
+      replaceRemovedJobRoute(removedActiveJobId, fallbackJob);
     }
     setHistory((current) => {
       const next = current.map((item) =>
@@ -3847,7 +3856,7 @@ function AnalyzerWorkspace({
       );
       const fallbackJob = nextJobs[fallbackIndex] ?? null;
       alignWorkspaceToJob(fallbackJob);
-      navigateToJobOrWorkspace(fallbackJob, "replace");
+      replaceRemovedJobRoute(jobId, fallbackJob);
     }
     if (writeProcessingQueue(nextJobs)) {
       markProcessingQueueSessionSynced();
