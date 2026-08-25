@@ -465,7 +465,8 @@ function waveNineMutationBoundaryViolations(): string[] {
   type CallableImplementation =
     | ts.ArrowFunction
     | ts.FunctionDeclaration
-    | ts.FunctionExpression;
+    | ts.FunctionExpression
+    | ts.MethodDeclaration;
 
   function callableImplementation(
     symbol: ts.Symbol | null,
@@ -473,7 +474,8 @@ function waveNineMutationBoundaryViolations(): string[] {
     for (const declaration of symbol?.declarations ?? []) {
       if (
         ts.isFunctionDeclaration(declaration) ||
-        ts.isFunctionExpression(declaration)
+        ts.isFunctionExpression(declaration) ||
+        ts.isMethodDeclaration(declaration)
       ) {
         return declaration;
       }
@@ -528,7 +530,15 @@ function waveNineMutationBoundaryViolations(): string[] {
             property.name.text === "method")),
     );
     if (!method) {
-      return false;
+      return value.properties.some(
+        (property) =>
+          (ts.isSpreadAssignment(property) &&
+            requestOptionsWrite(property.expression)) ||
+          (ts.isShorthandPropertyAssignment(property) &&
+            property.name.text === "method") ||
+          (!ts.isSpreadAssignment(property) &&
+            ts.isComputedPropertyName(property.name)),
+      );
     }
     return !(
       ts.isStringLiteralLike(method.initializer) &&
@@ -566,11 +576,17 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
       if (ts.isCallExpression(node)) {
         const reference = callReference(node);
-        const localCallable = callableImplementation(resolvedSymbol(reference));
-        writes =
-          rawCallWrites(node) ||
-          mutationSymbol(reference) !== null ||
-          (localCallable !== null && callableWrites(localCallable, active));
+        const rawTransport = rawTransportSymbol(reference);
+        if (rawTransport) {
+          writes = rawCallWrites(node);
+        } else {
+          const localCallable = callableImplementation(
+            resolvedSymbol(reference),
+          );
+          writes =
+            mutationSymbol(reference) !== null ||
+            (localCallable !== null && callableWrites(localCallable, active));
+        }
       }
       ts.forEachChild(node, visit);
     }
@@ -579,6 +595,106 @@ function waveNineMutationBoundaryViolations(): string[] {
     active.delete(callable);
     writeBearingCallables.set(callable, writes);
     return writes;
+  }
+
+  interface ExportedCallable {
+    callable: CallableImplementation;
+    label: string;
+    topLevel: boolean;
+  }
+
+  function staticMemberName(name: ts.PropertyName): string {
+    return ts.isIdentifier(name) || ts.isStringLiteralLike(name)
+      ? name.text
+      : "[computed]";
+  }
+
+  function callableMembers(
+    value: ts.Expression | ts.ClassDeclaration,
+    label: string,
+  ): ExportedCallable[] {
+    const members: ExportedCallable[] = [];
+    const declarations = ts.isObjectLiteralExpression(value)
+      ? value.properties
+      : ts.isClassDeclaration(value) || ts.isClassExpression(value)
+        ? value.members
+        : [];
+    for (const declaration of declarations) {
+      if (ts.isMethodDeclaration(declaration)) {
+        members.push({
+          callable: declaration,
+          label: label + "." + staticMemberName(declaration.name),
+          topLevel: false,
+        });
+      } else if (
+        ts.isPropertyAssignment(declaration) &&
+        (ts.isArrowFunction(declaration.initializer) ||
+          ts.isFunctionExpression(declaration.initializer))
+      ) {
+        members.push({
+          callable: declaration.initializer,
+          label: label + "." + staticMemberName(declaration.name),
+          topLevel: false,
+        });
+      } else if (
+        ts.isPropertyAssignment(declaration) &&
+        (ts.isObjectLiteralExpression(declaration.initializer) ||
+          ts.isClassExpression(declaration.initializer))
+      ) {
+        members.push(
+          ...callableMembers(
+            declaration.initializer,
+            label + "." + staticMemberName(declaration.name),
+          ),
+        );
+      }
+    }
+    return members;
+  }
+
+  function exportedCallables(
+    symbol: ts.Symbol | null,
+    sourcePath: string,
+    exportName: string,
+  ): ExportedCallable[] {
+    const callables: ExportedCallable[] = [];
+    for (const declaration of symbol?.declarations ?? []) {
+      if (declarationSourcePath(declaration) !== sourcePath) {
+        continue;
+      }
+      if (
+        ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration) ||
+        ts.isMethodDeclaration(declaration)
+      ) {
+        callables.push({
+          callable: declaration,
+          label: exportName,
+          topLevel: true,
+        });
+      } else if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer &&
+        (ts.isArrowFunction(declaration.initializer) ||
+          ts.isFunctionExpression(declaration.initializer))
+      ) {
+        callables.push({
+          callable: declaration.initializer,
+          label: exportName,
+          topLevel: true,
+        });
+      } else if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer &&
+        (ts.isObjectLiteralExpression(declaration.initializer) ||
+          ts.isClassExpression(declaration.initializer))
+      ) {
+        callables.push(...callableMembers(declaration.initializer, exportName));
+      } else if (ts.isClassDeclaration(declaration)) {
+        callables.push(...callableMembers(declaration, exportName));
+      }
+    }
+    return callables;
   }
 
   function auditAdapterWriteExports(
@@ -595,18 +711,27 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
     for (const exportedSymbol of checker.getExportsOfModule(moduleSymbol)) {
       const symbol = resolvedAliasSymbol(exportedSymbol);
-      const callable = callableImplementation(symbol);
-      if (!callable || !callableWrites(callable)) {
-        continue;
-      }
       const exportName = exportedSymbol.getName();
-      if (
-        !isWaveNineMutation(exportName) ||
-        !WAVE_NINE_MUTATION_OWNERS[exportName].has(sourcePath)
-      ) {
-        violations.add(
-          "Unregistered domain adapter write " + exportName + ": " + sourcePath,
-        );
+      for (const exportedCallable of exportedCallables(
+        symbol,
+        sourcePath,
+        exportName,
+      )) {
+        if (!callableWrites(exportedCallable.callable)) {
+          continue;
+        }
+        if (
+          !exportedCallable.topLevel ||
+          !isWaveNineMutation(exportName) ||
+          !WAVE_NINE_MUTATION_OWNERS[exportName].has(sourcePath)
+        ) {
+          violations.add(
+            "Unregistered domain adapter write " +
+              exportedCallable.label +
+              ": " +
+              sourcePath,
+          );
+        }
       }
     }
   }
