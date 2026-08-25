@@ -2761,11 +2761,54 @@ function waveNineMutationBoundaryViolations(): string[] {
         return false;
       }
       seen.add(expressionSymbol);
-      return (expressionSymbol.declarations ?? []).some(
+      const followsInitializer = (expressionSymbol.declarations ?? []).some(
         (declaration) =>
           ts.isVariableDeclaration(declaration) &&
           declaration.initializer &&
           expressionReferencesExport(declaration.initializer, seen),
+      );
+      if (followsInitializer) {
+        return true;
+      }
+
+      function expressionReferencesSymbol(
+        candidate: ts.Expression,
+        target: ts.Symbol,
+        aliasSeen = new Set<ts.Symbol>(),
+      ): boolean {
+        while (
+          ts.isParenthesizedExpression(candidate) ||
+          ts.isAsExpression(candidate) ||
+          ts.isSatisfiesExpression(candidate) ||
+          ts.isNonNullExpression(candidate)
+        ) {
+          candidate = candidate.expression;
+        }
+        const candidateSymbol = resolvedSymbol(candidate);
+        if (candidateSymbol === target) {
+          return true;
+        }
+        if (!candidateSymbol || aliasSeen.has(candidateSymbol)) {
+          return false;
+        }
+        aliasSeen.add(candidateSymbol);
+        return (candidateSymbol.declarations ?? []).some(
+          (declaration) =>
+            ts.isVariableDeclaration(declaration) &&
+            declaration.initializer &&
+            expressionReferencesSymbol(
+              declaration.initializer,
+              target,
+              aliasSeen,
+            ),
+        );
+      }
+
+      return (symbol?.declarations ?? []).some(
+        (declaration) =>
+          ts.isVariableDeclaration(declaration) &&
+          declaration.initializer &&
+          expressionReferencesSymbol(declaration.initializer, expressionSymbol),
       );
     }
 
