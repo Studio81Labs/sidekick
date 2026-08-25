@@ -9,8 +9,8 @@ import {
 } from "@playwright/test";
 
 const VALID_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
-    + "AAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==",
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ" +
+    "AAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==",
   "base64",
 );
 const BACKEND_URL = "http://127.0.0.1:8010";
@@ -48,9 +48,8 @@ async function samplePngPixels(
 ): Promise<{ background: number[]; table: number[] }> {
   return page.evaluate(async (pngBase64) => {
     const binary = window.atob(pngBase64);
-    const bytes = Uint8Array.from(
-      binary,
-      (character) => character.charCodeAt(0),
+    const bytes = Uint8Array.from(binary, (character) =>
+      character.charCodeAt(0),
     );
     const bitmap = await createImageBitmap(
       new Blob([bytes], { type: "image/png" }),
@@ -63,9 +62,8 @@ async function samplePngPixels(
       throw new Error("Canvas is unavailable");
     }
     context.drawImage(bitmap, 0, 0);
-    const pixelAt = (x: number, y: number) => Array.from(
-      context.getImageData(x, y, 1, 1).data,
-    );
+    const pixelAt = (x: number, y: number) =>
+      Array.from(context.getImageData(x, y, 1, 1).data);
     const samples = {
       background: pixelAt(20, 20),
       table: pixelAt(320, 100),
@@ -75,24 +73,24 @@ async function samplePngPixels(
   }, imageBytes.toString("base64"));
 }
 
-async function captureAutomatedFrame(
-  page: Page,
-): Promise<{
+async function captureAutomatedFrame(page: Page): Promise<{
   id: string;
   original_filename: string;
   queueItem: Locator;
 }> {
   const uploadResponsePromise = page.waitForResponse(
-    (response) => response.url() === `${BACKEND_URL}/api/jobs`
-      && response.request().method() === "POST"
-      && response.ok(),
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.request().method() === "POST" &&
+      response.ok(),
   );
   await page.getByRole("button", { name: "Capture and parse" }).click();
   const uploadedJob = await uploadResponsePromise.then(
-    (response) => response.json() as Promise<{
-      id: string;
-      original_filename: string;
-    }>,
+    (response) =>
+      response.json() as Promise<{
+        id: string;
+        original_filename: string;
+      }>,
   );
   expect(uploadedJob.original_filename).toMatch(
     /^screen-capture-\d{4}-\d{2}-\d{2}T.*Z\.png$/,
@@ -114,9 +112,10 @@ async function uploadValidScreenshot(
     buffer: VALID_PNG,
   });
   const uploadResponsePromise = page.waitForResponse(
-    (response) => response.url() === `${BACKEND_URL}/api/jobs`
-      && response.request().method() === "POST"
-      && response.ok(),
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.request().method() === "POST" &&
+      response.ok(),
   );
   await page.getByRole("button", { name: "Upload and parse" }).click();
   const uploadedJob = await uploadResponsePromise.then(
@@ -146,15 +145,20 @@ async function createReviewedLesson(
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", { name: "fold", exact: true }).click();
-  await decisionPanel.getByRole("button", { name: "high", exact: true }).click();
+  await decisionPanel
+    .getByRole("button", { name: "fold", exact: true })
+    .click();
+  await decisionPanel
+    .getByRole("button", { name: "high", exact: true })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
   await page.getByRole("button", { name: "Request recommendation" }).click();
   await expect(uploadedJob.queueItem).toContainText("recommended");
   await page.getByLabel("Training review note").fill(note);
-  await page.getByLabel("Training decision comparison")
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed" })
     .click();
   await expect(page.getByLabel("Training decision comparison")).toContainText(
@@ -186,27 +190,32 @@ async function createPendingTrainingReview(
   if (options.heroPosition !== undefined) {
     await handReview.getByLabel("Hero position").fill(options.heroPosition);
   }
-  await handReview.getByRole("combobox", { name: /^Street/ })
+  await handReview
+    .getByRole("combobox", { name: /^Street/ })
     .selectOption(options.street);
   await handReview.getByRole("button", { name: "Approve state" }).click();
 
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: options.decisionAction ?? "fold",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: options.decisionAction ?? "fold",
+      exact: true,
+    })
+    .click();
   if (options.decisionSizing !== undefined) {
-    await decisionPanel.getByLabel("Decision sizing in BB").fill(
-      String(options.decisionSizing),
-    );
+    await decisionPanel
+      .getByLabel("Decision sizing in BB")
+      .fill(String(options.decisionSizing));
   }
   if (options.certainty !== undefined) {
-    await decisionPanel.getByRole("button", {
-      name: options.certainty,
-      exact: true,
-    }).click();
+    await decisionPanel
+      .getByRole("button", {
+        name: options.certainty,
+        exact: true,
+      })
+      .click();
   }
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
@@ -232,7 +241,7 @@ async function completeStaleTrainingReviews(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(staleProgressResponse.ok()).toBe(true);
-  const staleProgress = await staleProgressResponse.json() as {
+  const staleProgress = (await staleProgressResponse.json()) as {
     recent_hands: Array<{
       job_id: string;
       original_filename: string;
@@ -241,8 +250,8 @@ async function completeStaleTrainingReviews(
   };
   for (const staleHand of staleProgress.recent_hands) {
     if (
-      staleHand.reviewed_at !== null
-      || !staleHand.original_filename.startsWith(fixturePrefix)
+      staleHand.reviewed_at !== null ||
+      !staleHand.original_filename.startsWith(fixturePrefix)
     ) {
       continue;
     }
@@ -293,7 +302,7 @@ async function createApprovedScreenshot(
     },
   });
   expect(uploadResponse.ok()).toBe(true);
-  const uploadedJob = await uploadResponse.json() as {
+  const uploadedJob = (await uploadResponse.json()) as {
     id: string;
     parser_result: { state: Record<string, unknown> } | null;
   };
@@ -314,11 +323,15 @@ async function createApprovedScreenshot(
   return { id: uploadedJob.id };
 }
 
+async function expectAnalyzerReady(page: Page): Promise<void> {
+  await expect(
+    page.getByRole("region", { name: "Analyzer controls" }),
+  ).toBeVisible();
+}
+
 async function openUploadInput(page: Page): Promise<void> {
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Poker Training Analyzer" }),
-  ).toBeVisible();
+  await expectAnalyzerReady(page);
   await page
     .getByRole("group", { name: "Input mode" })
     .getByRole("button", { name: "Upload" })
@@ -332,97 +345,101 @@ async function installCaptureStreams(
   page: Page,
   outcomes: readonly CaptureOutcome[] = ["window"],
 ): Promise<void> {
-  await page.addInitScript((configuredOutcomes) => {
-    Object.defineProperty(navigator.mediaDevices, "getDisplayMedia", {
-      configurable: true,
-      value: async (requestedOptions: DisplayMediaStreamOptions) => {
-        const fixtureWindow = window as typeof window & {
-          __pokerHeroCaptureFixtures?: Array<{
-            stream: MediaStream;
-            surface: CaptureSurface;
-          }>;
-          __pokerHeroDisplayMediaCalls?: number;
-          __pokerHeroDisplayMediaOptions?: DisplayMediaStreamOptions[];
-        };
-        const callIndex = fixtureWindow.__pokerHeroDisplayMediaCalls ?? 0;
-        fixtureWindow.__pokerHeroDisplayMediaCalls = callIndex + 1;
-        const displayMediaOptions =
-          fixtureWindow.__pokerHeroDisplayMediaOptions ?? [];
-        displayMediaOptions.push(requestedOptions);
-        fixtureWindow.__pokerHeroDisplayMediaOptions = displayMediaOptions;
-        const outcome = configuredOutcomes[
-          Math.min(callIndex, configuredOutcomes.length - 1)
-        ] ?? "window";
-        if (outcome === "cancel") {
-          throw new DOMException(
-            "Screen sharing was cancelled",
-            "NotAllowedError",
-          );
-        }
-        const displaySurface = outcome;
-        const canvas = document.createElement("canvas");
-        canvas.width = 640;
-        canvas.height = 360;
-        const context = canvas.getContext("2d");
-        if (context === null) {
-          throw new Error("Canvas is unavailable");
-        }
+  await page.addInitScript(
+    (configuredOutcomes) => {
+      Object.defineProperty(navigator.mediaDevices, "getDisplayMedia", {
+        configurable: true,
+        value: async (requestedOptions: DisplayMediaStreamOptions) => {
+          const fixtureWindow = window as typeof window & {
+            __pokerHeroCaptureFixtures?: Array<{
+              stream: MediaStream;
+              surface: CaptureSurface;
+            }>;
+            __pokerHeroDisplayMediaCalls?: number;
+            __pokerHeroDisplayMediaOptions?: DisplayMediaStreamOptions[];
+          };
+          const callIndex = fixtureWindow.__pokerHeroDisplayMediaCalls ?? 0;
+          fixtureWindow.__pokerHeroDisplayMediaCalls = callIndex + 1;
+          const displayMediaOptions =
+            fixtureWindow.__pokerHeroDisplayMediaOptions ?? [];
+          displayMediaOptions.push(requestedOptions);
+          fixtureWindow.__pokerHeroDisplayMediaOptions = displayMediaOptions;
+          const outcome =
+            configuredOutcomes[
+              Math.min(callIndex, configuredOutcomes.length - 1)
+            ] ?? "window";
+          if (outcome === "cancel") {
+            throw new DOMException(
+              "Screen sharing was cancelled",
+              "NotAllowedError",
+            );
+          }
+          const displaySurface = outcome;
+          const canvas = document.createElement("canvas");
+          canvas.width = 640;
+          canvas.height = 360;
+          const context = canvas.getContext("2d");
+          if (context === null) {
+            throw new Error("Canvas is unavailable");
+          }
 
-        let frame = 0;
-        let tableColor = "#991b3f";
-        const paintFrame = () => {
-          context.fillStyle = "#1f2937";
-          context.fillRect(0, 0, canvas.width, canvas.height);
-          context.fillStyle = tableColor;
-          context.beginPath();
-          context.ellipse(320, 180, 250, 125, 0, 0, Math.PI * 2);
-          context.fill();
-          context.fillStyle = "#ffffff";
-          context.font = "bold 28px sans-serif";
-          context.fillText("Poker Hero capture fixture", 145, 188);
-          context.fillStyle = frame % 2 === 0 ? "#22c55e" : "#16a34a";
-          context.fillRect(510, 300, 90, 18);
-          frame += 1;
-        };
-        paintFrame();
+          let frame = 0;
+          let tableColor = "#991b3f";
+          const paintFrame = () => {
+            context.fillStyle = "#1f2937";
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.fillStyle = tableColor;
+            context.beginPath();
+            context.ellipse(320, 180, 250, 125, 0, 0, Math.PI * 2);
+            context.fill();
+            context.fillStyle = "#ffffff";
+            context.font = "bold 28px sans-serif";
+            context.fillText("Poker Hero capture fixture", 145, 188);
+            context.fillStyle = frame % 2 === 0 ? "#22c55e" : "#16a34a";
+            context.fillRect(510, 300, 90, 18);
+            frame += 1;
+          };
+          paintFrame();
 
-        const stream = canvas.captureStream(8);
-        const track = stream.getVideoTracks()[0];
-        const nativeGetSettings = track.getSettings.bind(track);
-        track.getSettings = () => ({
-          ...nativeGetSettings(),
-          displaySurface,
-        });
-        const interval = window.setInterval(paintFrame, 125);
-        const clearPaintInterval = () => window.clearInterval(interval);
-        const nativeStop = track.stop.bind(track);
-        track.stop = () => {
-          clearPaintInterval();
-          nativeStop();
-        };
-        track.addEventListener("ended", clearPaintInterval, {
-          once: true,
-        });
+          const stream = canvas.captureStream(8);
+          const track = stream.getVideoTracks()[0];
+          const nativeGetSettings = track.getSettings.bind(track);
+          track.getSettings = () => ({
+            ...nativeGetSettings(),
+            displaySurface,
+          });
+          const interval = window.setInterval(paintFrame, 125);
+          const clearPaintInterval = () => window.clearInterval(interval);
+          const nativeStop = track.stop.bind(track);
+          track.stop = () => {
+            clearPaintInterval();
+            nativeStop();
+          };
+          track.addEventListener("ended", clearPaintInterval, {
+            once: true,
+          });
 
-        const fixture = {
-          canvas,
-          setTableColor(color: string) {
-            tableColor = color;
-            paintFrame();
-          },
-          stream,
-          surface: displaySurface,
-        };
-        const fixtures = fixtureWindow.__pokerHeroCaptureFixtures ?? [];
-        fixtures.push(fixture);
-        Object.assign(fixtureWindow, {
-          __pokerHeroCaptureFixture: fixture,
-          __pokerHeroCaptureFixtures: fixtures,
-        });
-        return stream;
-      },
-    });
-  }, [...outcomes]);
+          const fixture = {
+            canvas,
+            setTableColor(color: string) {
+              tableColor = color;
+              paintFrame();
+            },
+            stream,
+            surface: displaySurface,
+          };
+          const fixtures = fixtureWindow.__pokerHeroCaptureFixtures ?? [];
+          fixtures.push(fixture);
+          Object.assign(fixtureWindow, {
+            __pokerHeroCaptureFixture: fixture,
+            __pokerHeroCaptureFixtures: fixtures,
+          });
+          return stream;
+        },
+      });
+    },
+    [...outcomes],
+  );
 }
 
 test("captures repeated shared-window frames into persisted history", async ({
@@ -430,9 +447,7 @@ test("captures repeated shared-window frames into persisted history", async ({
 }) => {
   await installCaptureStreams(page);
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Poker Training Analyzer" }),
-  ).toBeVisible();
+  await expectAnalyzerReady(page);
   await expect(
     page.getByRole("button", { name: "Automation On" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -441,12 +456,14 @@ test("captures repeated shared-window frames into persisted history", async ({
   await expect(page.getByText("Window sharing active")).toBeVisible();
   const preview = page.getByLabel("Shared screen preview");
   await expect(preview).toHaveClass(/active/);
-  await expect.poll(
-    () => preview.evaluate((element: HTMLVideoElement) => ({
-      height: element.videoHeight,
-      width: element.videoWidth,
-    })),
-  ).toEqual({ height: 360, width: 640 });
+  await expect
+    .poll(() =>
+      preview.evaluate((element: HTMLVideoElement) => ({
+        height: element.videoHeight,
+        width: element.videoWidth,
+      })),
+    )
+    .toEqual({ height: 360, width: 640 });
 
   const firstCapture = await captureAutomatedFrame(page);
   await expect(
@@ -476,7 +493,7 @@ test("captures repeated shared-window frames into persisted history", async ({
     `${BACKEND_URL}/api/jobs/${firstCapture.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     approved_state: unknown;
     archived_at: string | null;
     recommendation: { raw: Record<string, string> } | null;
@@ -508,28 +525,32 @@ test("captures repeated shared-window frames into persisted history", async ({
     ).__pokerHeroCaptureFixture;
     fixture.setTableColor("#0e7490");
   });
-  await expect.poll(
-    () => preview.evaluate((video: HTMLVideoElement) => {
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const context = canvas.getContext("2d");
-      if (context === null) {
-        return false;
-      }
-      context.drawImage(video, 0, 0);
-      const [red, green, blue, alpha] = context.getImageData(
-        320,
-        100,
-        1,
-        1,
-      ).data;
-      return Math.abs(red - 14) <= 12
-        && Math.abs(green - 116) <= 12
-        && Math.abs(blue - 144) <= 12
-        && alpha === 255;
-    }),
-  ).toBe(true);
+  await expect
+    .poll(() =>
+      preview.evaluate((video: HTMLVideoElement) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext("2d");
+        if (context === null) {
+          return false;
+        }
+        context.drawImage(video, 0, 0);
+        const [red, green, blue, alpha] = context.getImageData(
+          320,
+          100,
+          1,
+          1,
+        ).data;
+        return (
+          Math.abs(red - 14) <= 12 &&
+          Math.abs(green - 116) <= 12 &&
+          Math.abs(blue - 144) <= 12 &&
+          alpha === 255
+        );
+      }),
+    )
+    .toBe(true);
 
   const secondCapture = await captureAutomatedFrame(page);
   expect(secondCapture.original_filename).not.toBe(
@@ -547,11 +568,14 @@ test("captures repeated shared-window frames into persisted history", async ({
   expectPixelClose(secondSampledPixels.table, [14, 116, 144, 255]);
   expect(secondImageBytes).not.toEqual(imageBytes);
 
-  const displayMediaCalls = await page.evaluate(() => (
-    window as typeof window & {
-      __pokerHeroDisplayMediaCalls?: number;
-    }
-  ).__pokerHeroDisplayMediaCalls);
+  const displayMediaCalls = await page.evaluate(
+    () =>
+      (
+        window as typeof window & {
+          __pokerHeroDisplayMediaCalls?: number;
+        }
+      ).__pokerHeroDisplayMediaCalls,
+  );
   expect(displayMediaCalls).toBe(1);
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
@@ -567,7 +591,7 @@ test("captures repeated shared-window frames into persisted history", async ({
   ]);
   for (const archivedResponse of archivedResponses) {
     expect(archivedResponse.ok()).toBe(true);
-    const archivedJob = await archivedResponse.json() as {
+    const archivedJob = (await archivedResponse.json()) as {
       archived_at: string | null;
     };
     expect(archivedJob.archived_at).not.toBeNull();
@@ -577,16 +601,18 @@ test("captures repeated shared-window frames into persisted history", async ({
   await expect(
     page.getByRole("button", { name: "Share window" }),
   ).toBeEnabled();
-  await expect.poll(
-    () => page.evaluate(() => {
-      const fixture = (
-        window as typeof window & {
-          __pokerHeroCaptureFixture: { stream: MediaStream };
-        }
-      ).__pokerHeroCaptureFixture;
-      return fixture.stream.getVideoTracks()[0]?.readyState;
-    }),
-  ).toBe("ended");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const fixture = (
+          window as typeof window & {
+            __pokerHeroCaptureFixture: { stream: MediaStream };
+          }
+        ).__pokerHeroCaptureFixture;
+        return fixture.stream.getVideoTracks()[0]?.readyState;
+      }),
+    )
+    .toBe("ended");
 });
 
 test("rejects a mismatched share source and recovers with a tab", async ({
@@ -594,9 +620,7 @@ test("rejects a mismatched share source and recovers with a tab", async ({
 }) => {
   await installCaptureStreams(page, ["browser", "browser"]);
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Poker Training Analyzer" }),
-  ).toBeVisible();
+  await expectAnalyzerReady(page);
 
   await page.getByRole("button", { name: "Share window" }).click();
   await expect(
@@ -610,16 +634,18 @@ test("rejects a mismatched share source and recovers with a tab", async ({
   await expect(
     page.getByText("No screenshots uploaded or captured yet"),
   ).toBeVisible();
-  await expect.poll(
-    () => page.evaluate(() => {
-      const fixtures = (
-        window as typeof window & {
-          __pokerHeroCaptureFixtures: Array<{ stream: MediaStream }>;
-        }
-      ).__pokerHeroCaptureFixtures;
-      return fixtures[0]?.stream.getVideoTracks()[0]?.readyState;
-    }),
-  ).toBe("ended");
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const fixtures = (
+          window as typeof window & {
+            __pokerHeroCaptureFixtures: Array<{ stream: MediaStream }>;
+          }
+        ).__pokerHeroCaptureFixtures;
+        return fixtures[0]?.stream.getVideoTracks()[0]?.readyState;
+      }),
+    )
+    .toBe("ended");
 
   await page
     .getByRole("group", { name: "Share source type" })
@@ -629,12 +655,14 @@ test("rejects a mismatched share source and recovers with a tab", async ({
   await expect(page.getByText("Tab sharing active")).toBeVisible();
   const preview = page.getByLabel("Shared screen preview");
   await expect(preview).toHaveClass(/active/);
-  await expect.poll(
-    () => preview.evaluate((element: HTMLVideoElement) => ({
-      height: element.videoHeight,
-      width: element.videoWidth,
-    })),
-  ).toEqual({ height: 360, width: 640 });
+  await expect
+    .poll(() =>
+      preview.evaluate((element: HTMLVideoElement) => ({
+        height: element.videoHeight,
+        width: element.videoWidth,
+      })),
+    )
+    .toEqual({ height: 360, width: 640 });
   await expect(
     page.getByText(
       "Tab was selected. Choose a window in the browser share picker, or switch the source type before sharing.",
@@ -685,24 +713,26 @@ test("rejects a mismatched share source and recovers with a tab", async ({
     `${BACKEND_URL}/api/jobs/${capture.id}`,
   );
   expect(archivedResponse.ok()).toBe(true);
-  const archivedJob = await archivedResponse.json() as {
+  const archivedJob = (await archivedResponse.json()) as {
     archived_at: string | null;
   };
   expect(archivedJob.archived_at).not.toBeNull();
 
   await page.getByRole("button", { name: "Stop sharing" }).click();
-  await expect.poll(
-    () => page.evaluate(() => {
-      const fixtures = (
-        window as typeof window & {
-          __pokerHeroCaptureFixtures: Array<{ stream: MediaStream }>;
-        }
-      ).__pokerHeroCaptureFixtures;
-      return fixtures.map(
-        (fixture) => fixture.stream.getVideoTracks()[0]?.readyState,
-      );
-    }),
-  ).toEqual(["ended", "ended"]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const fixtures = (
+          window as typeof window & {
+            __pokerHeroCaptureFixtures: Array<{ stream: MediaStream }>;
+          }
+        ).__pokerHeroCaptureFixtures;
+        return fixtures.map(
+          (fixture) => fixture.stream.getVideoTracks()[0]?.readyState,
+        );
+      }),
+    )
+    .toEqual(["ended", "ended"]);
 });
 
 test("recovers after the browser share picker is cancelled", async ({
@@ -710,9 +740,7 @@ test("recovers after the browser share picker is cancelled", async ({
 }) => {
   await installCaptureStreams(page, ["cancel", "window"]);
   await page.goto("/");
-  await expect(
-    page.getByRole("heading", { name: "Poker Training Analyzer" }),
-  ).toBeVisible();
+  await expectAnalyzerReady(page);
 
   await page.getByRole("button", { name: "Share window" }).click();
   await expect(page.getByText("Screen sharing was cancelled")).toBeVisible();
@@ -752,12 +780,14 @@ test("recovers after the browser share picker is cancelled", async ({
   await expect(page.getByText("Screen sharing was cancelled")).toBeHidden();
   const preview = page.getByLabel("Shared screen preview");
   await expect(preview).toHaveClass(/active/);
-  await expect.poll(
-    () => preview.evaluate((element: HTMLVideoElement) => ({
-      height: element.videoHeight,
-      width: element.videoWidth,
-    })),
-  ).toEqual({ height: 360, width: 640 });
+  await expect
+    .poll(() =>
+      preview.evaluate((element: HTMLVideoElement) => ({
+        height: element.videoHeight,
+        width: element.videoWidth,
+      })),
+    )
+    .toEqual({ height: 360, width: 640 });
 
   const capture = await captureAutomatedFrame(page);
   await expect(
@@ -800,24 +830,26 @@ test("recovers after the browser share picker is cancelled", async ({
     `${BACKEND_URL}/api/jobs/${capture.id}`,
   );
   expect(archivedResponse.ok()).toBe(true);
-  const archivedJob = await archivedResponse.json() as {
+  const archivedJob = (await archivedResponse.json()) as {
     archived_at: string | null;
   };
   expect(archivedJob.archived_at).not.toBeNull();
 
   await page.getByRole("button", { name: "Stop sharing" }).click();
-  await expect.poll(
-    () => page.evaluate(() => {
-      const fixtures = (
-        window as typeof window & {
-          __pokerHeroCaptureFixtures: Array<{ stream: MediaStream }>;
-        }
-      ).__pokerHeroCaptureFixtures;
-      return fixtures.map(
-        (fixture) => fixture.stream.getVideoTracks()[0]?.readyState,
-      );
-    }),
-  ).toEqual(["ended"]);
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const fixtures = (
+          window as typeof window & {
+            __pokerHeroCaptureFixtures: Array<{ stream: MediaStream }>;
+          }
+        ).__pokerHeroCaptureFixtures;
+        return fixtures.map(
+          (fixture) => fixture.stream.getVideoTracks()[0]?.readyState,
+        );
+      }),
+    )
+    .toEqual(["ended"]);
 });
 
 test("reviews one screenshot from upload through persisted history", async ({
@@ -851,9 +883,11 @@ test("reviews one screenshot from upload through persisted history", async ({
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(queueItem).toBeHidden();
 
-  const historyItem = page.getByRole("button", {
-    name: /Reopen history item/,
-  }).first();
+  const historyItem = page
+    .getByRole("button", {
+      name: /Reopen history item/,
+    })
+    .first();
   await expect(historyItem).toBeVisible();
   await historyItem.click();
   await expect(page.getByLabel("Pot")).toHaveValue("13");
@@ -862,7 +896,7 @@ test("reviews one screenshot from upload through persisted history", async ({
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     approved_state: { pot_size: number };
     archived_at: string | null;
   };
@@ -885,9 +919,11 @@ test("overlays delete confirmation without resizing screenshot details", async (
   );
   expect(includeResponse.ok()).toBe(true);
   await page.reload();
-  await page.getByRole("button", {
-    name: `Manage screenshot 1: ${filename}`,
-  }).click();
+  await page
+    .getByRole("button", {
+      name: `Manage screenshot 1: ${filename}`,
+    })
+    .click();
 
   const dialog = page.getByRole("dialog", { name: "Screenshot details" });
   const before = await dialog.boundingBox();
@@ -927,9 +963,11 @@ test("overlays delete confirmation without resizing screenshot details", async (
     Math.abs(mobileConfirmationBox!.y - mobileFooterBox!.y),
   ).toBeLessThanOrEqual(1);
 
-  await confirmation.getByRole("button", {
-    name: "Delete permanently",
-  }).click();
+  await confirmation
+    .getByRole("button", {
+      name: "Delete permanently",
+    })
+    .click();
   await expect(dialog).toBeHidden();
 });
 
@@ -947,7 +985,7 @@ test("completes and reopens a training review from persisted progress", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     lesson_count: number;
     needs_review_hands: number;
     reviewed_hands: number;
@@ -963,9 +1001,9 @@ test("completes and reopens a training review from persisted progress", async ({
   await decisionPanel.getByRole("button", { name: "high" }).click();
 
   const decisionResponsePromise = page.waitForResponse(
-    (response) => response.url()
-      === `${BACKEND_URL}/api/jobs/${uploadedJob.id}/decision`
-      && response.request().method() === "PUT",
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/jobs/${uploadedJob.id}/decision` &&
+      response.request().method() === "PUT",
   );
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   expect((await decisionResponsePromise).ok()).toBe(true);
@@ -985,9 +1023,10 @@ test("completes and reopens a training review from persisted progress", async ({
   const lessonNote = "Compare pot odds before folding to a single bet.";
   await page.getByLabel("Training review note").fill(lessonNote);
   const completeResponsePromise = page.waitForResponse(
-    (response) => response.url()
-      === `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review`
-      && response.request().method() === "PUT",
+    (response) =>
+      response.url() ===
+        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review` &&
+      response.request().method() === "PUT",
   );
   await comparison.getByRole("button", { name: "Mark reviewed" }).click();
   expect((await completeResponsePromise).ok()).toBe(true);
@@ -1004,7 +1043,9 @@ test("completes and reopens a training review from persisted progress", async ({
     name: "Training progress",
   });
   await expect(progressDialog).toBeVisible();
-  const progressSummary = progressDialog.getByLabel("Training progress summary");
+  const progressSummary = progressDialog.getByLabel(
+    "Training progress summary",
+  );
   await expect(progressSummary).toContainText(
     String(initialProgress.reviewed_hands + 1),
   );
@@ -1027,11 +1068,13 @@ test("completes and reopens a training review from persisted progress", async ({
   );
 
   const reopenResponsePromise = page.waitForResponse(
-    (response) => response.url()
-      === `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review`
-      && response.request().method() === "DELETE",
+    (response) =>
+      response.url() ===
+        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review` &&
+      response.request().method() === "DELETE",
   );
-  await page.getByLabel("Training decision comparison")
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Reopen review" })
     .click();
   expect((await reopenResponsePromise).ok()).toBe(true);
@@ -1039,11 +1082,13 @@ test("completes and reopens a training review from persisted progress", async ({
   await expect(page.getByLabel("Training review note")).toHaveValue(lessonNote);
 
   const recompleteResponsePromise = page.waitForResponse(
-    (response) => response.url()
-      === `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review`
-      && response.request().method() === "PUT",
+    (response) =>
+      response.url() ===
+        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review` &&
+      response.request().method() === "PUT",
   );
-  await page.getByLabel("Training decision comparison")
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed" })
     .click();
   expect((await recompleteResponsePromise).ok()).toBe(true);
@@ -1055,7 +1100,7 @@ test("completes and reopens a training review from persisted progress", async ({
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     archived_at: string | null;
     recommendation: { action: string } | null;
     training_decision: { action: string; certainty: string | null } | null;
@@ -1074,7 +1119,7 @@ test("completes and reopens a training review from persisted progress", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(finalProgressResponse.ok()).toBe(true);
-  const finalProgress = await finalProgressResponse.json() as {
+  const finalProgress = (await finalProgressResponse.json()) as {
     lesson_count: number;
     needs_review_hands: number;
     reviewed_hands: number;
@@ -1099,7 +1144,7 @@ test("continues through a filtered persisted training review queue", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(staleProgressResponse.ok()).toBe(true);
-  const staleProgress = await staleProgressResponse.json() as {
+  const staleProgress = (await staleProgressResponse.json()) as {
     review_queue: Array<{ job_id: string; original_filename: string }>;
   };
   const attemptMarker = [
@@ -1113,9 +1158,9 @@ test("continues through a filtered persisted training review queue", async ({
   ];
   for (const staleHand of staleProgress.review_queue) {
     if (
-      !staleHand.original_filename.includes(attemptMarker)
-      || !staleFixturePrefixes.some(
-        (prefix) => staleHand.original_filename.startsWith(prefix),
+      !staleHand.original_filename.includes(attemptMarker) ||
+      !staleFixturePrefixes.some((prefix) =>
+        staleHand.original_filename.startsWith(prefix),
       )
     ) {
       continue;
@@ -1131,21 +1176,17 @@ test("continues through a filtered persisted training review queue", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     needs_review_hands: number;
   };
 
   const controlFilename = attemptFilename("review-control-flop", testInfo);
   const olderTurnFilename = attemptFilename("review-turn-older", testInfo);
   const newerTurnFilename = attemptFilename("review-turn-newer", testInfo);
-  const controlJob = await createPendingTrainingReview(
-    page,
-    controlFilename,
-    {
-      certainty: "low",
-      street: "flop",
-    },
-  );
+  const controlJob = await createPendingTrainingReview(page, controlFilename, {
+    certainty: "low",
+    street: "flop",
+  });
   const olderTurnJob = await createPendingTrainingReview(
     page,
     olderTurnFilename,
@@ -1170,10 +1211,12 @@ test("continues through a filtered persisted training review queue", async ({
     name: "Training progress",
   });
   const expectedPendingCount = initialProgress.needs_review_hands + 3;
-  await progressDialog.getByRole("button", {
-    name: `Needs review ${expectedPendingCount}`,
-    exact: true,
-  }).click();
+  await progressDialog
+    .getByRole("button", {
+      name: `Needs review ${expectedPendingCount}`,
+      exact: true,
+    })
+    .click();
   await progressDialog.getByLabel("Review street").selectOption("turn");
   await progressDialog.getByLabel("Review certainty").selectOption("high");
 
@@ -1187,52 +1230,55 @@ test("continues through a filtered persisted training review queue", async ({
   });
   await expect(newerTurnReview).toBeVisible();
   await expect(olderTurnReview).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${controlFilename} training review`,
-    exact: true,
-  })).toBeHidden();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${controlFilename} training review`,
+      exact: true,
+    }),
+  ).toBeHidden();
 
   await progressDialog.getByRole("button", { name: "Review next" }).click();
   await expect(progressDialog).toBeHidden();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${newerTurnJob.id}/image`,
-    );
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${newerTurnJob.id}/image`);
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${olderTurnJob.id}/image`,
-    );
-  await expect(page.getByText(
-    "Training review completed. Next hand ready",
-  )).toBeVisible();
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${olderTurnJob.id}/image`);
+  await expect(
+    page.getByText("Training review completed. Next hand ready"),
+  ).toBeVisible();
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
   await expect(progressDialog).toBeVisible();
   await expect(progressDialog.getByLabel("Review street")).toHaveValue("turn");
-  await expect(progressDialog.getByLabel("Review certainty"))
-    .toHaveValue("high");
+  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
+    "high",
+  );
   await expect(progressDialog).toContainText(
     "No action or sizing differences need review.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-    exact: true,
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 
   for (const reviewedJob of [newerTurnJob, olderTurnJob]) {
     const persistedResponse = await page.request.get(
       `${BACKEND_URL}/api/jobs/${reviewedJob.id}`,
     );
     expect(persistedResponse.ok()).toBe(true);
-    const persistedJob = await persistedResponse.json() as {
+    const persistedJob = (await persistedResponse.json()) as {
       training_reviewed_at: string | null;
     };
     expect(persistedJob.training_reviewed_at).toEqual(expect.any(String));
@@ -1241,7 +1287,7 @@ test("continues through a filtered persisted training review queue", async ({
     `${BACKEND_URL}/api/jobs/${controlJob.id}`,
   );
   expect(controlResponse.ok()).toBe(true);
-  const persistedControl = await controlResponse.json() as {
+  const persistedControl = (await controlResponse.json()) as {
     training_reviewed_at: string | null;
   };
   expect(persistedControl.training_reviewed_at).toBeNull();
@@ -1253,9 +1299,7 @@ test("continues through a filtered persisted training review queue", async ({
   expect(cleanupResponse.ok()).toBe(true);
 });
 
-test("drills into persisted solver attribution", async ({
-  page,
-}, testInfo) => {
+test("drills into persisted solver attribution", async ({ page }, testInfo) => {
   await openUploadInput(page);
   await page.getByRole("button", { name: "Automation On" }).click();
   await expect(
@@ -1273,14 +1317,15 @@ test("drills into persisted solver attribution", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     solver_coverage: {
       routes: Array<{ engine: string; hands: number }>;
     };
   };
-  const initialRouteHands = initialProgress.solver_coverage.routes.find(
-    (route) => route.engine === "e2e_provider_stub",
-  )?.hands ?? 0;
+  const initialRouteHands =
+    initialProgress.solver_coverage.routes.find(
+      (route) => route.engine === "e2e_provider_stub",
+    )?.hands ?? 0;
 
   const filename = attemptFilename("solver-attribution", testInfo);
   const attributedJob = await createPendingTrainingReview(page, filename, {
@@ -1292,14 +1337,16 @@ test("drills into persisted solver attribution", async ({
   const progressDialog = page.getByRole("dialog", {
     name: "Training progress",
   });
-  await expect(progressDialog.getByRole("heading", {
-    name: "Solver coverage",
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("heading", {
+      name: "Solver coverage",
+    }),
+  ).toBeVisible();
   const expectedRouteHands = initialRouteHands + 1;
   const routeButton = progressDialog.getByRole("button", {
     name: new RegExp(
-      `^Show ${expectedRouteHands} ${expectedRouteHands === 1 ? "hand" : "hands"}`
-        + " handled by e2e provider stub\\.",
+      `^Show ${expectedRouteHands} ${expectedRouteHands === 1 ? "hand" : "hands"}` +
+        " handled by e2e provider stub\\.",
     ),
   });
   await expect(routeButton).toBeVisible();
@@ -1315,22 +1362,22 @@ test("drills into persisted solver attribution", async ({
   await attributedReview.click();
 
   await expect(progressDialog).toBeHidden();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${attributedJob.id}/image`,
-    );
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${attributedJob.id}/image`);
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed" })
     .click();
-  await expect(page.getByLabel("Training decision comparison"))
-    .toContainText("Reviewed");
+  await expect(page.getByLabel("Training decision comparison")).toContainText(
+    "Reviewed",
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${attributedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     recommendation: { raw: Record<string, unknown> } | null;
     training_reviewed_at: string | null;
   };
@@ -1342,9 +1389,7 @@ test("drills into persisted solver attribution", async ({
   });
 });
 
-test("drills into a persisted solver fallback", async ({
-  page,
-}, testInfo) => {
+test("drills into a persisted solver fallback", async ({ page }, testInfo) => {
   await openUploadInput(page);
   await page.getByRole("button", { name: "Automation On" }).click();
   await expect(
@@ -1362,14 +1407,15 @@ test("drills into a persisted solver fallback", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     solver_coverage: {
       fallback_reasons: Array<{ reason: string; hands: number }>;
     };
   };
-  const initialFallbackHands = initialProgress.solver_coverage
-    .fallback_reasons.find((fallback) => fallback.reason === fallbackReason)
-    ?.hands ?? 0;
+  const initialFallbackHands =
+    initialProgress.solver_coverage.fallback_reasons.find(
+      (fallback) => fallback.reason === fallbackReason,
+    )?.hands ?? 0;
 
   const armResponse = await page.request.post(
     `${PROVIDER_URL}/control/fallback-next-recommendation`,
@@ -1388,8 +1434,8 @@ test("drills into a persisted solver fallback", async ({
   const expectedFallbackHands = initialFallbackHands + 1;
   const fallbackButton = progressDialog.getByRole("button", {
     name: new RegExp(
-      `^Show ${expectedFallbackHands} ${expectedFallbackHands === 1 ? "hand" : "hands"}`
-        + ` using fallback: ${fallbackReason}\\.`,
+      `^Show ${expectedFallbackHands} ${expectedFallbackHands === 1 ? "hand" : "hands"}` +
+        ` using fallback: ${fallbackReason}\\.`,
     ),
   });
   await expect(fallbackButton).toBeVisible();
@@ -1408,17 +1454,19 @@ test("drills into a persisted solver fallback", async ({
   const recommendation = page.getByRole("region", { name: "Recommendation" });
   await expect(recommendation).toContainText(fallbackReason);
   await expect(recommendation).toContainText("Postflop solver fallback");
-  await page.getByLabel("Training decision comparison")
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed" })
     .click();
-  await expect(page.getByLabel("Training decision comparison"))
-    .toContainText("Reviewed");
+  await expect(page.getByLabel("Training decision comparison")).toContainText(
+    "Reviewed",
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${fallbackJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     recommendation: { raw: Record<string, unknown> } | null;
     training_reviewed_at: string | null;
   };
@@ -1449,7 +1497,7 @@ test("renders persisted solver evidence and prioritizes EV loss", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     needs_review_hands: number;
   };
 
@@ -1459,14 +1507,18 @@ test("renders persisted solver evidence and prioritizes EV loss", async ({
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: "fold",
-    exact: true,
-  }).click();
-  await decisionPanel.getByRole("button", {
-    name: "medium",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "fold",
+      exact: true,
+    })
+    .click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "medium",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
@@ -1484,10 +1536,7 @@ test("renders persisted solver evidence and prioritizes EV loss", async ({
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
-  const lowerLossFilename = attemptFilename(
-    "solver-evidence-lower",
-    testInfo,
-  );
+  const lowerLossFilename = attemptFilename("solver-evidence-lower", testInfo);
   const lowerLossJob = await createPendingTrainingReview(
     page,
     lowerLossFilename,
@@ -1501,10 +1550,12 @@ test("renders persisted solver evidence and prioritizes EV loss", async ({
   const progressDialog = page.getByRole("dialog", {
     name: "Training progress",
   });
-  await progressDialog.getByRole("button", {
-    name: `Needs review ${initialProgress.needs_review_hands + 2}`,
-    exact: true,
-  }).click();
+  await progressDialog
+    .getByRole("button", {
+      name: `Needs review ${initialProgress.needs_review_hands + 2}`,
+      exact: true,
+    })
+    .click();
   await progressDialog.getByLabel("Review order").selectOption("ev_loss");
   const reviewHands = progressDialog.getByRole("button", {
     name: /^Open .* training review$/,
@@ -1517,41 +1568,44 @@ test("renders persisted solver evidence and prioritizes EV loss", async ({
     `Open ${lowerLossFilename} training review`,
   );
   await expect(reviewHands.nth(1)).toContainText("EV loss: 0.4 BB");
-  await progressDialog.getByRole("button", {
-    name: "Review highest loss",
-  }).click();
+  await progressDialog
+    .getByRole("button", {
+      name: "Review highest loss",
+    })
+    .click();
 
   await expect(progressDialog).toBeHidden();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${uploadedJob.id}/image`,
-    );
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${uploadedJob.id}/image`);
   await expectDetailedSolverEvidence(page);
-  await page.getByLabel("Training decision comparison")
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${lowerLossJob.id}/image`,
-    );
-  await expect(page.getByLabel("Training decision comparison"))
-    .toContainText("0.4 BB EV loss");
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${lowerLossJob.id}/image`);
+  await expect(page.getByLabel("Training decision comparison")).toContainText(
+    "0.4 BB EV loss",
+  );
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
   await expect(progressDialog).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Needs review ${initialProgress.needs_review_hands}`,
-    exact: true,
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Needs review ${initialProgress.needs_review_hands}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     recommendation: { raw: Record<string, unknown> } | null;
     training_reviewed_at: string | null;
   };
@@ -1572,7 +1626,7 @@ test("renders persisted solver evidence and prioritizes EV loss", async ({
     `${BACKEND_URL}/api/jobs/${lowerLossJob.id}`,
   );
   expect(persistedLowerLossResponse.ok()).toBe(true);
-  const persistedLowerLossJob = await persistedLowerLossResponse.json() as {
+  const persistedLowerLossJob = (await persistedLowerLossResponse.json()) as {
     training_reviewed_at: string | null;
   };
   expect(persistedLowerLossJob.training_reviewed_at).toEqual(
@@ -1594,7 +1648,7 @@ test("opens the suggested highest-loss action pattern", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     needs_review_hands: number;
   };
 
@@ -1602,15 +1656,11 @@ test("opens the suggested highest-loss action pattern", async ({
     "suggested-pattern-control",
     testInfo,
   );
-  const controlJob = await createPendingTrainingReview(
-    page,
-    controlFilename,
-    {
-      certainty: "low",
-      recommendationControl: "lower-evidence-next-recommendation",
-      street: "flop",
-    },
-  );
+  const controlJob = await createPendingTrainingReview(page, controlFilename, {
+    certainty: "low",
+    recommendationControl: "lower-evidence-next-recommendation",
+    street: "flop",
+  });
   const olderTargetFilename = attemptFilename(
     "suggested-pattern-target-older",
     testInfo,
@@ -1656,40 +1706,52 @@ test("opens the suggested highest-loss action pattern", async ({
   await expect(progressDialog).toContainText(
     "2 pending review hands for Raise to Call across all streets.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${newerTargetFilename} training review`,
-  })).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${olderTargetFilename} training review`,
-  })).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${controlFilename} training review`,
-  })).toBeHidden();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${newerTargetFilename} training review`,
+    }),
+  ).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${olderTargetFilename} training review`,
+    }),
+  ).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${controlFilename} training review`,
+    }),
+  ).toBeHidden();
   await progressDialog.getByRole("button", { name: "Review next" }).click();
 
   await expect(progressDialog).toBeHidden();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
-    );
-  await expect(page.getByLabel("Training decision comparison"))
-    .toContainText("2.2 BB EV loss");
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute(
+    "src",
+    `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
+  );
+  await expect(page.getByLabel("Training decision comparison")).toContainText(
+    "2.2 BB EV loss",
+  );
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
-    );
-  await expect(page.getByText(
-    "Training review completed. Next hand ready",
-  )).toBeVisible();
-  await expect(page.getByLabel("Training decision comparison"))
-    .toContainText("2.2 BB EV loss");
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute(
+    "src",
+    `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
+  );
+  await expect(
+    page.getByText("Training review completed. Next hand ready"),
+  ).toBeVisible();
+  await expect(page.getByLabel("Training decision comparison")).toContainText(
+    "2.2 BB EV loss",
+  );
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
@@ -1697,17 +1759,19 @@ test("opens the suggested highest-loss action pattern", async ({
   await expect(progressDialog).toContainText(
     "No action or sizing differences need review.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-    exact: true,
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 
   for (const targetJob of [newerTargetJob, olderTargetJob]) {
     const targetResponse = await page.request.get(
       `${BACKEND_URL}/api/jobs/${targetJob.id}`,
     );
     expect(targetResponse.ok()).toBe(true);
-    const persistedTarget = await targetResponse.json() as {
+    const persistedTarget = (await targetResponse.json()) as {
       training_reviewed_at: string | null;
     };
     expect(persistedTarget.training_reviewed_at).toEqual(expect.any(String));
@@ -1717,7 +1781,7 @@ test("opens the suggested highest-loss action pattern", async ({
     `${BACKEND_URL}/api/jobs/${controlJob.id}`,
   );
   expect(controlResponse.ok()).toBe(true);
-  const persistedControl = await controlResponse.json() as {
+  const persistedControl = (await controlResponse.json()) as {
     training_reviewed_at: string | null;
   };
   expect(persistedControl.training_reviewed_at).toBeNull();
@@ -1742,7 +1806,7 @@ test("opens the suggested normalized-position review focus", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     needs_review_hands: number;
   };
 
@@ -1750,15 +1814,11 @@ test("opens the suggested normalized-position review focus", async ({
     "suggested-position-control",
     testInfo,
   );
-  const controlJob = await createPendingTrainingReview(
-    page,
-    controlFilename,
-    {
-      certainty: "low",
-      recommendationControl: "lower-evidence-next-recommendation",
-      street: "flop",
-    },
-  );
+  const controlJob = await createPendingTrainingReview(page, controlFilename, {
+    certainty: "low",
+    recommendationControl: "lower-evidence-next-recommendation",
+    street: "flop",
+  });
   const olderTargetFilename = attemptFilename(
     "suggested-position-target-older",
     testInfo,
@@ -1806,50 +1866,62 @@ test("opens the suggested normalized-position review focus", async ({
   await expect(progressDialog).toContainText(
     "2 pending review hands across all streets at BB.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${newerTargetFilename} training review`,
-  })).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${olderTargetFilename} training review`,
-  })).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${controlFilename} training review`,
-  })).toBeHidden();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${newerTargetFilename} training review`,
+    }),
+  ).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${olderTargetFilename} training review`,
+    }),
+  ).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${controlFilename} training review`,
+    }),
+  ).toBeHidden();
   await progressDialog.getByRole("button", { name: "Review next" }).click();
 
   await expect(progressDialog).toBeHidden();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
-    );
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute(
+    "src",
+    `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
+  );
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
-    );
-  await expect(page.getByText(
-    "Training review completed. Next hand ready",
-  )).toBeVisible();
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute(
+    "src",
+    `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
+  );
+  await expect(
+    page.getByText("Training review completed. Next hand ready"),
+  ).toBeVisible();
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
   await expect(progressDialog).toBeVisible();
-  await expect(progressDialog.getByLabel(
-    "Active review position filter",
-  )).toContainText("BB");
+  await expect(
+    progressDialog.getByLabel("Active review position filter"),
+  ).toContainText("BB");
   await expect(progressDialog).toContainText(
     "No action or sizing differences need review.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-    exact: true,
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 
   const targetPositions = [
     [newerTargetJob, "bb"],
@@ -1860,7 +1932,7 @@ test("opens the suggested normalized-position review focus", async ({
       `${BACKEND_URL}/api/jobs/${targetJob.id}`,
     );
     expect(targetResponse.ok()).toBe(true);
-    const persistedTarget = await targetResponse.json() as {
+    const persistedTarget = (await targetResponse.json()) as {
       approved_state: { hero_position: string | null } | null;
       training_reviewed_at: string | null;
     };
@@ -1874,7 +1946,7 @@ test("opens the suggested normalized-position review focus", async ({
     `${BACKEND_URL}/api/jobs/${controlJob.id}`,
   );
   expect(controlResponse.ok()).toBe(true);
-  const persistedControl = await controlResponse.json() as {
+  const persistedControl = (await controlResponse.json()) as {
     training_reviewed_at: string | null;
   };
   expect(persistedControl.training_reviewed_at).toBeNull();
@@ -1899,7 +1971,7 @@ test("opens the suggested certainty review focus", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     needs_review_hands: number;
   };
 
@@ -1907,15 +1979,11 @@ test("opens the suggested certainty review focus", async ({
     "suggested-certainty-control",
     testInfo,
   );
-  const controlJob = await createPendingTrainingReview(
-    page,
-    controlFilename,
-    {
-      certainty: "low",
-      recommendationControl: "lower-evidence-next-recommendation",
-      street: "flop",
-    },
-  );
+  const controlJob = await createPendingTrainingReview(page, controlFilename, {
+    certainty: "low",
+    recommendationControl: "lower-evidence-next-recommendation",
+    street: "flop",
+  });
   const olderTargetFilename = attemptFilename(
     "suggested-certainty-target-older",
     testInfo,
@@ -1954,61 +2022,75 @@ test("opens the suggested certainty review focus", async ({
   await expect(suggestedFocus).toBeVisible();
   await suggestedFocus.click();
 
-  await expect(progressDialog.getByLabel("Review certainty"))
-    .toHaveValue("high");
+  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
+    "high",
+  );
   await expect(progressDialog).toContainText(
     "2 pending review hands across all streets with high certainty.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${newerTargetFilename} training review`,
-  })).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${olderTargetFilename} training review`,
-  })).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${controlFilename} training review`,
-  })).toBeHidden();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${newerTargetFilename} training review`,
+    }),
+  ).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${olderTargetFilename} training review`,
+    }),
+  ).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${controlFilename} training review`,
+    }),
+  ).toBeHidden();
   await progressDialog.getByRole("button", { name: "Review next" }).click();
 
   await expect(progressDialog).toBeHidden();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
-    );
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute(
+    "src",
+    `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
+  );
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
-    );
-  await expect(page.getByText(
-    "Training review completed. Next hand ready",
-  )).toBeVisible();
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute(
+    "src",
+    `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
+  );
+  await expect(
+    page.getByText("Training review completed. Next hand ready"),
+  ).toBeVisible();
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
   await expect(progressDialog).toBeVisible();
-  await expect(progressDialog.getByLabel("Review certainty"))
-    .toHaveValue("high");
+  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
+    "high",
+  );
   await expect(progressDialog).toContainText(
     "No action or sizing differences need review.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-    exact: true,
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 
   for (const targetJob of [newerTargetJob, olderTargetJob]) {
     const targetResponse = await page.request.get(
       `${BACKEND_URL}/api/jobs/${targetJob.id}`,
     );
     expect(targetResponse.ok()).toBe(true);
-    const persistedTarget = await targetResponse.json() as {
+    const persistedTarget = (await targetResponse.json()) as {
       training_decision: { certainty: string | null } | null;
       training_reviewed_at: string | null;
     };
@@ -2022,7 +2104,7 @@ test("opens the suggested certainty review focus", async ({
     `${BACKEND_URL}/api/jobs/${controlJob.id}`,
   );
   expect(controlResponse.ok()).toBe(true);
-  const persistedControl = await controlResponse.json() as {
+  const persistedControl = (await controlResponse.json()) as {
     training_decision: { certainty: string | null } | null;
     training_reviewed_at: string | null;
   };
@@ -2037,9 +2119,7 @@ test("opens the suggested certainty review focus", async ({
   expect(cleanupResponse.ok()).toBe(true);
 });
 
-test("opens the suggested street review focus", async ({
-  page,
-}, testInfo) => {
+test("opens the suggested street review focus", async ({ page }, testInfo) => {
   await openUploadInput(page);
   await page.getByRole("button", { name: "Automation On" }).click();
   await expect(
@@ -2051,23 +2131,16 @@ test("opens the suggested street review focus", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     needs_review_hands: number;
   };
 
-  const controlFilename = attemptFilename(
-    "suggested-street-control",
-    testInfo,
-  );
-  const controlJob = await createPendingTrainingReview(
-    page,
-    controlFilename,
-    {
-      certainty: "low",
-      recommendationControl: "lower-evidence-next-recommendation",
-      street: "flop",
-    },
-  );
+  const controlFilename = attemptFilename("suggested-street-control", testInfo);
+  const controlJob = await createPendingTrainingReview(page, controlFilename, {
+    certainty: "low",
+    recommendationControl: "lower-evidence-next-recommendation",
+    street: "flop",
+  });
   const olderTargetFilename = attemptFilename(
     "suggested-street-target-older",
     testInfo,
@@ -2107,61 +2180,71 @@ test("opens the suggested street review focus", async ({
   await expect(suggestedFocus).toBeVisible();
   await suggestedFocus.click();
 
-  await expect(progressDialog.getByLabel("Review street"))
-    .toHaveValue("river");
+  await expect(progressDialog.getByLabel("Review street")).toHaveValue("river");
   await expect(progressDialog).toContainText(
     "2 pending review hands on river.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${newerTargetFilename} training review`,
-  })).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${olderTargetFilename} training review`,
-  })).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${controlFilename} training review`,
-  })).toBeHidden();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${newerTargetFilename} training review`,
+    }),
+  ).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${olderTargetFilename} training review`,
+    }),
+  ).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${controlFilename} training review`,
+    }),
+  ).toBeHidden();
   await progressDialog.getByRole("button", { name: "Review next" }).click();
 
   await expect(progressDialog).toBeHidden();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
-    );
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute(
+    "src",
+    `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
+  );
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
-    );
-  await expect(page.getByText(
-    "Training review completed. Next hand ready",
-  )).toBeVisible();
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute(
+    "src",
+    `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
+  );
+  await expect(
+    page.getByText("Training review completed. Next hand ready"),
+  ).toBeVisible();
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
   await expect(progressDialog).toBeVisible();
-  await expect(progressDialog.getByLabel("Review street"))
-    .toHaveValue("river");
+  await expect(progressDialog.getByLabel("Review street")).toHaveValue("river");
   await expect(progressDialog).toContainText(
     "No action or sizing differences need review.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-    exact: true,
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 
   for (const targetJob of [newerTargetJob, olderTargetJob]) {
     const targetResponse = await page.request.get(
       `${BACKEND_URL}/api/jobs/${targetJob.id}`,
     );
     expect(targetResponse.ok()).toBe(true);
-    const persistedTarget = await targetResponse.json() as {
+    const persistedTarget = (await targetResponse.json()) as {
       approved_state: {
         board_cards: Array<{ rank: string; suit: string }>;
         street: string | null;
@@ -2170,9 +2253,7 @@ test("opens the suggested street review focus", async ({
     };
     expect(persistedTarget).toMatchObject({
       approved_state: {
-        board_cards: expect.arrayContaining([
-          { rank: "8", suit: "spades" },
-        ]),
+        board_cards: expect.arrayContaining([{ rank: "8", suit: "spades" }]),
         street: "river",
       },
       training_reviewed_at: expect.any(String),
@@ -2184,7 +2265,7 @@ test("opens the suggested street review focus", async ({
     `${BACKEND_URL}/api/jobs/${controlJob.id}`,
   );
   expect(controlResponse.ok()).toBe(true);
-  const persistedControl = await controlResponse.json() as {
+  const persistedControl = (await controlResponse.json()) as {
     approved_state: { street: string | null } | null;
     training_reviewed_at: string | null;
   };
@@ -2213,20 +2294,16 @@ test("opens legacy review focus by unrated and unpositioned state", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     needs_review_hands: number;
   };
 
   const filename = attemptFilename("legacy-focus", testInfo);
-  const legacyJob = await createPendingTrainingReview(
-    page,
-    filename,
-    {
-      heroPosition: "",
-      recommendationControl: "evidence-next-recommendation",
-      street: "flop",
-    },
-  );
+  const legacyJob = await createPendingTrainingReview(page, filename, {
+    heroPosition: "",
+    recommendationControl: "evidence-next-recommendation",
+    street: "flop",
+  });
 
   await page.getByRole("button", { name: "Training progress" }).click();
   const progressDialog = page.getByRole("dialog", {
@@ -2242,14 +2319,17 @@ test("opens legacy review focus by unrated and unpositioned state", async ({
   await expect(unpositionedFocus).toBeVisible();
 
   await unratedFocus.click();
-  await expect(progressDialog.getByLabel("Review certainty"))
-    .toHaveValue("unrated");
+  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
+    "unrated",
+  );
   await expect(progressDialog).toContainText(
     "1 pending review hand across all streets without a certainty rating.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${filename} training review`,
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${filename} training review`,
+    }),
+  ).toBeVisible();
 
   const recentView = progressDialog.getByRole("button", { name: "Recent" });
   await recentView.click();
@@ -2260,41 +2340,45 @@ test("opens legacy review focus by unrated and unpositioned state", async ({
   await expect(refreshedUnpositionedFocus).toBeVisible();
   await refreshedUnpositionedFocus.click();
 
-  await expect(progressDialog.getByLabel("Review certainty"))
-    .toHaveValue("all");
-  await expect(progressDialog.getByLabel("Active review position filter"))
-    .toContainText("Unpositioned");
+  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
+    "all",
+  );
+  await expect(
+    progressDialog.getByLabel("Active review position filter"),
+  ).toContainText("Unpositioned");
   await expect(progressDialog).toContainText(
     "1 pending review hand across all streets without a recorded position.",
   );
   await progressDialog.getByRole("button", { name: "Review next" }).click();
 
   await expect(progressDialog).toBeHidden();
-  await expect(page.getByAltText("Uploaded poker table screenshot"))
-    .toHaveAttribute(
-      "src",
-      `${BACKEND_URL}/api/jobs/${legacyJob.id}/image`,
-    );
-  await page.getByLabel("Training decision comparison")
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${legacyJob.id}/image`);
+  await page
+    .getByLabel("Training decision comparison")
     .getByRole("button", { name: "Mark reviewed & next" })
     .click();
 
   await expect(progressDialog).toBeVisible();
-  await expect(progressDialog.getByLabel("Active review position filter"))
-    .toContainText("Unpositioned");
+  await expect(
+    progressDialog.getByLabel("Active review position filter"),
+  ).toContainText("Unpositioned");
   await expect(progressDialog).toContainText(
     "No action or sizing differences need review.",
   );
-  await expect(progressDialog.getByRole("button", {
-    name: `Needs review ${initialProgress.needs_review_hands}`,
-    exact: true,
-  })).toBeVisible();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Needs review ${initialProgress.needs_review_hands}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${legacyJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     approved_state: { hero_position: string | null } | null;
     training_decision: { certainty: string | null } | null;
     training_reviewed_at: string | null;
@@ -2401,7 +2485,7 @@ async function verifyGradedSupportedMix(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     ev_compared_hands: number;
@@ -2416,15 +2500,19 @@ async function verifyGradedSupportedMix(
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: "raise",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "raise",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-  await decisionPanel.getByRole("button", {
-    name: "medium",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "medium",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
@@ -2440,9 +2528,11 @@ async function verifyGradedSupportedMix(
   await expect(comparison).toContainText(
     `${evidenceCase.expectedEvLoss} BB EV loss`,
   );
-  await expect(comparison.getByRole("button", {
-    name: "Mark reviewed",
-  })).toBeHidden();
+  await expect(
+    comparison.getByRole("button", {
+      name: "Mark reviewed",
+    }),
+  ).toBeHidden();
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
@@ -2451,7 +2541,7 @@ async function verifyGradedSupportedMix(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = await updatedProgressResponse.json() as {
+  const updatedProgress = (await updatedProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     ev_compared_hands: number;
@@ -2472,31 +2562,35 @@ async function verifyGradedSupportedMix(
     needs_review_hands: initialProgress.needs_review_hands,
     reviewed_hands: initialProgress.reviewed_hands + 1,
   });
-  expect(updatedProgress.recent_hands).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      ev_loss_bb: evidenceCase.expectedEvLoss,
-      job_id: uploadedJob.id,
-      outcome: "mixed",
-    }),
-  ]));
+  expect(updatedProgress.recent_hands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        ev_loss_bb: evidenceCase.expectedEvLoss,
+        job_id: uploadedJob.id,
+        outcome: "mixed",
+      }),
+    ]),
+  );
 
   const filteredProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`
-      + "?review_decision_action=raise&review_recommended_action=call",
+    `${BACKEND_URL}/api/training/progress` +
+      "?review_decision_action=raise&review_recommended_action=call",
   );
   expect(filteredProgressResponse.ok()).toBe(true);
-  const filteredProgress = await filteredProgressResponse.json() as {
+  const filteredProgress = (await filteredProgressResponse.json()) as {
     review_queue: Array<{ job_id: string }>;
   };
-  expect(filteredProgress.review_queue).not.toEqual(expect.arrayContaining([
-    expect.objectContaining({ job_id: uploadedJob.id }),
-  ]));
+  expect(filteredProgress.review_queue).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ job_id: uploadedJob.id }),
+    ]),
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     archived_at: string | null;
     recommendation: { raw: Record<string, unknown> } | null;
     training_decision: { action: string; sizing: number | null } | null;
@@ -2589,7 +2683,7 @@ test("applies the solver policy-support frequency boundary", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     exact_matches: number;
@@ -2609,15 +2703,19 @@ test("applies the solver policy-support frequency boundary", async ({
     const decisionPanel = page.getByRole("region", {
       name: "Your training decision",
     });
-    await decisionPanel.getByRole("button", {
-      name: "raise",
-      exact: true,
-    }).click();
+    await decisionPanel
+      .getByRole("button", {
+        name: "raise",
+        exact: true,
+      })
+      .click();
     await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-    await decisionPanel.getByRole("button", {
-      name: "medium",
-      exact: true,
-    }).click();
+    await decisionPanel
+      .getByRole("button", {
+        name: "medium",
+        exact: true,
+      })
+      .click();
     await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
     await expect(decisionPanel).toContainText("Answer locked");
 
@@ -2631,13 +2729,17 @@ test("applies the solver policy-support frequency boundary", async ({
     const comparison = page.getByLabel("Training decision comparison");
     await expect(comparison).toContainText(expectedLabel);
     if (needsReview) {
-      await expect(comparison.getByRole("button", {
-        name: "Mark reviewed",
-      })).toBeVisible();
+      await expect(
+        comparison.getByRole("button", {
+          name: "Mark reviewed",
+        }),
+      ).toBeVisible();
     } else {
-      await expect(comparison.getByRole("button", {
-        name: "Mark reviewed",
-      })).toBeHidden();
+      await expect(
+        comparison.getByRole("button", {
+          name: "Mark reviewed",
+        }),
+      ).toBeHidden();
     }
 
     await page.getByRole("button", { name: "Clear reviewed" }).click();
@@ -2662,7 +2764,7 @@ test("applies the solver policy-support frequency boundary", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = await updatedProgressResponse.json() as {
+  const updatedProgress = (await updatedProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     exact_matches: number;
@@ -2680,25 +2782,31 @@ test("applies the solver policy-support frequency boundary", async ({
     review_queue_hands: initialProgress.review_queue_hands + 1,
     reviewed_hands: initialProgress.reviewed_hands + 2,
   });
-  expect(updatedProgress.recent_hands).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      job_id: boundaryJob.id,
-      outcome: "mixed",
-    }),
-    expect.objectContaining({
-      job_id: belowBoundaryJob.id,
-      outcome: "different",
-    }),
-  ]));
-  expect(updatedProgress.review_queue).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      job_id: belowBoundaryJob.id,
-      outcome: "different",
-    }),
-  ]));
-  expect(updatedProgress.review_queue).not.toEqual(expect.arrayContaining([
-    expect.objectContaining({ job_id: boundaryJob.id }),
-  ]));
+  expect(updatedProgress.recent_hands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        job_id: boundaryJob.id,
+        outcome: "mixed",
+      }),
+      expect.objectContaining({
+        job_id: belowBoundaryJob.id,
+        outcome: "different",
+      }),
+    ]),
+  );
+  expect(updatedProgress.review_queue).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        job_id: belowBoundaryJob.id,
+        outcome: "different",
+      }),
+    ]),
+  );
+  expect(updatedProgress.review_queue).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ job_id: boundaryJob.id }),
+    ]),
+  );
 
   const boundaryResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${boundaryJob.id}`,
@@ -2708,10 +2816,10 @@ test("applies the solver policy-support frequency boundary", async ({
   );
   expect(boundaryResponse.ok()).toBe(true);
   expect(belowBoundaryResponse.ok()).toBe(true);
-  const boundaryPersistedJob = await boundaryResponse.json() as {
+  const boundaryPersistedJob = (await boundaryResponse.json()) as {
     recommendation: { raw: Record<string, unknown> } | null;
   };
-  const belowBoundaryPersistedJob = await belowBoundaryResponse.json() as {
+  const belowBoundaryPersistedJob = (await belowBoundaryResponse.json()) as {
     recommendation: { raw: Record<string, unknown> } | null;
   };
   expect(boundaryPersistedJob.recommendation?.raw).toMatchObject({
@@ -2782,7 +2890,7 @@ async function verifyUnsupportedPolicyCandidate(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     ev_compared_hands: number;
@@ -2798,15 +2906,19 @@ async function verifyUnsupportedPolicyCandidate(
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: "raise",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "raise",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-  await decisionPanel.getByRole("button", {
-    name: "medium",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "medium",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
@@ -2826,9 +2938,11 @@ async function verifyUnsupportedPolicyCandidate(
       `${evidenceCase.expectedEvLoss} BB EV loss`,
     );
   }
-  await expect(comparison.getByRole("button", {
-    name: "Mark reviewed",
-  })).toBeVisible();
+  await expect(
+    comparison.getByRole("button", {
+      name: "Mark reviewed",
+    }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
@@ -2837,7 +2951,7 @@ async function verifyUnsupportedPolicyCandidate(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = await updatedProgressResponse.json() as {
+  const updatedProgress = (await updatedProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     ev_compared_hands: number;
@@ -2855,40 +2969,43 @@ async function verifyUnsupportedPolicyCandidate(
   expect(updatedProgress).toMatchObject({
     action_matches: initialProgress.action_matches,
     different_actions: initialProgress.different_actions + 1,
-    ev_compared_hands: initialProgress.ev_compared_hands
-      + (evidenceCase.expectedEvLoss === null ? 0 : 1),
+    ev_compared_hands:
+      initialProgress.ev_compared_hands +
+      (evidenceCase.expectedEvLoss === null ? 0 : 1),
     exact_matches: initialProgress.exact_matches,
     needs_review_hands: initialProgress.needs_review_hands + 1,
     review_queue_hands: initialProgress.review_queue_hands + 1,
     reviewed_hands: initialProgress.reviewed_hands + 1,
   });
-  expect(updatedProgress.recent_hands).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      ev_loss_bb: evidenceCase.expectedEvLoss,
-      job_id: uploadedJob.id,
-      outcome: "different",
-    }),
-  ]));
-  expect(updatedProgress.review_queue).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      job_id: uploadedJob.id,
-      outcome: "different",
-    }),
-  ]));
+  expect(updatedProgress.recent_hands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        ev_loss_bb: evidenceCase.expectedEvLoss,
+        job_id: uploadedJob.id,
+        outcome: "different",
+      }),
+    ]),
+  );
+  expect(updatedProgress.review_queue).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        job_id: uploadedJob.id,
+        outcome: "different",
+      }),
+    ]),
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     recommendation: {
       raw: { candidates: Array<Record<string, unknown>> };
     } | null;
   };
   expect(persistedJob.recommendation?.raw.candidates).toEqual(
-    expect.arrayContaining([
-      evidenceCase.expectedCandidate,
-    ]),
+    expect.arrayContaining([evidenceCase.expectedCandidate]),
   );
 }
 
@@ -2994,7 +3111,7 @@ async function verifySupportedUngradedMix(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     ev_compared_hands: number;
@@ -3010,15 +3127,19 @@ async function verifySupportedUngradedMix(
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: "raise",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "raise",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-  await decisionPanel.getByRole("button", {
-    name: "medium",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "medium",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
@@ -3032,9 +3153,11 @@ async function verifySupportedUngradedMix(
   const comparison = page.getByLabel("Training decision comparison");
   await expect(comparison).toContainText("Solver-supported mix");
   await expect(comparison).not.toContainText("BB EV loss");
-  await expect(comparison.getByRole("button", {
-    name: "Mark reviewed",
-  })).toBeHidden();
+  await expect(
+    comparison.getByRole("button", {
+      name: "Mark reviewed",
+    }),
+  ).toBeHidden();
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
@@ -3043,7 +3166,7 @@ async function verifySupportedUngradedMix(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = await updatedProgressResponse.json() as {
+  const updatedProgress = (await updatedProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     ev_compared_hands: number;
@@ -3067,22 +3190,26 @@ async function verifySupportedUngradedMix(
     review_queue_hands: initialProgress.review_queue_hands,
     reviewed_hands: initialProgress.reviewed_hands + 1,
   });
-  expect(updatedProgress.recent_hands).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      ev_loss_bb: null,
-      job_id: uploadedJob.id,
-      outcome: "mixed",
-    }),
-  ]));
-  expect(updatedProgress.review_queue).not.toEqual(expect.arrayContaining([
-    expect.objectContaining({ job_id: uploadedJob.id }),
-  ]));
+  expect(updatedProgress.recent_hands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        ev_loss_bb: null,
+        job_id: uploadedJob.id,
+        outcome: "mixed",
+      }),
+    ]),
+  );
+  expect(updatedProgress.review_queue).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ job_id: uploadedJob.id }),
+    ]),
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     recommendation: {
       action: string;
       raw: { candidates: Array<Record<string, unknown>> };
@@ -3149,9 +3276,7 @@ const nonDistinctEvidenceCases = [
     label: "one candidate",
     filename: "single-line-ev-evidence",
     controlPath: "/control/single-line-evidence-next-recommendation",
-    candidates: [
-      { action: "raise", sizing: 8, ev: 1.4, frequency: 1 },
-    ],
+    candidates: [{ action: "raise", sizing: 8, ev: 1.4, frequency: 1 }],
   },
   {
     label: "duplicate candidate lines",
@@ -3179,7 +3304,7 @@ async function verifyNonDistinctEvidence(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     ev_compared_hands: number;
@@ -3195,15 +3320,19 @@ async function verifyNonDistinctEvidence(
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: "raise",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "raise",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-  await decisionPanel.getByRole("button", {
-    name: "medium",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "medium",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
@@ -3217,9 +3346,11 @@ async function verifyNonDistinctEvidence(
   const comparison = page.getByLabel("Training decision comparison");
   await expect(comparison).toContainText("Matched solver");
   await expect(comparison).not.toContainText("BB EV loss");
-  await expect(comparison.getByRole("button", {
-    name: "Mark reviewed",
-  })).toBeHidden();
+  await expect(
+    comparison.getByRole("button", {
+      name: "Mark reviewed",
+    }),
+  ).toBeHidden();
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
@@ -3228,7 +3359,7 @@ async function verifyNonDistinctEvidence(
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = await updatedProgressResponse.json() as {
+  const updatedProgress = (await updatedProgressResponse.json()) as {
     action_matches: number;
     different_actions: number;
     ev_compared_hands: number;
@@ -3252,22 +3383,26 @@ async function verifyNonDistinctEvidence(
     review_queue_hands: initialProgress.review_queue_hands,
     reviewed_hands: initialProgress.reviewed_hands + 1,
   });
-  expect(updatedProgress.recent_hands).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      ev_loss_bb: null,
-      job_id: uploadedJob.id,
-      outcome: "match",
-    }),
-  ]));
-  expect(updatedProgress.review_queue).not.toEqual(expect.arrayContaining([
-    expect.objectContaining({ job_id: uploadedJob.id }),
-  ]));
+  expect(updatedProgress.recent_hands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        ev_loss_bb: null,
+        job_id: uploadedJob.id,
+        outcome: "match",
+      }),
+    ]),
+  );
+  expect(updatedProgress.review_queue).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ job_id: uploadedJob.id }),
+    ]),
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     recommendation: {
       action: string;
       raw: { candidates: Array<Record<string, unknown>> };
@@ -3308,7 +3443,7 @@ test("reviews a sizing difference at the tolerance boundary", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     action_differences: Array<{
       decision_action: string;
       recommended_action: string;
@@ -3327,15 +3462,19 @@ test("reviews a sizing difference at the tolerance boundary", async ({
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: "raise",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "raise",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByLabel("Decision sizing in BB").fill("8.01");
-  await decisionPanel.getByRole("button", {
-    name: "medium",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "medium",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
@@ -3348,9 +3487,11 @@ test("reviews a sizing difference at the tolerance boundary", async ({
 
   const comparison = page.getByLabel("Training decision comparison");
   await expect(comparison).toContainText("Same action, different size");
-  await expect(comparison.getByRole("button", {
-    name: "Mark reviewed",
-  })).toBeVisible();
+  await expect(
+    comparison.getByRole("button", {
+      name: "Mark reviewed",
+    }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
@@ -3359,7 +3500,7 @@ test("reviews a sizing difference at the tolerance boundary", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = await updatedProgressResponse.json() as {
+  const updatedProgress = (await updatedProgressResponse.json()) as {
     action_differences: Array<{
       decision_action: string;
       recommended_action: string;
@@ -3384,24 +3525,28 @@ test("reviews a sizing difference at the tolerance boundary", async ({
   expect(updatedProgress.action_differences).toEqual(
     initialProgress.action_differences,
   );
-  expect(updatedProgress.recent_hands).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      job_id: uploadedJob.id,
-      outcome: "same_action",
-    }),
-  ]));
-  expect(updatedProgress.review_queue).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      job_id: uploadedJob.id,
-      outcome: "same_action",
-    }),
-  ]));
+  expect(updatedProgress.recent_hands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        job_id: uploadedJob.id,
+        outcome: "same_action",
+      }),
+    ]),
+  );
+  expect(updatedProgress.review_queue).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        job_id: uploadedJob.id,
+        outcome: "same_action",
+      }),
+    ]),
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     archived_at: string | null;
     recommendation: { action: string; sizing: number | null } | null;
     training_decision: { action: string; sizing: number | null } | null;
@@ -3428,7 +3573,7 @@ test("reviews a supported mixed action taken at a different size", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     action_differences: Array<{
       decision_action: string;
       recommended_action: string;
@@ -3447,15 +3592,19 @@ test("reviews a supported mixed action taken at a different size", async ({
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: "raise",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "raise",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByLabel("Decision sizing in BB").fill("9");
-  await decisionPanel.getByRole("button", {
-    name: "medium",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "medium",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
@@ -3470,9 +3619,11 @@ test("reviews a supported mixed action taken at a different size", async ({
   await expect(comparison).toContainText(
     "Solver-supported action, different size",
   );
-  await expect(comparison.getByRole("button", {
-    name: "Mark reviewed",
-  })).toBeVisible();
+  await expect(
+    comparison.getByRole("button", {
+      name: "Mark reviewed",
+    }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
@@ -3481,7 +3632,7 @@ test("reviews a supported mixed action taken at a different size", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = await updatedProgressResponse.json() as {
+  const updatedProgress = (await updatedProgressResponse.json()) as {
     action_differences: Array<{
       decision_action: string;
       recommended_action: string;
@@ -3506,24 +3657,28 @@ test("reviews a supported mixed action taken at a different size", async ({
   expect(updatedProgress.action_differences).toEqual(
     initialProgress.action_differences,
   );
-  expect(updatedProgress.recent_hands).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      job_id: uploadedJob.id,
-      outcome: "mixed_action",
-    }),
-  ]));
-  expect(updatedProgress.review_queue).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      job_id: uploadedJob.id,
-      outcome: "mixed_action",
-    }),
-  ]));
+  expect(updatedProgress.recent_hands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        job_id: uploadedJob.id,
+        outcome: "mixed_action",
+      }),
+    ]),
+  );
+  expect(updatedProgress.review_queue).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        job_id: uploadedJob.id,
+        outcome: "mixed_action",
+      }),
+    ]),
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     archived_at: string | null;
     recommendation: {
       action: string;
@@ -3562,7 +3717,7 @@ test("treats sub-tolerance sizing drift as an exact line", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     action_differences: Array<{
       decision_action: string;
       recommended_action: string;
@@ -3581,15 +3736,19 @@ test("treats sub-tolerance sizing drift as an exact line", async ({
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
   });
-  await decisionPanel.getByRole("button", {
-    name: "raise",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "raise",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByLabel("Decision sizing in BB").fill("8.005");
-  await decisionPanel.getByRole("button", {
-    name: "high",
-    exact: true,
-  }).click();
+  await decisionPanel
+    .getByRole("button", {
+      name: "high",
+      exact: true,
+    })
+    .click();
   await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
   await expect(decisionPanel).toContainText("Answer locked");
 
@@ -3602,9 +3761,11 @@ test("treats sub-tolerance sizing drift as an exact line", async ({
 
   const comparison = page.getByLabel("Training decision comparison");
   await expect(comparison).toContainText("Matched solver");
-  await expect(comparison.getByRole("button", {
-    name: "Mark reviewed",
-  })).toBeHidden();
+  await expect(
+    comparison.getByRole("button", {
+      name: "Mark reviewed",
+    }),
+  ).toBeHidden();
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
@@ -3613,7 +3774,7 @@ test("treats sub-tolerance sizing drift as an exact line", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = await updatedProgressResponse.json() as {
+  const updatedProgress = (await updatedProgressResponse.json()) as {
     action_differences: Array<{
       decision_action: string;
       recommended_action: string;
@@ -3638,21 +3799,25 @@ test("treats sub-tolerance sizing drift as an exact line", async ({
   expect(updatedProgress.action_differences).toEqual(
     initialProgress.action_differences,
   );
-  expect(updatedProgress.recent_hands).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      job_id: uploadedJob.id,
-      outcome: "match",
-    }),
-  ]));
-  expect(updatedProgress.review_queue).not.toEqual(expect.arrayContaining([
-    expect.objectContaining({ job_id: uploadedJob.id }),
-  ]));
+  expect(updatedProgress.recent_hands).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        job_id: uploadedJob.id,
+        outcome: "match",
+      }),
+    ]),
+  );
+  expect(updatedProgress.review_queue).not.toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ job_id: uploadedJob.id }),
+    ]),
+  );
 
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     archived_at: string | null;
     recommendation: { action: string; sizing: number | null } | null;
     training_decision: { action: string; sizing: number | null } | null;
@@ -3679,7 +3844,7 @@ test("filters and exports persisted lesson notes", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = await initialProgressResponse.json() as {
+  const initialProgress = (await initialProgressResponse.json()) as {
     lesson_count: number;
   };
   const flopFilename = attemptFilename("lesson-export-flop", testInfo);
@@ -3698,17 +3863,11 @@ test("filters and exports persisted lesson notes", async ({
   const turnNote = `${lessonFilterToken}: check the turn bluff catcher.`;
   const turnControlNote = `Review turn value bets from ${turnControlFilename}.`;
 
-  const flopJob = await createReviewedLesson(
-    page,
-    flopFilename,
-    flopNote,
-  );
-  const turnJob = await createReviewedLesson(
-    page,
-    turnFilename,
-    turnNote,
-    { boardCards: "Qs Jc 2h 9d", street: "turn" },
-  );
+  const flopJob = await createReviewedLesson(page, flopFilename, flopNote);
+  const turnJob = await createReviewedLesson(page, turnFilename, turnNote, {
+    boardCards: "Qs Jc 2h 9d",
+    street: "turn",
+  });
   const turnControlJob = await createReviewedLesson(
     page,
     turnControlFilename,
@@ -3722,10 +3881,12 @@ test("filters and exports persisted lesson notes", async ({
   });
   await expect(progressDialog).toBeVisible();
   const expectedLessonCount = initialProgress.lesson_count + 3;
-  await progressDialog.getByRole("button", {
-    name: `Lessons ${expectedLessonCount}`,
-    exact: true,
-  }).click();
+  await progressDialog
+    .getByRole("button", {
+      name: `Lessons ${expectedLessonCount}`,
+      exact: true,
+    })
+    .click();
 
   await progressDialog.getByLabel("Lesson street").selectOption("turn");
   const turnLesson = progressDialog.getByRole("button", {
@@ -3738,23 +3899,29 @@ test("filters and exports persisted lesson notes", async ({
   });
   await expect(turnLesson).toBeVisible();
   await expect(turnControlLesson).toBeVisible();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${flopFilename} training review`,
-    exact: true,
-  })).toBeHidden();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${flopFilename} training review`,
+      exact: true,
+    }),
+  ).toBeHidden();
 
   const lessonSearch = progressDialog.getByLabel("Search saved lesson notes");
   await lessonSearch.fill(lessonFilterToken);
-  await progressDialog.getByRole("button", {
-    name: "Apply lesson search",
-  }).click();
+  await progressDialog
+    .getByRole("button", {
+      name: "Apply lesson search",
+    })
+    .click();
 
   await expect(turnLesson).toContainText(turnNote);
   await expect(turnControlLesson).toBeHidden();
-  await expect(progressDialog.getByRole("button", {
-    name: `Open ${flopFilename} training review`,
-    exact: true,
-  })).toBeHidden();
+  await expect(
+    progressDialog.getByRole("button", {
+      name: `Open ${flopFilename} training review`,
+      exact: true,
+    }),
+  ).toBeHidden();
   await expect(progressDialog).toContainText(
     "1 lesson note matches these filters.",
   );
@@ -3795,7 +3962,7 @@ test("filters and exports persisted lesson notes", async ({
     `${BACKEND_URL}/api/training/progress`,
   );
   expect(cleanedProgressResponse.ok()).toBe(true);
-  const cleanedProgress = await cleanedProgressResponse.json() as {
+  const cleanedProgress = (await cleanedProgressResponse.json()) as {
     lesson_count: number;
   };
   expect(cleanedProgress.lesson_count).toBe(initialProgress.lesson_count);
@@ -3818,7 +3985,7 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
     `${BACKEND_URL}/api/benchmarks`,
   );
   expect(initialOverviewResponse.ok()).toBe(true);
-  const initialOverview = await initialOverviewResponse.json() as {
+  const initialOverview = (await initialOverviewResponse.json()) as {
     included_cases: number;
   };
   const expectedIncludedCases = initialOverview.included_cases + 1;
@@ -3839,9 +4006,10 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   await expect(importDatasetButton.locator("svg")).toHaveCSS("width", "14px");
 
   const includeResponsePromise = page.waitForResponse(
-    (response) => response.url()
-      === `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark`
-      && response.request().method() === "PUT",
+    (response) =>
+      response.url() ===
+        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark` &&
+      response.request().method() === "PUT",
   );
   const groundTruthToggle = benchmarkDialog.getByRole("switch", {
     name: /Use current hand as ground truth/,
@@ -3854,13 +4022,14 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   );
 
   const runResponsePromise = page.waitForResponse(
-    (response) => response.url() === `${BACKEND_URL}/api/benchmarks/run`
-      && response.request().method() === "POST",
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/benchmarks/run` &&
+      response.request().method() === "POST",
   );
   await benchmarkDialog.getByRole("button", { name: "Run benchmark" }).click();
   const runResponse = await runResponsePromise;
   expect(runResponse.ok()).toBe(true);
-  const report = await runResponse.json() as {
+  const report = (await runResponse.json()) as {
     accuracy: number;
     cases: Array<{
       accuracy: number;
@@ -3875,11 +4044,13 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
     failed_cases: 0,
     total_cases: expectedIncludedCases,
   });
-  expect(report.cases).toContainEqual(expect.objectContaining({
-    accuracy: 1,
-    job_id: uploadedJob.id,
-    status: "completed",
-  }));
+  expect(report.cases).toContainEqual(
+    expect.objectContaining({
+      accuracy: 1,
+      job_id: uploadedJob.id,
+      status: "completed",
+    }),
+  );
   const benchmarkSummary = benchmarkDialog.getByLabel("Benchmark summary");
   await expect(benchmarkSummary).toContainText(String(expectedIncludedCases));
   await expect(benchmarkSummary).toContainText("100%");
@@ -3899,15 +4070,16 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   expect(datasetPath).not.toBeNull();
 
   const importResponsePromise = page.waitForResponse(
-    (response) => response.url() === `${BACKEND_URL}/api/benchmarks/import`
-      && response.request().method() === "POST",
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/benchmarks/import` &&
+      response.request().method() === "POST",
   );
-  await benchmarkDialog.getByLabel("Parser dataset ZIP").setInputFiles(
-    datasetPath ?? "",
-  );
+  await benchmarkDialog
+    .getByLabel("Parser dataset ZIP")
+    .setInputFiles(datasetPath ?? "");
   const importResponse = await importResponsePromise;
   expect(importResponse.ok()).toBe(true);
-  const importResult = await importResponse.json() as {
+  const importResult = (await importResponse.json()) as {
     imported_cases: number;
     included_cases: number;
     job_ids: string[];
@@ -3919,14 +4091,17 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
     reused_cases: expectedIncludedCases,
   });
   expect(importResult.job_ids).toContain(uploadedJob.id);
-  await expect(page.getByText(
-    `Dataset ready: ${expectedIncludedCases} ${expectedIncludedCases === 1 ? "hand" : "hands"}`,
-  )).toBeVisible();
+  await expect(
+    page.getByText(
+      `Dataset ready: ${expectedIncludedCases} ${expectedIncludedCases === 1 ? "hand" : "hands"}`,
+    ),
+  ).toBeVisible();
 
   const excludeResponsePromise = page.waitForResponse(
-    (response) => response.url()
-      === `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark`
-      && response.request().method() === "PUT",
+    (response) =>
+      response.url() ===
+        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark` &&
+      response.request().method() === "PUT",
   );
   await groundTruthToggle.click();
   expect((await excludeResponsePromise).ok()).toBe(true);
@@ -3945,7 +4120,7 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = await persistedResponse.json() as {
+  const persistedJob = (await persistedResponse.json()) as {
     archived_at: string | null;
     benchmark_included: boolean;
   };
@@ -3972,7 +4147,10 @@ test("downloads and verifies an application backup through recovery", async ({
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(archivedJob.queueItem).toBeHidden();
 
-  const pendingFilename = attemptFilename("application-backup-pending", testInfo);
+  const pendingFilename = attemptFilename(
+    "application-backup-pending",
+    testInfo,
+  );
   const pendingJob = await uploadValidScreenshot(page, pendingFilename);
   await expect(pendingJob.queueItem).toContainText("parsed");
 
@@ -3983,9 +4161,11 @@ test("downloads and verifies an application backup through recovery", async ({
   await expect(infoDialog).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");
-  await infoDialog.getByRole("link", {
-    name: "Download application backup",
-  }).click();
+  await infoDialog
+    .getByRole("link", {
+      name: "Download application backup",
+    })
+    .click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toMatch(
     /^poker-hero-backup-\d{8}T\d{6}Z\.zip$/,
@@ -3994,15 +4174,16 @@ test("downloads and verifies an application backup through recovery", async ({
   expect(backupPath).not.toBeNull();
 
   const restoreResponsePromise = page.waitForResponse(
-    (response) => response.url() === `${BACKEND_URL}/api/backups/restore`
-      && response.request().method() === "POST",
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/backups/restore` &&
+      response.request().method() === "POST",
   );
-  await infoDialog.getByLabel("Application backup ZIP").setInputFiles(
-    backupPath ?? "",
-  );
+  await infoDialog
+    .getByLabel("Application backup ZIP")
+    .setInputFiles(backupPath ?? "");
   const restoreResponse = await restoreResponsePromise;
   expect(restoreResponse.ok()).toBe(true);
-  const restoreResult = await restoreResponse.json() as {
+  const restoreResult = (await restoreResponse.json()) as {
     imported_jobs: number;
     reused_jobs: number;
     imported_benchmark_reports: number;
@@ -4024,7 +4205,7 @@ test("downloads and verifies an application backup through recovery", async ({
     `${BACKEND_URL}/api/jobs/${archivedJob.id}`,
   );
   expect(archivedResponse.ok()).toBe(true);
-  const archivedRecord = await archivedResponse.json() as {
+  const archivedRecord = (await archivedResponse.json()) as {
     archived_at: string | null;
     status: string;
   };
@@ -4036,7 +4217,7 @@ test("downloads and verifies an application backup through recovery", async ({
     `${BACKEND_URL}/api/jobs/${pendingJob.id}`,
   );
   expect(pendingResponse.ok()).toBe(true);
-  const pendingRecord = await pendingResponse.json() as {
+  const pendingRecord = (await pendingResponse.json()) as {
     archived_at: string | null;
     status: string;
   };
@@ -4111,8 +4292,14 @@ test("continues an automated batch after a recommendation provider failure", asy
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  const failedFilename = attemptFilename("automated-provider-failure", testInfo);
-  const successfulFilename = attemptFilename("automated-provider-success", testInfo);
+  const failedFilename = attemptFilename(
+    "automated-provider-failure",
+    testInfo,
+  );
+  const successfulFilename = attemptFilename(
+    "automated-provider-success",
+    testInfo,
+  );
   await expect(
     page.getByRole("button", { name: "Automation On" }),
   ).toHaveAttribute("aria-pressed", "true");
@@ -4155,17 +4342,19 @@ test("continues an automated batch after a recommendation provider failure", asy
       "1 screenshot need attention. Check the highlighted queue items.",
     ),
   ).toBeVisible();
-  await expect.poll(
-    () => page.evaluate(
-      () => sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ),
-  ).toBeNull();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        sessionStorage.getItem("poker-training-processing-mutation-v1"),
+      ),
+    )
+    .toBeNull();
 
   const processingJobsResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs`,
   );
   expect(processingJobsResponse.ok()).toBe(true);
-  const processingJobs = await processingJobsResponse.json() as {
+  const processingJobs = (await processingJobsResponse.json()) as {
     jobs: Array<{
       approved_state: unknown;
       error: string | null;
@@ -4273,16 +4462,18 @@ for (const failureCase of retryableRecommendationFailureCases) {
       page.getByText(failureCase.expectedError).first(),
     ).toBeVisible();
     await expect(uploadedJob.queueItem).toContainText("error");
-    await expect.poll(
-      () => page.evaluate(
-        () => sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ),
-    ).toBeNull();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          sessionStorage.getItem("poker-training-processing-mutation-v1"),
+        ),
+      )
+      .toBeNull();
     const failedJobResponse = await page.request.get(
       `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
     );
     expect(failedJobResponse.ok()).toBe(true);
-    const failedJob = await failedJobResponse.json() as {
+    const failedJob = (await failedJobResponse.json()) as {
       error: string | null;
       recommendation_pending: boolean;
       recommendation_request_id: string | null;
@@ -4304,7 +4495,7 @@ for (const failureCase of retryableRecommendationFailureCases) {
       `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
     );
     expect(recommendedJobResponse.ok()).toBe(true);
-    const recommendedJob = await recommendedJobResponse.json() as {
+    const recommendedJob = (await recommendedJobResponse.json()) as {
       error: string | null;
       recommendation: { raw: { engine: string } } | null;
       status: string;
@@ -4337,35 +4528,43 @@ test("reconciles a recommendation that completes after page reload", async ({
   let recommendationReleased = false;
   try {
     await page.getByRole("button", { name: "Request recommendation" }).click();
-    await expect.poll(async () => {
-      const response = await page.request.get(
-        `${PROVIDER_URL}/control/recommendation-state`,
-      );
-      if (!response.ok()) {
-        return false;
-      }
-      const state = await response.json() as { started: boolean };
-      return state.started;
-    }).toBe(true);
-    await expect.poll(async () => {
-      const response = await page.request.get(
-        `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-      );
-      if (!response.ok()) {
-        return false;
-      }
-      const job = await response.json() as {
-        recommendation_pending: boolean;
-      };
-      return job.recommendation_pending;
-    }).toBe(true);
-    const pendingLease = await page.evaluate(() => JSON.parse(
-      sessionStorage.getItem("poker-training-processing-mutation-v1") ?? "null",
-    ) as {
-      expectedRecommendationRequestId: string;
-      jobId: string;
-      kind: string;
-    } | null);
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          `${PROVIDER_URL}/control/recommendation-state`,
+        );
+        if (!response.ok()) {
+          return false;
+        }
+        const state = (await response.json()) as { started: boolean };
+        return state.started;
+      })
+      .toBe(true);
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
+        );
+        if (!response.ok()) {
+          return false;
+        }
+        const job = (await response.json()) as {
+          recommendation_pending: boolean;
+        };
+        return job.recommendation_pending;
+      })
+      .toBe(true);
+    const pendingLease = await page.evaluate(
+      () =>
+        JSON.parse(
+          sessionStorage.getItem("poker-training-processing-mutation-v1") ??
+            "null",
+        ) as {
+          expectedRecommendationRequestId: string;
+          jobId: string;
+          kind: string;
+        } | null,
+    );
     if (pendingLease === null) {
       throw new Error("Recommendation mutation lease was not persisted");
     }
@@ -4376,9 +4575,7 @@ test("reconciles a recommendation that completes after page reload", async ({
     });
 
     await page.reload();
-    await expect(
-      page.getByRole("heading", { name: "Poker Training Analyzer" }),
-    ).toBeVisible();
+    await expectAnalyzerReady(page);
     const reloadedQueueItem = page.getByRole("button", {
       name: filenamePattern(filename),
     });
@@ -4398,17 +4595,19 @@ test("reconciles a recommendation that completes after page reload", async ({
       page.getByRole("region", { name: "Recommendation" }),
     ).toBeVisible();
     await expect(reloadedQueueItem).toContainText("recommended");
-    await expect.poll(
-      () => page.evaluate(
-        () => sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ),
-    ).toBeNull();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          sessionStorage.getItem("poker-training-processing-mutation-v1"),
+        ),
+      )
+      .toBeNull();
 
     const completedJobResponse = await page.request.get(
       `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
     );
     expect(completedJobResponse.ok()).toBe(true);
-    const completedJob = await completedJobResponse.json() as {
+    const completedJob = (await completedJobResponse.json()) as {
       error: string | null;
       recommendation: { raw: Record<string, string> } | null;
       recommendation_pending: boolean;
@@ -4429,9 +4628,7 @@ test("reconciles a recommendation that completes after page reload", async ({
     });
   } finally {
     if (!recommendationReleased) {
-      await page.request.post(
-        `${PROVIDER_URL}/control/release-recommendation`,
-      );
+      await page.request.post(`${PROVIDER_URL}/control/release-recommendation`);
     }
   }
 });
@@ -4456,9 +4653,10 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
     buffer: VALID_PNG,
   });
   const failedUploadResponsePromise = page.waitForResponse(
-    (response) => response.url() === `${BACKEND_URL}/api/jobs`
-      && response.request().method() === "POST"
-      && response.status() === 502,
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.request().method() === "POST" &&
+      response.status() === 502,
   );
   await page.getByRole("button", { name: "Upload and parse" }).click();
   const failedUploadResponse = await failedUploadResponsePromise;
@@ -4474,15 +4672,17 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   await expect(matchingQueueItems).toContainText(
     "Vision parser request failed with status 503",
   );
-  await expect.poll(
-    () => page.evaluate(
-      () => sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ),
-  ).toBeNull();
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        sessionStorage.getItem("poker-training-processing-mutation-v1"),
+      ),
+    )
+    .toBeNull();
 
   const failedJobsResponse = await page.request.get(`${BACKEND_URL}/api/jobs`);
   expect(failedJobsResponse.ok()).toBe(true);
-  const failedJobs = await failedJobsResponse.json() as {
+  const failedJobs = (await failedJobsResponse.json()) as {
     jobs: Array<{
       error: string | null;
       id: string;
@@ -4503,14 +4703,17 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
     status: "error",
   });
   expect(failedJob?.upload_request_id).not.toBeNull();
-  const cachedFailedJobs = await page.evaluate(() => JSON.parse(
-    localStorage.getItem("poker-training-processing-v1") ?? "[]",
-  ) as Array<{
-    id: string;
-    original_filename: string;
-    parser_provider: string;
-    status: string;
-  }>);
+  const cachedFailedJobs = await page.evaluate(
+    () =>
+      JSON.parse(
+        localStorage.getItem("poker-training-processing-v1") ?? "[]",
+      ) as Array<{
+        id: string;
+        original_filename: string;
+        parser_provider: string;
+        status: string;
+      }>,
+  );
   const cachedFailedJob = cachedFailedJobs.find(
     (candidate) => candidate.original_filename === filename,
   );
@@ -4521,9 +4724,7 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   });
 
   await page.reload();
-  await expect(
-    page.getByRole("heading", { name: "Poker Training Analyzer" }),
-  ).toBeVisible();
+  await expectAnalyzerReady(page);
   await expect(matchingQueueItems).toHaveCount(1);
   await expect(matchingQueueItems).toContainText(
     "Vision parser request failed with status 503",
@@ -4557,7 +4758,7 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
     `${BACKEND_URL}/api/jobs`,
   );
   expect(recoveredJobsResponse.ok()).toBe(true);
-  const recoveredJobs = await recoveredJobsResponse.json() as {
+  const recoveredJobs = (await recoveredJobsResponse.json()) as {
     jobs: Array<{
       original_filename: string;
       parser_result: { raw: Record<string, string> } | null;
@@ -4569,24 +4770,26 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
     (candidate) => candidate.original_filename === filename,
   );
   expect(matchingPersistedJobs).toHaveLength(2);
-  expect(matchingPersistedJobs).toEqual(expect.arrayContaining([
-    expect.objectContaining({
-      parser_result: null,
-      status: "error",
-    }),
-    expect.objectContaining({
-      parser_result: expect.objectContaining({
-        raw: expect.objectContaining({
-          engine: "e2e_provider_stub",
-          provider: "llm_vision",
+  expect(matchingPersistedJobs).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        parser_result: null,
+        status: "error",
+      }),
+      expect.objectContaining({
+        parser_result: expect.objectContaining({
+          raw: expect.objectContaining({
+            engine: "e2e_provider_stub",
+            provider: "llm_vision",
+          }),
         }),
+        recommendation: expect.objectContaining({
+          raw: expect.objectContaining({ engine: "e2e_provider_stub" }),
+        }),
+        status: "recommended",
       }),
-      recommendation: expect.objectContaining({
-        raw: expect.objectContaining({ engine: "e2e_provider_stub" }),
-      }),
-      status: "recommended",
-    }),
-  ]));
+    ]),
+  );
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(matchingQueueItems).toHaveCount(1);
@@ -4615,10 +4818,12 @@ test("restores history and processing after browser storage is cleared", async (
   const pendingJob = await uploadValidScreenshot(page, pendingFilename);
   await expect(pendingJob.queueItem).toContainText("parsed");
   const historyPanel = page.getByRole("region", { name: "Session history" });
-  await expect(historyPanel.getByRole("button", {
-    name: "Reopen history item 1",
-    exact: true,
-  })).toBeVisible();
+  await expect(
+    historyPanel.getByRole("button", {
+      name: "Reopen history item 1",
+      exact: true,
+    }),
+  ).toBeVisible();
 
   const storageCounts = await page.evaluate(() => {
     localStorage.clear();
@@ -4631,16 +4836,16 @@ test("restores history and processing after browser storage is cleared", async (
   expect(storageCounts).toEqual({ local: 0, session: 0 });
 
   await page.reload();
-  await expect(
-    page.getByRole("heading", { name: "Poker Training Analyzer" }),
-  ).toBeVisible();
+  await expectAnalyzerReady(page);
   const restoredPendingJob = page.getByRole("button", {
     name: filenamePattern(pendingFilename),
   });
   await expect(restoredPendingJob).toContainText("parsed");
-  const restoredHistoryItem = page.getByRole("region", {
-    name: "Session history",
-  }).getByRole("button", { name: "Reopen history item 1", exact: true });
+  const restoredHistoryItem = page
+    .getByRole("region", {
+      name: "Session history",
+    })
+    .getByRole("button", { name: "Reopen history item 1", exact: true });
   await expect(restoredHistoryItem).toBeVisible();
 
   await restoredHistoryItem.click();
@@ -4650,7 +4855,7 @@ test("restores history and processing after browser storage is cleared", async (
     `${BACKEND_URL}/api/jobs/${archivedJob.id}`,
   );
   expect(persistedArchivedResponse.ok()).toBe(true);
-  const persistedArchivedJob = await persistedArchivedResponse.json() as {
+  const persistedArchivedJob = (await persistedArchivedResponse.json()) as {
     archived_at: string | null;
     approved_state: { pot_size: number } | null;
     status: string;
@@ -4676,11 +4881,7 @@ test("searches beyond cached history without replacing active work", async ({
   page,
 }, testInfo) => {
   const targetFilename = attemptFilename("deep-history-target", testInfo);
-  const targetJob = await createApprovedScreenshot(
-    page,
-    targetFilename,
-    77.25,
-  );
+  const targetJob = await createApprovedScreenshot(page, targetFilename, 77.25);
   const targetArchiveResponse = await page.request.put(
     `${BACKEND_URL}/api/history`,
     { data: { job_ids: [targetJob.id] } },
@@ -4706,7 +4907,7 @@ test("searches beyond cached history without replacing active work", async ({
     `${BACKEND_URL}/api/history`,
   );
   expect(firstHistoryResponse.ok()).toBe(true);
-  const firstHistory = await firstHistoryResponse.json() as {
+  const firstHistory = (await firstHistoryResponse.json()) as {
     jobs: Array<{ id: string }>;
     total: number;
   };
@@ -4727,25 +4928,31 @@ test("searches beyond cached history without replacing active work", async ({
   });
   await expect(historyItems).toHaveCount(24);
 
-  await historyPanel.getByRole("button", {
-    name: "Search saved history",
-  }).click();
+  await historyPanel
+    .getByRole("button", {
+      name: "Search saved history",
+    })
+    .click();
   await historyPanel.getByLabel("History search query").fill(targetFilename);
   const searchResponsePromise = page.waitForResponse((response) => {
     if (response.request().method() !== "GET") {
       return false;
     }
     const url = new URL(response.url());
-    return url.origin === BACKEND_URL
-      && url.pathname === "/api/history"
-      && url.searchParams.get("query") === targetFilename;
+    return (
+      url.origin === BACKEND_URL &&
+      url.pathname === "/api/history" &&
+      url.searchParams.get("query") === targetFilename
+    );
   });
-  await historyPanel.getByRole("button", {
-    name: "Run history search",
-  }).click();
+  await historyPanel
+    .getByRole("button", {
+      name: "Run history search",
+    })
+    .click();
   const searchResponse = await searchResponsePromise;
   expect(searchResponse.ok()).toBe(true);
-  const searchResult = await searchResponse.json() as {
+  const searchResult = (await searchResponse.json()) as {
     jobs: Array<{ id: string }>;
     total: number;
   };
@@ -4760,9 +4967,11 @@ test("searches beyond cached history without replacing active work", async ({
   await expect(page.getByLabel("Pot")).toHaveValue("77.25");
   await expect(pendingJob.queueItem).toContainText("parsed");
 
-  await historyPanel.getByRole("button", {
-    name: "Close history search",
-  }).click();
+  await historyPanel
+    .getByRole("button", {
+      name: "Close history search",
+    })
+    .click();
   await expect(historyPanel).toContainText("History · reopen");
   await expect(historyItems).toHaveCount(24);
   await expect(pendingJob.queueItem).toContainText("parsed");
@@ -4785,11 +4994,7 @@ test("loads an older page of matching history results", async ({
     `r${testInfo.retry}`,
   ].join("-");
   const oldestFilename = `${searchToken}-oldest.png`;
-  const oldestJob = await createApprovedScreenshot(
-    page,
-    oldestFilename,
-    88.5,
-  );
+  const oldestJob = await createApprovedScreenshot(page, oldestFilename, 88.5);
   const oldestArchiveResponse = await page.request.put(
     `${BACKEND_URL}/api/history`,
     { data: { job_ids: [oldestJob.id] } },
@@ -4819,9 +5024,11 @@ test("loads an older page of matching history results", async ({
   const pendingFilename = attemptFilename("paged-history-pending", testInfo);
   const pendingJob = await uploadValidScreenshot(page, pendingFilename);
   const historyPanel = page.getByRole("region", { name: "Session history" });
-  await historyPanel.getByRole("button", {
-    name: "Search saved history",
-  }).click();
+  await historyPanel
+    .getByRole("button", {
+      name: "Search saved history",
+    })
+    .click();
   await historyPanel.getByLabel("History search query").fill(searchToken);
 
   const firstSearchResponsePromise = page.waitForResponse((response) => {
@@ -4829,17 +5036,21 @@ test("loads an older page of matching history results", async ({
       return false;
     }
     const url = new URL(response.url());
-    return url.origin === BACKEND_URL
-      && url.pathname === "/api/history"
-      && url.searchParams.get("query") === searchToken
-      && url.searchParams.get("offset") === null;
+    return (
+      url.origin === BACKEND_URL &&
+      url.pathname === "/api/history" &&
+      url.searchParams.get("query") === searchToken &&
+      url.searchParams.get("offset") === null
+    );
   });
-  await historyPanel.getByRole("button", {
-    name: "Run history search",
-  }).click();
+  await historyPanel
+    .getByRole("button", {
+      name: "Run history search",
+    })
+    .click();
   const firstSearchResponse = await firstSearchResponsePromise;
   expect(firstSearchResponse.ok()).toBe(true);
-  const firstSearchPage = await firstSearchResponse.json() as {
+  const firstSearchPage = (await firstSearchResponse.json()) as {
     jobs: Array<{ id: string }>;
     snapshot_version: string;
     total: number;
@@ -4863,15 +5074,17 @@ test("loads an older page of matching history results", async ({
       return false;
     }
     const url = new URL(response.url());
-    return url.origin === BACKEND_URL
-      && url.pathname === "/api/history"
-      && url.searchParams.get("query") === searchToken
-      && url.searchParams.get("offset") === "24";
+    return (
+      url.origin === BACKEND_URL &&
+      url.pathname === "/api/history" &&
+      url.searchParams.get("query") === searchToken &&
+      url.searchParams.get("offset") === "24"
+    );
   });
   await loadOlderButton.click();
   const olderPageResponse = await olderPageResponsePromise;
   expect(olderPageResponse.ok()).toBe(true);
-  const olderPage = await olderPageResponse.json() as {
+  const olderPage = (await olderPageResponse.json()) as {
     jobs: Array<{ id: string }>;
     snapshot_version: string;
     total: number;
@@ -4888,9 +5101,11 @@ test("loads an older page of matching history results", async ({
   await expect(page.getByLabel("Pot")).toHaveValue("88.5");
   await expect(pendingJob.queueItem).toContainText("parsed");
 
-  await historyPanel.getByRole("button", {
-    name: "Close history search",
-  }).click();
+  await historyPanel
+    .getByRole("button", {
+      name: "Close history search",
+    })
+    .click();
   await expect(historyItems).toHaveCount(24);
   await expect(pendingJob.queueItem).toContainText("parsed");
 

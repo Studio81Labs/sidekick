@@ -492,9 +492,11 @@ correction, automation controls, pre-reveal training decisions, recommendations,
 decision-evidence presentation, aggregate training progress, and history. It
 is organized into application, page, feature, and shared layers. `src/app`
 contains the browser-router shell, route registry, top-level error monitoring,
-and other application-wide concerns. `src/pages/analyzer/AnalyzerPage.tsx`
-composes the workspace and retains the queue/history mutation protocol because those
-transactions span capture, automation, review, benchmark labels, and recovery.
+and other application-wide concerns. `src/pages/analyzer/AnalyzerPage.tsx` is a
+compatibility/provider wrapper. `useAnalyzerWorkspaceController.ts` retains the
+queue/history mutation protocol because those transactions span capture,
+automation, review, benchmark labels, and recovery, while
+`AnalyzerWorkspaceComposition.tsx` owns only the grouped feature render tree.
 `src/pages/analyzer/AnalyzerLayout.tsx` owns only the page shell, notification
 host, workspace landmarks, control rail, and dialog layer; it receives rendered
 feature content and has no workflow, transport, or persistence authority.
@@ -534,6 +536,15 @@ The application route shell owns canonical analyzer workspace, job, training,
 and benchmark URLs. Typed analyzer route state restores the represented surface
 and optional job identity, while workspace selections and surface closes update
 the same URLs. Transient dialog internals and draft state remain outside the URL.
+The source-architecture suite keeps `AnalyzerRoute.tsx`, `AnalyzerPage.tsx`, and
+`AnalyzerWorkspaceComposition.tsx` below 300 lines and rejects raw transport,
+browser persistence, mutation-lease, and poker-state transformation ownership
+in every composition root. Visible session status remains owned by the tested
+analyzer toolbar; the product currently has no separate status-footer surface.
+The browser workflow matrix runs the same analyzer scenarios with
+desktop Chrome and a Pixel-class mobile Chromium viewport. Each viewport runs
+in a separate Playwright process so the backend harness provisions an isolated
+temporary workspace for both project suites.
 The analyzer route mounts a typed `AnalyzerWorkflowProvider`. Its pure reducer
 owns cross-feature workflow state without copying server job records; queue
 attention messages, queue-processing progress, and active job selection are

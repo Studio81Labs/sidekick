@@ -4504,6 +4504,53 @@ function componentsMissingTests(): string[] {
     .map((file) => sourceSegments(file).join("/"));
 }
 
+const ANALYZER_COMPOSITION_ROOTS = [
+  "pages/analyzer/AnalyzerPage.tsx",
+  "pages/analyzer/AnalyzerRoute.tsx",
+  "pages/analyzer/AnalyzerWorkspaceComposition.tsx",
+] as const;
+
+function sourceLineCount(source: string): number {
+  const withoutTrailingNewline = source.replace(/\r?\n$/, "");
+  return withoutTrailingNewline === ""
+    ? 0
+    : withoutTrailingNewline.split(/\r?\n/).length;
+}
+
+function analyzerCompositionBoundaryViolations(): string[] {
+  const violations: string[] = [];
+  const prohibitedBoundaries: ReadonlyArray<
+    readonly [label: string, pattern: RegExp]
+  > = [
+    ["raw HTTP transport", /\b(?:fetch|XMLHttpRequest|requestJson)\b/],
+    ["local storage", /\blocalStorage\b/],
+    ["session storage", /\bsessionStorage\b/],
+    ["mutation leases", /\bmutationLease\w*\b/i],
+    [
+      "poker transformations",
+      /\b(?:parserRoutingFromRaw|stateToForm|validationFromForm)\b/,
+    ],
+  ];
+
+  for (const sourcePath of ANALYZER_COMPOSITION_ROOTS) {
+    const source = readFileSync(resolve(SOURCE_ROOT, sourcePath), "utf8");
+    const lineCount = sourceLineCount(source);
+    const sourceSegments = sourcePath.split("/");
+    const label = sourceSegments[sourceSegments.length - 1] ?? sourcePath;
+
+    if (lineCount > 300) {
+      violations.push(`${label} exceeds 300 lines: ${lineCount}`);
+    }
+    for (const [boundary, pattern] of prohibitedBoundaries) {
+      if (pattern.test(source)) {
+        violations.push(`${label} may not own ${boundary}`);
+      }
+    }
+  }
+
+  return violations;
+}
+
 function sharedTypeBoundaryViolations(): string[] {
   const violations: string[] = [];
   const barrel = resolve(SOURCE_ROOT, "shared/types.ts");
@@ -4975,6 +5022,10 @@ describe("frontend source architecture", () => {
 
   it("keeps tests colocated with production components", () => {
     expect(componentsMissingTests()).toEqual([]);
+  });
+
+  it("keeps analyzer composition roots thin", () => {
+    expect(analyzerCompositionBoundaryViolations()).toEqual([]);
   });
 
   it("keeps shared API contracts in domain type modules", () => {

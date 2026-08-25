@@ -23,6 +23,10 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"] },
     },
+    {
+      name: "mobile-chromium",
+      use: { ...devices["Pixel 7"] },
+    },
   ],
   webServer: [
     {
@@ -36,8 +40,7 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command:
-        `VITE_API_BASE_URL=${backendUrl} pnpm exec vite --host 127.0.0.1 --port 4174 --strictPort`,
+      command: `VITE_API_BASE_URL=${backendUrl} pnpm exec vite --host 127.0.0.1 --port 4174 --strictPort`,
       url: frontendUrl,
       timeout: 120_000,
       reuseExistingServer: false,

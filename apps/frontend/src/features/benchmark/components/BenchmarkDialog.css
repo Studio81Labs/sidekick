@@ -728,6 +728,10 @@
   display: none;
 }
 
+.benchmark-dialog-footer > .benchmark-dataset-action > svg {
+  flex: 0 0 auto;
+}
+
 .benchmark-dialog-footer
   > .benchmark-dataset-action:hover:not(:disabled):not(.disabled) {
   background: rgba(32, 30, 29, 0.07);
