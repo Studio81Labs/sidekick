@@ -3,21 +3,26 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
-  createMcpPrincipal,
   getMcpAccessConfig,
   listMcpPrincipals,
-  revokeMcpPrincipal,
-  rotateMcpPrincipal,
-} from "../../../shared/api/mcp";
+} from "../../../domains/mcp/api/mcpApi";
+import {
+  createMcpPrincipalCommand,
+  revokeMcpPrincipalCommand,
+  rotateMcpPrincipalCommand,
+} from "../services/mcpPrincipalCommands";
 import { McpAccessPanel } from "./McpAccessPanel";
 import type { McpPrincipal } from "../../../shared/types/mcp";
 
-vi.mock("../../../shared/api/mcp", () => ({
-  createMcpPrincipal: vi.fn(),
+vi.mock("../../../domains/mcp/api/mcpApi", () => ({
   getMcpAccessConfig: vi.fn(),
   listMcpPrincipals: vi.fn(),
-  revokeMcpPrincipal: vi.fn(),
-  rotateMcpPrincipal: vi.fn(),
+}));
+
+vi.mock("../services/mcpPrincipalCommands", () => ({
+  createMcpPrincipalCommand: vi.fn(),
+  revokeMcpPrincipalCommand: vi.fn(),
+  rotateMcpPrincipalCommand: vi.fn(),
 }));
 
 const principal: McpPrincipal = {
@@ -43,7 +48,7 @@ describe("McpAccessPanel", () => {
       writes_enabled: true,
     });
     vi.mocked(listMcpPrincipals).mockResolvedValue([principal]);
-    vi.mocked(createMcpPrincipal).mockResolvedValue({
+    vi.mocked(createMcpPrincipalCommand).mockResolvedValue({
       principal,
       token: "phmcp_first-token",
     });
@@ -80,8 +85,8 @@ describe("McpAccessPanel", () => {
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rotate" })).toBeDisabled();
     expect(onPendingTokenChange).toHaveBeenLastCalledWith(true);
-    expect(rotateMcpPrincipal).not.toHaveBeenCalled();
-    expect(revokeMcpPrincipal).not.toHaveBeenCalled();
+    expect(rotateMcpPrincipalCommand).not.toHaveBeenCalled();
+    expect(revokeMcpPrincipalCommand).not.toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "I stored it" }));
 
@@ -91,10 +96,13 @@ describe("McpAccessPanel", () => {
     expect(screen.getByRole("button", { name: "Rotate" })).toBeEnabled();
     expect(onPendingTokenChange).toHaveBeenLastCalledWith(false);
     expect(listMcpPrincipals).toHaveBeenCalledWith("admin-secret");
-    expect(createMcpPrincipal).toHaveBeenCalledWith("admin-secret", {
-      name: "Codex staging",
-      scopes: ["read"],
-      expires_at: null,
+    expect(createMcpPrincipalCommand).toHaveBeenCalledWith({
+      adminToken: "admin-secret",
+      input: {
+        name: "Codex staging",
+        scopes: ["read"],
+        expires_at: null,
+      },
     });
   });
 

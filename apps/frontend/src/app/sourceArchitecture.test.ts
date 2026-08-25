@@ -50,6 +50,10 @@ const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
       "domains/training/api/trainingApi.ts",
       "features/training/services/trainingReviewCommands.ts",
     ]),
+    createMcpPrincipal: new Set([
+      "domains/mcp/api/mcpApi.ts",
+      "features/system/services/mcpPrincipalCommands.ts",
+    ]),
     deleteJob: new Set([
       "domains/jobs/api/jobsApi.ts",
       "features/screenshots/services/deleteScreenshotCommand.ts",
@@ -65,6 +69,14 @@ const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
     reopenTrainingReview: new Set([
       "domains/training/api/trainingApi.ts",
       "features/training/services/trainingReviewCommands.ts",
+    ]),
+    revokeMcpPrincipal: new Set([
+      "domains/mcp/api/mcpApi.ts",
+      "features/system/services/mcpPrincipalCommands.ts",
+    ]),
+    rotateMcpPrincipal: new Set([
+      "domains/mcp/api/mcpApi.ts",
+      "features/system/services/mcpPrincipalCommands.ts",
     ]),
     runParserBenchmark: new Set([
       "domains/benchmarks/api/benchmarksApi.ts",
@@ -99,10 +111,7 @@ function isWaveNineMutation(value: string): boolean {
   return Object.prototype.hasOwnProperty.call(WAVE_NINE_MUTATION_OWNERS, value);
 }
 
-const LEGACY_RAW_TRANSPORT_OWNERS = new Set([
-  "shared/api/mcp.ts",
-  "shared/api/transport.ts",
-]);
+const LEGACY_RAW_TRANSPORT_OWNERS = new Set(["shared/api/transport.ts"]);
 const RAW_TRANSPORT_REFERENCES = new Set([
   "XMLHttpRequest",
   "fetch",
@@ -3707,14 +3716,6 @@ function waveNineMutationBoundaryViolations(): string[] {
   }
 
   const LEGACY_TRANSPORT_WRITE_EXPORTS = new Map<string, Set<string>>([
-    [
-      "shared/api/mcp.ts",
-      new Set([
-        "createMcpPrincipal",
-        "revokeMcpPrincipal",
-        "rotateMcpPrincipal",
-      ]),
-    ],
     ["shared/api/transport.ts", new Set(["requestJson"])],
   ]);
 
@@ -4580,6 +4581,7 @@ function sharedApiFacadeBoundaryViolations(): string[] {
     "client.ts",
     "history.ts",
     "jobs.ts",
+    "mcp.ts",
     "system.ts",
     "training.ts",
   ].map((name) => resolve(SOURCE_ROOT, "shared/api", name));

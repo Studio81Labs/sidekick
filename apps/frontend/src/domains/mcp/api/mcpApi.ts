@@ -1,10 +1,16 @@
+import { apiUrl, readJson } from "../../../shared/api/core";
 import type {
   McpAccessConfig,
   McpIssuedPrincipal,
   McpPrincipal,
   McpScope,
-} from "../types/mcp";
-import { apiUrl, readJson } from "./core";
+} from "../../../shared/types/mcp";
+
+export type CreateMcpPrincipalInput = {
+  name: string;
+  scopes: McpScope[];
+  expires_at: string | null;
+};
 
 export async function getMcpAccessConfig(): Promise<McpAccessConfig> {
   const response = await fetch(apiUrl("/api/mcp/config"), {
@@ -30,7 +36,7 @@ export async function listMcpPrincipals(
 
 export async function createMcpPrincipal(
   adminToken: string,
-  input: { name: string; scopes: McpScope[]; expires_at: string | null },
+  input: CreateMcpPrincipalInput,
 ): Promise<McpIssuedPrincipal> {
   const response = await fetch("/api/mcp/principals", {
     method: "POST",

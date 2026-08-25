@@ -8,12 +8,14 @@ import {
   TextInput,
 } from "../../../shared/components/FormControls";
 import {
-  createMcpPrincipal,
   getMcpAccessConfig,
   listMcpPrincipals,
-  revokeMcpPrincipal,
-  rotateMcpPrincipal,
-} from "../../../shared/api/mcp";
+} from "../../../domains/mcp/api/mcpApi";
+import {
+  createMcpPrincipalCommand,
+  revokeMcpPrincipalCommand,
+  rotateMcpPrincipalCommand,
+} from "../services/mcpPrincipalCommands";
 import type {
   McpAccessConfig,
   McpIssuedPrincipal,
@@ -103,10 +105,13 @@ export function McpAccessPanel({
     try {
       const scopes: McpScope[] =
         access === "write" ? ["read", "write"] : ["read"];
-      const result = await createMcpPrincipal(adminToken, {
-        name: normalizedName,
-        scopes,
-        expires_at: expiry ? new Date(expiry).toISOString() : null,
+      const result = await createMcpPrincipalCommand({
+        adminToken,
+        input: {
+          name: normalizedName,
+          scopes,
+          expires_at: expiry ? new Date(expiry).toISOString() : null,
+        },
       });
       setIssued(result);
       setPrincipals((current) => [
@@ -135,7 +140,10 @@ export function McpAccessPanel({
     setBusyId(principal.id);
     setError(null);
     try {
-      const result = await rotateMcpPrincipal(adminToken, principal.id);
+      const result = await rotateMcpPrincipalCommand({
+        adminToken,
+        principalId: principal.id,
+      });
       setIssued(result);
       replacePrincipal(result.principal);
     } catch (reason) {
@@ -153,7 +161,12 @@ export function McpAccessPanel({
     setBusyId(principal.id);
     setError(null);
     try {
-      replacePrincipal(await revokeMcpPrincipal(adminToken, principal.id));
+      replacePrincipal(
+        await revokeMcpPrincipalCommand({
+          adminToken,
+          principalId: principal.id,
+        }),
+      );
     } catch (reason) {
       setError(messageFrom(reason));
     } finally {
