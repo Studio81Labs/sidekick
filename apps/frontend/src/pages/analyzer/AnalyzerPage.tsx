@@ -1917,7 +1917,19 @@ function AnalyzerWorkspace({
         jobsRef.current = nextJobs;
         setJobs(nextJobs);
         if (!preserveDirtyForm) {
-          alignWorkspaceToJob(reconciledActiveJob ?? nextJobs[0] ?? null);
+          const nextActiveJob = reconciledActiveJob ?? nextJobs[0] ?? null;
+          alignWorkspaceToJob(nextActiveJob);
+          const activeRouteJobRemoved =
+            route.surface === "job" &&
+            route.jobId === currentActiveId &&
+            !nextJobs.some((candidate) => candidate.id === route.jobId);
+          if (activeRouteJobRemoved) {
+            if (nextActiveJob) {
+              navigation.openJob(nextActiveJob.id, { replace: true });
+            } else {
+              navigation.openWorkspace({ replace: true });
+            }
+          }
         }
         const processingInProgress = nextJobs.some(isProcessingJobInProgress);
         const authoritativeJobIds = new Set(

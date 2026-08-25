@@ -25,11 +25,6 @@ export function useAnalyzerRouteRestore(
   const optionsRef = useRef(options);
   const restoredSurfaceRef = useRef<AnalyzerSurface | null>(null);
   optionsRef.current = options;
-  const routedJob = options.route.jobId
-    ? options.jobs.find((job) => job.id === options.route.jobId)
-    : undefined;
-  const activeRouteJobId =
-    options.route.surface === "job" ? options.activeJobId : null;
 
   useEffect(() => {
     let active = true;
@@ -85,5 +80,5 @@ export function useAnalyzerRouteRestore(
     return () => {
       active = false;
     };
-  }, [activeRouteJobId, options.route.jobId, options.route.surface, routedJob]);
+  }, [options.route.jobId, options.route.surface]);
 }
