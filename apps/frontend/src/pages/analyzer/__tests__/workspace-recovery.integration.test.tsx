@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { DetectedState, JobRecord } from "../../../shared/types";
+import AnalyzerPage from "../AnalyzerPage";
+import type { AnalyzerRouteNavigation } from "../analyzerRouteState";
 import {
   AnalyzerTestApp as App,
   approvedJob,
@@ -423,6 +425,71 @@ describe("Analyzer workspace recovery", () => {
     expect(
       window.sessionStorage.getItem("poker-training-processing-synced"),
     ).toBe("true");
+  });
+
+  it("does not replace a newer analyzer surface after delayed processing recovery", async () => {
+    const removedJob = jobRecord({
+      id: "9".repeat(32),
+      original_filename: "removed-during-route-change.png",
+    });
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([removedJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    window.sessionStorage.removeItem("poker-training-processing-synced");
+    const pendingQueue = deferredResponse();
+    fetchMock().mockImplementation((input) => {
+      const url = String(input);
+      if (url.endsWith(`/api/jobs/${removedJob.id}`)) {
+        return Promise.resolve(jsonResponse(removedJob));
+      }
+      if (url.endsWith("/api/jobs")) {
+        return pendingQueue.promise;
+      }
+      return Promise.resolve(
+        jsonResponse(
+          benchmarkOverviewForJob(removedJob.id, removedJob.original_filename),
+        ),
+      );
+    });
+    const navigation: AnalyzerRouteNavigation = {
+      closeSurface: vi.fn(),
+      managed: true,
+      openBenchmarks: vi.fn(),
+      openJob: vi.fn(),
+      openTraining: vi.fn(),
+      openWorkspace: vi.fn(),
+    };
+    const view = render(
+      <App>
+        <AnalyzerPage
+          navigation={navigation}
+          route={{ jobId: removedJob.id, surface: "job" }}
+        />
+      </App>,
+    );
+
+    expect(await screen.findByDisplayValue("Ah Kd")).toBeInTheDocument();
+    view.rerender(
+      <App>
+        <AnalyzerPage
+          navigation={navigation}
+          route={{ jobId: null, surface: "benchmarks" }}
+        />
+      </App>,
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Parser benchmark" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      pendingQueue.resolve(processingQueueResponse([], "removed-job"));
+      await pendingQueue.promise;
+    });
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalled());
+    expect(navigation.openJob).not.toHaveBeenCalled();
+    expect(navigation.openWorkspace).not.toHaveBeenCalled();
   });
 
   it("preserves dirty processing jobs removed by another tab", async () => {

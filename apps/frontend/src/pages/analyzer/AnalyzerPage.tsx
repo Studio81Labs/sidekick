@@ -197,6 +197,8 @@ function AnalyzerWorkspace({
   route,
 }: AnalyzerWorkspaceProps) {
   const queryClient = useQueryClient();
+  const routeRef = useRef(route);
+  routeRef.current = route;
   const {
     finishRecovery,
     mutationLeaseRestoreRequest,
@@ -1931,10 +1933,11 @@ function AnalyzerWorkspace({
         if (!preserveDirtyForm) {
           const nextActiveJob = reconciledActiveJob ?? nextJobs[0] ?? null;
           alignWorkspaceToJob(nextActiveJob);
+          const currentRoute = routeRef.current;
           const activeRouteJobRemoved =
-            route.surface === "job" &&
-            route.jobId === currentActiveId &&
-            !nextJobs.some((candidate) => candidate.id === route.jobId);
+            currentRoute.surface === "job" &&
+            currentRoute.jobId === currentActiveId &&
+            !nextJobs.some((candidate) => candidate.id === currentRoute.jobId);
           if (activeRouteJobRemoved) {
             if (nextActiveJob) {
               navigation.openJob(nextActiveJob.id, { replace: true });
