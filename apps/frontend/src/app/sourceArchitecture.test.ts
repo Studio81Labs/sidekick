@@ -252,6 +252,11 @@ function waveNineMutationBoundaryViolations(): string[] {
           const importedName = (binding.propertyName ?? binding.name).text;
           if (isWaveNineMutation(importedName)) {
             importedMutations.set(binding.name.text, importedName);
+            if (!WAVE_NINE_MUTATION_OWNERS[importedName].has(sourcePath)) {
+              violations.add(
+                `${importedName} imported outside its owned boundary: ${sourcePath}`,
+              );
+            }
           }
         }
       }
