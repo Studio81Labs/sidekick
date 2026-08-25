@@ -26,6 +26,7 @@ export interface AnalyzerRouteRestoreOptions {
 export function useAnalyzerRouteRestore(
   options: AnalyzerRouteRestoreOptions,
 ): void {
+  const jobLoadsRef = useRef(new Map<string, Promise<JobRecord>>());
   const optionsRef = useRef(options);
   const restoredSurfaceRef = useRef<AnalyzerSurface | null>(null);
   optionsRef.current = options;
@@ -70,8 +71,13 @@ export function useAnalyzerRouteRestore(
           }
         } else {
           current.onJobLoading(routeJobId);
-          void current
-            .loadJob(routeJobId)
+          let jobLoad = jobLoadsRef.current.get(routeJobId);
+          if (!jobLoad) {
+            jobLoad = current.loadJob(routeJobId);
+            jobLoadsRef.current.set(routeJobId, jobLoad);
+          }
+          const pendingJobLoad = jobLoad;
+          void pendingJobLoad
             .then((job) => {
               if (active) {
                 current.activateJob(job);
@@ -81,6 +87,11 @@ export function useAnalyzerRouteRestore(
               if (active) {
                 current.onJobUnavailable();
                 current.onError(error);
+              }
+            })
+            .finally(() => {
+              if (jobLoadsRef.current.get(routeJobId) === pendingJobLoad) {
+                jobLoadsRef.current.delete(routeJobId);
               }
             });
         }

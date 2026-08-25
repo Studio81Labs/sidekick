@@ -139,7 +139,7 @@ describe("useAnalyzerRouteRestore", () => {
     expect(current.loadJob).toHaveBeenCalledWith(loadedJob.id);
   });
 
-  it("restarts a pending job load after leaving and returning", async () => {
+  it("reattaches a pending job load after leaving and returning", async () => {
     const loadedJob = job(PERSISTED_JOB_ID);
     let resolveJob: (job: JobRecord) => void = () => undefined;
     const pendingJob = new Promise<JobRecord>((resolve) => {
@@ -161,8 +161,28 @@ describe("useAnalyzerRouteRestore", () => {
       route: analyzerRouteState("job", loadedJob.id),
     };
     view.rerender();
-    expect(loadJob).toHaveBeenCalledTimes(2);
+    expect(loadJob).toHaveBeenCalledOnce();
 
+    resolveJob(loadedJob);
+    await waitFor(() =>
+      expect(current.activateJob).toHaveBeenCalledWith(loadedJob),
+    );
+    expect(current.activateJob).toHaveBeenCalledOnce();
+  });
+
+  it("deduplicates an uncached job load under Strict Mode", async () => {
+    const loadedJob = job(PERSISTED_JOB_ID);
+    let resolveJob: (job: JobRecord) => void = () => undefined;
+    const pendingJob = new Promise<JobRecord>((resolve) => {
+      resolveJob = resolve;
+    });
+    const current = options({
+      loadJob: vi.fn(() => pendingJob),
+      route: analyzerRouteState("job", loadedJob.id),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current), { wrapper: StrictMode });
+
+    expect(current.loadJob).toHaveBeenCalledOnce();
     resolveJob(loadedJob);
     await waitFor(() =>
       expect(current.activateJob).toHaveBeenCalledWith(loadedJob),
