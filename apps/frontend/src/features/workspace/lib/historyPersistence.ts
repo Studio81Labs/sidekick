@@ -2,7 +2,7 @@ import type { QueryClient } from "@tanstack/react-query";
 
 import { fetchHistoryPageQuery } from "../../../domains/history/api/historyQueries";
 import type { JobHistory, JobRecord } from "../../../shared/types/jobs";
-import type { HistoryItem } from "../../history/lib/historyPresentation";
+import type { HistoryItem } from "../../../domains/history/model/historyItem";
 import { readPersistedMutationLease } from "./mutationLeaseStorage";
 import { newerHistoryItem } from "./reconciliation";
 

@@ -544,6 +544,12 @@ Preflop position labels, aliases, and normalization live in
 consume that poker-domain model directly; no benchmark or hand-review peer
 adapter owns the shared primitive.
 
+The persisted analyzer history projection uses
+`domains/history/model/historyItem.ts` as its shared domain shape. Screenshot
+label formatting and the reusable screenshot rail row live under `shared/lib`
+and `shared/components`, so history, queue, screenshot, and workspace features
+do not depend on one another for presentation primitives.
+
 A feature must not move unrelated persistence orchestration into its hook merely
 to make the page coordinator shorter. New feature behavior should extend the
 closest feature boundary, while future top-level experiences such as account or

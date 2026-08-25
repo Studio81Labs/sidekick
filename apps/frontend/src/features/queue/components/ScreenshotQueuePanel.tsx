@@ -4,8 +4,8 @@ import "./ScreenshotQueuePanel.css";
 import { humanReadableMessage } from "../../../shared/api/core";
 import { ButtonControl } from "../../../shared/components/FormControls";
 import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
-import { screenshotLabel } from "../../screenshots/lib/screenshotPresentation";
-import { ScreenshotRailItem } from "./ScreenshotRailItem";
+import { ScreenshotRailItem } from "../../../shared/components/ScreenshotRailItem";
+import { screenshotLabel } from "../../../shared/lib/screenshotPresentation";
 import { StateMessage } from "../../../shared/components/StateMessage";
 import type { JobRecord } from "../../../shared/types/jobs";
 

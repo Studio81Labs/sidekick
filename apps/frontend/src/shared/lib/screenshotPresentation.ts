@@ -1,4 +1,4 @@
-import type { JobRecord } from "../../../shared/types/jobs";
+import type { JobRecord } from "../types/jobs";
 
 export function screenshotLabel(
   job: Pick<JobRecord, "original_filename" | "title">,

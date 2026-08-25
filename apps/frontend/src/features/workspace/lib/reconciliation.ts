@@ -1,5 +1,5 @@
 import type { JobRecord } from "../../../shared/types/jobs";
-import type { HistoryItem } from "../../history/lib/historyPresentation";
+import type { HistoryItem } from "../../../domains/history/model/historyItem";
 import { isPristineBenchmarkImport } from "./cachedJobValidation";
 import { PERSISTED_JOB_ID_PATTERN } from "./cacheValidationPrimitives";
 

@@ -2,7 +2,7 @@ import { Pencil } from "lucide-react";
 import type { HTMLAttributes, ReactNode } from "react";
 
 import "./ScreenshotRailItem.css";
-import { ButtonControl } from "../../../shared/components/FormControls";
+import { ButtonControl } from "./FormControls";
 
 export type ScreenshotRailItemProps = Omit<
   HTMLAttributes<HTMLDivElement>,
