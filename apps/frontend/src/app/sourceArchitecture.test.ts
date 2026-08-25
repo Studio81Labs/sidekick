@@ -1278,15 +1278,23 @@ function waveNineMutationBoundaryViolations(): string[] {
         callables.push(...callableMembers(declaration, exportName));
       }
     }
-    for (const exportedCallable of [...callables]) {
-      if (exportedCallable.topLevel) {
-        callables.push(
-          ...returnedValueCallables(
-            exportedCallable.callable,
-            exportedCallable.label,
-          ),
-        );
+    const returnQueue = [...callables];
+    const inspectedReturns = new Set<CallableImplementation>();
+    while (returnQueue.length > 0) {
+      const exportedCallable = returnQueue.shift();
+      if (
+        !exportedCallable ||
+        inspectedReturns.has(exportedCallable.callable)
+      ) {
+        continue;
       }
+      inspectedReturns.add(exportedCallable.callable);
+      const returned = returnedValueCallables(
+        exportedCallable.callable,
+        exportedCallable.label,
+      );
+      callables.push(...returned);
+      returnQueue.push(...returned);
     }
     return callables;
   }
