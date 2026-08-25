@@ -462,6 +462,155 @@ function waveNineMutationBoundaryViolations(): string[] {
     );
   }
 
+  type CallableImplementation =
+    | ts.ArrowFunction
+    | ts.FunctionDeclaration
+    | ts.FunctionExpression;
+
+  function callableImplementation(
+    symbol: ts.Symbol | null,
+  ): CallableImplementation | null {
+    for (const declaration of symbol?.declarations ?? []) {
+      if (
+        ts.isFunctionDeclaration(declaration) ||
+        ts.isFunctionExpression(declaration)
+      ) {
+        return declaration;
+      }
+      if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer &&
+        (ts.isArrowFunction(declaration.initializer) ||
+          ts.isFunctionExpression(declaration.initializer))
+      ) {
+        return declaration.initializer;
+      }
+    }
+    return null;
+  }
+
+  function callReference(node: ts.CallExpression): ts.Node {
+    return ts.isPropertyAccessExpression(node.expression)
+      ? node.expression.name
+      : ts.isElementAccessExpression(node.expression)
+        ? node.expression.argumentExpression
+        : node.expression;
+  }
+
+  function requestOptionsWrite(value: ts.Expression): boolean {
+    while (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isSatisfiesExpression(value)
+    ) {
+      value = value.expression;
+    }
+    if (ts.isConditionalExpression(value)) {
+      return (
+        requestOptionsWrite(value.whenTrue) ||
+        requestOptionsWrite(value.whenFalse)
+      );
+    }
+    if (
+      (ts.isIdentifier(value) && value.text === "undefined") ||
+      ts.isVoidExpression(value)
+    ) {
+      return false;
+    }
+    if (!ts.isObjectLiteralExpression(value)) {
+      return true;
+    }
+    const method = value.properties.find(
+      (property): property is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(property) &&
+        ((ts.isIdentifier(property.name) && property.name.text === "method") ||
+          (ts.isStringLiteralLike(property.name) &&
+            property.name.text === "method")),
+    );
+    if (!method) {
+      return false;
+    }
+    return !(
+      ts.isStringLiteralLike(method.initializer) &&
+      ["GET", "HEAD"].includes(method.initializer.text.toUpperCase())
+    );
+  }
+
+  function rawCallWrites(node: ts.CallExpression): boolean {
+    if (!rawTransportSymbol(callReference(node))) {
+      return false;
+    }
+    const options = node.arguments[1];
+    return options ? requestOptionsWrite(options) : false;
+  }
+
+  const writeBearingCallables = new Map<CallableImplementation, boolean>();
+
+  function callableWrites(
+    callable: CallableImplementation,
+    active = new Set<CallableImplementation>(),
+  ): boolean {
+    const cached = writeBearingCallables.get(callable);
+    if (cached !== undefined) {
+      return cached;
+    }
+    if (active.has(callable)) {
+      return false;
+    }
+    active.add(callable);
+    let writes = false;
+
+    function visit(node: ts.Node): void {
+      if (writes) {
+        return;
+      }
+      if (ts.isCallExpression(node)) {
+        const reference = callReference(node);
+        const localCallable = callableImplementation(resolvedSymbol(reference));
+        writes =
+          rawCallWrites(node) ||
+          mutationSymbol(reference) !== null ||
+          (localCallable !== null && callableWrites(localCallable, active));
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(callable);
+    active.delete(callable);
+    writeBearingCallables.set(callable, writes);
+    return writes;
+  }
+
+  function auditAdapterWriteExports(
+    sourceFile: ts.SourceFile,
+    sourcePath: string,
+  ): void {
+    const moduleSymbol = resolvedSymbol(sourceFile);
+    if (
+      !moduleSymbol ||
+      !sourcePath.startsWith("domains/") ||
+      !sourcePath.includes("/api/")
+    ) {
+      return;
+    }
+    for (const exportedSymbol of checker.getExportsOfModule(moduleSymbol)) {
+      const symbol = resolvedAliasSymbol(exportedSymbol);
+      const callable = callableImplementation(symbol);
+      if (!callable || !callableWrites(callable)) {
+        continue;
+      }
+      const exportName = exportedSymbol.getName();
+      if (
+        !isWaveNineMutation(exportName) ||
+        !WAVE_NINE_MUTATION_OWNERS[exportName].has(sourcePath)
+      ) {
+        violations.add(
+          "Unregistered domain adapter write " + exportName + ": " + sourcePath,
+        );
+      }
+    }
+  }
+
   for (const file of scriptFiles) {
     const sourcePath = sourceSegments(file).join("/");
     const sourceFile = program.getSourceFile(file);
@@ -471,6 +620,8 @@ function waveNineMutationBoundaryViolations(): string[] {
       );
       continue;
     }
+
+    auditAdapterWriteExports(sourceFile, sourcePath);
 
     for (const statement of sourceFile.statements) {
       if (
