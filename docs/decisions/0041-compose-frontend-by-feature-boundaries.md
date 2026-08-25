@@ -4,12 +4,13 @@
 
 Accepted, amended 2026-08-25
 
-The Wave 12 compatibility-removal program supersedes this decision only where
-it designated `src/shared/types.ts` as a stable type barrel. Focused contract
-modules remain under `src/shared/types`, but all consumers now import their
-owning module directly and the source-architecture suite prevents the barrel
-from being recreated. Other compatibility surfaces named in this ADR remain in
-force until separately amended or superseded.
+The Wave 12 compatibility-removal program supersedes this decision where it
+designated `src/shared/types.ts` as a stable type barrel and
+`src/shared/api/client.ts` as a stable client barrel. Focused contract and API
+modules remain, but all consumers now import their owning module directly and
+the source-architecture suite prevents either facade from being recreated.
+Other compatibility surfaces named in this ADR remain in force until
+separately amended or superseded.
 
 ## Context
 
@@ -40,9 +41,9 @@ Compose the frontend using four explicit boundaries:
   domain-independent helpers.
 
 Shared API access separates transport, response decoding, and human-readable
-errors from jobs, history, training, benchmark, system, and MCP endpoints. The
-stable client barrel preserves the application-facing contract while endpoint
-tests stay beside their owning module.
+errors from jobs, history, training, benchmark, system, and MCP endpoints.
+Consumers import those focused owners directly, while endpoint tests stay
+beside their owning module; no cross-domain API client facade is retained.
 
 Shared API contracts follow the same ownership split. Poker state,
 recommendations, training, jobs, pipeline capabilities, benchmarks, system,

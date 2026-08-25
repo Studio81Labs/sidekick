@@ -4587,6 +4587,44 @@ function sharedTypeBoundaryViolations(): string[] {
   return violations;
 }
 
+function sharedApiClientBoundaryViolations(): string[] {
+  const violations: string[] = [];
+  const retiredFacade = resolve(SOURCE_ROOT, "shared/api/client.ts");
+  const retiredFacadeWithoutExtension = retiredFacade.slice(
+    0,
+    -extname(retiredFacade).length,
+  );
+
+  if (existsSync(retiredFacade)) {
+    violations.push(
+      "shared/api/client.ts compatibility facade must remain removed",
+    );
+  }
+
+  for (const file of sourceFiles().filter((candidate) =>
+    [".cts", ".mts", ".ts", ".tsx"].includes(extname(candidate)),
+  )) {
+    for (const specifier of scriptImports(readFileSync(file, "utf8"), file)) {
+      const normalizedSpecifier = specifier.replace(/\.(?:c|m)?js$/u, "");
+      const target = normalizedSpecifier.startsWith("@/")
+        ? resolve(SOURCE_ROOT, normalizedSpecifier.slice(2))
+        : normalizedSpecifier.startsWith(".")
+          ? resolve(dirname(file), normalizedSpecifier)
+          : null;
+      if (
+        target === retiredFacade ||
+        target === retiredFacadeWithoutExtension
+      ) {
+        violations.push(
+          `production source may not import retired shared API client facade: ${sourceSegments(file).join("/")}`,
+        );
+      }
+    }
+  }
+
+  return violations;
+}
+
 interface FeatureLibraryBarrelBoundary {
   barrelPath: string;
   label: string;
@@ -4975,6 +5013,10 @@ describe("frontend source architecture", () => {
 
   it("keeps shared API contracts in domain type modules", () => {
     expect(sharedTypeBoundaryViolations()).toEqual([]);
+  });
+
+  it("keeps the shared API client compatibility facade retired", () => {
+    expect(sharedApiClientBoundaryViolations()).toEqual([]);
   });
 
   it("keeps workspace persistence in focused modules", () => {

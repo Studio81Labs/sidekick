@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Eye } from "lucide-react";
 
-import { humanReadableMessage } from "../../../shared/api/client";
+import { humanReadableMessage } from "../../../shared/api/core";
 import { ButtonControl } from "../../../shared/components/FormControls";
 import { SegmentedControl } from "../../../shared/components/SegmentedControl";
 import { StateMessage } from "../../../shared/components/StateMessage";

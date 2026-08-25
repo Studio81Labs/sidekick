@@ -216,8 +216,9 @@ apps/backend/app/
    request IDs, retry metadata, 204 responses, and human-readable errors.
 6. Feature API adapters translate generated wire contracts into stable domain
    values and own Query keys/options.
-7. The current `shared/api/client.ts` remains a temporary compatibility facade
-   until all consumers use feature API adapters.
+7. The former `shared/api/client.ts` compatibility facade has been removed;
+   consumers import focused endpoint or transport owners directly while the
+   remaining endpoint facades migrate to feature API adapters.
 
 The OpenAPI artifact is a compatibility gate. Route splitting must not change
 paths, methods, status codes, request bodies, response fields, or error detail
@@ -530,11 +531,11 @@ domain.
 
 Dependencies: Waves 1-11
 
-Wave 12 is in progress. The frontend shared-type compatibility barrel has been
-retired and an architecture check prevents production code from recreating or
-importing it. Remaining API facades, peer-feature exceptions, backend
-compatibility modules, and final release audits are tracked in subsequent
-bounded slices.
+Wave 12 is in progress. The frontend shared-type barrel and shared API client
+facade have been retired, and architecture checks prevent production code from
+recreating or importing either compatibility surface. Remaining endpoint
+facades, peer-feature exceptions, backend compatibility modules, and final
+release audits are tracked in subsequent bounded slices.
 
 - Remove obsolete handwritten wire types, API client facade, temporary barrels,
   dead page helpers, and duplicated fixtures.
@@ -636,7 +637,7 @@ Every implementation PR must include:
 | 9    | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
 | 10   | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands  |
 | 11   | Complete    | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain               |
-| 12   | In progress | The frontend shared-type barrel is removed; API facades, peer-feature allowlists, backend compatibility modules, release audits, and final documentation remain                                      |
+| 12   | In progress | The frontend shared-type barrel and shared API client facade are removed; endpoint facades, peer-feature allowlists, backend compatibility modules, release audits, and final documentation remain   |
 
 ## Exit Criteria
 

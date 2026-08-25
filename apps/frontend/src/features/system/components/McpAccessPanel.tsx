@@ -13,7 +13,7 @@ import {
   listMcpPrincipals,
   revokeMcpPrincipal,
   rotateMcpPrincipal,
-} from "../../../shared/api/client";
+} from "../../../shared/api/mcp";
 import type {
   McpAccessConfig,
   McpIssuedPrincipal,

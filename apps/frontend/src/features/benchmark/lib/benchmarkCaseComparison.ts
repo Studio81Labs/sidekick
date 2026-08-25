@@ -1,4 +1,4 @@
-import { humanReadableMessage } from "../../../shared/api/client";
+import { humanReadableMessage } from "../../../shared/api/core";
 import { benchmarkPercent } from "../../../shared/lib/metricPresentation";
 import type {
   BenchmarkCaseResult,

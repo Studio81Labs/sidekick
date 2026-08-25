@@ -1,7 +1,7 @@
 import { Archive } from "lucide-react";
 
 import "./ScreenshotQueuePanel.css";
-import { humanReadableMessage } from "../../../shared/api/client";
+import { humanReadableMessage } from "../../../shared/api/core";
 import { ButtonControl } from "../../../shared/components/FormControls";
 import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
 import { screenshotLabel } from "../../screenshots/lib/screenshotPresentation";

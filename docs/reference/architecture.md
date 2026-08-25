@@ -508,8 +508,10 @@ types, and generic formatting helpers live under `src/shared`.
 The shared API layer keeps base URL selection, response decoding, retry
 metadata, and readable error conversion in one transport core. Jobs, history,
 training, benchmark, system, and MCP endpoints live in focused modules with
-colocated tests; `src/shared/api/client.ts` remains the stable compatibility
-barrel used by application code.
+colocated tests. The former `src/shared/api/client.ts` compatibility facade has
+been removed; consumers import the focused endpoint or transport owner
+directly, and the source-architecture suite prevents the facade from being
+recreated.
 Shared API data contracts mirror those domains under `src/shared/types`.
 The former `src/shared/types.ts` compatibility barrel has been removed;
 production and test code import narrowly owned domain contract modules directly.
