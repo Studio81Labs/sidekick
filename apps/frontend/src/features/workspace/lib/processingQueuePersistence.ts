@@ -6,7 +6,7 @@ import {
   isCachedJobRecord,
   isPristineBenchmarkImport,
 } from "./cachedJobValidation";
-import { PERSISTED_JOB_ID_PATTERN } from "./cacheValidationPrimitives";
+import { PERSISTED_JOB_ID_PATTERN } from "../../../shared/lib/jobIdentity";
 import { readPersistedMutationLease } from "./mutationLeaseStorage";
 import { newerJob } from "./reconciliation";
 

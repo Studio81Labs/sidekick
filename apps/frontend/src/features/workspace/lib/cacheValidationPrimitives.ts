@@ -1,4 +1,3 @@
-export const PERSISTED_JOB_ID_PATTERN = /^[0-9a-f]{32}$/;
 export const PROCESSING_CACHE_FUTURE_SKEW_MS = 5 * 60 * 1000;
 
 export function isNullableCachedNumber(

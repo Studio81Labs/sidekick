@@ -671,11 +671,12 @@ have been removed.
 Training review-queue copy and suggested-focus ranking remain in focused
 feature-library modules; reusable options and decision comparison import the
 training domain model directly, with no presentation barrel.
-Hand-review card parsing, form conversion, canonical identity, confidence
-summaries, and preflop-position normalization live in focused modules behind
-`features/hand-review/lib/pokerState.ts`. Benchmark presentation consumes the
-hand-review position model without owning its implementation; its legacy
-normalizer export remains a compatibility alias.
+Poker card parsing, form conversion, canonical identity, state constants, and
+preflop-position normalization live in focused modules under
+`domains/poker/model`. Hand-review retains only confidence presentation and
+consumes the domain model directly; the former poker-state compatibility barrel
+has been removed. Persisted job-ID recognition and screenshot metadata
+normalization live under `shared/lib` for page, workspace, and screenshot use.
 The parser benchmark dialog is likewise a composition root: pipeline
 comparison, report overview, result presentation, expandable case review, and
 dataset/run actions live in focused benchmark components with direct tests.

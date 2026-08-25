@@ -21,7 +21,6 @@ export {
   isCachedTrainingDecision,
 } from "./cachedRecommendationValidation";
 export {
-  PERSISTED_JOB_ID_PATTERN,
   PROCESSING_CACHE_FUTURE_SKEW_MS,
   isNullableCachedNumber,
   isNullableCachedString,

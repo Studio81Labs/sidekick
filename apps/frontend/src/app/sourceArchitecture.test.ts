@@ -4744,12 +4744,11 @@ function retiredTrainingPresentationFacadeViolations(): string[] {
     : [];
 }
 
-function handReviewPokerStateBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
-    barrelPath: "features/hand-review/lib/pokerState.ts",
-    label: "hand-review poker state",
-    namedExportsAllowed: true,
-  });
+function retiredHandReviewPokerStateFacadeViolations(): string[] {
+  const facadePath = "features/hand-review/lib/pokerState.ts";
+  return existsSync(resolve(SOURCE_ROOT, facadePath))
+    ? [`retired hand-review poker state facade exists: ${facadePath}`]
+    : [];
 }
 
 function benchmarkPresentationBoundaryViolations(): string[] {
@@ -5022,8 +5021,8 @@ describe("frontend source architecture", () => {
     expect(retiredTrainingPresentationFacadeViolations()).toEqual([]);
   });
 
-  it("keeps hand-review poker state in focused modules", () => {
-    expect(handReviewPokerStateBoundaryViolations()).toEqual([]);
+  it("keeps the retired hand-review poker state facade removed", () => {
+    expect(retiredHandReviewPokerStateFacadeViolations()).toEqual([]);
   });
 
   it("keeps benchmark presentation in focused modules", () => {

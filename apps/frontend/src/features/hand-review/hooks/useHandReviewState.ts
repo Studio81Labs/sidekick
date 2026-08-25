@@ -7,14 +7,17 @@ import {
   PREFLOP_POSITIONS,
   normalizePreflopPosition,
 } from "../../../domains/poker/model/preflopPosition";
+import { EMPTY_STATE } from "../../../domains/poker/model/pokerStateConstants";
 import {
-  EMPTY_STATE,
   approvalKey,
-  formToCanonical,
+  benchmarkApprovalKey,
   stateFromJob,
+} from "../../../domains/poker/model/canonicalPokerState";
+import {
+  formToCanonical,
   stateToForm,
-  summarizeConfidences,
-} from "../lib/pokerState";
+} from "../../../domains/poker/model/pokerStateConversion";
+import { summarizeConfidences } from "../lib/pokerStateConfidence";
 import { recommendationEvidenceFromRaw } from "../../../domains/recommendations/model/recommendationEvidence";
 import { parserRoutingFromRaw } from "../../../domains/recommendations/model/parserRoutingPresentation";
 import {
@@ -32,8 +35,8 @@ import type {
   PostflopActionForm,
   PreflopActionForm,
   StateForm,
-} from "../lib/pokerStateForm";
-import { requiresOpponentPosition } from "../lib/pokerStateForm";
+} from "../../../domains/poker/model/pokerStateForm";
+import { requiresOpponentPosition } from "../../../domains/poker/model/pokerStateForm";
 import type { CompletedPostflopStreet } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
 
@@ -453,7 +456,9 @@ export function useHandReviewState({
     addPostflopAction,
     addPreflopAction,
     alignWorkspaceToJob,
+    approvalKey,
     approvedStateKey,
+    benchmarkApprovalKey,
     canApprove,
     canRecommend,
     cancelTrainingReviewNoteEdit,
@@ -484,6 +489,7 @@ export function useHandReviewState({
     setTrainingReviewNote,
     setTrainingReviewNoteEditing,
     setTrainingSizing,
+    stateToForm,
     startTrainingReviewNoteEdit,
     trainingAction,
     trainingCertainty,

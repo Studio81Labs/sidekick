@@ -6,7 +6,7 @@ import {
   DetectedStateForm,
   type DetectedStateFormProps,
 } from "./DetectedStateForm";
-import type { StateForm } from "../lib/pokerStateForm";
+import type { StateForm } from "../../../domains/poker/model/pokerStateForm";
 
 afterEach(cleanup);
 

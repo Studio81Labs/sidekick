@@ -1,5 +1,5 @@
-import { screenshotTags } from "../../screenshots/lib/screenshotMetadata";
-import { approvalKey } from "../../hand-review/lib/pokerState";
+import { approvalKey } from "../../../domains/poker/model/canonicalPokerState";
+import { screenshotTags } from "../../../shared/lib/screenshotMetadata";
 import type { JobRecord } from "../../../shared/types/jobs";
 import type {
   JobMutationExpectation,

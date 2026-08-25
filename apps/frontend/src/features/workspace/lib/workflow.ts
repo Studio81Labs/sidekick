@@ -1,11 +1,11 @@
 import type { CanonicalState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
 import { type PersistedJobMutationScope } from "./mutationLeaseTypes";
+import { toCanonicalState } from "../../../domains/poker/model/canonicalPokerState";
 import {
   formToCanonical,
   stateToForm,
-  toCanonicalState,
-} from "../../hand-review/lib/pokerState";
+} from "../../../domains/poker/model/pokerStateConversion";
 
 export type ActiveRecommendationRequest = {
   mutationScope: PersistedJobMutationScope;

@@ -13,8 +13,9 @@ import { type HistoryItem } from "../../features/history/lib/historyPresentation
 import {
   parseScreenshotTags,
   screenshotTags,
-} from "../../features/screenshots/lib/screenshotMetadata";
+} from "../../shared/lib/screenshotMetadata";
 import { screenshotLabel } from "../../shared/lib/screenshotPresentation";
+import { PERSISTED_JOB_ID_PATTERN } from "../../shared/lib/jobIdentity";
 import { useAutomationSettings } from "../../features/automation/hooks/useAutomationSettings";
 import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchmarkController";
 import {
@@ -74,7 +75,6 @@ import {
   HISTORY_CACHE_LIMIT,
   type JobMutationExpectation,
   type JobMutationLease,
-  PERSISTED_JOB_ID_PATTERN,
   PERSISTED_MUTATION_LEASE_MS,
   PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS,
   type PersistedJobMutationScope,
@@ -103,11 +103,6 @@ import {
   reconcileHistoryItems,
   reconcileProcessingJobs,
 } from "../../features/workspace/lib/persistence";
-import {
-  approvalKey,
-  benchmarkApprovalKey,
-  stateToForm,
-} from "../../features/hand-review/lib/pokerState";
 import {
   suggestedActionDifferenceFocus,
   suggestedCertaintyFocus,
@@ -232,6 +227,8 @@ export function useAnalyzerWorkspaceController({
     addPostflopAction,
     addPreflopAction,
     alignWorkspaceToJob,
+    approvalKey,
+    benchmarkApprovalKey,
     canApprove,
     canRecommend,
     cancelTrainingReviewNoteEdit,
@@ -262,6 +259,7 @@ export function useAnalyzerWorkspaceController({
     setTrainingReviewNote,
     setTrainingReviewNoteEditing,
     setTrainingSizing,
+    stateToForm,
     startTrainingReviewNoteEdit,
     trainingAction,
     trainingCertainty,

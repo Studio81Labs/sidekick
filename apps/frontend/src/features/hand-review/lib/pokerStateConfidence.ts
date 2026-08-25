@@ -1,6 +1,6 @@
 import type { CanonicalState } from "../../../shared/types/poker";
-import { CONFIDENCE_KEYS } from "./pokerStateConstants";
-import { requiresOpponentPosition } from "./pokerStateForm";
+import { CONFIDENCE_KEYS } from "../../../domains/poker/model/pokerStateConstants";
+import { requiresOpponentPosition } from "../../../domains/poker/model/pokerStateForm";
 
 export function summarizeConfidences(
   confidences: Record<string, number>,
