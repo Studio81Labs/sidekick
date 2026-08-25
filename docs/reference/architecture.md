@@ -558,6 +558,14 @@ hook. Media stream ownership remains inside `useCaptureSource`.
 The raw analyzer workflow context accessor is module-private. Production code
 can consume only the focused selection, queue, mutation-lease, recovery, and
 projection hooks, preventing page composition from bypassing command APIs.
+Frontend writes follow the same ownership rule. Upload/capture,
+approve/recommend, training review, screenshot metadata and deletion, history
+archive, benchmark inclusion/import, and backup restore calls are confined to
+their domain API adapters and focused feature command services. Commands return
+explicit Query cache outcomes and preserve request identities, abort behavior,
+mutation leases, and ambiguous-failure recovery. The source-architecture suite
+audits the exact mutation inventory so pages and shared compatibility exports
+cannot become write orchestrators again.
 When benchmark-import recovery overlaps a lease retry timer, the active request
 keeps the mutation-lease channel in the running phase; request settlement then
 selects retry-scheduled or idle from the remaining lease state.

@@ -36,6 +36,57 @@ const NON_COMPONENT_FEATURE_AREAS = new Set([
   "store",
 ]);
 const JAVASCRIPT_EXTENSIONS = new Set([".cjs", ".js", ".jsx", ".mjs"]);
+const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
+  {
+    approveState: new Set([
+      "domains/jobs/api/jobsApi.ts",
+      "features/hand-review/services/handWorkflowCommands.ts",
+    ]),
+    archiveJobs: new Set([
+      "domains/history/api/historyApi.ts",
+      "features/history/services/archiveJobsCommand.ts",
+    ]),
+    completeTrainingReview: new Set([
+      "domains/training/api/trainingApi.ts",
+      "features/training/services/trainingReviewCommands.ts",
+    ]),
+    deleteJob: new Set([
+      "domains/jobs/api/jobsApi.ts",
+      "features/screenshots/services/deleteScreenshotCommand.ts",
+    ]),
+    importBenchmarkDataset: new Set([
+      "domains/benchmarks/api/benchmarksApi.ts",
+      "features/benchmark/services/importBenchmarkDatasetCommand.ts",
+    ]),
+    recordTrainingDecision: new Set([
+      "domains/training/api/trainingApi.ts",
+      "features/training/services/trainingReviewCommands.ts",
+    ]),
+    reopenTrainingReview: new Set([
+      "domains/training/api/trainingApi.ts",
+      "features/training/services/trainingReviewCommands.ts",
+    ]),
+    requestRecommendation: new Set([
+      "domains/recommendations/api/recommendationsApi.ts",
+      "features/hand-review/services/handWorkflowCommands.ts",
+    ]),
+    restoreApplicationBackup: new Set([
+      "domains/backups/api/backupsApi.ts",
+      "features/backups/services/restoreApplicationBackupCommand.ts",
+    ]),
+    setBenchmarkInclusion: new Set([
+      "domains/benchmarks/api/benchmarksApi.ts",
+      "features/benchmark/services/setBenchmarkInclusionCommand.ts",
+    ]),
+    updateJobMetadata: new Set([
+      "domains/jobs/api/jobsApi.ts",
+      "features/screenshots/services/updateScreenshotMetadataCommand.ts",
+    ]),
+    uploadScreenshot: new Set([
+      "domains/jobs/api/jobsApi.ts",
+      "features/capture/services/uploadScreenshotCommand.ts",
+    ]),
+  };
 const SOURCE_EXTENSIONS = new Set([
   ".cjs",
   ".css",
@@ -162,6 +213,32 @@ function sourceFiles(): string[] {
       !isTestSupportPath(sourceSegments(file))
     );
   });
+}
+
+function waveNineMutationBoundaryViolations(): string[] {
+  const violations: string[] = [];
+
+  for (const file of sourceFiles().filter((candidate) =>
+    [".ts", ".tsx"].includes(extname(candidate)),
+  )) {
+    const sourcePath = sourceSegments(file).join("/");
+    const source = readFileSync(file, "utf8");
+
+    for (const [mutation, owners] of Object.entries(
+      WAVE_NINE_MUTATION_OWNERS,
+    )) {
+      if (
+        !owners.has(sourcePath) &&
+        new RegExp(`\\b${mutation}\\s*\\(`).test(source)
+      ) {
+        violations.push(
+          `${mutation} called outside its owned boundary: ${sourcePath}`,
+        );
+      }
+    }
+  }
+
+  return violations.sort();
 }
 
 function stylesheetImports(source: string, file: string): string[] {
@@ -994,6 +1071,10 @@ describe("frontend source architecture", () => {
 
   it("keeps imports within the documented layer direction", () => {
     expect(layerViolations()).toEqual([]);
+  });
+
+  it("keeps Wave 9 mutations in owned adapters and command services", () => {
+    expect(waveNineMutationBoundaryViolations()).toEqual([]);
   });
 
   it("allows only the checked-in legacy peer-feature imports", () => {
