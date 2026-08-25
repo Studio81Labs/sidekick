@@ -915,6 +915,16 @@ function waveNineMutationBoundaryViolations(): string[] {
     let states = new Set(initialStates);
     const boundary = executionBoundary(reference);
     const referenceStart = reference.getStart();
+    const sourceFile = reference.getSourceFile();
+
+    function precedesReferenceInScope(node: ts.Node): boolean {
+      const nodeBoundary = executionBoundary(node);
+      return (
+        node.getEnd() <= referenceStart &&
+        (nodeBoundary === boundary ||
+          (boundary !== sourceFile && nodeBoundary === sourceFile))
+      );
+    }
 
     function applyStates(
       node: ts.Node,
@@ -1085,8 +1095,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         ts.isBinaryExpression(node) &&
         node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
         node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
-        node.getEnd() <= referenceStart &&
-        executionBoundary(node) === boundary &&
+        precedesReferenceInScope(node) &&
         (ts.isPropertyAccessExpression(node.left) ||
           ts.isElementAccessExpression(node.left))
       ) {
@@ -1110,8 +1119,7 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
       if (
         ts.isCallExpression(node) &&
-        node.getEnd() <= referenceStart &&
-        executionBoundary(node) === boundary &&
+        precedesReferenceInScope(node) &&
         node.arguments[0] &&
         resolvedSymbol(node.arguments[0]) === symbol
       ) {
@@ -1179,11 +1187,7 @@ function waveNineMutationBoundaryViolations(): string[] {
           }
         }
       }
-      if (
-        ts.isCallExpression(node) &&
-        node.getEnd() <= referenceStart &&
-        executionBoundary(node) === boundary
-      ) {
+      if (ts.isCallExpression(node) && precedesReferenceInScope(node)) {
         node.arguments.forEach((argument, argumentIndex) => {
           if (resolvedSymbol(argument) !== symbol) {
             return;
@@ -1680,21 +1684,52 @@ function waveNineMutationBoundaryViolations(): string[] {
     if (!parameterSymbol) {
       return false;
     }
+    const aliases = new Set<ts.Symbol>([parameterSymbol]);
     let invokes = false;
+
+    function referencesAlias(node: ts.Node): boolean {
+      const symbol = resolvedSymbol(node);
+      return symbol !== null && aliases.has(symbol);
+    }
 
     function visit(node: ts.Node): void {
       if (invokes || (node !== implementation && ts.isFunctionLike(node))) {
         return;
       }
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer
+      ) {
+        const aliasSymbol = resolvedSymbol(node.name);
+        const initializerSymbol = resolvedSymbol(node.initializer);
+        if (
+          aliasSymbol &&
+          initializerSymbol &&
+          aliases.has(initializerSymbol)
+        ) {
+          aliases.add(aliasSymbol);
+        }
+      } else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left)
+      ) {
+        const aliasSymbol = resolvedSymbol(node.left);
+        const valueSymbol = resolvedSymbol(node.right);
+        if (aliasSymbol && valueSymbol && aliases.has(valueSymbol)) {
+          aliases.add(aliasSymbol);
+        }
+      }
       if (ts.isCallExpression(node)) {
         const receiver = invocationHelperReceiver(node);
         invokes =
-          resolvedSymbol(callReference(node)) === parameterSymbol ||
-          (receiver !== null && resolvedSymbol(receiver) === parameterSymbol);
+          referencesAlias(callReference(node)) ||
+          (receiver !== null && referencesAlias(receiver));
       } else if (ts.isTaggedTemplateExpression(node)) {
-        invokes = resolvedSymbol(node.tag) === parameterSymbol;
+        invokes = referencesAlias(node.tag);
       } else if (ts.isNewExpression(node)) {
-        invokes = resolvedSymbol(node.expression) === parameterSymbol;
+        invokes = referencesAlias(node.expression);
       }
       if (!invokes) {
         ts.forEachChild(node, visit);
