@@ -46,15 +46,19 @@ jobs:
         run: pnpm -C apps/frontend test --run src/app/sourceArchitecture.test.ts
 
       - name: Test application shell and edge worker
+        if: ${{ !cancelled() }}
         run: >-
           pnpm -C apps/frontend test --run src/app worker.test.js
           --exclude src/app/sourceArchitecture.test.ts
 
       - name: Test analyzer workflows
+        if: ${{ !cancelled() }}
         run: pnpm -C apps/frontend test --run src/pages
 
       - name: Test features, domains, and shared UI
+        if: ${{ !cancelled() }}
         run: pnpm -C apps/frontend test --run src/features src/domains src/shared
 
       - name: Build frontend
+        if: ${{ !cancelled() }}
         run: pnpm frontend:build

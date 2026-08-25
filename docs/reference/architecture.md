@@ -532,7 +532,9 @@ domain-named integration suites under `src/pages/analyzer/__tests__`.
 `src/test/analyzerHarness.tsx` supplies the shared workflow render boundary and
 domain API defaults instead of duplicating monolithic fixtures. Frontend CI
 reports architecture, application-shell/edge-worker, analyzer-workflow, and
-feature/domain failures in separate named steps. Backend tests are separated by router,
+feature/domain failures in separate named steps. Non-cancelled slices continue
+after an earlier domain failure so one run reports every independent result.
+Backend tests are separated by router,
 application service, domain model, repository contract, persistence/archive
 compatibility, and provider policy; large static poker-policy suites remain
 cohesive where splitting would obscure their ownership.
