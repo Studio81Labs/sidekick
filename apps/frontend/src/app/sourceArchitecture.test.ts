@@ -737,6 +737,40 @@ function waveNineMutationBoundaryViolations(): string[] {
 
   const writeBearingCallables = new Map<CallableImplementation, boolean>();
 
+  function argumentCallableWrites(
+    argument: ts.Node,
+    active: Set<CallableImplementation>,
+  ): boolean {
+    let writes = false;
+
+    function visit(node: ts.Node): void {
+      if (writes) {
+        return;
+      }
+      if (ts.isArrowFunction(node) || ts.isFunctionExpression(node)) {
+        writes = callableWrites(node, active);
+        return;
+      }
+      if (
+        ts.isIdentifier(node) ||
+        ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)
+      ) {
+        const implementation = callableImplementation(resolvedSymbol(node));
+        if (implementation) {
+          writes = callableWrites(implementation, active);
+          if (writes || !ts.isIdentifier(node)) {
+            return;
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(argument);
+    return writes;
+  }
+
   function callableWrites(
     callable: CallableImplementation,
     active = new Set<CallableImplementation>(),
@@ -767,6 +801,11 @@ function waveNineMutationBoundaryViolations(): string[] {
           writes =
             mutationSymbol(reference) !== null ||
             (localCallable !== null && callableWrites(localCallable, active));
+          if (!writes) {
+            writes = node.arguments.some((argument) =>
+              argumentCallableWrites(argument, active),
+            );
+          }
         }
       }
       ts.forEachChild(node, visit);
