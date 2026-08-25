@@ -1584,6 +1584,54 @@ function waveNineMutationBoundaryViolations(): string[] {
     return callables;
   }
 
+  function assignedExportCallables(
+    symbol: ts.Symbol | null,
+    sourcePath: string,
+    exportName: string,
+  ): ExportedCallable[] {
+    const callables: ExportedCallable[] = [];
+    const sourceFile = symbol?.declarations?.[0]?.getSourceFile();
+    if (!symbol || !sourceFile) {
+      return callables;
+    }
+    const assignmentOperators = new Set<ts.SyntaxKind>([
+      ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+      ts.SyntaxKind.BarBarEqualsToken,
+      ts.SyntaxKind.EqualsToken,
+      ts.SyntaxKind.QuestionQuestionEqualsToken,
+    ]);
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isBinaryExpression(node) &&
+        assignmentOperators.has(node.operatorToken.kind) &&
+        resolvedSymbol(node.left) === symbol
+      ) {
+        const implementation =
+          ts.isArrowFunction(node.right) || ts.isFunctionExpression(node.right)
+            ? node.right
+            : callableImplementation(resolvedSymbol(node.right));
+        if (implementation) {
+          callables.push({
+            callable: implementation,
+            label: exportName,
+            topLevel: true,
+          });
+        }
+        callables.push(...typedValueCallables(node.right, exportName));
+        if (ts.isCallExpression(node.right)) {
+          callables.push(...callExpressionCallables(node.right, exportName));
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    if (sourceSegments(sourceFile.fileName).join("/") === sourcePath) {
+      visit(sourceFile);
+    }
+    return callables;
+  }
+
   function exportedCallables(
     symbol: ts.Symbol | null,
     sourcePath: string,
@@ -1652,6 +1700,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         callables.push(...destructuredExportCallables(declaration, exportName));
       }
     }
+    callables.push(...assignedExportCallables(symbol, sourcePath, exportName));
     const returnQueue = [...callables];
     const inspectedReturns = new Set<CallableImplementation>();
     while (returnQueue.length > 0) {
