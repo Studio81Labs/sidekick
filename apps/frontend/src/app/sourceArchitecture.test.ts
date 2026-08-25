@@ -98,6 +98,12 @@ const LEGACY_RAW_TRANSPORT_OWNERS = new Set([
   "shared/api/system.ts",
   "shared/api/transport.ts",
 ]);
+const RAW_TRANSPORT_REFERENCES = new Set([
+  "XMLHttpRequest",
+  "fetch",
+  "requestJson",
+  "sendBeacon",
+]);
 
 function ownsRawTransport(sourcePath: string): boolean {
   const segments = sourcePath.split("/");
@@ -299,6 +305,11 @@ function waveNineMutationBoundaryViolations(): string[] {
           const importedName = (binding.propertyName ?? binding.name).text;
           if (isWaveNineMutation(importedName)) {
             importedMutations.set(binding.name.text, importedName);
+            if (binding.name.text !== importedName) {
+              violations.add(
+                `${importedName} imported as ${binding.name.text} outside its owned identity: ${sourcePath}`,
+              );
+            }
             if (!WAVE_NINE_MUTATION_OWNERS[importedName].has(sourcePath)) {
               violations.add(
                 `${importedName} imported outside its owned boundary: ${sourcePath}`,
@@ -346,21 +357,53 @@ function waveNineMutationBoundaryViolations(): string[] {
       return null;
     }
 
+    function isDirectOwnerMutationReference(node: ts.Identifier): boolean {
+      const parent = node.parent;
+      if (
+        ts.isImportSpecifier(parent) ||
+        ts.isExportSpecifier(parent) ||
+        ((ts.isFunctionDeclaration(parent) ||
+          ts.isFunctionExpression(parent)) &&
+          parent.name === node)
+      ) {
+        return true;
+      }
+
+      let expression: ts.Node = node;
+      if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
+        expression = parent;
+      }
+      while (ts.isParenthesizedExpression(expression.parent)) {
+        expression = expression.parent;
+      }
+      return (
+        ts.isCallExpression(expression.parent) &&
+        expression.parent.expression === expression
+      );
+    }
+
     function visit(node: ts.Node): void {
       if (!ownsRawTransport(sourcePath)) {
         const rawTransport =
-          ts.isIdentifier(node) &&
-          (node.text === "fetch" || node.text === "requestJson")
+          ts.isIdentifier(node) && RAW_TRANSPORT_REFERENCES.has(node.text)
             ? node.text
             : ts.isElementAccessExpression(node) &&
                 ts.isStringLiteralLike(node.argumentExpression) &&
-                (node.argumentExpression.text === "fetch" ||
-                  node.argumentExpression.text === "requestJson")
+                RAW_TRANSPORT_REFERENCES.has(node.argumentExpression.text)
               ? node.argumentExpression.text
               : null;
         if (rawTransport) {
           violations.add(
             `${rawTransport} referenced outside a domain transport boundary: ${sourcePath}`,
+          );
+        }
+      }
+
+      if (ts.isIdentifier(node) && isWaveNineMutation(node.text)) {
+        const owners = WAVE_NINE_MUTATION_OWNERS[node.text];
+        if (owners.has(sourcePath) && !isDirectOwnerMutationReference(node)) {
+          violations.add(
+            `${node.text} aliased inside its owned boundary: ${sourcePath}`,
           );
         }
       }
