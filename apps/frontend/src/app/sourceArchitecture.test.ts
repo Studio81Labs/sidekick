@@ -1852,8 +1852,13 @@ function waveNineMutationBoundaryViolations(): string[] {
     symbol: ts.Symbol | null,
     sourcePath: string,
     exportName: string,
+    seenExports = new Set<ts.Symbol>(),
   ): ExportedCallable[] {
     const callables: ExportedCallable[] = [];
+    if (!symbol || seenExports.has(symbol)) {
+      return callables;
+    }
+    seenExports.add(symbol);
     for (const declaration of symbol?.declarations ?? []) {
       if (declarationSourcePath(declaration) !== sourcePath) {
         continue;
@@ -1914,6 +1919,24 @@ function waveNineMutationBoundaryViolations(): string[] {
         callables.push(...callableMembers(declaration, exportName));
       } else if (ts.isBindingElement(declaration)) {
         callables.push(...destructuredExportCallables(declaration, exportName));
+      } else if (ts.isModuleDeclaration(declaration)) {
+        const moduleSymbol = resolvedSymbol(declaration.name);
+        if (moduleSymbol) {
+          for (const member of checker.getExportsOfModule(moduleSymbol)) {
+            callables.push(
+              ...exportedCallables(
+                resolvedAliasSymbol(member),
+                sourcePath,
+                member.getName(),
+                seenExports,
+              ).map((callable) => ({
+                ...callable,
+                label: exportName + "." + callable.label,
+                topLevel: false,
+              })),
+            );
+          }
+        }
       }
     }
     callables.push(...assignedExportCallables(symbol, sourcePath, exportName));
