@@ -79,8 +79,9 @@ timing remain behind application-owned callbacks.
 
 Frontend job-detail and processing-page reads are owned by
 `domains/jobs/api/jobsApi.ts`, with stable TanStack Query keys and options in
-`domains/jobs/api/jobsQueries.ts`. The legacy `shared/api/jobs.ts` read exports
-remain identity-preserving compatibility aliases while consumers migrate.
+`domains/jobs/api/jobsQueries.ts`. The legacy `shared/api/jobs.ts` and
+`shared/api/history.ts` compatibility aliases have been removed; consumers use
+the jobs, recommendations, and history domain API owners directly.
 Analyzer job-detail, processing-extent, history-page, and history-search reads
 execute those domain options through the application QueryClient. Browser
 queue and history persistence remains a bounded recovery projection rather

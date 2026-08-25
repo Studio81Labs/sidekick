@@ -190,9 +190,6 @@ function domainCompatibilityFacadeImportAllowed(
   const domain = targetPath.slice(0, 3).join("/");
   const module = (targetPath[3] ?? "").replace(/\.ts$/, "");
   return [
-    ["shared/api/jobs.ts", "domains/jobs/api", "jobsApi"],
-    ["shared/api/jobs.ts", "domains/recommendations/api", "recommendationsApi"],
-    ["shared/api/history.ts", "domains/history/api", "historyApi"],
     ["shared/api/training.ts", "domains/training/api", "trainingApi"],
     ["shared/api/benchmarks.ts", "domains/benchmarks/api", "benchmarksApi"],
     ["shared/api/system.ts", "domains/backups/api", "backupsApi"],
@@ -211,7 +208,7 @@ function generatedOpenApiImportAllowed(sourcePath: readonly string[]): boolean {
   if (sourcePath[0] !== "shared" || sourcePath[1] !== "api") {
     return false;
   }
-  return ["client.ts", "core.ts", "transport.ts"].includes(
+  return ["core.ts", "transport.ts"].includes(
     sourcePath[sourcePath.length - 1] ?? "",
   );
 }
@@ -4587,18 +4584,24 @@ function sharedTypeBoundaryViolations(): string[] {
   return violations;
 }
 
-function sharedApiClientBoundaryViolations(): string[] {
+function sharedApiFacadeBoundaryViolations(): string[] {
   const violations: string[] = [];
-  const retiredFacade = resolve(SOURCE_ROOT, "shared/api/client.ts");
-  const retiredFacadeWithoutExtension = retiredFacade.slice(
-    0,
-    -extname(retiredFacade).length,
+  const retiredFacades = ["client.ts", "history.ts", "jobs.ts"].map((name) =>
+    resolve(SOURCE_ROOT, "shared/api", name),
+  );
+  const retiredFacadeTargets = new Set(
+    retiredFacades.flatMap((facade) => [
+      facade,
+      facade.slice(0, -extname(facade).length),
+    ]),
   );
 
-  if (existsSync(retiredFacade)) {
-    violations.push(
-      "shared/api/client.ts compatibility facade must remain removed",
-    );
+  for (const facade of retiredFacades) {
+    if (existsSync(facade)) {
+      violations.push(
+        `${relative(SOURCE_ROOT, facade)} compatibility facade must remain removed`,
+      );
+    }
   }
 
   for (const file of sourceFiles().filter((candidate) =>
@@ -4611,12 +4614,9 @@ function sharedApiClientBoundaryViolations(): string[] {
         : normalizedSpecifier.startsWith(".")
           ? resolve(dirname(file), normalizedSpecifier)
           : null;
-      if (
-        target === retiredFacade ||
-        target === retiredFacadeWithoutExtension
-      ) {
+      if (target !== null && retiredFacadeTargets.has(target)) {
         violations.push(
-          `production source may not import retired shared API client facade: ${sourceSegments(file).join("/")}`,
+          `production source may not import a retired shared API facade: ${sourceSegments(file).join("/")}`,
         );
       }
     }
@@ -4812,12 +4812,6 @@ describe("frontend source architecture", () => {
   it("limits domain compatibility imports to declared API facades", () => {
     expect(
       domainCompatibilityFacadeImportAllowed(
-        ["shared", "api", "jobs.ts"],
-        ["domains", "jobs", "api", "jobsApi.ts"],
-      ),
-    ).toBe(true);
-    expect(
-      domainCompatibilityFacadeImportAllowed(
         ["shared", "api", "benchmarks.ts"],
         ["domains", "benchmarks", "api", "benchmarksApi.ts"],
       ),
@@ -4833,7 +4827,13 @@ describe("frontend source architecture", () => {
         ["shared", "api", "history.ts"],
         ["domains", "history", "api", "historyApi.ts"],
       ),
-    ).toBe(true);
+    ).toBe(false);
+    expect(
+      domainCompatibilityFacadeImportAllowed(
+        ["shared", "api", "jobs.ts"],
+        ["domains", "jobs", "api", "jobsApi.ts"],
+      ),
+    ).toBe(false);
     expect(
       domainCompatibilityFacadeImportAllowed(
         ["shared", "api", "client.ts"],
@@ -5015,8 +5015,8 @@ describe("frontend source architecture", () => {
     expect(sharedTypeBoundaryViolations()).toEqual([]);
   });
 
-  it("keeps the shared API client compatibility facade retired", () => {
-    expect(sharedApiClientBoundaryViolations()).toEqual([]);
+  it("keeps retired shared API compatibility facades removed", () => {
+    expect(sharedApiFacadeBoundaryViolations()).toEqual([]);
   });
 
   it("keeps workspace persistence in focused modules", () => {
