@@ -2484,7 +2484,10 @@ function AnalyzerWorkspace({
 
   function appendJob(created: JobRecord) {
     updateJobs((current) => [...current, created]);
-    activateJob(created, "replace");
+    activateJob(
+      created,
+      processingJobsForCache([created]).length > 0 ? "replace" : false,
+    );
   }
 
   function applyApprovedJob(
@@ -2779,7 +2782,13 @@ function AnalyzerWorkspace({
       });
     }
     if (completedJobs.length > 1) {
-      activateJob(completedJobs[0], "replace");
+      const firstCompletedJob = completedJobs[0];
+      activateJob(
+        firstCompletedJob,
+        processingJobsForCache([firstCompletedJob]).length > 0
+          ? "replace"
+          : false,
+      );
     }
     if (controller.signal.aborted || queueAbortRequestedRef.current) {
       setError(
