@@ -482,13 +482,16 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
     seen.add(symbol);
     for (const declaration of symbol?.declarations ?? []) {
+      if (ts.isFunctionExpression(declaration)) {
+        return declaration;
+      }
       if (
-        ts.isFunctionDeclaration(declaration) ||
-        ts.isFunctionExpression(declaration) ||
-        ts.isMethodDeclaration(declaration) ||
-        ts.isGetAccessorDeclaration(declaration) ||
-        ts.isSetAccessorDeclaration(declaration) ||
-        ts.isConstructorDeclaration(declaration)
+        (ts.isFunctionDeclaration(declaration) ||
+          ts.isMethodDeclaration(declaration) ||
+          ts.isGetAccessorDeclaration(declaration) ||
+          ts.isSetAccessorDeclaration(declaration) ||
+          ts.isConstructorDeclaration(declaration)) &&
+        declaration.body
       ) {
         return declaration;
       }
@@ -525,6 +528,40 @@ function waveNineMutationBoundaryViolations(): string[] {
       : ts.isElementAccessExpression(node.expression)
         ? node.expression.argumentExpression
         : node.expression;
+  }
+
+  function invocationHelperReceiver(
+    node: ts.CallExpression,
+  ): ts.Expression | null {
+    if (
+      ts.isPropertyAccessExpression(node.expression) ||
+      ts.isElementAccessExpression(node.expression)
+    ) {
+      const helperName = ts.isPropertyAccessExpression(node.expression)
+        ? node.expression.name.text
+        : ts.isStringLiteralLike(node.expression.argumentExpression)
+          ? node.expression.argumentExpression.text
+          : null;
+      if (["apply", "call"].includes(helperName ?? "")) {
+        if (
+          ts.isPropertyAccessExpression(node.expression) &&
+          ts.isIdentifier(node.expression.expression) &&
+          node.expression.expression.text === "Reflect" &&
+          helperName === "apply"
+        ) {
+          const reflectSymbol = resolvedSymbol(node.expression.expression);
+          const isGlobalReflect = reflectSymbol?.declarations?.some(
+            (declaration) =>
+              declaration
+                .getSourceFile()
+                .fileName.endsWith("lib.es2015.reflect.d.ts"),
+          );
+          return isGlobalReflect ? (node.arguments[0] ?? null) : null;
+        }
+        return node.expression.expression;
+      }
+    }
+    return null;
   }
 
   type RequestMethodState = "absent" | "read" | "write";
@@ -798,9 +835,15 @@ function waveNineMutationBoundaryViolations(): string[] {
           const localCallable = callableImplementation(
             resolvedSymbol(reference),
           );
+          const receiver = invocationHelperReceiver(node);
+          const receiverCallable = receiver
+            ? callableImplementation(resolvedSymbol(receiver))
+            : null;
           writes =
             mutationSymbol(reference) !== null ||
-            (localCallable !== null && callableWrites(localCallable, active));
+            (localCallable !== null && callableWrites(localCallable, active)) ||
+            (receiverCallable !== null &&
+              callableWrites(receiverCallable, active));
           if (!writes) {
             writes = node.arguments.some((argument) =>
               argumentCallableWrites(argument, active),
