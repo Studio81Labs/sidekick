@@ -1,5 +1,11 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import {
+  MemoryRouter,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+} from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import AnalyzerRoute from "./AnalyzerRoute";
@@ -23,7 +29,12 @@ vi.mock("./AnalyzerPage", () => ({
       </output>
       <button onClick={navigation.openTraining}>Open training</button>
       <button onClick={() => navigation.openJob("next-job")}>Open job</button>
-      <button onClick={navigation.openWorkspace}>Close surface</button>
+      <button
+        onClick={() => navigation.openJob("replacement-job", { replace: true })}
+      >
+        Replace job
+      </button>
+      <button onClick={() => navigation.openWorkspace()}>Close surface</button>
     </>
   ),
 }));
@@ -32,6 +43,7 @@ afterEach(cleanup);
 
 describe("AnalyzerRoute", () => {
   function RouteHarness() {
+    const navigate = useNavigate();
     return (
       <>
         <Routes>
@@ -49,6 +61,7 @@ describe("AnalyzerRoute", () => {
           />
         </Routes>
         <output aria-label="Current path">{useLocation().pathname}</output>
+        <button onClick={() => navigate(-1)}>Back</button>
       </>
     );
   }
@@ -107,5 +120,11 @@ describe("AnalyzerRoute", () => {
     expect(screen.getByLabelText("Current path")).toHaveTextContent(
       "/analyzer/jobs/next-job",
     );
+
+    fireEvent.click(screen.getByRole("button", { name: "Replace job" }));
+    expect(screen.getByText("job:replacement-job")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByText("workspace:none")).toBeInTheDocument();
   });
 });

@@ -160,6 +160,7 @@ const DEFAULT_ANALYZER_NAVIGATION: AnalyzerRouteNavigation = {
   openTraining: ignoreRouteNavigation,
   openWorkspace: ignoreRouteNavigation,
 };
+type JobNavigationMode = "push" | "replace" | false;
 
 interface AnalyzerPageProps {
   navigation?: AnalyzerRouteNavigation;
@@ -539,7 +540,7 @@ function AnalyzerWorkspace({
       ),
     onJobUnavailable: () => {
       alignWorkspaceToJob(null);
-      navigation.openWorkspace();
+      navigation.openWorkspace({ replace: true });
     },
     openBenchmarks: openBenchmarkDialog,
     openTraining: openTrainingDialog,
@@ -1964,12 +1965,17 @@ function AnalyzerWorkspace({
     };
   }, [processingRestoreRequest]);
 
-  function activateJob(nextJob: JobRecord, navigateToJob = true) {
+  function activateJob(
+    nextJob: JobRecord,
+    navigationMode: JobNavigationMode = "push",
+  ) {
     alignWorkspaceToJob(nextJob);
     setLivePreviewVisible(false);
     setError(null);
-    if (navigateToJob) {
-      navigation.openJob(nextJob.id);
+    if (navigationMode) {
+      navigation.openJob(nextJob.id, {
+        replace: navigationMode === "replace",
+      });
     }
   }
 
@@ -2006,7 +2012,10 @@ function AnalyzerWorkspace({
     setActiveJobId(updatedJob.id);
   }
 
-  function upsertAndActivateJob(nextJob: JobRecord, navigateToJob = true) {
+  function upsertAndActivateJob(
+    nextJob: JobRecord,
+    navigationMode: JobNavigationMode = "push",
+  ) {
     updateJobs((current) => {
       const existing = current.some((candidate) => candidate.id === nextJob.id);
       return existing
@@ -2016,7 +2025,7 @@ function AnalyzerWorkspace({
         : [nextJob, ...current];
     });
     updateHistoryJob(nextJob, false);
-    activateJob(nextJob, navigateToJob);
+    activateJob(nextJob, navigationMode);
   }
 
   function updateHistoryJob(updatedJob: JobRecord, revalidateSearch = true) {
@@ -2454,7 +2463,7 @@ function AnalyzerWorkspace({
 
   function appendJob(created: JobRecord) {
     updateJobs((current) => [...current, created]);
-    activateJob(created);
+    activateJob(created, "replace");
   }
 
   function applyApprovedJob(
@@ -2749,7 +2758,7 @@ function AnalyzerWorkspace({
       });
     }
     if (completedJobs.length > 1) {
-      activateJob(completedJobs[0]);
+      activateJob(completedJobs[0], "replace");
     }
     if (controller.signal.aborted || queueAbortRequestedRef.current) {
       setError(
@@ -3174,13 +3183,17 @@ function AnalyzerWorkspace({
         if (!nextHand) {
           setTrainingReviewQueueJobId(null);
           setTrainingProgressView("review");
-          setTrainingDialogOpen(true);
+          if (navigation.managed) {
+            navigation.openTraining();
+          } else {
+            setTrainingDialogOpen(true);
+          }
           toast.success("Review queue completed");
           return;
         }
 
         const nextJob = await fetchJobQuery(queryClient, nextHand.job_id);
-        upsertAndActivateJob(nextJob);
+        upsertAndActivateJob(nextJob, "replace");
         setTrainingReviewQueueJobId(nextJob.id);
         toast.success("Training review completed. Next hand ready");
       } catch (continueError) {
@@ -3799,9 +3812,9 @@ function AnalyzerWorkspace({
       const fallbackJob = nextJobs[fallbackIndex] ?? null;
       alignWorkspaceToJob(fallbackJob);
       if (fallbackJob) {
-        navigation.openJob(fallbackJob.id);
+        navigation.openJob(fallbackJob.id, { replace: true });
       } else {
-        navigation.openWorkspace();
+        navigation.openWorkspace({ replace: true });
       }
     }
     if (writeProcessingQueue(nextJobs)) {
@@ -3996,10 +4009,11 @@ function AnalyzerWorkspace({
         activateJob(
           remainingJobs.find((candidate) => candidate.id === activeJobId) ??
             remainingJobs[0],
+          "replace",
         );
       } else {
         alignWorkspaceToJob(null);
-        navigation.openWorkspace();
+        navigation.openWorkspace({ replace: true });
         setError(null);
       }
     } catch (historyError) {

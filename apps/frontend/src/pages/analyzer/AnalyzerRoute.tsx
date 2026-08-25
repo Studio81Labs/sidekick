@@ -25,9 +25,11 @@ export default function AnalyzerRoute({ surface }: AnalyzerRouteProps) {
     () => ({
       managed: true,
       openBenchmarks: () => navigate(analyzerPaths.analyzerBenchmarks),
-      openJob: (nextJobId) => navigate(analyzerJobPath(nextJobId)),
+      openJob: (nextJobId, options) =>
+        navigate(analyzerJobPath(nextJobId), { replace: options?.replace }),
       openTraining: () => navigate(analyzerPaths.analyzerTraining),
-      openWorkspace: () => navigate(analyzerPaths.analyzer),
+      openWorkspace: (options) =>
+        navigate(analyzerPaths.analyzer, { replace: options?.replace }),
     }),
     [navigate],
   );

@@ -8,9 +8,13 @@ export interface AnalyzerRouteState {
 export interface AnalyzerRouteNavigation {
   managed: boolean;
   openBenchmarks: () => void;
-  openJob: (jobId: string) => void;
+  openJob: (jobId: string, options?: AnalyzerRouteNavigationOptions) => void;
   openTraining: () => void;
-  openWorkspace: () => void;
+  openWorkspace: (options?: AnalyzerRouteNavigationOptions) => void;
+}
+
+export interface AnalyzerRouteNavigationOptions {
+  replace?: boolean;
 }
 
 export const analyzerPaths = {
