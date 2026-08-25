@@ -835,16 +835,48 @@ function waveNineMutationBoundaryViolations(): string[] {
     );
   }
 
-  function typeContainsGlobalDomType(type: ts.Type, name: string): boolean {
+  function typeContainsGlobalDomType(
+    type: ts.Type,
+    name: string,
+    seen = new Set<ts.Type>(),
+  ): boolean {
+    if (seen.has(type)) {
+      return false;
+    }
+    seen.add(type);
     if (type.isUnionOrIntersection()) {
       return type.types.some((member) =>
-        typeContainsGlobalDomType(member, name),
+        typeContainsGlobalDomType(member, name, seen),
       );
     }
-    return isGlobalDomSymbol(
-      resolvedAliasSymbol(type.aliasSymbol ?? type.getSymbol()),
-      name,
-    );
+    if (
+      isGlobalDomSymbol(
+        resolvedAliasSymbol(type.aliasSymbol ?? type.getSymbol()),
+        name,
+      )
+    ) {
+      return true;
+    }
+    if ((type.flags & ts.TypeFlags.Object) === 0) {
+      return false;
+    }
+    const objectType = type as ts.ObjectType;
+    if ((objectType.objectFlags & ts.ObjectFlags.Reference) !== 0) {
+      const target = (type as ts.TypeReference).target;
+      if (target !== type && typeContainsGlobalDomType(target, name, seen)) {
+        return true;
+      }
+    }
+    if (
+      (objectType.objectFlags &
+        (ts.ObjectFlags.Class | ts.ObjectFlags.Interface)) !==
+      0
+    ) {
+      return checker
+        .getBaseTypes(type as ts.InterfaceType)
+        .some((baseType) => typeContainsGlobalDomType(baseType, name, seen));
+    }
+    return false;
   }
 
   function requestInputMethodStates(
@@ -999,7 +1031,9 @@ function waveNineMutationBoundaryViolations(): string[] {
 
     collectReceiverAliases(callable);
     visit(callable);
-    return [...operations.values()].some((operation) => operation.send);
+    return [...operations.values()].some(
+      (operation) => operation.send && operation.writeOpen,
+    );
   }
 
   const writeBearingCallables = new Map<CallableImplementation, boolean>();
