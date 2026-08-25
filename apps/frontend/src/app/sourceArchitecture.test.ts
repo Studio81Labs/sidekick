@@ -502,9 +502,12 @@ function waveNineMutationBoundaryViolations(): string[] {
     if (
       !ts.isPropertyAccessExpression(node.expression) ||
       !ts.isIdentifier(node.expression.expression) ||
-      node.arguments.length < 2 ||
-      !ts.isStringLiteralLike(node.arguments[1])
+      node.arguments.length < 2
     ) {
+      return null;
+    }
+    const propertyName = constantStringValue(node.arguments[1]);
+    if (propertyName === null) {
       return null;
     }
     const owner = node.expression.expression;
@@ -529,7 +532,7 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
     const targetType = checker.getTypeAtLocation(node.arguments[0]);
     const propertySymbol = resolvedAliasSymbol(
-      checker.getPropertyOfType(targetType, node.arguments[1].text),
+      checker.getPropertyOfType(targetType, propertyName),
     );
     return (
       mutationNameForSymbol(propertySymbol) ??
