@@ -1,7 +1,3 @@
-import {
-  ApiResponseError,
-  humanReadableMessage,
-} from "../../../shared/api/core";
 import type { CanonicalState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
 import { type PersistedJobMutationScope } from "./mutationLeaseTypes";
@@ -16,45 +12,6 @@ export type ActiveRecommendationRequest = {
   controller: AbortController;
   ownsMutationLease: boolean;
 };
-
-export const ERROR_TOAST_ID = "poker-training-error";
-
-export const VALIDATION_TOAST_ID = "poker-training-validation";
-
-export function messageFromError(error: unknown, fallback: string): string {
-  return humanReadableMessage(
-    error instanceof Error ? error.message : error,
-    fallback,
-  );
-}
-
-export function isAbortError(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "name" in error &&
-    error.name === "AbortError"
-  );
-}
-
-export function mutationFailureMayHavePersistedSideEffect(
-  error: unknown,
-): boolean {
-  return (
-    error instanceof TypeError ||
-    (error instanceof ApiResponseError &&
-      (error.status === 408 || error.status >= 500))
-  );
-}
-
-export function recommendationAttemptMayHavePersistedSideEffect(
-  error: unknown,
-): boolean {
-  return (
-    mutationFailureMayHavePersistedSideEffect(error) ||
-    (error instanceof ApiResponseError && error.status === 422)
-  );
-}
 
 export function autoApprovalState(
   job: JobRecord,

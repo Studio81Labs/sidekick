@@ -11,7 +11,7 @@ import type {
   BenchmarkReport,
 } from "../../../shared/types/benchmarks";
 import type { PipelineSelection } from "../../../shared/types/pipeline";
-import { messageFromError } from "../../workspace/lib/workflow";
+import { messageFromError } from "../../../shared/lib/errors";
 import {
   benchmarkReportSummary,
   benchmarkReportsAreComparable,

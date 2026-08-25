@@ -10,7 +10,7 @@ import {
   providerLabel,
   reconcilePipelineSelection,
 } from "../../pipeline/lib/pipelineSelection";
-import { messageFromError } from "../../workspace/lib/workflow";
+import { messageFromError } from "../../../shared/lib/errors";
 import type { BenchmarkOverview } from "../../../shared/types/benchmarks";
 import type { JobRecord } from "../../../shared/types/jobs";
 import type {

@@ -57,6 +57,13 @@ import {
   fetchTrainingProgressQuery,
 } from "../../features/workspace/lib/queryReads";
 import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
+import {
+  ERROR_TOAST_ID,
+  isAbortError,
+  messageFromError,
+  mutationFailureMayHavePersistedSideEffect,
+  recommendationAttemptMayHavePersistedSideEffect,
+} from "../../shared/lib/errors";
 import type { BenchmarkDatasetImportResult } from "../../shared/types/benchmarks";
 import type { CanonicalState } from "../../shared/types/poker";
 import type { JobHistory, JobRecord } from "../../shared/types/jobs";
@@ -115,15 +122,10 @@ import {
   trainingReviewQueueStatus,
 } from "../../features/training/lib/trainingPresentation";
 import {
-  ERROR_TOAST_ID,
   autoApprovalState,
   createLocalErrorJob,
-  isAbortError,
   isHistoryReady,
   isProcessingJobInProgress,
-  messageFromError,
-  mutationFailureMayHavePersistedSideEffect,
-  recommendationAttemptMayHavePersistedSideEffect,
 } from "../../features/workspace/lib/workflow";
 
 type JobNavigationMode = "push" | "replace" | false;
