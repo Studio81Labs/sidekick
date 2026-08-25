@@ -1,8 +1,8 @@
-import {
-  type PipelineCapabilities,
-  type PipelineOption,
-  type PipelineSelection,
-} from "../../../shared/types";
+import type {
+  PipelineCapabilities,
+  PipelineOption,
+  PipelineSelection,
+} from "../../../shared/types/pipeline";
 
 export const PROVIDER_LABELS: Record<string, string> = {
   auto: "Automatic recognition",

@@ -2,7 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
-import type { JobRecord } from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
 import {
   AnalyzerTestApp as App,
   recommendation,

@@ -29,8 +29,8 @@ import { TrainingProgressControls } from "./TrainingProgressControls";
 import { TrainingProgressOverview } from "./TrainingProgressOverview";
 import { TrainingSolverCoverage } from "./TrainingSolverCoverage";
 import { TrainingStreetSummary } from "./TrainingStreetSummary";
+import type { Street } from "../../../shared/types/poker";
 import type {
-  Street,
   TrainingCertaintyFilter,
   TrainingPositionFilter,
   TrainingProgress,
@@ -42,7 +42,7 @@ import type {
   TrainingReviewStreet,
   TrainingSolverFilter,
   TrainingStreetFilter,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 export interface TrainingProgressDialogProps {
   actionDifferenceFocus: TrainingActionDifferenceFocus | null;

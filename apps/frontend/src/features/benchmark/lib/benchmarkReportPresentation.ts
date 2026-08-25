@@ -5,8 +5,8 @@ import type {
   BenchmarkParserPipelineSummary,
   BenchmarkReport,
   BenchmarkReportSummary,
-  PipelineCapabilities,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
+import type { PipelineCapabilities } from "../../../shared/types/pipeline";
 import { providerLabel } from "../../pipeline/lib/pipelineSelection";
 
 export interface BenchmarkComparisonProgress {

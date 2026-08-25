@@ -6,7 +6,7 @@ import {
   trainingTrendTone,
   trainingTrendWindowLabel,
 } from "../../../shared/lib/metricPresentation";
-import type { TrainingTrend } from "../../../shared/types";
+import type { TrainingTrend } from "../../../shared/types/training";
 
 export interface TrainingPerformanceTrendProps {
   hiddenFromAssistiveTechnology?: boolean;

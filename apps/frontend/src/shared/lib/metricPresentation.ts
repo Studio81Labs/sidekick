@@ -1,4 +1,4 @@
-import type { TrainingTrend } from "../types";
+import type { TrainingTrend } from "../types/training";
 
 export function formatCandidateValue(value: number): string {
   return Number(value.toFixed(3)).toString();

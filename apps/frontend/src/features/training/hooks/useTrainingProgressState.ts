@@ -5,8 +5,8 @@ import {
   trainingProgressQueryOptions,
   trainingQueryKeys,
 } from "../../../domains/training/api/trainingQueries";
+import type { Street } from "../../../shared/types/poker";
 import type {
-  Street,
   TrainingCertaintyFilter,
   TrainingPositionFilter,
   TrainingProgress,
@@ -17,7 +17,7 @@ import type {
   TrainingReviewStreet,
   TrainingSolverFilter,
   TrainingStreetFilter,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 import { messageFromError } from "../../workspace/lib/workflow";
 import {
   sameTrainingPositionFilter,

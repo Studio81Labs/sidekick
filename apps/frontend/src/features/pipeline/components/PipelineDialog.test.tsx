@@ -6,7 +6,7 @@ import { PipelineDialog, type PipelineDialogProps } from "./PipelineDialog";
 import type {
   PipelineCapabilities,
   PipelineSelection,
-} from "../../../shared/types";
+} from "../../../shared/types/pipeline";
 
 afterEach(cleanup);
 

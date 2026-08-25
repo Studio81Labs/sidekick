@@ -2,7 +2,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { JobStatusBadge } from "./JobStatusBadge";
-import type { JobRecord } from "../types";
+import type { JobRecord } from "../types/jobs";
 
 afterEach(cleanup);
 

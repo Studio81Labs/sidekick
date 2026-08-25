@@ -11,10 +11,8 @@ import {
   TrainingDecisionList,
   type TrainingDecisionListProps,
 } from "./TrainingDecisionList";
-import type {
-  RecommendationAction,
-  TrainingRecentHand,
-} from "../../../shared/types";
+import type { RecommendationAction } from "../../../shared/types/recommendations";
+import type { TrainingRecentHand } from "../../../shared/types/training";
 
 afterEach(cleanup);
 

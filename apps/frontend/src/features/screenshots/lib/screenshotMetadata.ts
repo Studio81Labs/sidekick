@@ -1,4 +1,4 @@
-import type { JobRecord } from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 export const MAX_SCREENSHOT_TITLE_LENGTH = 120;
 export const MAX_SCREENSHOT_NOTES_LENGTH = 1000;

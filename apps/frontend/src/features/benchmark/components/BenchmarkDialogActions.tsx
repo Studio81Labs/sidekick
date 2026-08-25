@@ -8,7 +8,7 @@ import {
   DownloadLinkControl,
   FileInputControl,
 } from "../../../shared/components/FormControls";
-import type { PipelineSelection } from "../../../shared/types";
+import type { PipelineSelection } from "../../../shared/types/pipeline";
 
 export interface BenchmarkDialogActionsProps {
   closeDisabled: boolean;

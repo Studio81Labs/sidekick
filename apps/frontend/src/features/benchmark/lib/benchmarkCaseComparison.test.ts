@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type {
   BenchmarkCaseResult,
   BenchmarkReport,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
 import {
   benchmarkCaseChanges,
   benchmarkCaseTrend,

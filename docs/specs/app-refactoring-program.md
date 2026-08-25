@@ -530,6 +530,12 @@ domain.
 
 Dependencies: Waves 1-11
 
+Wave 12 is in progress. The frontend shared-type compatibility barrel has been
+retired and an architecture check prevents production code from recreating or
+importing it. Remaining API facades, peer-feature exceptions, backend
+compatibility modules, and final release audits are tracked in subsequent
+bounded slices.
+
 - Remove obsolete handwritten wire types, API client facade, temporary barrels,
   dead page helpers, and duplicated fixtures.
 - Verify frontend and backend package dependency direction.
@@ -630,7 +636,7 @@ Every implementation PR must include:
 | 9    | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
 | 10   | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands  |
 | 11   | Complete    | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain               |
-| 12   | Pending     | Remove compatibility facades and peer-feature allowlists, run final security/performance/release audits, and update final contributor and operations documentation                                   |
+| 12   | In progress | The frontend shared-type barrel is removed; API facades, peer-feature allowlists, backend compatibility modules, release audits, and final documentation remain                                      |
 
 ## Exit Criteria
 

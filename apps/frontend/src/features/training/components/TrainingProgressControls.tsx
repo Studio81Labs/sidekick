@@ -13,7 +13,7 @@ import type {
   TrainingReviewCertaintyFilter,
   TrainingReviewOrder,
   TrainingReviewStreet,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 export interface TrainingProgressControlsProps {
   controlsDisabled: boolean;

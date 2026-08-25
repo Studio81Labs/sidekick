@@ -4,14 +4,14 @@ import type { ReactNode } from "react";
 import "./TrainingActiveFilters.css";
 import { ButtonControl } from "../../../shared/components/FormControls";
 import type { TrainingDecisionListView } from "./TrainingDecisionList";
+import type { RecommendationAction } from "../../../shared/types/recommendations";
 import type {
-  RecommendationAction,
   TrainingCertaintyFilter,
   TrainingPositionFilter,
   TrainingReviewDifference,
   TrainingSolverFilter,
   TrainingStreetFilter,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 export interface TrainingActiveFiltersProps {
   actionLabel: (action: RecommendationAction) => string;

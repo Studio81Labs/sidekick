@@ -1,4 +1,4 @@
-import type { Card, Suit } from "../types";
+import type { Card, Suit } from "../types/poker";
 
 export const SUIT_BY_CODE: Readonly<Record<string, Suit>> = {
   c: "clubs",

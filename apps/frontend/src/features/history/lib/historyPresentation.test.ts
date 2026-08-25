@@ -5,7 +5,8 @@ import {
   historyCards,
   relativeTimeLabel,
 } from "./historyPresentation";
-import type { CanonicalState, JobRecord } from "../../../shared/types";
+import type { CanonicalState } from "../../../shared/types/poker";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 const NOW = Date.parse("2026-08-13T12:00:00Z");
 

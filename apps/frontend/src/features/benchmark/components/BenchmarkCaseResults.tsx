@@ -10,7 +10,7 @@ import type {
   BenchmarkCaseResult,
   BenchmarkReport,
   BenchmarkReportSummary,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
 import { providerLabel } from "../../pipeline/lib/pipelineSelection";
 import { parserRoutingEvidence } from "../../recommendation/lib/recommendationPresentation";
 import {

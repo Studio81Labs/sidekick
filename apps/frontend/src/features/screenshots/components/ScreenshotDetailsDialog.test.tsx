@@ -6,7 +6,7 @@ import {
   ScreenshotDetailsDialog,
   type ScreenshotDetailsDialogProps,
 } from "./ScreenshotDetailsDialog";
-import type { JobRecord } from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 afterEach(cleanup);
 

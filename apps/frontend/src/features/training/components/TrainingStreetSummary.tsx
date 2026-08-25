@@ -8,11 +8,11 @@ import {
 } from "../../../shared/lib/metricPresentation";
 import { SectionHeading } from "../../../shared/components/SectionHeading";
 import { TrainingPerformanceTrend } from "./TrainingPerformanceTrend";
+import type { Street } from "../../../shared/types/poker";
 import type {
-  Street,
   TrainingStreetFilter,
   TrainingStreetSummary as TrainingStreetSummaryModel,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 export interface TrainingStreetFocus {
   reason: string;

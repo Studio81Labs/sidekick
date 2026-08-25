@@ -13,7 +13,7 @@ import {
   TextInput,
 } from "../../../shared/components/FormControls";
 import { SegmentedControl } from "../../../shared/components/SegmentedControl";
-import type { TrainingDecision } from "../../../shared/types";
+import type { TrainingDecision } from "../../../shared/types/training";
 
 export interface TrainingDecisionPanelProps {
   action: TrainingActionOption;

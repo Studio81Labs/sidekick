@@ -17,7 +17,7 @@ import type {
   TrainingCertaintyFilter,
   TrainingProgress,
   TrainingReviewCertainty,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 type TrainingCertaintyProgress = Pick<
   TrainingProgress,

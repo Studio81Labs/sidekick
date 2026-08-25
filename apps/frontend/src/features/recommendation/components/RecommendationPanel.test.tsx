@@ -1,7 +1,8 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { JobRecord, RecommendationResult } from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
+import type { RecommendationResult } from "../../../shared/types/recommendations";
 import {
   RecommendationPanel,
   type RecommendationPanelProps,

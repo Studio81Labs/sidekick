@@ -5,9 +5,9 @@ import { describe, expect, it, vi } from "vitest";
 import type {
   BenchmarkCaseResult,
   BenchmarkReport,
-  DetectedState,
-  JobRecord,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
+import type { DetectedState } from "../../../shared/types/poker";
+import type { JobRecord } from "../../../shared/types/jobs";
 import {
   AnalyzerTestApp as App,
   approvedJob,

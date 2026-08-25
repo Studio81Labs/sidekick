@@ -20,7 +20,7 @@ import { screenshotLabel } from "../../screenshots/lib/screenshotPresentation";
 import { ScreenshotRailItem } from "../../queue/components/ScreenshotRailItem";
 import { StateMessage } from "../../../shared/components/StateMessage";
 import { StatusBadge } from "../../../shared/components/StatusBadge";
-import type { JobRecord } from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 export interface HistoryPanelProps {
   busy: boolean;

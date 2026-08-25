@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { HistoryPanel, type HistoryPanelProps } from "./HistoryPanel";
 import type { HistoryItem } from "../lib/historyPresentation";
-import type { CanonicalState, JobRecord } from "../../../shared/types";
+import type { CanonicalState } from "../../../shared/types/poker";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });

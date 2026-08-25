@@ -11,12 +11,12 @@ import {
   reconcilePipelineSelection,
 } from "../../pipeline/lib/pipelineSelection";
 import { messageFromError } from "../../workspace/lib/workflow";
+import type { BenchmarkOverview } from "../../../shared/types/benchmarks";
+import type { JobRecord } from "../../../shared/types/jobs";
 import type {
-  BenchmarkOverview,
-  JobRecord,
   PipelineCapabilities,
   PipelineSelection,
-} from "../../../shared/types";
+} from "../../../shared/types/pipeline";
 import { useBenchmarkReportState } from "./useBenchmarkReportState";
 
 interface UseBenchmarkControllerOptions {

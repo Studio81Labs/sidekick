@@ -7,7 +7,7 @@ import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
 import { screenshotLabel } from "../../screenshots/lib/screenshotPresentation";
 import { ScreenshotRailItem } from "./ScreenshotRailItem";
 import { StateMessage } from "../../../shared/components/StateMessage";
-import type { JobRecord } from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 export interface ScreenshotQueuePanelProps {
   activeJobId: string | null;

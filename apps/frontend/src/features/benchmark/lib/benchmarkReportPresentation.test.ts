@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type {
   BenchmarkParserPipelineSummary,
   BenchmarkReport,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
 import {
   benchmarkCorpusFingerprintAfterLayoutMutation,
   benchmarkCorpusIsUnverified,

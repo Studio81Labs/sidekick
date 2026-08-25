@@ -12,11 +12,9 @@ import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
 import { RecommendationPanel } from "../../recommendation/components/RecommendationPanel";
 import { TrainingDecisionPanel } from "../../training/components/TrainingDecisionPanel";
 import { trainingDecisionComparison } from "../../training/lib/trainingPresentation";
-import type {
-  JobRecord,
-  RecommendationResult,
-  TrainingDecision,
-} from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
+import type { RecommendationResult } from "../../../shared/types/recommendations";
+import type { TrainingDecision } from "../../../shared/types/training";
 
 export interface HandReviewPanelProps {
   busy: boolean;

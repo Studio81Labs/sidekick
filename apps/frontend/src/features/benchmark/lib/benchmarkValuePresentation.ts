@@ -1,4 +1,4 @@
-import type { BenchmarkFieldComparison } from "../../../shared/types";
+import type { BenchmarkFieldComparison } from "../../../shared/types/benchmarks";
 import { PREFLOP_POSITIONS } from "../../hand-review/lib/preflopPosition";
 
 export function benchmarkComparisonValue(value: unknown): string {

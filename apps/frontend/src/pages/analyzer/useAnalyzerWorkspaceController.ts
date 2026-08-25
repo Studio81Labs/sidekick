@@ -58,12 +58,9 @@ import {
   getTrainingProgress,
   humanReadableMessage,
 } from "../../shared/api/client";
-import {
-  type BenchmarkDatasetImportResult,
-  type CanonicalState,
-  type JobHistory,
-  type JobRecord,
-} from "../../shared/types";
+import type { BenchmarkDatasetImportResult } from "../../shared/types/benchmarks";
+import type { CanonicalState } from "../../shared/types/poker";
+import type { JobHistory, JobRecord } from "../../shared/types/jobs";
 import { benchmarkCorpusFingerprintAfterLayoutMutation } from "../../features/benchmark/lib/benchmarkPresentation";
 import { importBenchmarkDatasetCommand } from "../../features/benchmark/services/importBenchmarkDatasetCommand";
 import { setBenchmarkInclusionCommand } from "../../features/benchmark/services/setBenchmarkInclusionCommand";
