@@ -2829,6 +2829,11 @@ function waveNineMutationBoundaryViolations(): string[] {
           ...constructorImplementations(node.expression),
           ...proxyCallables(node),
         ].some((implementation) => callableWrites(implementation));
+        if (!writes) {
+          writes = (node.arguments ?? []).some((argument) =>
+            argumentCallableWrites(argument, new Set()),
+          );
+        }
       }
       ts.forEachChild(node, visit);
     }
