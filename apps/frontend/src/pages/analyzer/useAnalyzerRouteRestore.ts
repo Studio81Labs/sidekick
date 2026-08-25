@@ -11,6 +11,7 @@ export interface AnalyzerRouteRestoreOptions {
   jobs: readonly JobRecord[];
   loadJob: (jobId: string) => Promise<JobRecord>;
   onError: (error: unknown) => void;
+  onJobUnavailable: () => void;
   openBenchmarks: () => void;
   openTraining: () => void;
   route: AnalyzerRouteState;
@@ -56,6 +57,7 @@ export function useAnalyzerRouteRestore(
           })
           .catch((error: unknown) => {
             if (active) {
+              current.onJobUnavailable();
               current.onError(error);
             }
           });

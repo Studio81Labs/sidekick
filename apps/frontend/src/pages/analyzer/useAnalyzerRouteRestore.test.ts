@@ -23,6 +23,7 @@ function options(
     jobs: [],
     loadJob: vi.fn(async (jobId) => job(jobId)),
     onError: vi.fn(),
+    onJobUnavailable: vi.fn(),
     openBenchmarks: vi.fn(),
     openTraining: vi.fn(),
     route: analyzerRouteState("workspace"),
@@ -86,6 +87,7 @@ describe("useAnalyzerRouteRestore", () => {
     renderHook(() => useAnalyzerRouteRestore(current));
 
     await waitFor(() => expect(current.onError).toHaveBeenCalledWith(failure));
+    expect(current.onJobUnavailable).toHaveBeenCalledOnce();
     expect(current.activateJob).not.toHaveBeenCalled();
   });
 });

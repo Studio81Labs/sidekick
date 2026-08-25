@@ -537,6 +537,10 @@ function AnalyzerWorkspace({
           "The requested analyzer job could not load",
         ),
       ),
+    onJobUnavailable: () => {
+      alignWorkspaceToJob(null);
+      navigation.openWorkspace();
+    },
     openBenchmarks: openBenchmarkDialog,
     openTraining: openTrainingDialog,
     route,
@@ -3995,6 +3999,7 @@ function AnalyzerWorkspace({
         );
       } else {
         alignWorkspaceToJob(null);
+        navigation.openWorkspace();
         setError(null);
       }
     } catch (historyError) {
