@@ -154,6 +154,7 @@ const DEFAULT_ANALYZER_ROUTE: AnalyzerRouteState = {
 };
 const ignoreRouteNavigation = () => undefined;
 const DEFAULT_ANALYZER_NAVIGATION: AnalyzerRouteNavigation = {
+  closeSurface: ignoreRouteNavigation,
   managed: false,
   openBenchmarks: ignoreRouteNavigation,
   openJob: ignoreRouteNavigation,
@@ -4334,7 +4335,7 @@ function AnalyzerWorkspace({
           onCertaintyFilterChange={updateTrainingCertaintyFilter}
           onClose={() => {
             setTrainingDialogOpen(false);
-            navigation.openWorkspace({ replace: true });
+            navigation.closeSurface();
           }}
           onFocusActionDifference={focusTrainingActionDifference}
           onFocusCertainty={focusTrainingReviewCertainty}
@@ -4385,7 +4386,7 @@ function AnalyzerWorkspace({
           }
           onClose={() => {
             closeBenchmarkDialog();
-            navigation.openWorkspace({ replace: true });
+            navigation.closeSurface();
           }}
           onDatasetImport={onBenchmarkDatasetImport}
           onReviewCase={reviewBenchmarkCase}

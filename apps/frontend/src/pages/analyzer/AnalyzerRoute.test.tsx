@@ -34,7 +34,7 @@ vi.mock("./AnalyzerPage", () => ({
       >
         Replace job
       </button>
-      <button onClick={() => navigation.openWorkspace()}>Close surface</button>
+      <button onClick={navigation.closeSurface}>Close surface</button>
     </>
   ),
 }));
@@ -121,10 +121,34 @@ describe("AnalyzerRoute", () => {
       "/analyzer/jobs/next-job",
     );
 
+    fireEvent.click(screen.getByRole("button", { name: "Open job" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByText("workspace:none")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open job" }));
+
     fireEvent.click(screen.getByRole("button", { name: "Replace job" }));
     expect(screen.getByText("job:replacement-job")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Back" }));
     expect(screen.getByText("workspace:none")).toBeInTheDocument();
+  });
+
+  it("returns a closed surface to its origin without duplicating it", () => {
+    render(
+      <MemoryRouter
+        initialEntries={["/analyzer/jobs/prior-job", "/analyzer"]}
+        initialIndex={1}
+      >
+        <RouteHarness />
+      </MemoryRouter>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Open training" }));
+    fireEvent.click(screen.getByRole("button", { name: "Close surface" }));
+    expect(screen.getByText("workspace:none")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(screen.getByText("job:prior-job")).toBeInTheDocument();
   });
 });
