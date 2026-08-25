@@ -1980,6 +1980,90 @@ function waveNineMutationBoundaryViolations(): string[] {
     return implementations;
   }
 
+  function implicitAccessorWrites(
+    node: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+    active = new Set<CallableImplementation>(),
+  ): boolean {
+    const propertySymbol = ts.isPropertyAccessExpression(node)
+      ? (resolvedSymbol(node.name) ?? resolvedSymbol(node))
+      : (() => {
+          const propertyName = constantStringValue(node.argumentExpression);
+          return propertyName === null
+            ? null
+            : resolvedAliasSymbol(
+                checker.getPropertyOfType(
+                  checker.getTypeAtLocation(node.expression),
+                  propertyName,
+                ),
+              );
+        })();
+    if (!propertySymbol) {
+      return false;
+    }
+
+    let expression: ts.Expression = node;
+    while (
+      (ts.isParenthesizedExpression(expression.parent) ||
+        ts.isAsExpression(expression.parent) ||
+        ts.isSatisfiesExpression(expression.parent) ||
+        ts.isNonNullExpression(expression.parent)) &&
+      expression.parent.expression === expression
+    ) {
+      expression = expression.parent;
+    }
+
+    let reads = true;
+    let writes = false;
+    let assignedValue: ts.Expression | null = null;
+    const parent = expression.parent;
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.left === expression &&
+      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    ) {
+      reads = parent.operatorToken.kind !== ts.SyntaxKind.EqualsToken;
+      writes = true;
+      assignedValue = parent.right;
+    } else if (
+      (ts.isPrefixUnaryExpression(parent) ||
+        ts.isPostfixUnaryExpression(parent)) &&
+      parent.operand === expression &&
+      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
+        parent.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      writes = true;
+    } else if (ts.isDeleteExpression(parent)) {
+      reads = false;
+    }
+
+    const getters: CallableImplementation[] = [];
+    const setters: CallableImplementation[] = [];
+    for (const declaration of propertySymbol.declarations ?? []) {
+      if (ts.isGetAccessorDeclaration(declaration) && declaration.body) {
+        getters.push(declaration);
+      } else if (ts.isSetAccessorDeclaration(declaration) && declaration.body) {
+        setters.push(declaration);
+      }
+    }
+    if (
+      reads &&
+      getters.some((implementation) => callableWrites(implementation, active))
+    ) {
+      return true;
+    }
+    return (
+      writes &&
+      setters.some(
+        (implementation) =>
+          callableWrites(implementation, active) ||
+          (assignedValue !== null &&
+            implementationInvokesParameter(implementation, 0) &&
+            argumentCallableWrites(assignedValue, active)),
+      )
+    );
+  }
+
   function callableWrites(
     callable: CallableImplementation,
     active = new Set<CallableImplementation>(),
@@ -2064,6 +2148,13 @@ function waveNineMutationBoundaryViolations(): string[] {
           assignedImplementationsForSymbol(referenceSymbol).some(
             (implementation) => callableWrites(implementation, active),
           );
+      }
+      if (
+        !writes &&
+        (ts.isPropertyAccessExpression(node) ||
+          ts.isElementAccessExpression(node))
+      ) {
+        writes = implicitAccessorWrites(node, active);
       }
       if (ts.isNewExpression(node)) {
         writes = [
@@ -3687,6 +3778,13 @@ function waveNineMutationBoundaryViolations(): string[] {
               argumentCallableWrites(argument, new Set()),
           );
         }
+      }
+      if (
+        !writes &&
+        (ts.isPropertyAccessExpression(node) ||
+          ts.isElementAccessExpression(node))
+      ) {
+        writes = implicitAccessorWrites(node);
       }
       ts.forEachChild(node, visit);
     }
