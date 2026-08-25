@@ -175,7 +175,7 @@ from app.storage.persistence import (
     BenchmarkNotFoundError,
     JobNotFoundError,
 )
-from app.training import (
+from app.domain.training.aggregation import (
     build_training_lessons_markdown,
     summarize_training,
     training_outcome,

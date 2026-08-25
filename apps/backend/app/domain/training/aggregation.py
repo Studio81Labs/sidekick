@@ -9,7 +9,7 @@ from typing import Any, Literal
 from app.domain.poker import Street
 from app.domain.recommendations import RecommendationAction, RecommendationResult
 from app.domain.hands import JobRecord
-from app.domain.training import (
+from app.domain.training.models import (
     TrainingActionDifference,
     TrainingCertainty,
     TrainingCertaintySummary,

@@ -180,3 +180,14 @@ def test_package_root_compatibility_exports_are_retired() -> None:
         if imports_app_package_root(path, package)
     ]
     assert violations == []
+
+
+def test_training_aggregation_monolith_is_retired() -> None:
+    assert not (APP_ROOT / "training.py").exists()
+
+    violations = [
+        str(path)
+        for path in first_party_python_sources()
+        if imports_app_package_root(path, "training")
+    ]
+    assert violations == []

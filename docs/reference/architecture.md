@@ -178,8 +178,10 @@ recovery and the lock ordering for job, history, benchmark import, backup export
 and restore transactions; transport callbacks continue to own HTTP error mapping.
 
 Post-hand decisions, review requests, progress summaries, trends, and solver
-coverage contracts live under `app/domain/training`. Training aggregation and
-transport adapters import that domain directly. The former `app/models.py`
+coverage contracts live under `app/domain/training`. Summary, grading, trend,
+solver-coverage, and Markdown lesson aggregation live in
+`app/domain/training/aggregation.py`; bootstrap and tests import that owner
+directly. The former `app/models.py`
 compatibility facade has been retired; source-architecture tests prevent it or
 its imports from returning.
 

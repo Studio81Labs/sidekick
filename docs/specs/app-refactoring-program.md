@@ -540,8 +540,7 @@ architecture checks prevent production code from recreating or importing those
 compatibility surfaces. MCP transport now belongs to its domain adapter and
 principal writes use feature commands. The backend `app.models`, `app.api`, and
 `app.storage` compatibility exports are retired, leaving controller ownership,
-the training aggregation monolith, and final release audits for subsequent
-bounded slices.
+final release audits, and final documentation for subsequent bounded slices.
 The first peer-dependency cleanup moved shared error primitives out of the
 workspace feature and reduced the explicit peer-feature baseline from 41 to 34
 edges. Moving preflop-position normalization into the poker domain removed two
