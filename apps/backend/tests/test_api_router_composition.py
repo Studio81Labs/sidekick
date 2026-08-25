@@ -51,16 +51,17 @@ from app.mcp_access import (
     McpPrincipalList,
     McpPrincipalSummary,
 )
-from app.models import (
+from app.domain.hands import (
     ArchiveJobsRequest,
-    CanonicalState,
-    HealthResponse,
     JobHistory,
     JobQueue,
     JobRecord,
-    PipelineCapabilities,
-    PipelineSelection,
     ScreenshotMetadataRequest,
+)
+from app.domain.health import HealthResponse
+from app.domain.pipeline import PipelineCapabilities, PipelineSelection
+from app.domain.poker import CanonicalState
+from app.domain.training import (
     TrainingDecisionRequest,
     TrainingProgress,
     TrainingReviewRequest,

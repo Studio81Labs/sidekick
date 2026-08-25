@@ -17,7 +17,7 @@ from app.backup_cli import (
 )
 from app.config import Settings
 from app.data_lock import InterprocessDataLock
-from app.models import BenchmarkReport
+from app.domain.benchmarks import BenchmarkReport
 from app.storage import FileBenchmarkStore, FileJobStore, initialize_data_volume
 
 

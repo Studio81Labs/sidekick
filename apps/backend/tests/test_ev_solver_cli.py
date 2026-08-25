@@ -1,4 +1,4 @@
-from app.models import Card
+from app.domain.poker import Card
 from app.solvers.ev_solver_cli import _sample_prefix_outcomes
 
 

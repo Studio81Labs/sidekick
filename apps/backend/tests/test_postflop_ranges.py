@@ -5,7 +5,7 @@ from typing import Literal
 import pytest
 
 from app.config import DEFAULT_POSTFLOP_IP_RANGE, DEFAULT_POSTFLOP_OOP_RANGE
-from app.models import (
+from app.domain.poker import (
     CanonicalState,
     CompletedPostflopAction,
     CompletedPostflopStreetHistory,

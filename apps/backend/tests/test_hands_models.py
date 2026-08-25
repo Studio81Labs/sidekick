@@ -10,24 +10,7 @@ from app.domain.hands import (
     JobRecord,
     ScreenshotMetadataRequest,
 )
-from app.models import (
-    ArchiveJobsRequest as CompatibilityArchiveJobsRequest,
-    JobHistory as CompatibilityJobHistory,
-    JobQueue as CompatibilityJobQueue,
-    JobRecord as CompatibilityJobRecord,
-    ScreenshotMetadataRequest as CompatibilityScreenshotMetadataRequest,
-)
 from app.storage import load_persisted_job_record
-
-
-def test_hands_contracts_reexported_from_app_models() -> None:
-    assert CompatibilityJobRecord is JobRecord
-    assert CompatibilityJobHistory is JobHistory
-    assert CompatibilityJobQueue is JobQueue
-    assert CompatibilityArchiveJobsRequest is ArchiveJobsRequest
-    assert (
-        CompatibilityScreenshotMetadataRequest is ScreenshotMetadataRequest
-    )
 
 
 def test_screenshot_metadata_request_normalizes_text_and_tags() -> None:

@@ -20,13 +20,13 @@ from app.dataset_export import (
     ParserDatasetArchiveCase,
     build_parser_dataset_archive_from_cases,
 )
-from app.models import (
-    BenchmarkReport,
+from app.domain.benchmarks import BenchmarkReport
+from app.domain.hands import JobRecord
+from app.domain.poker import (
     CanonicalState,
     Card,
     CompletedPostflopAction,
     CompletedPostflopStreetHistory,
-    JobRecord,
     PostflopAction,
     PreflopAction,
 )

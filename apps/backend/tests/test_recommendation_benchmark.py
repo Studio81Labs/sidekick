@@ -7,7 +7,8 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings, get_settings
-from app.models import Card, PreflopAction, RecommendationRequest, RecommendationResult
+from app.domain.poker import Card, PreflopAction
+from app.domain.recommendations import RecommendationRequest, RecommendationResult
 from app.providers.base import ProviderConfigurationError
 from app.providers.registry import build_provider
 from app.recommendation_benchmark import (

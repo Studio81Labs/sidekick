@@ -19,18 +19,17 @@ from app.api.dependencies import (
 )
 from app.api.routers.benchmarks import create_benchmarks_router
 from app.api.routers.health import create_health_router
-from app.models import (
+from app.domain.benchmarks import (
     BenchmarkDatasetImportReceipt,
     BenchmarkDatasetImportResult,
     BenchmarkOverview,
     BenchmarkReport,
     BenchmarkRunRequest,
     BenchmarkSelectionRequest,
-    HealthResponse,
-    JobRecord,
-    PipelineCapabilities,
-    PipelineSelection,
 )
+from app.domain.hands import JobRecord
+from app.domain.health import HealthResponse
+from app.domain.pipeline import PipelineCapabilities, PipelineSelection
 
 
 def job_record() -> JobRecord:

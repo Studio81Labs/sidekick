@@ -6,15 +6,6 @@ from app.domain.recommendations import (
     RecommendationRequest,
     RecommendationResult,
 )
-from app.models import RecommendationRequest as CompatibilityRecommendationRequest
-from app.models import RecommendationResult as CompatibilityRecommendationResult
-
-
-def test_models_compatibility_surface_reexports_recommendation_contracts() -> None:
-    assert CompatibilityRecommendationRequest is RecommendationRequest
-    assert CompatibilityRecommendationResult is RecommendationResult
-
-
 def test_recommendation_request_parses_canonical_state() -> None:
     request = RecommendationRequest(
         state={
