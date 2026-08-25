@@ -124,6 +124,11 @@ delete-superseded write generation prevents late approval/recommendation
 responses from recreating permanently removed detail entries. Analyzer
 composition retains automation,
 lease handoff, abort registration, and optional training-decision sequencing.
+Screenshot upload now uses a capture-owned command over the generated jobs
+adapter. It preserves the caller upload request ID, selected pipeline, and abort
+signal, seeds confirmed job detail, and invalidates processing only. Analyzer
+composition continues to own per-file queue progress, independent failures,
+projection leases, capture sources, and optional post-upload automation.
 Training decisions and review completion/reopen operations now use a
 training-owned command family. The generated-contract adapters preserve the
 legacy positional function signatures, and confirmed responses update job

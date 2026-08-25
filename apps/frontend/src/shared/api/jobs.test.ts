@@ -14,6 +14,7 @@ import {
   deleteJob as deleteDomainJob,
   getJob as getDomainJob,
   updateJobMetadata as updateDomainJobMetadata,
+  uploadScreenshot as uploadDomainScreenshot,
 } from "../../domains/jobs/api/jobsApi";
 import { requestRecommendation as requestDomainRecommendation } from "../../domains/recommendations/api/recommendationsApi";
 import { getJob as getCompatibilityJob } from "./jobs";
@@ -25,6 +26,7 @@ it("preserves the shared job-read compatibility export identity", () => {
   expect(approveState).toBe(approveDomainState);
   expect(getCompatibilityJob).toBe(getDomainJob);
   expect(updateJobMetadata).toBe(updateDomainJobMetadata);
+  expect(uploadScreenshot).toBe(uploadDomainScreenshot);
   expect(requestRecommendation).toBe(requestDomainRecommendation);
 });
 

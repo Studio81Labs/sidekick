@@ -12,6 +12,7 @@ import {
   toJobQueue,
   toJobRecord,
   updateJobMetadata,
+  uploadScreenshot,
 } from "./jobsApi";
 
 afterEach(resetApiMocks);
@@ -94,6 +95,40 @@ describe("jobs API adapter", () => {
       "http://localhost:8000/api/jobs?offset=100",
       { credentials: "include" },
     );
+  });
+
+  it("uploads multipart pipeline selection and restores a missing request ID", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["screenshot"], "table.png", {
+      type: "image/png",
+    });
+    const controller = new AbortController();
+
+    await expect(
+      uploadScreenshot(file, "upload-1", controller.signal, {
+        parser_provider: "ocr_cv",
+        parser_layout_profile: "fortuna_nations",
+        recommendation_provider: "local_solver",
+        recommendation_engine: "postflop_solver",
+      }),
+    ).resolves.toEqual({ ...jobResponse, upload_request_id: "upload-1" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://localhost:8000/api/jobs",
+      expect.objectContaining({
+        method: "POST",
+        signal: controller.signal,
+        credentials: "include",
+      }),
+    );
+    const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
+    expect(form.get("file")).toBe(file);
+    expect(form.get("upload_request_id")).toBe("upload-1");
+    expect(form.get("parser_provider")).toBe("ocr_cv");
+    expect(form.get("parser_layout_profile")).toBe("fortuna_nations");
+    expect(form.get("recommendation_provider")).toBe("local_solver");
+    expect(form.get("recommendation_engine")).toBe("postflop_solver");
   });
 
   it("updates screenshot metadata through the shared transport", async () => {

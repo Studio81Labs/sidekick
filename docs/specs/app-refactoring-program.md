@@ -456,6 +456,11 @@ cannot recreate removed cache entries. Analyzer
 composition continues to own automation sequencing,
 mutation-lease handoff, active request cancellation, and optional training
 decision recording; failures apply no Query cache effects.
+Screenshot upload now uses a capture-owned generated-contract command that
+preserves upload request IDs, pipeline selection, and abort signals. Confirmed
+uploads seed job detail and invalidate processing only; Analyzer composition
+retains per-file queue progress, independent failure handling, projection
+leases, capture sources, and optional approval/recommendation automation.
 Training decisions and training review completion, note updates, and reopen now
 use training-owned generated-contract commands. Confirmed responses guard
 against stale reads, update job detail, and invalidate processing, history, and

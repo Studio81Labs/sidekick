@@ -30,6 +30,7 @@ import { useAutomationSettings } from "../../features/automation/hooks/useAutoma
 import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchmarkController";
 import { restoreApplicationBackupCommand } from "../../features/backups/services/restoreApplicationBackupCommand";
 import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource";
+import { uploadScreenshotCommand } from "../../features/capture/services/uploadScreenshotCommand";
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
 import {
   approveStateCommand,
@@ -68,7 +69,6 @@ import {
   getBenchmarkDatasetImport,
   getTrainingProgress,
   humanReadableMessage,
-  uploadScreenshot,
 } from "../../shared/api/client";
 import {
   type BenchmarkDatasetImportResult,
@@ -2583,12 +2583,12 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
       const expectedUploadIndex = index;
       const expectedUpload = expectedUploads[index];
       try {
-        const created = await uploadScreenshot(
-          selectedFile,
-          expectedUpload.requestId,
-          controller.signal,
-          pipelineSelection ?? undefined,
-        );
+        const { job: created } = await uploadScreenshotCommand(queryClient, {
+          file: selectedFile,
+          requestId: expectedUpload.requestId,
+          signal: controller.signal,
+          pipeline: pipelineSelection ?? undefined,
+        });
         updateExpectedUpload(
           expectedUploadIndex,
           projectionMutationTarget(
@@ -2754,12 +2754,11 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     file: File,
     uploadRequestId: string,
   ): Promise<JobRecord> {
-    const created = await uploadScreenshot(
+    const { job: created } = await uploadScreenshotCommand(queryClient, {
       file,
-      uploadRequestId,
-      undefined,
-      pipelineSelection ?? undefined,
-    );
+      requestId: uploadRequestId,
+      pipeline: pipelineSelection ?? undefined,
+    });
     appendJob(created);
     return created;
   }
