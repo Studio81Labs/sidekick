@@ -317,6 +317,20 @@ function waveNineMutationBoundaryViolations(): string[] {
       return null;
     }
 
+    function staticMutationPropertyName(node: ts.Node): string | null {
+      if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
+        return isWaveNineMutation(node.text) ? node.text : null;
+      }
+      if (
+        ts.isComputedPropertyName(node) &&
+        ts.isStringLiteralLike(node.expression) &&
+        isWaveNineMutation(node.expression.text)
+      ) {
+        return node.expression.text;
+      }
+      return null;
+    }
+
     function visit(node: ts.Node): void {
       let referencedMutation: string | null = null;
       if (
@@ -332,24 +346,12 @@ function waveNineMutationBoundaryViolations(): string[] {
         referencedMutation = node.argumentExpression.text;
       } else if (ts.isBindingElement(node)) {
         const propertyName = node.propertyName ?? node.name;
-        if (
-          ts.isIdentifier(propertyName) &&
-          isWaveNineMutation(propertyName.text)
-        ) {
-          referencedMutation = propertyName.text;
-        }
+        referencedMutation = staticMutationPropertyName(propertyName);
       } else if (
         ts.isPropertyAssignment(node) ||
         ts.isShorthandPropertyAssignment(node)
       ) {
-        const propertyName = node.name;
-        if (
-          (ts.isIdentifier(propertyName) ||
-            ts.isStringLiteralLike(propertyName)) &&
-          isWaveNineMutation(propertyName.text)
-        ) {
-          referencedMutation = propertyName.text;
-        }
+        referencedMutation = staticMutationPropertyName(node.name);
       }
 
       const referenceOwners = referencedMutation
