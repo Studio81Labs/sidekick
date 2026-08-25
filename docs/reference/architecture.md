@@ -508,10 +508,11 @@ component or feature. Reusable form and dialog controls, API access, primitive
 types, and generic formatting helpers live under `src/shared`.
 The shared API layer keeps base URL selection, response decoding, retry
 metadata, and readable error conversion in one transport core. Product
-endpoints live in focused domain adapters with colocated tests; MCP
-administration remains a focused shared transport owner. The former
-`src/shared/api/client.ts` compatibility facade has been removed, and the
-source-architecture suite prevents retired facades from being recreated.
+endpoints live in focused domain adapters with colocated tests. MCP
+configuration and principal administration transport live in
+`domains/mcp/api/mcpApi.ts`; principal writes pass through focused system
+feature commands. The former shared endpoint facades have been removed, and
+the source-architecture suite prevents them from being recreated.
 
 Benchmark HTTP transport and dataset-export URL construction are owned by
 `domains/benchmarks/api/benchmarksApi.ts`. Parser benchmark writes pass through
