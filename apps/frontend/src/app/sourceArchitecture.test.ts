@@ -1593,6 +1593,88 @@ function waveNineMutationBoundaryViolations(): string[] {
       : null;
   }
 
+  interface XhrInvocation extends BoundXhrMethod {
+    arguments: readonly ts.Expression[];
+  }
+
+  function xmlHttpRequestInvocation(
+    node: ts.CallExpression,
+    boundMethods: ReadonlyMap<ts.Symbol, BoundXhrMethod>,
+  ): XhrInvocation | null {
+    function operationForExpression(
+      expression: ts.Expression,
+    ): BoundXhrMethod | null {
+      while (
+        ts.isParenthesizedExpression(expression) ||
+        ts.isAsExpression(expression) ||
+        ts.isSatisfiesExpression(expression) ||
+        ts.isNonNullExpression(expression)
+      ) {
+        expression = expression.expression;
+      }
+      const expressionSymbol = resolvedSymbol(expression);
+      const boundMethod = expressionSymbol
+        ? boundMethods.get(expressionSymbol)
+        : null;
+      if (boundMethod) {
+        return boundMethod;
+      }
+      if (ts.isCallExpression(expression)) {
+        return boundXmlHttpRequestMethod(expression);
+      }
+      if (
+        !ts.isPropertyAccessExpression(expression) &&
+        !ts.isElementAccessExpression(expression)
+      ) {
+        return null;
+      }
+      const methodName = ts.isPropertyAccessExpression(expression)
+        ? expression.name.text
+        : constantStringValue(expression.argumentExpression);
+      const receiver = expression.expression;
+      const receiverSymbol = resolvedSymbol(receiver);
+      return receiverSymbol &&
+        (methodName === "open" || methodName === "send") &&
+        typeContainsGlobalDomType(
+          checker.getTypeAtLocation(receiver),
+          "XMLHttpRequest",
+        )
+        ? { method: methodName, receiver: receiverSymbol }
+        : null;
+    }
+
+    const direct = operationForExpression(node.expression);
+    if (direct) {
+      return { ...direct, arguments: node.arguments };
+    }
+    if (
+      !ts.isPropertyAccessExpression(node.expression) &&
+      !ts.isElementAccessExpression(node.expression)
+    ) {
+      return null;
+    }
+    const helperName = ts.isPropertyAccessExpression(node.expression)
+      ? node.expression.name.text
+      : constantStringValue(node.expression.argumentExpression);
+    if (helperName !== "call" && helperName !== "apply") {
+      return null;
+    }
+    const operation = operationForExpression(node.expression.expression);
+    if (!operation) {
+      return null;
+    }
+    if (helperName === "call") {
+      return { ...operation, arguments: node.arguments.slice(1) };
+    }
+    const appliedArguments = node.arguments[1];
+    return {
+      ...operation,
+      arguments: ts.isArrayLiteralExpression(appliedArguments)
+        ? appliedArguments.elements
+        : [],
+    };
+  }
+
   function xmlHttpRequestWrites(callable: CallableImplementation): boolean {
     const operations = new Map<
       ts.Symbol,
@@ -1736,42 +1818,18 @@ function waveNineMutationBoundaryViolations(): string[] {
         }
       }
       if (ts.isCallExpression(node)) {
-        const expressionSymbol = resolvedSymbol(node.expression);
-        let boundMethod = expressionSymbol
-          ? boundMethods.get(expressionSymbol)
-          : undefined;
-        if (
-          !boundMethod &&
-          (ts.isPropertyAccessExpression(node.expression) ||
-            ts.isElementAccessExpression(node.expression))
-        ) {
-          const receiver = node.expression.expression;
-          const receiverSymbol = resolvedSymbol(receiver);
-          const methodName = ts.isPropertyAccessExpression(node.expression)
-            ? node.expression.name.text
-            : constantStringValue(node.expression.argumentExpression);
-          if (
-            receiverSymbol &&
-            (methodName === "open" || methodName === "send") &&
-            typeContainsGlobalDomType(
-              checker.getTypeAtLocation(receiver),
-              "XMLHttpRequest",
-            )
-          ) {
-            boundMethod = { method: methodName, receiver: receiverSymbol };
-          }
-        }
-        if (boundMethod) {
-          const canonicalSymbol = canonicalReceiverSymbol(boundMethod.receiver);
+        const invocation = xmlHttpRequestInvocation(node, boundMethods);
+        if (invocation) {
+          const canonicalSymbol = canonicalReceiverSymbol(invocation.receiver);
           const operation = operations.get(canonicalSymbol) ?? {
             send: false,
             writeOpen: false,
           };
-          if (boundMethod.method === "send") {
+          if (invocation.method === "send") {
             operation.send = true;
           } else {
-            const writeOpen = node.arguments[0]
-              ? methodValueState(node.arguments[0]) === "write"
+            const writeOpen = invocation.arguments[0]
+              ? methodValueState(invocation.arguments[0]) === "write"
               : true;
             operation.writeOpen =
               conditionalContext || maySkipExecution(node, root)
@@ -3808,41 +3866,17 @@ function waveNineMutationBoundaryViolations(): string[] {
           ? callableImplementation(resolvedSymbol(receiver))
           : null;
         let xhrSendWrites = false;
-        const expressionSymbol = resolvedSymbol(node.expression);
-        let xhrMethod = expressionSymbol
-          ? boundXhrMethods.get(expressionSymbol)
-          : undefined;
-        if (
-          !xhrMethod &&
-          (ts.isPropertyAccessExpression(node.expression) ||
-            ts.isElementAccessExpression(node.expression))
-        ) {
-          const methodName = ts.isPropertyAccessExpression(node.expression)
-            ? node.expression.name.text
-            : constantStringValue(node.expression.argumentExpression);
-          const xhrReceiver = node.expression.expression;
-          const xhrReceiverSymbol = resolvedSymbol(xhrReceiver);
-          if (
-            xhrReceiverSymbol &&
-            (methodName === "open" || methodName === "send") &&
-            typeContainsGlobalDomType(
-              checker.getTypeAtLocation(xhrReceiver),
-              "XMLHttpRequest",
-            )
-          ) {
-            xhrMethod = { method: methodName, receiver: xhrReceiverSymbol };
-          }
-        }
-        if (xhrMethod) {
-          const canonicalSymbol = canonicalXhrSymbol(xhrMethod.receiver);
+        const xhrInvocation = xmlHttpRequestInvocation(node, boundXhrMethods);
+        if (xhrInvocation) {
+          const canonicalSymbol = canonicalXhrSymbol(xhrInvocation.receiver);
           const operation = xhrOperations.get(canonicalSymbol) ?? {
             writeOpen: false,
           };
-          if (xhrMethod.method === "send") {
+          if (xhrInvocation.method === "send") {
             xhrSendWrites = operation.writeOpen;
           } else {
-            const writeOpen = node.arguments[0]
-              ? methodValueState(node.arguments[0]) === "write"
+            const writeOpen = xhrInvocation.arguments[0]
+              ? methodValueState(xhrInvocation.arguments[0]) === "write"
               : true;
             operation.writeOpen = maySkipExecution(node, sourceFile)
               ? operation.writeOpen || writeOpen
