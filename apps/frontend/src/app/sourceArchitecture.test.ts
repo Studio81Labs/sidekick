@@ -944,15 +944,52 @@ function waveNineMutationBoundaryViolations(): string[] {
 
     const members: ExportedCallable[] = [];
     for (const property of checker.getPropertiesOfType(type)) {
+      const propertyLabel = label + "." + property.getName();
       members.push(
         ...callableAliasMembers(
           resolvedAliasSymbol(property),
-          label + "." + property.getName(),
+          propertyLabel,
           seenSymbols,
         ),
       );
+      const propertyDeclaration =
+        property.valueDeclaration ?? property.declarations?.[0];
+      if (propertyDeclaration) {
+        const propertyType = checker.getTypeOfSymbolAtLocation(
+          property,
+          propertyDeclaration,
+        );
+        if (hasProductionObjectDeclaration(propertyType)) {
+          members.push(
+            ...reachableTypeCallables(
+              propertyType,
+              propertyLabel,
+              seenSymbols,
+              seenTypes,
+            ),
+          );
+        }
+      }
     }
     members.push(...collectionTypeCallables(type, label + "[]"));
+
+    if (
+      (type.flags & ts.TypeFlags.Object) !== 0 &&
+      ((type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference) !== 0
+    ) {
+      for (const typeArgument of checker.getTypeArguments(
+        type as ts.TypeReference,
+      )) {
+        members.push(
+          ...reachableTypeCallables(
+            typeArgument,
+            label + ".[value]",
+            seenSymbols,
+            seenTypes,
+          ),
+        );
+      }
+    }
 
     for (const promisedType of promisedValueTypes(type)) {
       members.push(
@@ -965,6 +1002,21 @@ function waveNineMutationBoundaryViolations(): string[] {
       );
     }
     return members;
+  }
+
+  function hasProductionObjectDeclaration(type: ts.Type): boolean {
+    if (type.isUnionOrIntersection()) {
+      return type.types.some(hasProductionObjectDeclaration);
+    }
+    if ((type.flags & ts.TypeFlags.Object) === 0) {
+      return false;
+    }
+    const symbol = resolvedAliasSymbol(type.aliasSymbol ?? type.getSymbol());
+    return (
+      symbol?.declarations?.some(
+        (declaration) => declarationSourcePath(declaration) !== null,
+      ) ?? false
+    );
   }
 
   function promisedValueTypes(type: ts.Type): ts.Type[] {
