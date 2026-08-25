@@ -1,7 +1,7 @@
 import type { ChangeEvent, Ref } from "react";
 import { Download, Play, Upload } from "lucide-react";
 
-import { benchmarkDatasetUrl } from "../../../shared/api/benchmarks";
+import { benchmarkDatasetUrl } from "../../../domains/benchmarks/api/benchmarksApi";
 import { DialogFooter } from "../../../shared/components/DialogFooter";
 import {
   ButtonControl,

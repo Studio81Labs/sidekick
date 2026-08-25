@@ -66,6 +66,10 @@ const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
       "domains/training/api/trainingApi.ts",
       "features/training/services/trainingReviewCommands.ts",
     ]),
+    runParserBenchmark: new Set([
+      "domains/benchmarks/api/benchmarksApi.ts",
+      "features/benchmark/services/runParserBenchmarkCommand.ts",
+    ]),
     requestRecommendation: new Set([
       "domains/recommendations/api/recommendationsApi.ts",
       "features/hand-review/services/handWorkflowCommands.ts",
@@ -96,7 +100,6 @@ function isWaveNineMutation(value: string): boolean {
 }
 
 const LEGACY_RAW_TRANSPORT_OWNERS = new Set([
-  "shared/api/benchmarks.ts",
   "shared/api/mcp.ts",
   "shared/api/system.ts",
   "shared/api/transport.ts",
@@ -191,7 +194,6 @@ function domainCompatibilityFacadeImportAllowed(
   const module = (targetPath[3] ?? "").replace(/\.ts$/, "");
   return [
     ["shared/api/training.ts", "domains/training/api", "trainingApi"],
-    ["shared/api/benchmarks.ts", "domains/benchmarks/api", "benchmarksApi"],
     ["shared/api/system.ts", "domains/backups/api", "backupsApi"],
   ].some(
     ([allowedFacade, allowedDomain, allowedModule]) =>
@@ -3717,7 +3719,6 @@ function waveNineMutationBoundaryViolations(): string[] {
   }
 
   const LEGACY_TRANSPORT_WRITE_EXPORTS = new Map<string, Set<string>>([
-    ["shared/api/benchmarks.ts", new Set(["runParserBenchmark"])],
     [
       "shared/api/mcp.ts",
       new Set([
@@ -4586,9 +4587,12 @@ function sharedTypeBoundaryViolations(): string[] {
 
 function sharedApiFacadeBoundaryViolations(): string[] {
   const violations: string[] = [];
-  const retiredFacades = ["client.ts", "history.ts", "jobs.ts"].map((name) =>
-    resolve(SOURCE_ROOT, "shared/api", name),
-  );
+  const retiredFacades = [
+    "benchmarks.ts",
+    "client.ts",
+    "history.ts",
+    "jobs.ts",
+  ].map((name) => resolve(SOURCE_ROOT, "shared/api", name));
   const retiredFacadeTargets = new Set(
     retiredFacades.flatMap((facade) => [
       facade,
@@ -4815,7 +4819,7 @@ describe("frontend source architecture", () => {
         ["shared", "api", "benchmarks.ts"],
         ["domains", "benchmarks", "api", "benchmarksApi.ts"],
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       domainCompatibilityFacadeImportAllowed(
         ["shared", "api", "training.ts"],

@@ -1,5 +1,10 @@
-import { queryOptions, useQuery } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  queryOptions,
+  useQuery,
+} from "@tanstack/react-query";
 
+import { cacheLatestQueryResult } from "../../../shared/api/queryCache";
 import {
   getBenchmarkDatasetImport,
   getBenchmarkOverview,
@@ -66,6 +71,17 @@ export function benchmarkImportReceiptQueryOptions(
     ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
+}
+
+export function fetchBenchmarkImportReceiptQuery(
+  queryClient: QueryClient,
+  requestId: string,
+) {
+  return cacheLatestQueryResult(
+    queryClient,
+    benchmarkQueryKeys.importReceipt(requestId),
+    getBenchmarkDatasetImport(requestId),
+  );
 }
 
 export function useBenchmarkOverviewQuery(

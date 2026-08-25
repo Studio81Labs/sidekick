@@ -1,7 +1,7 @@
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { getJob } from "../../../domains/jobs/api/jobsApi";
-import { runParserBenchmark } from "../../../shared/api/benchmarks";
 import {
   type BenchmarkComparisonProgress,
   benchmarkCorpusIsUnverified,
@@ -18,6 +18,7 @@ import type {
   PipelineSelection,
 } from "../../../shared/types/pipeline";
 import { useBenchmarkReportState } from "./useBenchmarkReportState";
+import { runParserBenchmarkCommand } from "../services/runParserBenchmarkCommand";
 
 interface UseBenchmarkControllerOptions {
   busy: boolean;
@@ -49,6 +50,7 @@ export function useBenchmarkController({
   loadPipelineCapabilities,
   setPipelineSelection,
 }: UseBenchmarkControllerOptions) {
+  const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [running, setRunning] = useState(false);
   const [comparisonProgress, setComparisonProgress] =
@@ -157,8 +159,9 @@ export function useBenchmarkController({
     setRunning(true);
     onError(null);
     try {
-      const latestReport = await runParserBenchmark(
-        pipelineSelection ?? undefined,
+      const { report: latestReport } = await runParserBenchmarkCommand(
+        queryClient,
+        { pipeline: pipelineSelection ?? undefined },
       );
       applyReport(latestReport, true);
       if (latestReport.corpus_fingerprint) {
@@ -196,10 +199,15 @@ export function useBenchmarkController({
           total: runnablePipelines.length,
         });
         try {
-          const nextReport = await runParserBenchmark({
-            parser_provider: pipeline.parser.id,
-            parser_layout_profile: pipeline.layout_profile,
-          });
+          const { report: nextReport } = await runParserBenchmarkCommand(
+            queryClient,
+            {
+              pipeline: {
+                parser_provider: pipeline.parser.id,
+                parser_layout_profile: pipeline.layout_profile,
+              },
+            },
+          );
           applyReport(nextReport, pipeline.parser.id === selectedParser);
           successfulRuns += 1;
           corpusRevalidationRequired ||= Boolean(nextReport.corpus_fingerprint);
