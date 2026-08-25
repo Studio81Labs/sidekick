@@ -330,6 +330,69 @@ function waveNineMutationBoundaryViolations(): string[] {
     return rawTransportNameForSymbol(resolvedSymbol(node));
   }
 
+  function constantStringValue(
+    value: ts.Expression,
+    seen = new Set<ts.Symbol>(),
+  ): string | null {
+    while (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isSatisfiesExpression(value) ||
+      ts.isNonNullExpression(value)
+    ) {
+      value = value.expression;
+    }
+    if (ts.isStringLiteralLike(value)) {
+      return value.text;
+    }
+    if (ts.isConditionalExpression(value)) {
+      const whenTrue = constantStringValue(value.whenTrue, seen);
+      const whenFalse = constantStringValue(value.whenFalse, seen);
+      return whenTrue === whenFalse ? whenTrue : null;
+    }
+    if (!ts.isIdentifier(value)) {
+      return null;
+    }
+    const symbol = resolvedSymbol(value);
+    if (!symbol || seen.has(symbol)) {
+      return null;
+    }
+    seen.add(symbol);
+    for (const declaration of symbol.declarations ?? []) {
+      if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer &&
+        ts.isVariableDeclarationList(declaration.parent) &&
+        (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+      ) {
+        return constantStringValue(declaration.initializer, seen);
+      }
+    }
+    return null;
+  }
+
+  function computedRawTransportAccess(
+    node: ts.ElementAccessExpression,
+  ): string | null {
+    const receiverType = checker.getTypeAtLocation(node.expression);
+    const exposedTransports = [...RAW_TRANSPORT_REFERENCES].filter(
+      (transport) =>
+        rawTransportNameForSymbol(
+          resolvedAliasSymbol(
+            checker.getPropertyOfType(receiverType, transport),
+          ),
+        ) === transport,
+    );
+    if (exposedTransports.length === 0) {
+      return null;
+    }
+    const key = constantStringValue(node.argumentExpression);
+    if (key === null) {
+      return "[unresolved]";
+    }
+    return exposedTransports.includes(key) ? key : null;
+  }
+
   function isTypeOnlyReference(node: ts.Node): boolean {
     let current: ts.Node | undefined = node.parent;
     while (current && !ts.isSourceFile(current)) {
@@ -2052,6 +2115,17 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
 
     function visit(node: ts.Node): void {
+      if (ts.isElementAccessExpression(node)) {
+        const computedTransport = computedRawTransportAccess(node);
+        if (computedTransport) {
+          violations.add(
+            (computedTransport === "[unresolved]"
+              ? "Unresolved computed access on a raw-transport type: "
+              : computedTransport + " accessed through a computed key: ") +
+              sourcePath,
+          );
+        }
+      }
       if (ts.isCallExpression(node)) {
         const reflectedName = reflectedBoundaryName(node);
         if (reflectedName) {
