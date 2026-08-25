@@ -884,6 +884,22 @@ function waveNineMutationBoundaryViolations(): string[] {
         ),
       );
     }
+    members.push(...collectionTypeCallables(valueType, label + "[]"));
+
+    if (ts.isArrayLiteralExpression(value)) {
+      for (const element of value.elements) {
+        if (ts.isOmittedExpression(element)) {
+          continue;
+        }
+        members.push(
+          ...nestedValueCallables(
+            ts.isSpreadElement(element) ? element.expression : element,
+            label + "[]",
+            seen,
+          ),
+        );
+      }
+    }
 
     if (ts.isNewExpression(value)) {
       if (ts.isClassExpression(value.expression)) {
@@ -915,6 +931,81 @@ function waveNineMutationBoundaryViolations(): string[] {
           );
         }
       }
+    }
+    return members;
+  }
+
+  function nestedValueCallables(
+    value: ts.Expression,
+    label: string,
+    seen: Set<ts.Symbol>,
+  ): ExportedCallable[] {
+    const members: ExportedCallable[] = [];
+    const implementation =
+      ts.isArrowFunction(value) || ts.isFunctionExpression(value)
+        ? value
+        : callableImplementation(resolvedSymbol(value));
+    if (implementation) {
+      members.push({ callable: implementation, label, topLevel: false });
+    }
+    members.push(...typedValueCallables(value, label, seen));
+    return members;
+  }
+
+  function collectionTypeCallables(
+    type: ts.Type,
+    label: string,
+    seen = new Set<ts.Type>(),
+  ): ExportedCallable[] {
+    if (seen.has(type)) {
+      return [];
+    }
+    seen.add(type);
+    if (type.isUnionOrIntersection()) {
+      return type.types.flatMap((member) =>
+        collectionTypeCallables(member, label, seen),
+      );
+    }
+    const collectionName = resolvedAliasSymbol(
+      type.aliasSymbol ?? type.getSymbol(),
+    )?.getName();
+    const isCollection =
+      checker.isArrayType(type) ||
+      checker.isTupleType(type) ||
+      [
+        "Array",
+        "Map",
+        "ReadonlyArray",
+        "ReadonlyMap",
+        "ReadonlySet",
+        "Set",
+        "WeakMap",
+        "WeakSet",
+      ].includes(collectionName ?? "");
+    if (!isCollection) {
+      return [];
+    }
+
+    const members: ExportedCallable[] = [];
+    for (const typeArgument of checker.getTypeArguments(
+      type as ts.TypeReference,
+    )) {
+      for (const signature of checker.getSignaturesOfType(
+        typeArgument,
+        ts.SignatureKind.Call,
+      )) {
+        const declaration = signature.declaration;
+        if (
+          declaration &&
+          (ts.isArrowFunction(declaration) ||
+            ts.isFunctionDeclaration(declaration) ||
+            ts.isFunctionExpression(declaration) ||
+            ts.isMethodDeclaration(declaration))
+        ) {
+          members.push({ callable: declaration, label, topLevel: false });
+        }
+      }
+      members.push(...collectionTypeCallables(typeArgument, label, seen));
     }
     return members;
   }
