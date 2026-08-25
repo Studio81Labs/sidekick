@@ -128,9 +128,14 @@ def test_api_routers_do_not_import_runtime_wiring_dependencies() -> None:
 def test_models_compatibility_facade_is_retired() -> None:
     assert not (APP_ROOT / "models.py").exists()
 
+    first_party_sources = sorted(
+        path
+        for root in (APP_ROOT, APP_ROOT.parent / "tests")
+        for path in root.rglob("*.py")
+    )
     violations = [
         str(path)
-        for path in sorted(APP_ROOT.parent.rglob("*.py"))
+        for path in first_party_sources
         if imports_app_models(path)
     ]
     assert violations == []

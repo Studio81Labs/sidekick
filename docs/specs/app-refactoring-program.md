@@ -306,7 +306,8 @@ Dependencies: Wave 3
   `JobQueue`, `JobHistory`, `ArchiveJobsRequest`,
   `ScreenshotMetadataRequest`) as the ownership target, and migrate production
   imports to those classes directly.
-- Keep `models.py` as an exports-only compatibility surface during migration.
+- Retire `models.py` after direct-import migration and guard against restoring
+  the facade or its imports.
 - Move lifecycle transitions into aggregate/domain functions with direct tests.
 
 Gate: persisted legacy jobs and archives load unchanged; model validation and
