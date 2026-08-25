@@ -549,6 +549,43 @@ function waveNineMutationBoundaryViolations(): string[] {
     | ts.PropertyDeclaration
     | ts.SetAccessorDeclaration;
 
+  const assignedCallableImplementations = new Map<
+    ts.Symbol,
+    CallableImplementation[]
+  >();
+  const assignedCallableValues = new Map<ts.Symbol, ts.Expression[]>();
+  const indexedAssignmentSourceFiles = new Set<ts.SourceFile>();
+  const assignedCallableOperators = new Set<ts.SyntaxKind>([
+    ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+    ts.SyntaxKind.BarBarEqualsToken,
+    ts.SyntaxKind.EqualsToken,
+    ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ]);
+
+  function indexAssignedCallableValues(sourceFile: ts.SourceFile): void {
+    if (indexedAssignmentSourceFiles.has(sourceFile)) {
+      return;
+    }
+    indexedAssignmentSourceFiles.add(sourceFile);
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isBinaryExpression(node) &&
+        assignedCallableOperators.has(node.operatorToken.kind)
+      ) {
+        const symbol = resolvedSymbol(node.left);
+        if (symbol) {
+          const values = assignedCallableValues.get(symbol) ?? [];
+          values.push(node.right);
+          assignedCallableValues.set(symbol, values);
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(sourceFile);
+  }
+
   function callableImplementation(
     symbol: ts.Symbol | null,
     seen = new Set<ts.Symbol>(),
@@ -633,7 +670,38 @@ function waveNineMutationBoundaryViolations(): string[] {
         }
       }
     }
-    return null;
+    return assignedImplementationsForSymbol(symbol)[0] ?? null;
+  }
+
+  function assignedImplementationsForSymbol(
+    symbol: ts.Symbol | null,
+  ): CallableImplementation[] {
+    if (!symbol) {
+      return [];
+    }
+    const cached = assignedCallableImplementations.get(symbol);
+    if (cached) {
+      return cached;
+    }
+    const implementations: CallableImplementation[] = [];
+    assignedCallableImplementations.set(symbol, implementations);
+    for (const declaration of symbol.declarations ?? []) {
+      indexAssignedCallableValues(declaration.getSourceFile());
+    }
+
+    for (const value of assignedCallableValues.get(symbol) ?? []) {
+      if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+        implementations.push(value);
+      } else if (ts.isCallExpression(value)) {
+        implementations.push(value);
+      } else {
+        const implementation = callableImplementation(resolvedSymbol(value));
+        if (implementation) {
+          implementations.push(implementation);
+        }
+      }
+    }
+    return implementations;
   }
 
   function callReference(node: ts.CallExpression): ts.Node {
@@ -1059,13 +1127,12 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
       if (ts.isCallExpression(node)) {
         const reference = callReference(node);
+        const referenceSymbol = resolvedSymbol(reference);
         const rawTransport = rawTransportSymbol(reference);
         if (rawTransport) {
           writes = rawCallWrites(node);
         } else {
-          const localCallable = callableImplementation(
-            resolvedSymbol(reference),
-          );
+          const localCallable = callableImplementation(referenceSymbol);
           const receiver = invocationHelperReceiver(node);
           const receiverCallable = receiver
             ? callableImplementation(resolvedSymbol(receiver))
@@ -1073,6 +1140,9 @@ function waveNineMutationBoundaryViolations(): string[] {
           writes =
             mutationSymbol(reference) !== null ||
             (localCallable !== null && callableWrites(localCallable, active)) ||
+            assignedImplementationsForSymbol(referenceSymbol).some(
+              (implementation) => callableWrites(implementation, active),
+            ) ||
             (receiverCallable !== null &&
               callableWrites(receiverCallable, active));
           if (!writes) {
@@ -2194,6 +2264,11 @@ function waveNineMutationBoundaryViolations(): string[] {
           (rawTransport !== null && rawCallWrites(node)) ||
           (directCallable !== null && callableWrites(directCallable)) ||
           (receiverCallable !== null && callableWrites(receiverCallable));
+        if (!writes) {
+          writes = node.arguments.some((argument) =>
+            argumentCallableWrites(argument, new Set()),
+          );
+        }
       } else if (ts.isNewExpression(node)) {
         writes = constructorImplementations(node.expression).some(
           (implementation) => callableWrites(implementation),
