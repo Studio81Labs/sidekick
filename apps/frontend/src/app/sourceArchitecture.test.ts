@@ -746,6 +746,69 @@ function waveNineMutationBoundaryViolations(): string[] {
     return null;
   }
 
+  function invocationTargetCallables(
+    initialExpression: ts.Expression,
+    seenSymbols = new Set<ts.Symbol>(),
+  ): CallableImplementation[] {
+    let expression = initialExpression;
+    while (
+      ts.isParenthesizedExpression(expression) ||
+      ts.isAsExpression(expression) ||
+      ts.isSatisfiesExpression(expression) ||
+      ts.isNonNullExpression(expression)
+    ) {
+      expression = expression.expression;
+    }
+    if (ts.isConditionalExpression(expression)) {
+      return [
+        ...invocationTargetCallables(expression.whenTrue, seenSymbols),
+        ...invocationTargetCallables(expression.whenFalse, seenSymbols),
+      ];
+    }
+    if (ts.isBinaryExpression(expression)) {
+      if (expression.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+        return invocationTargetCallables(expression.right, seenSymbols);
+      }
+      if (
+        [
+          ts.SyntaxKind.AmpersandAmpersandToken,
+          ts.SyntaxKind.BarBarToken,
+          ts.SyntaxKind.QuestionQuestionToken,
+        ].includes(expression.operatorToken.kind)
+      ) {
+        return [
+          ...invocationTargetCallables(expression.left, seenSymbols),
+          ...invocationTargetCallables(expression.right, seenSymbols),
+        ];
+      }
+    }
+    if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) {
+      return [expression];
+    }
+
+    const callables = new Set<CallableImplementation>();
+    const symbol = resolvedSymbol(expression);
+    if (symbol && !seenSymbols.has(symbol)) {
+      seenSymbols.add(symbol);
+      const direct = callableImplementation(symbol);
+      if (direct) {
+        callables.add(direct);
+      }
+      assignedImplementationsForSymbol(symbol).forEach((implementation) =>
+        callables.add(implementation),
+      );
+    }
+    if (ts.isCallExpression(expression)) {
+      const receiver = invocationHelperReceiver(expression);
+      if (receiver) {
+        invocationTargetCallables(receiver, seenSymbols).forEach(
+          (implementation) => callables.add(implementation),
+        );
+      }
+    }
+    return [...callables];
+  }
+
   type RequestMethodState = "absent" | "read" | "write";
 
   function methodValueState(value: ts.Expression): RequestMethodState {
@@ -768,7 +831,10 @@ function waveNineMutationBoundaryViolations(): string[] {
     return composed;
   }
 
-  function requestMethodStates(value: ts.Expression): Set<RequestMethodState> {
+  function requestMethodStates(
+    value: ts.Expression,
+    seen = new Set<ts.Symbol>(),
+  ): Set<RequestMethodState> {
     while (
       ts.isParenthesizedExpression(value) ||
       ts.isAsExpression(value) ||
@@ -787,6 +853,22 @@ function waveNineMutationBoundaryViolations(): string[] {
       ts.isVoidExpression(value)
     ) {
       return new Set(["absent"]);
+    }
+    if (ts.isIdentifier(value)) {
+      const symbol = resolvedSymbol(value);
+      if (symbol && !seen.has(symbol)) {
+        seen.add(symbol);
+        for (const declaration of symbol.declarations ?? []) {
+          if (
+            ts.isVariableDeclaration(declaration) &&
+            declaration.initializer &&
+            ts.isVariableDeclarationList(declaration.parent) &&
+            (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+          ) {
+            return requestMethodStates(declaration.initializer, seen);
+          }
+        }
+      }
     }
     if (!ts.isObjectLiteralExpression(value)) {
       return new Set(["write"]);
@@ -1173,6 +1255,9 @@ function waveNineMutationBoundaryViolations(): string[] {
             : null;
           writes =
             mutationSymbol(reference) !== null ||
+            invocationTargetCallables(node.expression).some((implementation) =>
+              callableWrites(implementation, active),
+            ) ||
             (localCallable !== null && callableWrites(localCallable, active)) ||
             assignedImplementationsForSymbol(referenceSymbol).some(
               (implementation) => callableWrites(implementation, active),
@@ -1191,6 +1276,9 @@ function waveNineMutationBoundaryViolations(): string[] {
         writes =
           mutationSymbol(node.tag) !== null ||
           rawTransportNameForSymbol(referenceSymbol) === "sendBeacon" ||
+          invocationTargetCallables(node.tag).some((implementation) =>
+            callableWrites(implementation, active),
+          ) ||
           (localCallable !== null && callableWrites(localCallable, active)) ||
           assignedImplementationsForSymbol(referenceSymbol).some(
             (implementation) => callableWrites(implementation, active),
@@ -1733,6 +1821,10 @@ function waveNineMutationBoundaryViolations(): string[] {
         return;
       }
       if (ts.isReturnStatement(node) && node.expression) {
+        inspect(node.expression);
+        return;
+      }
+      if (ts.isYieldExpression(node) && node.expression) {
         inspect(node.expression);
         return;
       }
@@ -2317,6 +2409,9 @@ function waveNineMutationBoundaryViolations(): string[] {
           xhrSend ||
           mutationSymbol(reference) !== null ||
           (rawTransport !== null && rawCallWrites(node)) ||
+          invocationTargetCallables(node.expression).some((implementation) =>
+            callableWrites(implementation),
+          ) ||
           (directCallable !== null && callableWrites(directCallable)) ||
           (receiverCallable !== null && callableWrites(receiverCallable));
         if (!writes) {
@@ -2330,6 +2425,9 @@ function waveNineMutationBoundaryViolations(): string[] {
         writes =
           mutationSymbol(node.tag) !== null ||
           rawTransportNameForSymbol(referenceSymbol) === "sendBeacon" ||
+          invocationTargetCallables(node.tag).some((implementation) =>
+            callableWrites(implementation),
+          ) ||
           (directCallable !== null && callableWrites(directCallable)) ||
           assignedImplementationsForSymbol(referenceSymbol).some(
             (implementation) => callableWrites(implementation),
