@@ -516,9 +516,14 @@ describe("Analyzer workspace recovery", () => {
       JSON.stringify([cachedJob]),
     );
     window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    window.sessionStorage.setItem("poker-training-processing-synced", "true");
+    window.sessionStorage.removeItem("poker-training-processing-synced");
     const pendingJob = deferredResponse();
-    fetchMock().mockReturnValueOnce(pendingJob.promise);
+    const pendingQueue = deferredResponse();
+    fetchMock().mockImplementation((input) =>
+      String(input).endsWith("/api/jobs")
+        ? pendingQueue.promise
+        : pendingJob.promise,
+    );
     const navigation: AnalyzerRouteNavigation = {
       closeSurface: vi.fn(),
       managed: true,
@@ -551,6 +556,19 @@ describe("Analyzer workspace recovery", () => {
     expect(
       screen.getByRole("button", { name: "Approve state" }),
     ).toBeDisabled();
+
+    await act(async () => {
+      pendingQueue.resolve(
+        processingQueueResponse([cachedJob], "pending-route-queue"),
+      );
+      await pendingQueue.promise;
+    });
+    expect(screen.queryByDisplayValue("Ah Kd")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Approve state" }),
+    ).toBeDisabled();
+    expect(navigation.openJob).not.toHaveBeenCalled();
+    expect(navigation.openWorkspace).not.toHaveBeenCalled();
 
     await act(async () => {
       pendingJob.resolve(jsonResponse(requestedJob));

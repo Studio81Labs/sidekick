@@ -1912,6 +1912,13 @@ function AnalyzerWorkspace({
           formDirtyRef.current &&
           reconciledActiveJob !== null &&
           !activeJobUpdatedAuthoritatively;
+        const currentRoute = routeRef.current;
+        const pendingRouteJob =
+          currentActiveId !== null &&
+          currentActiveJob === null &&
+          reconciledActiveJob === null &&
+          currentRoute.surface === "job" &&
+          currentRoute.jobId === currentActiveId;
         for (const removalCandidateId of processingRemovalCandidateIdsRef.current) {
           if (
             !mutationLeaseTargetsJob(
@@ -1934,10 +1941,11 @@ function AnalyzerWorkspace({
         }
         jobsRef.current = nextJobs;
         setJobs(nextJobs);
-        if (!preserveDirtyForm) {
+        if (!preserveDirtyForm && !pendingRouteJob) {
           const nextActiveJob = reconciledActiveJob ?? nextJobs[0] ?? null;
           alignWorkspaceToJob(nextActiveJob);
           if (
+            currentActiveJob !== null &&
             currentActiveId !== null &&
             !nextJobs.some((candidate) => candidate.id === currentActiveId)
           ) {
