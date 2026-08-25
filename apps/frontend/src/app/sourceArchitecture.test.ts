@@ -501,18 +501,30 @@ function waveNineMutationBoundaryViolations(): string[] {
   function reflectedBoundaryName(node: ts.CallExpression): string | null {
     if (
       !ts.isPropertyAccessExpression(node.expression) ||
-      node.expression.name.text !== "get" ||
       !ts.isIdentifier(node.expression.expression) ||
       node.arguments.length < 2 ||
       !ts.isStringLiteralLike(node.arguments[1])
     ) {
       return null;
     }
-    const reflectSymbol = resolvedSymbol(node.expression.expression);
-    const isGlobalReflect = reflectSymbol?.declarations?.some((declaration) =>
-      declaration.getSourceFile().fileName.endsWith("lib.es2015.reflect.d.ts"),
-    );
-    if (!isGlobalReflect) {
+    const owner = node.expression.expression;
+    const method = node.expression.name.text;
+    const ownerSymbol = resolvedSymbol(owner);
+    const isGlobalReflect =
+      owner.text === "Reflect" &&
+      ["get", "getOwnPropertyDescriptor"].includes(method) &&
+      ownerSymbol?.declarations?.some((declaration) =>
+        declaration
+          .getSourceFile()
+          .fileName.endsWith("lib.es2015.reflect.d.ts"),
+      );
+    const isGlobalObject =
+      owner.text === "Object" &&
+      method === "getOwnPropertyDescriptor" &&
+      ownerSymbol?.declarations?.some((declaration) =>
+        declaration.getSourceFile().fileName.endsWith("lib.es5.d.ts"),
+      );
+    if (!isGlobalReflect && !isGlobalObject) {
       return null;
     }
     const targetType = checker.getTypeAtLocation(node.arguments[0]);
