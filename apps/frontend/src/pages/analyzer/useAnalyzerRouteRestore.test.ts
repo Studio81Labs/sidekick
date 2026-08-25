@@ -108,6 +108,37 @@ describe("useAnalyzerRouteRestore", () => {
     expect(current.loadJob).toHaveBeenCalledWith(loadedJob.id);
   });
 
+  it("restarts a pending job load after leaving and returning", async () => {
+    const loadedJob = job("job-123");
+    let resolveJob: (job: JobRecord) => void = () => undefined;
+    const pendingJob = new Promise<JobRecord>((resolve) => {
+      resolveJob = resolve;
+    });
+    const loadJob = vi.fn(() => pendingJob);
+    let current = options({
+      activeJobId: loadedJob.id,
+      loadJob,
+      route: analyzerRouteState("job", loadedJob.id),
+    });
+    const view = renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(loadJob).toHaveBeenCalledOnce();
+    current = { ...current, route: analyzerRouteState("training") };
+    view.rerender();
+    current = {
+      ...current,
+      route: analyzerRouteState("job", loadedJob.id),
+    };
+    view.rerender();
+    expect(loadJob).toHaveBeenCalledTimes(2);
+
+    resolveJob(loadedJob);
+    await waitFor(() =>
+      expect(current.activateJob).toHaveBeenCalledWith(loadedJob),
+    );
+    expect(current.activateJob).toHaveBeenCalledOnce();
+  });
+
   it("surfaces a durable job load failure", async () => {
     const failure = new Error("missing job");
     const current = options({

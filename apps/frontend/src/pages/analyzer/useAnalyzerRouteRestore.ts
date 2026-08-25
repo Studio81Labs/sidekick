@@ -54,16 +54,14 @@ export function useAnalyzerRouteRestore(
       surfaceChanged
     ) {
       current.openBenchmarks();
-    } else if (
-      current.route.surface === "job" &&
-      current.route.jobId &&
-      current.activeJobId !== current.route.jobId
-    ) {
+    } else if (current.route.surface === "job" && current.route.jobId) {
       const cachedJob = current.jobs.find(
         (job) => job.id === current.route.jobId,
       );
       if (cachedJob) {
-        current.activateJob(cachedJob);
+        if (current.activeJobId !== current.route.jobId) {
+          current.activateJob(cachedJob);
+        }
       } else {
         current.onJobLoading(current.route.jobId);
         void current
