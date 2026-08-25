@@ -338,6 +338,18 @@ function waveNineMutationBoundaryViolations(): string[] {
         ) {
           referencedMutation = propertyName.text;
         }
+      } else if (
+        ts.isPropertyAssignment(node) ||
+        ts.isShorthandPropertyAssignment(node)
+      ) {
+        const propertyName = node.name;
+        if (
+          (ts.isIdentifier(propertyName) ||
+            ts.isStringLiteralLike(propertyName)) &&
+          isWaveNineMutation(propertyName.text)
+        ) {
+          referencedMutation = propertyName.text;
+        }
       }
 
       const referenceOwners = referencedMutation
