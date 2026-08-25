@@ -1675,19 +1675,30 @@ function waveNineMutationBoundaryViolations(): string[] {
   function implementationInvokesParameter(
     implementation: CallableImplementation,
     parameterIndex: number,
+    seenParameters = new Set<ts.Symbol>(),
   ): boolean {
     if (!ts.isFunctionLike(implementation)) {
       return false;
     }
     const parameter = implementation.parameters[parameterIndex];
     const parameterSymbol = parameter ? resolvedSymbol(parameter.name) : null;
-    if (!parameterSymbol) {
+    if (!parameterSymbol || seenParameters.has(parameterSymbol)) {
       return false;
     }
+    const activeParameters = new Set(seenParameters);
+    activeParameters.add(parameterSymbol);
     const aliases = new Set<ts.Symbol>([parameterSymbol]);
     let invokes = false;
 
     function referencesAlias(node: ts.Node): boolean {
+      while (
+        ts.isParenthesizedExpression(node) ||
+        ts.isAsExpression(node) ||
+        ts.isSatisfiesExpression(node) ||
+        ts.isNonNullExpression(node)
+      ) {
+        node = node.expression;
+      }
       const symbol = resolvedSymbol(node);
       return symbol !== null && aliases.has(symbol);
     }
@@ -1726,10 +1737,24 @@ function waveNineMutationBoundaryViolations(): string[] {
         invokes =
           referencesAlias(callReference(node)) ||
           (receiver !== null && referencesAlias(receiver));
+        if (!invokes) {
+          invokes = node.arguments.some(
+            (argument, index) =>
+              referencesAlias(argument) &&
+              callExecutesArgument(node, index, activeParameters),
+          );
+        }
       } else if (ts.isTaggedTemplateExpression(node)) {
         invokes = referencesAlias(node.tag);
       } else if (ts.isNewExpression(node)) {
         invokes = referencesAlias(node.expression);
+        if (!invokes) {
+          invokes = (node.arguments ?? []).some(
+            (argument, index) =>
+              referencesAlias(argument) &&
+              newExecutesArgument(node, index, activeParameters),
+          );
+        }
       }
       if (!invokes) {
         ts.forEachChild(node, visit);
@@ -1743,10 +1768,15 @@ function waveNineMutationBoundaryViolations(): string[] {
   function callExecutesArgument(
     node: ts.CallExpression,
     argumentIndex: number,
+    seenParameters = new Set<ts.Symbol>(),
   ): boolean {
     if (
       invocationTargetCallables(node.expression).some((implementation) =>
-        implementationInvokesParameter(implementation, argumentIndex),
+        implementationInvokesParameter(
+          implementation,
+          argumentIndex,
+          seenParameters,
+        ),
       )
     ) {
       return true;
@@ -1807,10 +1837,15 @@ function waveNineMutationBoundaryViolations(): string[] {
   function newExecutesArgument(
     node: ts.NewExpression,
     argumentIndex: number,
+    seenParameters = new Set<ts.Symbol>(),
   ): boolean {
     if (
       constructorImplementations(node.expression).some((implementation) =>
-        implementationInvokesParameter(implementation, argumentIndex),
+        implementationInvokesParameter(
+          implementation,
+          argumentIndex,
+          seenParameters,
+        ),
       )
     ) {
       return true;
@@ -3254,11 +3289,60 @@ function waveNineMutationBoundaryViolations(): string[] {
 
   function moduleInitializerWrites(sourceFile: ts.SourceFile): boolean {
     let writes = false;
+    const xhrOperations = new Map<ts.Symbol, { writeOpen: boolean }>();
+    const xhrAliases = new Map<ts.Symbol, ts.Symbol>();
+
+    function canonicalXhrSymbol(symbol: ts.Symbol): ts.Symbol {
+      const seen = new Set<ts.Symbol>();
+      while (xhrAliases.has(symbol) && !seen.has(symbol)) {
+        seen.add(symbol);
+        symbol = xhrAliases.get(symbol) ?? symbol;
+      }
+      return symbol;
+    }
+
+    function collectXhrAlias(node: ts.Node): void {
+      let target: ts.Node | null = null;
+      let value: ts.Expression | null = null;
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer
+      ) {
+        target = node.name;
+        value = node.initializer;
+      } else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        target = node.left;
+        value = node.right;
+      }
+      if (
+        target &&
+        value &&
+        typeContainsGlobalDomType(
+          checker.getTypeAtLocation(target),
+          "XMLHttpRequest",
+        ) &&
+        typeContainsGlobalDomType(
+          checker.getTypeAtLocation(value),
+          "XMLHttpRequest",
+        )
+      ) {
+        const targetSymbol = resolvedSymbol(target);
+        const valueSymbol = resolvedSymbol(value);
+        if (targetSymbol && valueSymbol && targetSymbol !== valueSymbol) {
+          xhrAliases.set(targetSymbol, canonicalXhrSymbol(valueSymbol));
+        }
+      }
+    }
 
     function visit(node: ts.Node): void {
       if (writes || ts.isFunctionLike(node)) {
         return;
       }
+      collectXhrAlias(node);
       if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
         for (const member of node.members) {
           if (ts.isClassStaticBlockDeclaration(member)) {
@@ -3287,7 +3371,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         const receiverCallable = receiver
           ? callableImplementation(resolvedSymbol(receiver))
           : null;
-        let xhrSend = false;
+        let xhrSendWrites = false;
         if (
           ts.isPropertyAccessExpression(node.expression) ||
           ts.isElementAccessExpression(node.expression)
@@ -3295,15 +3379,35 @@ function waveNineMutationBoundaryViolations(): string[] {
           const methodName = ts.isPropertyAccessExpression(node.expression)
             ? node.expression.name.text
             : constantStringValue(node.expression.argumentExpression);
-          xhrSend =
-            methodName === "send" &&
+          const xhrReceiver = node.expression.expression;
+          const xhrReceiverSymbol = resolvedSymbol(xhrReceiver);
+          if (
+            xhrReceiverSymbol &&
+            (methodName === "open" || methodName === "send") &&
             typeContainsGlobalDomType(
-              checker.getTypeAtLocation(node.expression.expression),
+              checker.getTypeAtLocation(xhrReceiver),
               "XMLHttpRequest",
-            );
+            )
+          ) {
+            const canonicalSymbol = canonicalXhrSymbol(xhrReceiverSymbol);
+            const operation = xhrOperations.get(canonicalSymbol) ?? {
+              writeOpen: false,
+            };
+            if (methodName === "send") {
+              xhrSendWrites = operation.writeOpen;
+            } else {
+              const writeOpen = node.arguments[0]
+                ? methodValueState(node.arguments[0]) === "write"
+                : true;
+              operation.writeOpen = maySkipExecution(node, sourceFile)
+                ? operation.writeOpen || writeOpen
+                : writeOpen;
+              xhrOperations.set(canonicalSymbol, operation);
+            }
+          }
         }
         writes =
-          xhrSend ||
+          xhrSendWrites ||
           mutationSymbol(reference) !== null ||
           (rawTransport !== null && rawCallWrites(node)) ||
           invocationTargetCallables(node.expression).some((implementation) =>
