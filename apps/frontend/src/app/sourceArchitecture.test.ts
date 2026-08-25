@@ -721,9 +721,7 @@ function waveNineMutationBoundaryViolations(): string[] {
     ) {
       const helperName = ts.isPropertyAccessExpression(node.expression)
         ? node.expression.name.text
-        : ts.isStringLiteralLike(node.expression.argumentExpression)
-          ? node.expression.argumentExpression.text
-          : null;
+        : constantStringValue(node.expression.argumentExpression);
       if (["apply", "bind", "call"].includes(helperName ?? "")) {
         if (
           ts.isPropertyAccessExpression(node.expression) &&
@@ -1367,9 +1365,7 @@ function waveNineMutationBoundaryViolations(): string[] {
           const receiverSymbol = resolvedSymbol(receiver);
           const methodName = ts.isPropertyAccessExpression(node.expression)
             ? node.expression.name.text
-            : ts.isStringLiteralLike(node.expression.argumentExpression)
-              ? node.expression.argumentExpression.text
-              : null;
+            : constantStringValue(node.expression.argumentExpression);
           if (
             receiverSymbol &&
             (methodName === "open" || methodName === "send")
@@ -2787,9 +2783,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         ) {
           const methodName = ts.isPropertyAccessExpression(node.expression)
             ? node.expression.name.text
-            : ts.isStringLiteralLike(node.expression.argumentExpression)
-              ? node.expression.argumentExpression.text
-              : null;
+            : constantStringValue(node.expression.argumentExpression);
           xhrSend =
             methodName === "send" &&
             typeContainsGlobalDomType(
