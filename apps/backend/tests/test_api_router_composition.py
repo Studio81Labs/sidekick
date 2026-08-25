@@ -66,7 +66,7 @@ from app.domain.training import (
     TrainingProgress,
     TrainingReviewRequest,
 )
-from app.training import summarize_training
+from app.domain.training.aggregation import summarize_training
 
 
 def pipeline_capabilities() -> PipelineCapabilities:
