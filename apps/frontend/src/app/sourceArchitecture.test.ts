@@ -470,7 +470,12 @@ function waveNineMutationBoundaryViolations(): string[] {
 
   function callableImplementation(
     symbol: ts.Symbol | null,
+    seen = new Set<ts.Symbol>(),
   ): CallableImplementation | null {
+    if (!symbol || seen.has(symbol)) {
+      return null;
+    }
+    seen.add(symbol);
     for (const declaration of symbol?.declarations ?? []) {
       if (
         ts.isFunctionDeclaration(declaration) ||
@@ -487,6 +492,15 @@ function waveNineMutationBoundaryViolations(): string[] {
       ) {
         return declaration.initializer;
       }
+      if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
+        const implementation = callableImplementation(
+          resolvedSymbol(declaration.initializer),
+          seen,
+        );
+        if (implementation) {
+          return implementation;
+        }
+      }
     }
     return null;
   }
@@ -499,7 +513,29 @@ function waveNineMutationBoundaryViolations(): string[] {
         : node.expression;
   }
 
-  function requestOptionsWrite(value: ts.Expression): boolean {
+  type RequestMethodState = "absent" | "read" | "write";
+
+  function methodValueState(value: ts.Expression): RequestMethodState {
+    return ts.isStringLiteralLike(value) &&
+      ["GET", "HEAD"].includes(value.text.toUpperCase())
+      ? "read"
+      : "write";
+  }
+
+  function composeMethodStates(
+    currentStates: Set<RequestMethodState>,
+    overrideStates: Set<RequestMethodState>,
+  ): Set<RequestMethodState> {
+    const composed = new Set<RequestMethodState>();
+    for (const current of currentStates) {
+      for (const override of overrideStates) {
+        composed.add(override === "absent" ? current : override);
+      }
+    }
+    return composed;
+  }
+
+  function requestMethodStates(value: ts.Expression): Set<RequestMethodState> {
     while (
       ts.isParenthesizedExpression(value) ||
       ts.isAsExpression(value) ||
@@ -508,50 +544,181 @@ function waveNineMutationBoundaryViolations(): string[] {
       value = value.expression;
     }
     if (ts.isConditionalExpression(value)) {
-      return (
-        requestOptionsWrite(value.whenTrue) ||
-        requestOptionsWrite(value.whenFalse)
-      );
+      return new Set([
+        ...requestMethodStates(value.whenTrue),
+        ...requestMethodStates(value.whenFalse),
+      ]);
     }
     if (
       (ts.isIdentifier(value) && value.text === "undefined") ||
       ts.isVoidExpression(value)
     ) {
-      return false;
+      return new Set(["absent"]);
     }
     if (!ts.isObjectLiteralExpression(value)) {
-      return true;
+      return new Set(["write"]);
     }
-    const method = value.properties.find(
-      (property): property is ts.PropertyAssignment =>
-        ts.isPropertyAssignment(property) &&
-        ((ts.isIdentifier(property.name) && property.name.text === "method") ||
-          (ts.isStringLiteralLike(property.name) &&
-            property.name.text === "method")),
-    );
-    if (!method) {
-      return value.properties.some(
-        (property) =>
-          (ts.isSpreadAssignment(property) &&
-            requestOptionsWrite(property.expression)) ||
-          (ts.isShorthandPropertyAssignment(property) &&
-            property.name.text === "method") ||
-          (!ts.isSpreadAssignment(property) &&
-            ts.isComputedPropertyName(property.name)),
-      );
+
+    let states = new Set<RequestMethodState>(["absent"]);
+    for (const property of value.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        states = composeMethodStates(
+          states,
+          requestMethodStates(property.expression),
+        );
+        continue;
+      }
+      if (ts.isComputedPropertyName(property.name)) {
+        states = new Set(["write"]);
+        continue;
+      }
+      const propertyName =
+        ts.isIdentifier(property.name) || ts.isStringLiteralLike(property.name)
+          ? property.name.text
+          : null;
+      if (propertyName !== "method") {
+        continue;
+      }
+      states = new Set([
+        ts.isPropertyAssignment(property)
+          ? methodValueState(property.initializer)
+          : "write",
+      ]);
     }
-    return !(
-      ts.isStringLiteralLike(method.initializer) &&
-      ["GET", "HEAD"].includes(method.initializer.text.toUpperCase())
+    return states;
+  }
+
+  function requestOptionsWrite(value: ts.Expression): boolean {
+    return requestMethodStates(value).has("write");
+  }
+
+  function isGlobalDomSymbol(symbol: ts.Symbol | null, name: string): boolean {
+    return (
+      symbol?.getName() === name &&
+      (symbol.declarations?.some((declaration) =>
+        declaration.getSourceFile().fileName.endsWith("lib.dom.d.ts"),
+      ) ??
+        false)
     );
   }
 
+  function typeContainsGlobalDomType(type: ts.Type, name: string): boolean {
+    if (type.isUnionOrIntersection()) {
+      return type.types.some((member) =>
+        typeContainsGlobalDomType(member, name),
+      );
+    }
+    return isGlobalDomSymbol(
+      resolvedAliasSymbol(type.aliasSymbol ?? type.getSymbol()),
+      name,
+    );
+  }
+
+  function requestInputMethodStates(
+    value: ts.Expression | undefined,
+  ): Set<RequestMethodState> {
+    if (!value) {
+      return new Set(["absent"]);
+    }
+    while (
+      ts.isParenthesizedExpression(value) ||
+      ts.isAsExpression(value) ||
+      ts.isSatisfiesExpression(value)
+    ) {
+      value = value.expression;
+    }
+    if (
+      ts.isNewExpression(value) &&
+      isGlobalDomSymbol(resolvedSymbol(value.expression), "Request")
+    ) {
+      return composeMethodStates(
+        requestInputMethodStates(value.arguments?.[0]),
+        value.arguments?.[1]
+          ? requestMethodStates(value.arguments[1])
+          : new Set(["absent"]),
+      );
+    }
+    return typeContainsGlobalDomType(
+      checker.getTypeAtLocation(value),
+      "Request",
+    )
+      ? new Set(["write"])
+      : new Set(["absent"]);
+  }
+
   function rawCallWrites(node: ts.CallExpression): boolean {
-    if (!rawTransportSymbol(callReference(node))) {
+    const transport = rawTransportSymbol(callReference(node));
+    if (!transport) {
       return false;
     }
+    if (transport === "sendBeacon") {
+      return true;
+    }
+    if (transport === "fetch") {
+      return composeMethodStates(
+        requestInputMethodStates(node.arguments[0]),
+        node.arguments[1]
+          ? requestMethodStates(node.arguments[1])
+          : new Set(["absent"]),
+      ).has("write");
+    }
     const options = node.arguments[1];
-    return options ? requestOptionsWrite(options) : false;
+    return transport === "requestJson" && options
+      ? requestOptionsWrite(options)
+      : false;
+  }
+
+  function xmlHttpRequestWrites(callable: CallableImplementation): boolean {
+    const operations = new Map<
+      ts.Symbol,
+      { send: boolean; writeOpen: boolean }
+    >();
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isCallExpression(node) &&
+        (ts.isPropertyAccessExpression(node.expression) ||
+          ts.isElementAccessExpression(node.expression))
+      ) {
+        const receiver = node.expression.expression;
+        if (
+          typeContainsGlobalDomType(
+            checker.getTypeAtLocation(receiver),
+            "XMLHttpRequest",
+          )
+        ) {
+          const receiverSymbol = resolvedSymbol(receiver);
+          const methodName = ts.isPropertyAccessExpression(node.expression)
+            ? node.expression.name.text
+            : ts.isStringLiteralLike(node.expression.argumentExpression)
+              ? node.expression.argumentExpression.text
+              : null;
+          if (
+            receiverSymbol &&
+            (methodName === "open" || methodName === "send")
+          ) {
+            const operation = operations.get(receiverSymbol) ?? {
+              send: false,
+              writeOpen: false,
+            };
+            if (methodName === "send") {
+              operation.send = true;
+            } else {
+              operation.writeOpen = node.arguments[0]
+                ? methodValueState(node.arguments[0]) === "write"
+                : true;
+            }
+            operations.set(receiverSymbol, operation);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(callable);
+    return [...operations.values()].some(
+      (operation) => operation.send && operation.writeOpen,
+    );
   }
 
   const writeBearingCallables = new Map<CallableImplementation, boolean>();
@@ -568,7 +735,7 @@ function waveNineMutationBoundaryViolations(): string[] {
       return false;
     }
     active.add(callable);
-    let writes = false;
+    let writes = xmlHttpRequestWrites(callable);
 
     function visit(node: ts.Node): void {
       if (writes) {
@@ -683,6 +850,22 @@ function waveNineMutationBoundaryViolations(): string[] {
           label: exportName,
           topLevel: true,
         });
+      } else if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer &&
+        !ts.isObjectLiteralExpression(declaration.initializer) &&
+        !ts.isClassExpression(declaration.initializer)
+      ) {
+        const implementation = callableImplementation(
+          resolvedSymbol(declaration.initializer),
+        );
+        if (implementation) {
+          callables.push({
+            callable: implementation,
+            label: exportName,
+            topLevel: true,
+          });
+        }
       } else if (
         ts.isVariableDeclaration(declaration) &&
         declaration.initializer &&
