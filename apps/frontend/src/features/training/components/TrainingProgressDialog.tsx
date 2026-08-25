@@ -2,7 +2,7 @@ import { Download, Eye } from "lucide-react";
 import "./TrainingProgressDialog.css";
 
 import { trainingLessonsExportUrl } from "../../../domains/training/api/trainingApi";
-import { providerLabel } from "../../pipeline/lib/pipelineSelection";
+import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection";
 import {
   trainingCertaintyLabel,
   trainingDecisionLabel,

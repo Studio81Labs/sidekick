@@ -104,10 +104,6 @@ import {
   reconcileProcessingJobs,
 } from "../../features/workspace/lib/persistence";
 import {
-  compatiblePipelineLayouts,
-  providerLabel,
-} from "../../features/pipeline/lib/pipelineSelection";
-import {
   approvalKey,
   benchmarkApprovalKey,
   stateToForm,
@@ -330,10 +326,12 @@ export function useAnalyzerWorkspaceController({
   });
   const {
     capabilities: pipelineCapabilities,
+    compatibleLayouts: compatiblePipelineLayouts,
     dialogOpen: pipelineDialogOpen,
     loading: pipelineLoading,
     loadCapabilities: loadPipelineCapabilities,
     openDialog: openPipelineDialog,
+    providerLabel,
     selection: pipelineSelection,
     setDialogOpen: setPipelineDialogOpen,
     setSelection: setPipelineSelection,
@@ -4228,13 +4226,7 @@ export function useAnalyzerWorkspaceController({
       pipeline: pipelineDialogOpen
         ? {
             capabilities: pipelineCapabilities,
-            compatibleLayouts:
-              pipelineCapabilities && pipelineSelection
-                ? compatiblePipelineLayouts(
-                    pipelineCapabilities,
-                    pipelineSelection.parser_provider,
-                  )
-                : [],
+            compatibleLayouts: compatiblePipelineLayouts,
             loading: pipelineLoading,
             onClose: () => setPipelineDialogOpen(false),
             onParserChange: updateParserProvider,

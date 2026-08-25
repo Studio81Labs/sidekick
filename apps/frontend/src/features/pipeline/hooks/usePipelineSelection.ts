@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { usePipelineCapabilitiesQuery } from "../../../domains/pipeline/api/pipelineQueries";
-import { reconcilePipelineSelection } from "../lib/pipelineSelection";
+import {
+  compatiblePipelineLayouts,
+  providerLabel,
+  reconcilePipelineSelection,
+} from "../../../domains/pipeline/model/pipelineSelection";
 import { messageFromError } from "../../../shared/lib/errors";
 import type {
   PipelineCapabilities,
@@ -17,6 +21,10 @@ export function usePipelineSelection({ onError }: UsePipelineSelectionOptions) {
   const [selection, setSelection] = useState<PipelineSelection | null>(null);
   const { data, isFetching, refetch } = usePipelineCapabilitiesQuery(false);
   const capabilities = data ?? null;
+  const compatibleLayouts =
+    capabilities && selection
+      ? compatiblePipelineLayouts(capabilities, selection.parser_provider)
+      : [];
 
   useEffect(() => {
     if (!capabilities) return;
@@ -94,10 +102,12 @@ export function usePipelineSelection({ onError }: UsePipelineSelectionOptions) {
 
   return {
     capabilities,
+    compatibleLayouts,
     dialogOpen,
     loadCapabilities,
     loading: isFetching,
     openDialog,
+    providerLabel,
     selection,
     setDialogOpen,
     setSelection,

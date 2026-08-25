@@ -4,7 +4,7 @@ import type {
   BenchmarkReport,
   BenchmarkReportSummary,
 } from "../../../shared/types/benchmarks";
-import { providerLabel } from "../../pipeline/lib/pipelineSelection";
+import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection";
 import {
   benchmarkParserRouteSummary,
   benchmarkPointChange,

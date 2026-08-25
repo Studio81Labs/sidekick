@@ -9,7 +9,7 @@ import {
 import {
   providerLabel,
   reconcilePipelineSelection,
-} from "../../pipeline/lib/pipelineSelection";
+} from "../../../domains/pipeline/model/pipelineSelection";
 import { messageFromError } from "../../../shared/lib/errors";
 import type { BenchmarkOverview } from "../../../shared/types/benchmarks";
 import type { JobRecord } from "../../../shared/types/jobs";

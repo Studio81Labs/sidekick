@@ -7,7 +7,7 @@ import type {
   BenchmarkReportSummary,
 } from "../../../shared/types/benchmarks";
 import type { PipelineCapabilities } from "../../../shared/types/pipeline";
-import { providerLabel } from "../../pipeline/lib/pipelineSelection";
+import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection";
 
 export interface BenchmarkComparisonProgress {
   parserId: string;
