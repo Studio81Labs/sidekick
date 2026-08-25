@@ -518,6 +518,33 @@ function waveNineMutationBoundaryViolations(): string[] {
           return implementation;
         }
       }
+      if (
+        ts.isPropertyAssignment(declaration) &&
+        (ts.isArrowFunction(declaration.initializer) ||
+          ts.isFunctionExpression(declaration.initializer))
+      ) {
+        return declaration.initializer;
+      }
+      if (ts.isPropertyAssignment(declaration)) {
+        const implementation = callableImplementation(
+          resolvedSymbol(declaration.initializer),
+          seen,
+        );
+        if (implementation) {
+          return implementation;
+        }
+      }
+      if (ts.isShorthandPropertyAssignment(declaration)) {
+        const implementation = callableImplementation(
+          resolvedAliasSymbol(
+            checker.getShorthandAssignmentValueSymbol(declaration),
+          ),
+          seen,
+        );
+        if (implementation) {
+          return implementation;
+        }
+      }
     }
     return null;
   }
@@ -724,6 +751,54 @@ function waveNineMutationBoundaryViolations(): string[] {
       ts.Symbol,
       { send: boolean; writeOpen: boolean }
     >();
+    const receiverAliases = new Map<ts.Symbol, ts.Symbol>();
+
+    function collectReceiverAliases(node: ts.Node): void {
+      let target: ts.Node | null = null;
+      let value: ts.Expression | null = null;
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer
+      ) {
+        target = node.name;
+        value = node.initializer;
+      } else if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        target = node.left;
+        value = node.right;
+      }
+      if (
+        target &&
+        value &&
+        typeContainsGlobalDomType(
+          checker.getTypeAtLocation(target),
+          "XMLHttpRequest",
+        ) &&
+        typeContainsGlobalDomType(
+          checker.getTypeAtLocation(value),
+          "XMLHttpRequest",
+        )
+      ) {
+        const targetSymbol = resolvedSymbol(target);
+        const valueSymbol = resolvedSymbol(value);
+        if (targetSymbol && valueSymbol && targetSymbol !== valueSymbol) {
+          receiverAliases.set(targetSymbol, valueSymbol);
+        }
+      }
+      ts.forEachChild(node, collectReceiverAliases);
+    }
+
+    function canonicalReceiverSymbol(symbol: ts.Symbol): ts.Symbol {
+      const seen = new Set<ts.Symbol>();
+      while (receiverAliases.has(symbol) && !seen.has(symbol)) {
+        seen.add(symbol);
+        symbol = receiverAliases.get(symbol) ?? symbol;
+      }
+      return symbol;
+    }
 
     function visit(node: ts.Node): void {
       if (
@@ -748,7 +823,8 @@ function waveNineMutationBoundaryViolations(): string[] {
             receiverSymbol &&
             (methodName === "open" || methodName === "send")
           ) {
-            const operation = operations.get(receiverSymbol) ?? {
+            const canonicalSymbol = canonicalReceiverSymbol(receiverSymbol);
+            const operation = operations.get(canonicalSymbol) ?? {
               send: false,
               writeOpen: false,
             };
@@ -759,13 +835,14 @@ function waveNineMutationBoundaryViolations(): string[] {
                 ? methodValueState(node.arguments[0]) === "write"
                 : true;
             }
-            operations.set(receiverSymbol, operation);
+            operations.set(canonicalSymbol, operation);
           }
         }
       }
       ts.forEachChild(node, visit);
     }
 
+    collectReceiverAliases(callable);
     visit(callable);
     return [...operations.values()].some(
       (operation) => operation.send && operation.writeOpen,
@@ -1421,6 +1498,92 @@ function waveNineMutationBoundaryViolations(): string[] {
     return callables;
   }
 
+  function destructuredExportCallables(
+    declaration: ts.BindingElement,
+    exportName: string,
+  ): ExportedCallable[] {
+    const callables: ExportedCallable[] = [];
+    const bindingPattern = declaration.parent;
+    const variableDeclaration = bindingPattern.parent;
+    if (
+      !ts.isVariableDeclaration(variableDeclaration) ||
+      !variableDeclaration.initializer
+    ) {
+      return callables;
+    }
+
+    function addExpression(value: ts.Expression): void {
+      const implementation =
+        ts.isArrowFunction(value) || ts.isFunctionExpression(value)
+          ? value
+          : callableImplementation(resolvedSymbol(value));
+      if (implementation) {
+        callables.push({
+          callable: implementation,
+          label: exportName,
+          topLevel: true,
+        });
+      }
+      callables.push(...typedValueCallables(value, exportName));
+    }
+
+    if (declaration.initializer) {
+      addExpression(declaration.initializer);
+    }
+    if (declaration.dotDotDotToken) {
+      callables.push(
+        ...typedValueCallables(variableDeclaration.initializer, exportName),
+      );
+      return callables;
+    }
+    if (ts.isObjectBindingPattern(bindingPattern)) {
+      const propertyName = declaration.propertyName ?? declaration.name;
+      const staticName =
+        ts.isIdentifier(propertyName) || ts.isStringLiteralLike(propertyName)
+          ? propertyName.text
+          : null;
+      if (staticName) {
+        const sourceType = checker.getTypeAtLocation(
+          variableDeclaration.initializer,
+        );
+        const property = resolvedAliasSymbol(
+          checker.getPropertyOfType(sourceType, staticName),
+        );
+        const implementation = callableImplementation(property);
+        if (implementation) {
+          callables.push({
+            callable: implementation,
+            label: exportName,
+            topLevel: true,
+          });
+        }
+        const propertyDeclaration =
+          property?.valueDeclaration ?? property?.declarations?.[0];
+        if (property && propertyDeclaration) {
+          callables.push(
+            ...reachableTypeCallables(
+              checker.getTypeOfSymbolAtLocation(property, propertyDeclaration),
+              exportName,
+              new Set(),
+            ),
+          );
+        }
+      }
+    } else if (
+      ts.isArrayBindingPattern(bindingPattern) &&
+      ts.isArrayLiteralExpression(variableDeclaration.initializer)
+    ) {
+      const index = bindingPattern.elements.indexOf(declaration);
+      const element = variableDeclaration.initializer.elements[index];
+      if (element && !ts.isOmittedExpression(element)) {
+        addExpression(
+          ts.isSpreadElement(element) ? element.expression : element,
+        );
+      }
+    }
+    return callables;
+  }
+
   function exportedCallables(
     symbol: ts.Symbol | null,
     sourcePath: string,
@@ -1485,6 +1648,8 @@ function waveNineMutationBoundaryViolations(): string[] {
         callables.push(...callableMembers(declaration.initializer, exportName));
       } else if (ts.isClassDeclaration(declaration)) {
         callables.push(...callableMembers(declaration, exportName));
+      } else if (ts.isBindingElement(declaration)) {
+        callables.push(...destructuredExportCallables(declaration, exportName));
       }
     }
     const returnQueue = [...callables];
