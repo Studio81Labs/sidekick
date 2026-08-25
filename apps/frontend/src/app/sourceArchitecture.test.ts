@@ -87,6 +87,9 @@ const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
       "features/capture/services/uploadScreenshotCommand.ts",
     ]),
   };
+const WAVE_NINE_MUTATION_OWNER_PATHS = new Set(
+  Object.values(WAVE_NINE_MUTATION_OWNERS).flatMap((owners) => [...owners]),
+);
 
 function isWaveNineMutation(value: string): boolean {
   return Object.prototype.hasOwnProperty.call(WAVE_NINE_MUTATION_OWNERS, value);
@@ -3827,7 +3830,8 @@ function waveNineMutationBoundaryViolations(): string[] {
     auditAdapterWriteExports(sourceFile, sourcePath);
     if (
       ((sourcePath.startsWith("domains/") && sourcePath.includes("/api/")) ||
-        LEGACY_RAW_TRANSPORT_OWNERS.has(sourcePath)) &&
+        LEGACY_RAW_TRANSPORT_OWNERS.has(sourcePath) ||
+        WAVE_NINE_MUTATION_OWNER_PATHS.has(sourcePath)) &&
       moduleInitializerWrites(sourceFile)
     ) {
       violations.add("Module initializer performs a write: " + sourcePath);
