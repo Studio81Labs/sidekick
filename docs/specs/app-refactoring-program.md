@@ -483,7 +483,7 @@ Dependencies: Wave 9
 
 Wave 10 is in progress. The application route shell now owns canonical analyzer,
 job, training, and benchmark URLs, with `/` retained as a compatibility redirect.
-A typed analyzer route context exposes the durable surface and optional job
+Typed analyzer route state restores the represented surface and optional job
 identity without moving transient dialog or draft state into the URL.
 
 - Replace `AnalyzerPage` with a thin `AnalyzerRoute` that mounts providers,
@@ -615,7 +615,7 @@ Every implementation PR must include:
 | 7     | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
 | 8     | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |
 | 9     | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
-| 10    | In progress | Durable analyzer, job, training, and benchmark route shells plus typed route state are in place; workspace surface wiring and page composition extraction remain                                     |
+| 10    | In progress | Durable analyzer, job, training, and benchmark routes now restore their typed surface state; page composition extraction remains                                                                     |
 | 11-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
 
 ## Exit Criteria

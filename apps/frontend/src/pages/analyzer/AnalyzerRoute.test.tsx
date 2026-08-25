@@ -1,23 +1,48 @@
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { analyzerRouteState } from "./AnalyzerRoute";
+import AnalyzerRoute from "./AnalyzerRoute";
+import type { AnalyzerRouteState } from "./analyzerRouteState";
 
-describe("analyzerRouteState", () => {
-  it("keeps job identity only on the durable job surface", () => {
-    expect(analyzerRouteState("job", "job-123")).toEqual({
-      jobId: "job-123",
-      surface: "job",
-    });
-    expect(analyzerRouteState("workspace", "job-123")).toEqual({
-      jobId: null,
-      surface: "workspace",
-    });
+vi.mock("./AnalyzerPage", () => ({
+  default: ({ route }: { route: AnalyzerRouteState }) => (
+    <output>
+      {route.surface}:{route.jobId ?? "none"}
+    </output>
+  ),
+}));
+
+afterEach(cleanup);
+
+describe("AnalyzerRoute", () => {
+  it("passes durable job identity into the analyzer", () => {
+    render(
+      <MemoryRouter initialEntries={["/analyzer/jobs/job-123"]}>
+        <Routes>
+          <Route
+            path="/analyzer/jobs/:jobId"
+            element={<AnalyzerRoute surface="job" />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("job:job-123")).toBeInTheDocument();
   });
 
-  it("represents a missing job parameter explicitly", () => {
-    expect(analyzerRouteState("job")).toEqual({
-      jobId: null,
-      surface: "job",
-    });
+  it("passes a durable non-job surface without job identity", () => {
+    render(
+      <MemoryRouter initialEntries={["/analyzer/training"]}>
+        <Routes>
+          <Route
+            path="/analyzer/training"
+            element={<AnalyzerRoute surface="training" />}
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("training:none")).toBeInTheDocument();
   });
 });

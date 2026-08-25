@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import "./AnalyzerPage.css";
+import type { AnalyzerRouteState } from "./analyzerRouteState";
+import { useAnalyzerRouteRestore } from "./useAnalyzerRouteRestore";
 import { AnalyzerToolbar } from "./components/AnalyzerToolbar";
 import { AutomationDialog } from "../../features/automation/components/AutomationDialog";
 import { BenchmarkDialog } from "../../features/benchmark/components/BenchmarkDialog";
@@ -143,21 +145,33 @@ import {
   recommendationAttemptMayHavePersistedSideEffect,
 } from "../../features/workspace/lib/workflow";
 
-export default function AnalyzerPage() {
+const DEFAULT_ANALYZER_ROUTE: AnalyzerRouteState = {
+  jobId: null,
+  surface: "workspace",
+};
+
+interface AnalyzerPageProps {
+  route?: AnalyzerRouteState;
+}
+
+export default function AnalyzerPage({
+  route = DEFAULT_ANALYZER_ROUTE,
+}: AnalyzerPageProps) {
   const [mutationOwnerId] = useState(mutationLeaseOwnerId);
 
   return (
     <AnalyzerWorkflowProvider mutationOwnerId={mutationOwnerId}>
-      <AnalyzerWorkspace mutationOwnerId={mutationOwnerId} />
+      <AnalyzerWorkspace mutationOwnerId={mutationOwnerId} route={route} />
     </AnalyzerWorkflowProvider>
   );
 }
 
 type AnalyzerWorkspaceProps = {
   mutationOwnerId: string;
+  route: AnalyzerRouteState;
 };
 
-function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
+function AnalyzerWorkspace({ mutationOwnerId, route }: AnalyzerWorkspaceProps) {
   const queryClient = useQueryClient();
   const {
     finishRecovery,
@@ -485,6 +499,25 @@ function AnalyzerWorkspace({ mutationOwnerId }: AnalyzerWorkspaceProps) {
     pipelineSelection,
     loadPipelineCapabilities,
     setPipelineSelection,
+  });
+
+  useAnalyzerRouteRestore({
+    activateJob: upsertAndActivateJob,
+    activeJobId,
+    closeBenchmarks: closeBenchmarkDialog,
+    closeTraining: () => setTrainingDialogOpen(false),
+    jobs,
+    loadJob: (jobId) => fetchJobQuery(queryClient, jobId),
+    onError: (routeError) =>
+      setError(
+        messageFromError(
+          routeError,
+          "The requested analyzer job could not load",
+        ),
+      ),
+    openBenchmarks: openBenchmarkDialog,
+    openTraining: openTrainingDialog,
+    route,
   });
 
   useEffect(() => {

@@ -1,0 +1,69 @@
+import { useEffect, useRef } from "react";
+
+import type { JobRecord } from "../../shared/types";
+import type { AnalyzerRouteState } from "./analyzerRouteState";
+
+export interface AnalyzerRouteRestoreOptions {
+  activateJob: (job: JobRecord) => void;
+  activeJobId: string | null;
+  closeBenchmarks: () => void;
+  closeTraining: () => void;
+  jobs: readonly JobRecord[];
+  loadJob: (jobId: string) => Promise<JobRecord>;
+  onError: (error: unknown) => void;
+  openBenchmarks: () => void;
+  openTraining: () => void;
+  route: AnalyzerRouteState;
+}
+
+export function useAnalyzerRouteRestore(
+  options: AnalyzerRouteRestoreOptions,
+): void {
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
+
+  useEffect(() => {
+    let active = true;
+    const current = optionsRef.current;
+
+    if (current.route.surface !== "training") {
+      current.closeTraining();
+    }
+    if (current.route.surface !== "benchmarks") {
+      current.closeBenchmarks();
+    }
+    if (current.route.surface === "training") {
+      current.openTraining();
+    } else if (current.route.surface === "benchmarks") {
+      current.openBenchmarks();
+    } else if (
+      current.route.surface === "job" &&
+      current.route.jobId &&
+      current.activeJobId !== current.route.jobId
+    ) {
+      const cachedJob = current.jobs.find(
+        (job) => job.id === current.route.jobId,
+      );
+      if (cachedJob) {
+        current.activateJob(cachedJob);
+      } else {
+        void current
+          .loadJob(current.route.jobId)
+          .then((job) => {
+            if (active) {
+              current.activateJob(job);
+            }
+          })
+          .catch((error: unknown) => {
+            if (active) {
+              current.onError(error);
+            }
+          });
+      }
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [options.route.jobId, options.route.surface]);
+}
