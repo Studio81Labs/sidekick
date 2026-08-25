@@ -56,6 +56,8 @@ import {
   fetchHistoryPageQuery,
   fetchJobQuery,
   fetchTrainingProgressQuery,
+  getHistorySearchExtent,
+  getProcessingQueueExtent,
 } from "../../features/workspace/lib/queryReads";
 import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
 import {
@@ -74,7 +76,6 @@ import { setBenchmarkInclusionCommand } from "../../features/benchmark/services/
 import { isPristineBenchmarkImport } from "../../features/workspace/lib/cachedJobValidation";
 import {
   HISTORY_CACHE_LIMIT,
-  getHistorySearchExtent,
   historyItemsFromPage,
 } from "../../features/workspace/lib/historyPersistence";
 import {
@@ -102,7 +103,6 @@ import type {
 } from "../../features/workspace/lib/mutationLeaseTypes";
 import {
   PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS,
-  getProcessingQueueExtent,
   processingJobsForCache,
 } from "../../features/workspace/lib/processingQueuePersistence";
 import {

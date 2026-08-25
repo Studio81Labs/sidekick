@@ -1,7 +1,4 @@
-import type { QueryClient } from "@tanstack/react-query";
-
-import { fetchHistoryPageQuery } from "../../../domains/history/api/historyQueries";
-import type { JobHistory, JobRecord } from "../../../shared/types/jobs";
+import type { JobHistory } from "../../../shared/types/jobs";
 import type { HistoryItem } from "../../../domains/history/model/historyItem";
 import { readPersistedMutationLease } from "./mutationLeaseStorage";
 import { newerHistoryItem } from "./reconciliation";
@@ -10,8 +7,6 @@ export const HISTORY_SESSION_SYNC_KEY = "poker-training-history-synced";
 export const HISTORY_STORAGE_KEY = "poker-training-history-v1";
 export const HISTORY_TOTAL_STORAGE_KEY = "poker-training-history-total-v1";
 export const HISTORY_CACHE_LIMIT = 24;
-export const HISTORY_SEARCH_PAGE_LIMIT = 100;
-export const HISTORY_SNAPSHOT_RETRY_LIMIT = 3;
 
 export function readHistory(): HistoryItem[] | null {
   if (typeof window === "undefined") {
@@ -133,50 +128,4 @@ export function historyItemsFromPage(page: JobHistory): HistoryItem[] {
     job,
     savedAt: job.archived_at ?? job.updated_at,
   }));
-}
-
-export async function getHistorySearchExtent(
-  queryClient: QueryClient,
-  query: string,
-  loadedCount: number,
-): Promise<JobHistory> {
-  for (let attempt = 0; attempt < HISTORY_SNAPSHOT_RETRY_LIMIT; attempt += 1) {
-    const jobs: JobRecord[] = [];
-    let snapshotVersion: string | null = null;
-    let snapshotChanged = false;
-    let total = 0;
-
-    do {
-      const page = await fetchHistoryPageQuery(
-        queryClient,
-        jobs.length,
-        query,
-        Math.min(HISTORY_SEARCH_PAGE_LIMIT, loadedCount - jobs.length),
-      );
-      if (
-        snapshotVersion !== null &&
-        page.snapshot_version !== undefined &&
-        page.snapshot_version !== snapshotVersion
-      ) {
-        snapshotChanged = true;
-        break;
-      }
-      snapshotVersion ??= page.snapshot_version ?? null;
-      total = page.total;
-      jobs.push(...page.jobs);
-      if (page.jobs.length === 0) {
-        break;
-      }
-    } while (jobs.length < Math.min(loadedCount, total));
-
-    if (!snapshotChanged) {
-      return {
-        total,
-        jobs: jobs.slice(0, Math.min(loadedCount, total)),
-        snapshot_version: snapshotVersion ?? undefined,
-      };
-    }
-  }
-
-  throw new Error("Saved history changed repeatedly while loading");
 }

@@ -4538,6 +4538,39 @@ function analyzerCompositionBoundaryViolations(): string[] {
   return violations;
 }
 
+const BROWSER_PERSISTENCE_OWNERS = new Set([
+  "features/workspace/lib/historyPersistence.ts",
+  "features/workspace/lib/mutationLeaseStorage.ts",
+  "features/workspace/lib/processingQueuePersistence.ts",
+  "features/workspace/services/browserAnalyzerWorkflowProjections.ts",
+]);
+
+function transportAndBrowserPersistenceOwnershipViolations(): string[] {
+  return sourceFiles()
+    .filter((file) => [".cts", ".mts", ".ts", ".tsx"].includes(extname(file)))
+    .flatMap((file) => {
+      const source = readFileSync(file, "utf8");
+      const sourcePath = sourceSegments(file).join("/");
+      const importedSourcePaths = scriptImports(source, file).flatMap(
+        (specifier) => {
+          const target = sourceImportTarget(file, specifier);
+          return target === null ? [] : [sourceSegments(target).join("/")];
+        },
+      );
+      const ownsTransport =
+        ownsRawTransport(sourcePath) ||
+        importedSourcePaths.some((targetPath) => ownsRawTransport(targetPath));
+      const ownsBrowserPersistence =
+        BROWSER_PERSISTENCE_OWNERS.has(sourcePath) ||
+        importedSourcePaths.some((targetPath) =>
+          BROWSER_PERSISTENCE_OWNERS.has(targetPath),
+        ) ||
+        /\b(?:localStorage|sessionStorage)\b/.test(source);
+
+      return ownsTransport && ownsBrowserPersistence ? [sourcePath] : [];
+    });
+}
+
 function sharedTypeBoundaryViolations(): string[] {
   const violations: string[] = [];
   const retiredBarrel = resolve(SOURCE_ROOT, "shared/types.ts");
@@ -4946,6 +4979,10 @@ describe("frontend source architecture", () => {
 
   it("keeps analyzer composition roots thin", () => {
     expect(analyzerCompositionBoundaryViolations()).toEqual([]);
+  });
+
+  it("separates HTTP transport from browser persistence ownership", () => {
+    expect(transportAndBrowserPersistenceOwnershipViolations()).toEqual([]);
   });
 
   it("keeps shared API contracts in domain type modules", () => {

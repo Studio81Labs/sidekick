@@ -6,12 +6,12 @@ import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
   HISTORY_CACHE_LIMIT,
-  getHistorySearchExtent,
   readCachedHistoryTotal,
   readHistory,
   writeHistory,
   writeHistoryTotal,
 } from "./historyPersistence";
+import { getHistorySearchExtent } from "./queryReads";
 
 vi.mock("../../../domains/history/api/historyApi", () => ({
   getHistory: vi.fn(),

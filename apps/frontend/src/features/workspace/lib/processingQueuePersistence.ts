@@ -1,6 +1,3 @@
-import type { QueryClient } from "@tanstack/react-query";
-
-import { fetchProcessingJobsQuery } from "../../../domains/jobs/api/jobsQueries";
 import type { JobQueue, JobRecord } from "../../../shared/types/jobs";
 import {
   isCachedJobRecord,
@@ -16,7 +13,6 @@ export const PROCESSING_QUEUE_STORAGE_KEY = "poker-training-processing-v1";
 export const PROCESSING_QUEUE_TOTAL_STORAGE_KEY =
   "poker-training-processing-total-v1";
 export const PROCESSING_QUEUE_CACHE_LIMIT = 100;
-export const PROCESSING_QUEUE_SNAPSHOT_RETRY_LIMIT = 3;
 export const PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS = 250;
 
 export type ProcessingQueueRestore = JobQueue & {
@@ -177,47 +173,4 @@ export function processingQueueSessionSynced(): boolean {
   } catch {
     return false;
   }
-}
-
-export async function getProcessingQueueExtent(
-  queryClient: QueryClient,
-): Promise<JobQueue> {
-  for (
-    let attempt = 0;
-    attempt < PROCESSING_QUEUE_SNAPSHOT_RETRY_LIMIT;
-    attempt += 1
-  ) {
-    const jobs: JobRecord[] = [];
-    let snapshotVersion: string | null = null;
-    let snapshotChanged = false;
-    let total = 0;
-
-    do {
-      const page = await fetchProcessingJobsQuery(queryClient, jobs.length);
-      if (
-        snapshotVersion !== null &&
-        page.snapshot_version !== undefined &&
-        page.snapshot_version !== snapshotVersion
-      ) {
-        snapshotChanged = true;
-        break;
-      }
-      snapshotVersion ??= page.snapshot_version ?? null;
-      total = page.total;
-      jobs.push(...page.jobs);
-      if (page.jobs.length === 0) {
-        break;
-      }
-    } while (jobs.length < total);
-
-    if (!snapshotChanged && jobs.length >= total) {
-      return {
-        total,
-        jobs: jobs.slice(0, total),
-        snapshot_version: snapshotVersion ?? undefined,
-      };
-    }
-  }
-
-  throw new Error("Processing queue changed repeatedly while loading");
 }
