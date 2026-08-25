@@ -844,9 +844,7 @@ function waveNineMutationBoundaryViolations(): string[] {
 
     collectReceiverAliases(callable);
     visit(callable);
-    return [...operations.values()].some(
-      (operation) => operation.send && operation.writeOpen,
-    );
+    return [...operations.values()].some((operation) => operation.send);
   }
 
   const writeBearingCallables = new Map<CallableImplementation, boolean>();
