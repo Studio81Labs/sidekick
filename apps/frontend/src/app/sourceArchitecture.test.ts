@@ -262,8 +262,10 @@ function waveNineMutationBoundaryViolations(): string[] {
   });
   const checker = program.getTypeChecker();
 
-  function resolvedSymbol(node: ts.Node): ts.Symbol | null {
-    let symbol = checker.getSymbolAtLocation(node);
+  function resolvedAliasSymbol(
+    initialSymbol: ts.Symbol | undefined,
+  ): ts.Symbol | null {
+    let symbol = initialSymbol;
     const seen = new Set<ts.Symbol>();
     while (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
       if (seen.has(symbol)) {
@@ -279,6 +281,10 @@ function waveNineMutationBoundaryViolations(): string[] {
     return symbol ?? null;
   }
 
+  function resolvedSymbol(node: ts.Node): ts.Symbol | null {
+    return resolvedAliasSymbol(checker.getSymbolAtLocation(node));
+  }
+
   function declarationSourcePath(declaration: ts.Declaration): string | null {
     const declarationFile = resolve(declaration.getSourceFile().fileName);
     if (!declarationFile.startsWith(SOURCE_ROOT + sep)) {
@@ -287,8 +293,7 @@ function waveNineMutationBoundaryViolations(): string[] {
     return sourceSegments(declarationFile).join("/");
   }
 
-  function mutationSymbol(node: ts.Node): string | null {
-    const symbol = resolvedSymbol(node);
+  function mutationNameForSymbol(symbol: ts.Symbol | null): string | null {
     const mutation = symbol?.getName() ?? "";
     if (!symbol || !isWaveNineMutation(mutation)) {
       return null;
@@ -302,8 +307,11 @@ function waveNineMutationBoundaryViolations(): string[] {
       : null;
   }
 
-  function rawTransportSymbol(node: ts.Node): string | null {
-    const symbol = resolvedSymbol(node);
+  function mutationSymbol(node: ts.Node): string | null {
+    return mutationNameForSymbol(resolvedSymbol(node));
+  }
+
+  function rawTransportNameForSymbol(symbol: ts.Symbol | null): string | null {
     const transport = symbol?.getName() ?? "";
     if (!symbol || !RAW_TRANSPORT_REFERENCES.has(transport)) {
       return null;
@@ -316,6 +324,10 @@ function waveNineMutationBoundaryViolations(): string[] {
       return declarationFile.endsWith("lib.dom.d.ts");
     });
     return ownsDeclaration ? transport : null;
+  }
+
+  function rawTransportSymbol(node: ts.Node): string | null {
+    return rawTransportNameForSymbol(resolvedSymbol(node));
   }
 
   function isTypeOnlyReference(node: ts.Node): boolean {
@@ -388,12 +400,18 @@ function waveNineMutationBoundaryViolations(): string[] {
     );
   }
 
-  function isApiModuleTarget(target: string): boolean {
-    const targetPath = sourceSegments(target);
-    return (
-      (targetPath[0] === "shared" && targetPath[1] === "api") ||
-      (targetPath[0] === "domains" && targetPath[2] === "api")
-    );
+  function moduleExposesBoundary(node: ts.Node): boolean {
+    const moduleSymbol = resolvedSymbol(node);
+    if (!moduleSymbol || (moduleSymbol.flags & ts.SymbolFlags.Module) === 0) {
+      return false;
+    }
+    return checker.getExportsOfModule(moduleSymbol).some((exportedSymbol) => {
+      const symbol = resolvedAliasSymbol(exportedSymbol);
+      return (
+        mutationNameForSymbol(symbol) !== null ||
+        rawTransportNameForSymbol(symbol) !== null
+      );
+    });
   }
 
   function reflectedBoundaryName(node: ts.CallExpression): string | null {
@@ -410,12 +428,17 @@ function waveNineMutationBoundaryViolations(): string[] {
     const isGlobalReflect = reflectSymbol?.declarations?.some((declaration) =>
       declaration.getSourceFile().fileName.endsWith("lib.es2015.reflect.d.ts"),
     );
-    const propertyName = node.arguments[1].text;
-    return isGlobalReflect &&
-      (isWaveNineMutation(propertyName) ||
-        RAW_TRANSPORT_REFERENCES.has(propertyName))
-      ? propertyName
-      : null;
+    if (!isGlobalReflect) {
+      return null;
+    }
+    const targetType = checker.getTypeAtLocation(node.arguments[0]);
+    const propertySymbol = resolvedAliasSymbol(
+      checker.getPropertyOfType(targetType, node.arguments[1].text),
+    );
+    return (
+      mutationNameForSymbol(propertySymbol) ??
+      rawTransportNameForSymbol(propertySymbol)
+    );
   }
 
   for (const file of scriptFiles) {
@@ -438,8 +461,7 @@ function waveNineMutationBoundaryViolations(): string[] {
       ) {
         continue;
       }
-      const target = sourceImportTarget(file, statement.moduleSpecifier.text);
-      if (target && isApiModuleTarget(target)) {
+      if (moduleExposesBoundary(statement.moduleSpecifier)) {
         violations.add(
           "API namespace import bypasses owned symbols: " + sourcePath,
         );
@@ -464,8 +486,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         node.arguments.length === 1 &&
         ts.isStringLiteralLike(node.arguments[0])
       ) {
-        const target = sourceImportTarget(file, node.arguments[0].text);
-        if (target && isApiModuleTarget(target)) {
+        if (moduleExposesBoundary(node.arguments[0])) {
           violations.add(
             "Dynamic API namespace import bypasses owned symbols: " +
               sourcePath,
