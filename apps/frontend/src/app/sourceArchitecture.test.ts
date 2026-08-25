@@ -1486,6 +1486,59 @@ function waveNineMutationBoundaryViolations(): string[] {
       : false;
   }
 
+  function visitExecutableClassDefinition(
+    node: ts.ClassDeclaration | ts.ClassExpression,
+    visit: (node: ts.Node) => void,
+  ): void {
+    function visitDecorators(target: ts.Node): void {
+      if (!ts.canHaveDecorators(target)) {
+        return;
+      }
+      for (const decorator of ts.getDecorators(target) ?? []) {
+        visit(decorator.expression);
+      }
+    }
+
+    visitDecorators(node);
+    for (const heritageClause of node.heritageClauses ?? []) {
+      if (heritageClause.token === ts.SyntaxKind.ExtendsKeyword) {
+        heritageClause.types.forEach((type) => visit(type.expression));
+      }
+    }
+    for (const member of node.members) {
+      visitDecorators(member);
+      if (
+        (ts.isConstructorDeclaration(member) ||
+          ts.isMethodDeclaration(member) ||
+          ts.isGetAccessorDeclaration(member) ||
+          ts.isSetAccessorDeclaration(member)) &&
+        member.parameters.length > 0
+      ) {
+        member.parameters.forEach(visitDecorators);
+      }
+      if (
+        (ts.isPropertyDeclaration(member) ||
+          ts.isMethodDeclaration(member) ||
+          ts.isGetAccessorDeclaration(member) ||
+          ts.isSetAccessorDeclaration(member)) &&
+        ts.isComputedPropertyName(member.name)
+      ) {
+        visit(member.name.expression);
+      }
+      if (ts.isClassStaticBlockDeclaration(member)) {
+        visit(member);
+      } else if (
+        ts.isPropertyDeclaration(member) &&
+        member.initializer &&
+        member.modifiers?.some(
+          (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+        )
+      ) {
+        visit(member.initializer);
+      }
+    }
+  }
+
   function xmlHttpRequestWrites(callable: CallableImplementation): boolean {
     const operations = new Map<
       ts.Symbol,
@@ -1551,19 +1604,9 @@ function waveNineMutationBoundaryViolations(): string[] {
         return;
       }
       if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-        for (const member of node.members) {
-          if (ts.isClassStaticBlockDeclaration(member)) {
-            visit(member, root, conditionalContext);
-          } else if (
-            ts.isPropertyDeclaration(member) &&
-            member.initializer &&
-            member.modifiers?.some(
-              (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
-            )
-          ) {
-            visit(member.initializer, root, conditionalContext);
-          }
-        }
+        visitExecutableClassDefinition(node, (expression) =>
+          visit(expression, root, conditionalContext),
+        );
         return;
       }
       if (ts.isCallExpression(node)) {
@@ -2089,19 +2132,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         return;
       }
       if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-        for (const member of node.members) {
-          if (ts.isClassStaticBlockDeclaration(member)) {
-            visit(member);
-          } else if (
-            ts.isPropertyDeclaration(member) &&
-            member.initializer &&
-            member.modifiers?.some(
-              (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
-            )
-          ) {
-            visit(member.initializer);
-          }
-        }
+        visitExecutableClassDefinition(node, visit);
         return;
       }
       if (ts.isCallExpression(node)) {
@@ -3675,19 +3706,7 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
       collectXhrAlias(node);
       if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
-        for (const member of node.members) {
-          if (ts.isClassStaticBlockDeclaration(member)) {
-            visit(member);
-          } else if (
-            ts.isPropertyDeclaration(member) &&
-            member.initializer &&
-            member.modifiers?.some(
-              (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
-            )
-          ) {
-            visit(member.initializer);
-          }
-        }
+        visitExecutableClassDefinition(node, visit);
         return;
       }
       if (ts.isCallExpression(node)) {
