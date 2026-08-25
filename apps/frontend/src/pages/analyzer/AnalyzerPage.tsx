@@ -3792,7 +3792,13 @@ function AnalyzerWorkspace({
         Math.max(deletedIndex, 0),
         nextJobs.length - 1,
       );
-      alignWorkspaceToJob(nextJobs[fallbackIndex] ?? null);
+      const fallbackJob = nextJobs[fallbackIndex] ?? null;
+      alignWorkspaceToJob(fallbackJob);
+      if (fallbackJob) {
+        navigation.openJob(fallbackJob.id);
+      } else {
+        navigation.openWorkspace();
+      }
     }
     if (writeProcessingQueue(nextJobs)) {
       markProcessingQueueSessionSynced();
