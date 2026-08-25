@@ -548,7 +548,13 @@ function AnalyzerWorkspace({
     openTraining: openTrainingDialog,
     route,
     restoreWorkspace: () => {
-      const workspaceJob = processingJobsForCache(jobsRef.current)[0] ?? null;
+      const activeWorkspaceJob = jobsRef.current.find(
+        (candidate) => candidate.id === activeJobIdRef.current,
+      );
+      const workspaceJob =
+        activeWorkspaceJob && isLocalUploadError(activeWorkspaceJob)
+          ? activeWorkspaceJob
+          : (processingJobsForCache(jobsRef.current)[0] ?? null);
       if (activeJobIdRef.current !== (workspaceJob?.id ?? null)) {
         alignWorkspaceToJob(workspaceJob);
       }
