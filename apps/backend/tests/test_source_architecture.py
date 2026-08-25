@@ -79,6 +79,36 @@ def imports_app_models(path: Path) -> bool:
     return False
 
 
+def imports_app_package_root(path: Path, package: str) -> bool:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    package_name = f"app.{package}"
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import) and any(
+            alias.name == package_name for alias in node.names
+        ):
+            return True
+        if isinstance(node, ast.ImportFrom):
+            if node.module == package_name:
+                return True
+            if node.module == "app" and any(
+                alias.name == package for alias in node.names
+            ):
+                return True
+    return False
+
+
+def first_party_python_sources() -> list[Path]:
+    return sorted(
+        path
+        for root in (
+            APP_ROOT,
+            APP_ROOT.parent / "tests",
+            APP_ROOT.parents[2] / "scripts",
+        )
+        for path in root.rglob("*.py")
+    )
+
+
 def package_target(module: str, path: Path) -> str | None:
     if module.startswith("."):
         relative_parts = list(path.relative_to(APP_ROOT).parts[:-1])
@@ -128,14 +158,25 @@ def test_api_routers_do_not_import_runtime_wiring_dependencies() -> None:
 def test_models_compatibility_facade_is_retired() -> None:
     assert not (APP_ROOT / "models.py").exists()
 
-    first_party_sources = sorted(
-        path
-        for root in (APP_ROOT, APP_ROOT.parent / "tests")
-        for path in root.rglob("*.py")
-    )
     violations = [
         str(path)
-        for path in first_party_sources
+        for path in first_party_python_sources()
         if imports_app_models(path)
+    ]
+    assert violations == []
+
+
+def test_package_root_compatibility_exports_are_retired() -> None:
+    packages = ("api", "storage")
+    assert all(
+        imported_modules(APP_ROOT / package / "__init__.py") == []
+        for package in packages
+    )
+
+    violations = [
+        f"{path}: app.{package}"
+        for path in first_party_python_sources()
+        for package in packages
+        if imports_app_package_root(path, package)
     ]
     assert violations == []

@@ -10,7 +10,7 @@ from app.domain.hands import (
     JobRecord,
     ScreenshotMetadataRequest,
 )
-from app.storage import load_persisted_job_record
+from app.storage.persistence import load_persisted_job_record
 
 
 def test_screenshot_metadata_request_normalizes_text_and_tags() -> None:

@@ -8,7 +8,7 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from app.api import create_app
+from app.bootstrap import create_app
 from app.config import Settings
 from app.mcp_gateway import (
     McpGatewaySettings,

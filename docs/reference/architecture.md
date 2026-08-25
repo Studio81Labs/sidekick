@@ -169,8 +169,8 @@ File-backed persistence is organized under `app/storage`. Repository contracts
 live in `app/storage/ports.py`, job and benchmark adapters are split between
 `file_job_store.py` and `file_benchmark_store.py`, and shared durability and
 legacy-decoding helpers live in `persistence.py`. The package root preserves the
-historical `app.storage` import surface while production code can depend on the
-owned modules directly.
+package namespace without re-exporting adapter or persistence symbols;
+consumers import the owned modules directly.
 
 `app/workspace.py` composes those repositories with the process-wide and
 cross-process coordination boundary. `WorkspaceCoordinator` owns startup job

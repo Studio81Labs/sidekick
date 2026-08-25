@@ -6,7 +6,8 @@ import pytest
 import app.bootstrap as bootstrap_module
 from app.parsers.base import ParserError
 from app.parsers.mock import MockParser
-from app.storage import FileJobStore, JobNotFoundError
+from app.storage.file_job_store import FileJobStore
+from app.storage.persistence import JobNotFoundError
 from api_test_support import (
     VALID_PNG,
     approve_job,

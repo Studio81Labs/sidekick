@@ -5,7 +5,7 @@ from threading import Event, Thread
 import pytest
 from starlette.types import Message, Receive, Scope, Send
 
-from app.api import DataMutationLockMiddleware
+from app.bootstrap import DataMutationLockMiddleware
 from app.data_lock import InterprocessDataLock
 
 

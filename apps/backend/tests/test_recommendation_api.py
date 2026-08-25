@@ -6,11 +6,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.bootstrap as bootstrap_module
-from app.api import create_app
+from app.bootstrap import create_app
 from app.config import Settings
 from app.providers.base import ProviderError
 from app.providers.mock import MockRecommendationProvider
-from app.storage import FileJobStore
+from app.storage.file_job_store import FileJobStore
 from api_test_support import (
     APPROVED_STATE,
     approve_job,
