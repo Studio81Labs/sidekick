@@ -51,13 +51,10 @@ import {
   fetchHistoryPageQuery,
   fetchJobQuery,
 } from "../../features/workspace/lib/queryReads";
-import {
-  ApiResponseError,
-  applicationBackupUrl,
-  getBenchmarkDatasetImport,
-  getTrainingProgress,
-  humanReadableMessage,
-} from "../../shared/api/client";
+import { getBenchmarkDatasetImport } from "../../shared/api/benchmarks";
+import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
+import { applicationBackupUrl } from "../../shared/api/system";
+import { getTrainingProgress } from "../../shared/api/training";
 import type { BenchmarkDatasetImportResult } from "../../shared/types/benchmarks";
 import type { CanonicalState } from "../../shared/types/poker";
 import type { JobHistory, JobRecord } from "../../shared/types/jobs";

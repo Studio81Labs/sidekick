@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { imageUrl } from "../../../domains/jobs/api/jobsApi";
-import { humanReadableMessage } from "../../../shared/api/client";
+import { humanReadableMessage } from "../../../shared/api/core";
 import { normalizePreflopPosition } from "../lib/preflopPosition";
 import {
   EMPTY_STATE,

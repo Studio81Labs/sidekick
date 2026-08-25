@@ -8,11 +8,11 @@ import {
   listMcpPrincipals,
   revokeMcpPrincipal,
   rotateMcpPrincipal,
-} from "../../../shared/api/client";
+} from "../../../shared/api/mcp";
 import { McpAccessPanel } from "./McpAccessPanel";
 import type { McpPrincipal } from "../../../shared/types/mcp";
 
-vi.mock("../../../shared/api/client", () => ({
+vi.mock("../../../shared/api/mcp", () => ({
   createMcpPrincipal: vi.fn(),
   getMcpAccessConfig: vi.fn(),
   listMcpPrincipals: vi.fn(),
