@@ -877,6 +877,67 @@ function waveNineMutationBoundaryViolations(): string[] {
     const boundary = executionBoundary(reference);
     const referenceStart = reference.getStart();
 
+    function applyStates(
+      node: ts.Node,
+      nextStates: Set<RequestMethodState>,
+    ): void {
+      states = maySkipExecution(node, boundary)
+        ? new Set([...states, ...nextStates])
+        : nextStates;
+    }
+
+    function globalInstaller(
+      node: ts.CallExpression,
+    ): { owner: "Object" | "Reflect"; method: string } | null {
+      if (
+        !ts.isPropertyAccessExpression(node.expression) ||
+        !ts.isIdentifier(node.expression.expression)
+      ) {
+        return null;
+      }
+      const owner = node.expression.expression;
+      if (owner.text !== "Object" && owner.text !== "Reflect") {
+        return null;
+      }
+      const ownerSymbol = resolvedSymbol(owner);
+      const isGlobal = ownerSymbol?.declarations?.some((declaration) => {
+        const file = declaration.getSourceFile().fileName;
+        return (
+          file.includes("/typescript/lib/lib.") ||
+          file.includes("/typescript/lib/lib_")
+        );
+      });
+      return isGlobal
+        ? { owner: owner.text, method: node.expression.name.text }
+        : null;
+    }
+
+    function descriptorState(
+      value: ts.Expression | undefined,
+    ): RequestMethodState {
+      while (
+        value &&
+        (ts.isParenthesizedExpression(value) ||
+          ts.isAsExpression(value) ||
+          ts.isSatisfiesExpression(value))
+      ) {
+        value = value.expression;
+      }
+      if (value && ts.isObjectLiteralExpression(value)) {
+        for (const property of value.properties) {
+          if (
+            ts.isPropertyAssignment(property) &&
+            (ts.isIdentifier(property.name) ||
+              ts.isStringLiteralLike(property.name)) &&
+            property.name.text === "value"
+          ) {
+            return methodValueState(property.initializer);
+          }
+        }
+      }
+      return "write";
+    }
+
     function visit(node: ts.Node): void {
       if (
         ts.isBinaryExpression(node) &&
@@ -900,6 +961,77 @@ function waveNineMutationBoundaryViolations(): string[] {
             states.add(nextState);
           } else {
             states = new Set([nextState]);
+          }
+        }
+      }
+      if (
+        ts.isCallExpression(node) &&
+        node.getEnd() <= referenceStart &&
+        executionBoundary(node) === boundary &&
+        node.arguments[0] &&
+        resolvedSymbol(node.arguments[0]) === symbol
+      ) {
+        const installer = globalInstaller(node);
+        if (installer?.owner === "Object" && installer.method === "assign") {
+          let nextStates = new Set(states);
+          for (const source of node.arguments.slice(1)) {
+            nextStates = composeMethodStates(
+              nextStates,
+              requestMethodStates(source),
+            );
+          }
+          applyStates(node, nextStates);
+        } else if (
+          installer &&
+          ["Object:defineProperty", "Reflect:defineProperty"].includes(
+            installer.owner + ":" + installer.method,
+          )
+        ) {
+          const key = node.arguments[1]
+            ? constantStringValue(node.arguments[1])
+            : null;
+          if (key === "method" || key === null) {
+            applyStates(node, new Set([descriptorState(node.arguments[2])]));
+          }
+        } else if (
+          installer?.owner === "Object" &&
+          installer.method === "defineProperties"
+        ) {
+          const descriptors = node.arguments[1];
+          let nextState: RequestMethodState | null = null;
+          if (descriptors && ts.isObjectLiteralExpression(descriptors)) {
+            for (const property of descriptors.properties) {
+              if (
+                ts.isPropertyAssignment(property) &&
+                (ts.isIdentifier(property.name) ||
+                  ts.isStringLiteralLike(property.name)) &&
+                property.name.text === "method"
+              ) {
+                nextState = descriptorState(property.initializer);
+              }
+            }
+          } else {
+            nextState = "write";
+          }
+          if (nextState) {
+            applyStates(node, new Set([nextState]));
+          }
+        } else if (
+          installer?.owner === "Reflect" &&
+          installer.method === "set"
+        ) {
+          const key = node.arguments[1]
+            ? constantStringValue(node.arguments[1])
+            : null;
+          if (key === "method" || key === null) {
+            applyStates(
+              node,
+              new Set([
+                node.arguments[2]
+                  ? methodValueState(node.arguments[2])
+                  : "write",
+              ]),
+            );
           }
         }
       }
