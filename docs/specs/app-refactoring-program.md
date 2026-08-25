@@ -468,6 +468,12 @@ all filtered training-progress keys; failures leave Query state untouched for
 the existing mutation-lease recovery flow. Shared API symbols retain their
 positional signatures and object identities.
 
+Wave 9 is complete. Upload/capture, approve/recommend, training review,
+metadata, archive/delete, benchmark inclusion/import, and backup restore enter
+through owned command services. A source-architecture audit allows each
+mutation call only in its domain API adapter and command owner, preventing page
+composition and compatibility transports from regaining write orchestration.
+
 Gate: every mutation has success, definite failure, ambiguous failure/recovery,
 and retry coverage.
 
@@ -592,17 +598,19 @@ Every implementation PR must include:
 
 ## Implementation Status
 
-| Wave | Status      | Current work                                                                                                                                                                                         |
-| ---- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                          |
-| 1    | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                  |
-| 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                |
-| 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                              |
-| 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                    |
-| 5    | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; `app/models.py` is an exports-only compatibility facade             |
-| 6    | In progress | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` now owns repository composition, startup recovery, and lock ordering for imports, backups, and restore |
-| 7    | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
-| 8-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
+| Wave  | Status      | Current work                                                                                                                                                                                         |
+| ----- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0     | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                          |
+| 1     | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                  |
+| 2     | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                |
+| 3     | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                              |
+| 4     | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                    |
+| 5     | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; `app/models.py` is an exports-only compatibility facade             |
+| 6     | In progress | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` now owns repository composition, startup recovery, and lock ordering for imports, backups, and restore |
+| 7     | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
+| 8     | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |
+| 9     | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
+| 10-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
 
 ## Exit Criteria
 
