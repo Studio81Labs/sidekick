@@ -17,7 +17,10 @@ import {
 import { screenshotLabel } from "../../features/screenshots/lib/screenshotPresentation";
 import { useAutomationSettings } from "../../features/automation/hooks/useAutomationSettings";
 import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchmarkController";
-import { restoreApplicationBackupCommand } from "../../features/backups/services/restoreApplicationBackupCommand";
+import {
+  applicationBackupUrl,
+  restoreApplicationBackupCommand,
+} from "../../features/backups/services/restoreApplicationBackupCommand";
 import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource";
 import { uploadScreenshotCommand } from "../../features/capture/services/uploadScreenshotCommand";
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
@@ -54,7 +57,6 @@ import {
   fetchTrainingProgressQuery,
 } from "../../features/workspace/lib/queryReads";
 import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
-import { applicationBackupUrl } from "../../shared/api/system";
 import type { BenchmarkDatasetImportResult } from "../../shared/types/benchmarks";
 import type { CanonicalState } from "../../shared/types/poker";
 import type { JobHistory, JobRecord } from "../../shared/types/jobs";

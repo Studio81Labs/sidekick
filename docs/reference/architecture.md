@@ -507,12 +507,11 @@ are limited to page composition; feature selectors must stay with their owning
 component or feature. Reusable form and dialog controls, API access, primitive
 types, and generic formatting helpers live under `src/shared`.
 The shared API layer keeps base URL selection, response decoding, retry
-metadata, and readable error conversion in one transport core. Jobs, history,
-training, benchmark, system, and MCP endpoints live in focused modules with
-colocated tests. The former `src/shared/api/client.ts` compatibility facade has
-been removed; consumers import the focused endpoint or transport owner
-directly, and the source-architecture suite prevents the facade from being
-recreated.
+metadata, and readable error conversion in one transport core. Product
+endpoints live in focused domain adapters with colocated tests; MCP
+administration remains a focused shared transport owner. The former
+`src/shared/api/client.ts` compatibility facade has been removed, and the
+source-architecture suite prevents retired facades from being recreated.
 
 Benchmark HTTP transport and dataset-export URL construction are owned by
 `domains/benchmarks/api/benchmarksApi.ts`. Parser benchmark writes pass through
@@ -524,6 +523,11 @@ Training progress reads and lesson-export URL construction are owned by
 `domains/training/api`. Both training hooks and analyzer compatibility flows
 execute the same normalized Query options; the former `shared/api/training.ts`
 facade has been removed.
+
+Health and pipeline reads use their existing system and pipeline domain
+adapters. Backup export URL construction now belongs to the backup domain and
+is exposed through the backup feature service used by the analyzer page. The
+former `shared/api/system.ts` facade and duplicate transport are removed.
 Shared API data contracts mirror those domains under `src/shared/types`.
 The former `src/shared/types.ts` compatibility barrel has been removed;
 production and test code import narrowly owned domain contract modules directly.
