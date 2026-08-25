@@ -5,6 +5,24 @@ export interface AnalyzerRouteState {
   surface: AnalyzerSurface;
 }
 
+export interface AnalyzerRouteNavigation {
+  openBenchmarks: () => void;
+  openJob: (jobId: string) => void;
+  openTraining: () => void;
+  openWorkspace: () => void;
+}
+
+export const analyzerPaths = {
+  analyzer: "/analyzer",
+  analyzerBenchmarks: "/analyzer/benchmarks",
+  analyzerJob: "/analyzer/jobs/:jobId",
+  analyzerTraining: "/analyzer/training",
+} as const;
+
+export function analyzerJobPath(jobId: string): string {
+  return `/analyzer/jobs/${encodeURIComponent(jobId)}`;
+}
+
 export function analyzerRouteState(
   surface: AnalyzerSurface,
   jobId?: string,

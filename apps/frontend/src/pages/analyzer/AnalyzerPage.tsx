@@ -3,7 +3,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Toaster, toast } from "sonner";
 import "./AnalyzerPage.css";
-import type { AnalyzerRouteState } from "./analyzerRouteState";
+import type {
+  AnalyzerRouteNavigation,
+  AnalyzerRouteState,
+} from "./analyzerRouteState";
 import { useAnalyzerRouteRestore } from "./useAnalyzerRouteRestore";
 import { AnalyzerToolbar } from "./components/AnalyzerToolbar";
 import { AutomationDialog } from "../../features/automation/components/AutomationDialog";
@@ -149,29 +152,47 @@ const DEFAULT_ANALYZER_ROUTE: AnalyzerRouteState = {
   jobId: null,
   surface: "workspace",
 };
+const ignoreRouteNavigation = () => undefined;
+const DEFAULT_ANALYZER_NAVIGATION: AnalyzerRouteNavigation = {
+  openBenchmarks: ignoreRouteNavigation,
+  openJob: ignoreRouteNavigation,
+  openTraining: ignoreRouteNavigation,
+  openWorkspace: ignoreRouteNavigation,
+};
 
 interface AnalyzerPageProps {
+  navigation?: AnalyzerRouteNavigation;
   route?: AnalyzerRouteState;
 }
 
 export default function AnalyzerPage({
+  navigation = DEFAULT_ANALYZER_NAVIGATION,
   route = DEFAULT_ANALYZER_ROUTE,
 }: AnalyzerPageProps) {
   const [mutationOwnerId] = useState(mutationLeaseOwnerId);
 
   return (
     <AnalyzerWorkflowProvider mutationOwnerId={mutationOwnerId}>
-      <AnalyzerWorkspace mutationOwnerId={mutationOwnerId} route={route} />
+      <AnalyzerWorkspace
+        mutationOwnerId={mutationOwnerId}
+        navigation={navigation}
+        route={route}
+      />
     </AnalyzerWorkflowProvider>
   );
 }
 
 type AnalyzerWorkspaceProps = {
   mutationOwnerId: string;
+  navigation: AnalyzerRouteNavigation;
   route: AnalyzerRouteState;
 };
 
-function AnalyzerWorkspace({ mutationOwnerId, route }: AnalyzerWorkspaceProps) {
+function AnalyzerWorkspace({
+  mutationOwnerId,
+  navigation,
+  route,
+}: AnalyzerWorkspaceProps) {
   const queryClient = useQueryClient();
   const {
     finishRecovery,
@@ -1942,6 +1963,7 @@ function AnalyzerWorkspace({ mutationOwnerId, route }: AnalyzerWorkspaceProps) {
     alignWorkspaceToJob(nextJob);
     setLivePreviewVisible(false);
     setError(null);
+    navigation.openJob(nextJob.id);
   }
 
   function updateJobs(updater: (current: JobRecord[]) => JobRecord[]) {
@@ -4022,10 +4044,16 @@ function AnalyzerWorkspace({ mutationOwnerId, route }: AnalyzerWorkspaceProps) {
         liveStatusLabel={liveStatusLabel}
         onConfigureAutomation={() => setAutomationDialogOpen(true)}
         onConfigurePipeline={openPipelineDialog}
-        onOpenBenchmark={openBenchmarkDialog}
+        onOpenBenchmark={() => {
+          openBenchmarkDialog();
+          navigation.openBenchmarks();
+        }}
         onOpenHelp={() => setHelpDialogOpen(true)}
         onOpenInfo={openInfoDialog}
-        onOpenTraining={openTrainingDialog}
+        onOpenTraining={() => {
+          openTrainingDialog();
+          navigation.openTraining();
+        }}
         onToggleAutomation={() =>
           updateAutomationSettings((current) => ({
             ...current,
@@ -4271,7 +4299,10 @@ function AnalyzerWorkspace({ mutationOwnerId, route }: AnalyzerWorkspaceProps) {
           lessonsExportDisabled={trainingLessonsExportDisabled}
           nextReviewHand={nextReviewHand}
           onCertaintyFilterChange={updateTrainingCertaintyFilter}
-          onClose={() => setTrainingDialogOpen(false)}
+          onClose={() => {
+            setTrainingDialogOpen(false);
+            navigation.openWorkspace();
+          }}
           onFocusActionDifference={focusTrainingActionDifference}
           onFocusCertainty={focusTrainingReviewCertainty}
           onFocusPosition={focusTrainingReviewPosition}
@@ -4319,7 +4350,10 @@ function AnalyzerWorkspace({ mutationOwnerId, route }: AnalyzerWorkspaceProps) {
           onChooseDatasetImport={() =>
             benchmarkDatasetInputRef.current?.click()
           }
-          onClose={closeBenchmarkDialog}
+          onClose={() => {
+            closeBenchmarkDialog();
+            navigation.openWorkspace();
+          }}
           onDatasetImport={onBenchmarkDatasetImport}
           onReviewCase={reviewBenchmarkCase}
           onRun={onRunBenchmark}

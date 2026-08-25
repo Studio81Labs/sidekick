@@ -1,17 +1,13 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import AnalyzerRoute from "../pages/analyzer/AnalyzerRoute";
+import {
+  analyzerJobPath,
+  analyzerPaths,
+} from "../pages/analyzer/analyzerRouteState";
 
-export const appPaths = {
-  analyzer: "/analyzer",
-  analyzerBenchmarks: "/analyzer/benchmarks",
-  analyzerJob: "/analyzer/jobs/:jobId",
-  analyzerTraining: "/analyzer/training",
-} as const;
-
-export function analyzerJobPath(jobId: string): string {
-  return `/analyzer/jobs/${encodeURIComponent(jobId)}`;
-}
+export const appPaths = analyzerPaths;
+export { analyzerJobPath };
 
 export function AppRoutes() {
   return (

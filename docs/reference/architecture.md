@@ -527,6 +527,10 @@ domain-named integration suites under `src/pages/analyzer/__tests__`.
 Training progress query state owns review, lesson, and recent-hand filters,
 request ordering, and failed-filter rollback. Its outer controller owns only
 dialog lifecycle and opening a selected hand in the analyzer workspace.
+The application route shell owns canonical analyzer workspace, job, training,
+and benchmark URLs. Typed analyzer route state restores the represented surface
+and optional job identity, while workspace selections and surface closes update
+the same URLs. Transient dialog internals and draft state remain outside the URL.
 The analyzer route mounts a typed `AnalyzerWorkflowProvider`. Its pure reducer
 owns cross-feature workflow state without copying server job records; queue
 attention messages, queue-processing progress, and active job selection are
