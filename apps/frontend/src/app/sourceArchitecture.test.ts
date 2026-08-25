@@ -1659,6 +1659,61 @@ function waveNineMutationBoundaryViolations(): string[] {
       };
     }
 
+    function isGlobalInstallerOwner(
+      identifier: ts.Identifier,
+      expectedName: "Object" | "Reflect",
+    ): boolean {
+      if (identifier.text !== expectedName) {
+        return false;
+      }
+      const ownerSymbol = resolvedSymbol(identifier);
+      return (
+        ownerSymbol?.declarations?.some((declaration) => {
+          const declarationFile = declaration.getSourceFile().fileName;
+          return (
+            declarationFile.includes("/typescript/lib/lib.") ||
+            declarationFile.includes("/typescript/lib/lib_")
+          );
+        }) ?? false
+      );
+    }
+
+    function installedValues(
+      node: ts.CallExpression,
+    ): { target: ts.Expression; values: ts.Expression[] } | null {
+      if (
+        !ts.isPropertyAccessExpression(node.expression) ||
+        !ts.isIdentifier(node.expression.expression) ||
+        !node.arguments[0]
+      ) {
+        return null;
+      }
+      const owner = node.expression.expression;
+      const method = node.expression.name.text;
+      if (isGlobalInstallerOwner(owner, "Object")) {
+        if (method === "assign") {
+          return { target: node.arguments[0], values: node.arguments.slice(1) };
+        }
+        if (method === "defineProperty" && node.arguments[2]) {
+          return { target: node.arguments[0], values: [node.arguments[2]] };
+        }
+        if (
+          ["defineProperties", "setPrototypeOf"].includes(method) &&
+          node.arguments[1]
+        ) {
+          return { target: node.arguments[0], values: [node.arguments[1]] };
+        }
+      }
+      if (
+        isGlobalInstallerOwner(owner, "Reflect") &&
+        method === "defineProperty" &&
+        node.arguments[2]
+      ) {
+        return { target: node.arguments[0], values: [node.arguments[2]] };
+      }
+      return null;
+    }
+
     function visit(node: ts.Node): void {
       if (
         ts.isBinaryExpression(node) &&
@@ -1688,6 +1743,24 @@ function waveNineMutationBoundaryViolations(): string[] {
                 }),
               ),
             );
+          }
+        }
+      }
+      if (ts.isCallExpression(node)) {
+        const installation = installedValues(node);
+        const target = installation
+          ? assignmentTarget(installation.target)
+          : null;
+        if (installation && target) {
+          for (const value of installation.values) {
+            callables.push(...typedValueCallables(value, target.label));
+            if (ts.isCallExpression(value)) {
+              callables.push(
+                ...callExpressionCallables(value, target.label).map(
+                  (callable) => ({ ...callable, topLevel: false }),
+                ),
+              );
+            }
           }
         }
       }
@@ -1877,19 +1950,29 @@ function waveNineMutationBoundaryViolations(): string[] {
         node.arguments.length === 1
       ) {
         const specifier = node.arguments[0];
-        const exposesBoundary = ts.isStringLiteralLike(specifier)
-          ? moduleExposesBoundary(specifier)
-          : ts.isTemplateExpression(specifier)
-            ? templateImportTargets(file, specifier).some((target) => {
-                const targetSource = program.getSourceFile(resolve(target));
-                return targetSource
-                  ? moduleExposesBoundary(targetSource)
-                  : false;
-              })
-            : false;
-        if (exposesBoundary) {
+        let exposesBoundary = false;
+        let unresolved = false;
+        if (ts.isStringLiteralLike(specifier)) {
+          exposesBoundary = moduleExposesBoundary(specifier);
+        } else if (ts.isTemplateExpression(specifier)) {
+          const targets = templateImportTargets(file, specifier);
+          unresolved = targets.length === 0;
+          exposesBoundary = targets.some((target) => {
+            const targetSource = program.getSourceFile(resolve(target));
+            if (!targetSource) {
+              unresolved = true;
+              return false;
+            }
+            return moduleExposesBoundary(targetSource);
+          });
+        } else {
+          unresolved = true;
+        }
+        if (exposesBoundary || unresolved) {
           violations.add(
-            "Dynamic API namespace import bypasses owned symbols: " +
+            (unresolved
+              ? "Unresolved dynamic import bypasses owned symbols: "
+              : "Dynamic API namespace import bypasses owned symbols: ") +
               sourcePath,
           );
         }
