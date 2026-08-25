@@ -93,6 +93,23 @@ describe("useAnalyzerRouteRestore", () => {
     expect(current.loadJob).not.toHaveBeenCalled();
   });
 
+  it("rejects a cached transient job route", () => {
+    const transientJob = {
+      id: "local-error-request",
+      parser_provider: "client",
+      status: "error",
+    } as JobRecord;
+    const current = options({
+      jobs: [transientJob],
+      route: analyzerRouteState("job", transientJob.id),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.onJobUnavailable).toHaveBeenCalledOnce();
+    expect(current.activateJob).not.toHaveBeenCalled();
+    expect(current.loadJob).not.toHaveBeenCalled();
+  });
+
   it("loads and activates a missing durable job", async () => {
     const loadedJob = job("job-123");
     const current = options({

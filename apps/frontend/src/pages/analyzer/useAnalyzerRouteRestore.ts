@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { isLocalUploadError } from "../../features/workspace/lib/reconciliation";
 import type { JobRecord } from "../../shared/types";
 import type { AnalyzerRouteState, AnalyzerSurface } from "./analyzerRouteState";
 
@@ -59,7 +60,9 @@ export function useAnalyzerRouteRestore(
         (job) => job.id === current.route.jobId,
       );
       if (cachedJob) {
-        if (current.activeJobId !== current.route.jobId) {
+        if (isLocalUploadError(cachedJob)) {
+          current.onJobUnavailable();
+        } else if (current.activeJobId !== current.route.jobId) {
           current.activateJob(cachedJob);
         }
       } else {
