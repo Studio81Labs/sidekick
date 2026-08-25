@@ -311,9 +311,42 @@ function waveNineMutationBoundaryViolations(): string[] {
     return mutationNameForSymbol(resolvedSymbol(node));
   }
 
-  function rawTransportNameForSymbol(symbol: ts.Symbol | null): string | null {
-    const transport = symbol?.getName() ?? "";
-    if (!symbol || !RAW_TRANSPORT_REFERENCES.has(transport)) {
+  function rawTransportNameForSymbol(
+    symbol: ts.Symbol | null,
+    seen = new Set<ts.Symbol>(),
+  ): string | null {
+    if (!symbol || seen.has(symbol)) {
+      return null;
+    }
+    seen.add(symbol);
+    for (const declaration of symbol.declarations ?? []) {
+      if (
+        ts.isBindingElement(declaration) &&
+        ts.isObjectBindingPattern(declaration.parent) &&
+        ts.isVariableDeclaration(declaration.parent.parent) &&
+        declaration.parent.parent.initializer
+      ) {
+        const propertyName = declaration.propertyName ?? declaration.name;
+        const staticName =
+          ts.isIdentifier(propertyName) || ts.isStringLiteralLike(propertyName)
+            ? propertyName.text
+            : null;
+        if (staticName) {
+          const sourceType = checker.getTypeAtLocation(
+            declaration.parent.parent.initializer,
+          );
+          const sourceProperty = resolvedAliasSymbol(
+            checker.getPropertyOfType(sourceType, staticName),
+          );
+          const transport = rawTransportNameForSymbol(sourceProperty, seen);
+          if (transport) {
+            return transport;
+          }
+        }
+      }
+    }
+    const transport = symbol.getName();
+    if (!RAW_TRANSPORT_REFERENCES.has(transport)) {
       return null;
     }
     const ownsDeclaration = symbol.declarations?.some((declaration) => {
