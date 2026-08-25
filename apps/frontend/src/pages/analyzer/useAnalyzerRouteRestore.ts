@@ -6,6 +6,7 @@ import type { AnalyzerRouteState } from "./analyzerRouteState";
 export interface AnalyzerRouteRestoreOptions {
   activateJob: (job: JobRecord) => void;
   activeJobId: string | null;
+  benchmarksOpen: boolean;
   closeBenchmarks: () => void;
   closeTraining: () => void;
   jobs: readonly JobRecord[];
@@ -15,6 +16,7 @@ export interface AnalyzerRouteRestoreOptions {
   openBenchmarks: () => void;
   openTraining: () => void;
   route: AnalyzerRouteState;
+  trainingOpen: boolean;
 }
 
 export function useAnalyzerRouteRestore(
@@ -33,9 +35,12 @@ export function useAnalyzerRouteRestore(
     if (current.route.surface !== "benchmarks") {
       current.closeBenchmarks();
     }
-    if (current.route.surface === "training") {
+    if (current.route.surface === "training" && !current.trainingOpen) {
       current.openTraining();
-    } else if (current.route.surface === "benchmarks") {
+    } else if (
+      current.route.surface === "benchmarks" &&
+      !current.benchmarksOpen
+    ) {
       current.openBenchmarks();
     } else if (
       current.route.surface === "job" &&

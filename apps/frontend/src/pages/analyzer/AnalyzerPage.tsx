@@ -527,6 +527,7 @@ function AnalyzerWorkspace({
   useAnalyzerRouteRestore({
     activateJob: (nextJob) => upsertAndActivateJob(nextJob, false),
     activeJobId,
+    benchmarksOpen: benchmarkDialogOpen,
     closeBenchmarks: closeBenchmarkDialog,
     closeTraining: () => setTrainingDialogOpen(false),
     jobs,
@@ -545,6 +546,7 @@ function AnalyzerWorkspace({
     openBenchmarks: openBenchmarkDialog,
     openTraining: openTrainingDialog,
     route,
+    trainingOpen: trainingDialogOpen,
   });
 
   useEffect(() => {
@@ -3183,11 +3185,8 @@ function AnalyzerWorkspace({
         if (!nextHand) {
           setTrainingReviewQueueJobId(null);
           setTrainingProgressView("review");
-          if (navigation.managed) {
-            navigation.openTraining();
-          } else {
-            setTrainingDialogOpen(true);
-          }
+          setTrainingDialogOpen(true);
+          navigation.openTraining();
           toast.success("Review queue completed");
           return;
         }
@@ -3477,7 +3476,13 @@ function AnalyzerWorkspace({
       !nextJobs.some((candidate) => candidate.id === activeJobIdRef.current);
     updateJobs(() => nextJobs);
     if (activeJobRemoved) {
-      alignWorkspaceToJob(nextJobs[0] ?? null);
+      const fallbackJob = nextJobs[0] ?? null;
+      alignWorkspaceToJob(fallbackJob);
+      if (fallbackJob) {
+        navigation.openJob(fallbackJob.id, { replace: true });
+      } else {
+        navigation.openWorkspace({ replace: true });
+      }
     }
     setHistory((current) => {
       const next = current.map((item) =>
@@ -4073,20 +4078,14 @@ function AnalyzerWorkspace({
         onConfigureAutomation={() => setAutomationDialogOpen(true)}
         onConfigurePipeline={openPipelineDialog}
         onOpenBenchmark={() => {
-          if (navigation.managed) {
-            navigation.openBenchmarks();
-          } else {
-            openBenchmarkDialog();
-          }
+          openBenchmarkDialog();
+          navigation.openBenchmarks();
         }}
         onOpenHelp={() => setHelpDialogOpen(true)}
         onOpenInfo={openInfoDialog}
         onOpenTraining={() => {
-          if (navigation.managed) {
-            navigation.openTraining();
-          } else {
-            openTrainingDialog();
-          }
+          openTrainingDialog();
+          navigation.openTraining();
         }}
         onToggleAutomation={() =>
           updateAutomationSettings((current) => ({
@@ -4335,7 +4334,7 @@ function AnalyzerWorkspace({
           onCertaintyFilterChange={updateTrainingCertaintyFilter}
           onClose={() => {
             setTrainingDialogOpen(false);
-            navigation.openWorkspace();
+            navigation.openWorkspace({ replace: true });
           }}
           onFocusActionDifference={focusTrainingActionDifference}
           onFocusCertainty={focusTrainingReviewCertainty}
@@ -4386,7 +4385,7 @@ function AnalyzerWorkspace({
           }
           onClose={() => {
             closeBenchmarkDialog();
-            navigation.openWorkspace();
+            navigation.openWorkspace({ replace: true });
           }}
           onDatasetImport={onBenchmarkDatasetImport}
           onReviewCase={reviewBenchmarkCase}

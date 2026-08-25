@@ -18,6 +18,7 @@ function options(
   return {
     activateJob: vi.fn(),
     activeJobId: null,
+    benchmarksOpen: false,
     closeBenchmarks: vi.fn(),
     closeTraining: vi.fn(),
     jobs: [],
@@ -27,6 +28,7 @@ function options(
     openBenchmarks: vi.fn(),
     openTraining: vi.fn(),
     route: analyzerRouteState("workspace"),
+    trainingOpen: false,
     ...overrides,
   };
 }
@@ -49,6 +51,16 @@ describe("useAnalyzerRouteRestore", () => {
     expect(current.closeTraining).toHaveBeenCalledOnce();
     expect(current.closeBenchmarks).not.toHaveBeenCalled();
     expect(current.openBenchmarks).toHaveBeenCalledOnce();
+    expect(current.openTraining).not.toHaveBeenCalled();
+  });
+
+  it("does not reopen an already open durable surface", () => {
+    const current = options({
+      route: analyzerRouteState("training"),
+      trainingOpen: true,
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
     expect(current.openTraining).not.toHaveBeenCalled();
   });
 
