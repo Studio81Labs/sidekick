@@ -527,6 +527,7 @@ function waveNineMutationBoundaryViolations(): string[] {
 
   type CallableImplementation =
     | ts.ArrowFunction
+    | ts.CallExpression
     | ts.ClassStaticBlockDeclaration
     | ts.ConstructorDeclaration
     | ts.FunctionDeclaration
@@ -563,6 +564,17 @@ function waveNineMutationBoundaryViolations(): string[] {
         declaration.initializer &&
         (ts.isArrowFunction(declaration.initializer) ||
           ts.isFunctionExpression(declaration.initializer))
+      ) {
+        return declaration.initializer;
+      }
+      if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer &&
+        ts.isCallExpression(declaration.initializer) &&
+        checker.getSignaturesOfType(
+          checker.getTypeAtLocation(declaration.name),
+          ts.SignatureKind.Call,
+        ).length > 0
       ) {
         return declaration.initializer;
       }
@@ -632,7 +644,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         : ts.isStringLiteralLike(node.expression.argumentExpression)
           ? node.expression.argumentExpression.text
           : null;
-      if (["apply", "call"].includes(helperName ?? "")) {
+      if (["apply", "bind", "call"].includes(helperName ?? "")) {
         if (
           ts.isPropertyAccessExpression(node.expression) &&
           ts.isIdentifier(node.expression.expression) &&
