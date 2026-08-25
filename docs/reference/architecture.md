@@ -495,6 +495,9 @@ contains the browser-router shell, route registry, top-level error monitoring,
 and other application-wide concerns. `src/pages/analyzer/AnalyzerPage.tsx`
 composes the workspace and retains the queue/history mutation protocol because those
 transactions span capture, automation, review, benchmark labels, and recovery.
+`src/pages/analyzer/AnalyzerLayout.tsx` owns only the page shell, notification
+host, workspace landmarks, control rail, and dialog layer; it receives rendered
+feature content and has no workflow, transport, or persistence authority.
 Each directory under `src/features` owns its components, colocated component
 styles, hooks, and non-React presentation or domain support. Route-level styles
 are limited to page composition; feature selectors must stay with their owning

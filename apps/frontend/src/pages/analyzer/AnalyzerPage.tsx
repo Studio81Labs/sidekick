@@ -1,8 +1,14 @@
 import { type ChangeEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Toaster, toast } from "sonner";
+import { toast } from "sonner";
 import "./AnalyzerPage.css";
+import {
+  AnalyzerControlRail,
+  AnalyzerDialogHost,
+  AnalyzerLayout,
+  AnalyzerWorkspaceLayout,
+} from "./AnalyzerLayout";
 import type {
   AnalyzerRouteNavigation,
   AnalyzerRouteState,
@@ -4099,25 +4105,7 @@ function AnalyzerWorkspace({
   }
 
   return (
-    <main className="app-shell">
-      <Toaster
-        closeButton
-        containerAriaLabel="App notifications"
-        expand={false}
-        offset={{ right: 18, top: 88 }}
-        position="top-right"
-        richColors
-        toastOptions={{
-          classNames: {
-            closeButton: "app-toast-close",
-            error: "app-toast-error",
-            title: "app-toast-title",
-            toast: "app-toast",
-            warning: "app-toast-warning",
-          },
-          duration: 6000,
-        }}
-      />
+    <AnalyzerLayout>
       <AnalyzerToolbar
         automationEnabled={automationEnabled}
         busy={busy}
@@ -4145,8 +4133,8 @@ function AnalyzerWorkspace({
         screenSharing={screenSharing}
       />
 
-      <section className="app-workspace">
-        <aside className="control-rail" aria-label="Capture, queue and history">
+      <AnalyzerWorkspaceLayout>
+        <AnalyzerControlRail>
           <InputSourcePanel
             busy={busy}
             files={files}
@@ -4199,7 +4187,7 @@ function AnalyzerWorkspace({
             searchTotal={historySearchTotal}
             total={visibleHistoryTotal}
           />
-        </aside>
+        </AnalyzerControlRail>
 
         <TablePreview
           averageConfidence={confidenceSummary.averageConfidence}
@@ -4271,195 +4259,197 @@ function AnalyzerWorkspace({
           trainingReviewQueueJobId={trainingReviewQueueJobId}
           trainingSizing={trainingSizing}
         />
-      </section>
+      </AnalyzerWorkspaceLayout>
 
-      {queueProgress ? (
-        <QueueProcessingDialog
-          onAbort={onAbortQueue}
-          progress={queueProgress}
-        />
-      ) : null}
+      <AnalyzerDialogHost>
+        {queueProgress ? (
+          <QueueProcessingDialog
+            onAbort={onAbortQueue}
+            progress={queueProgress}
+          />
+        ) : null}
 
-      {managedJob ? (
-        <ScreenshotDetailsDialog
-          deleteArmed={screenshotDeleteArmed}
-          deleting={screenshotDeleting}
-          job={managedJob}
-          metadataSaving={screenshotMetadataSaving}
-          notes={screenshotNotes}
-          onClose={closeScreenshotDetails}
-          onDelete={() => void permanentlyDeleteScreenshot()}
-          onDeleteArmedChange={setScreenshotDeleteArmed}
-          onNotesChange={setScreenshotNotes}
-          onSave={() => void saveScreenshotMetadata()}
-          onTagsChange={setScreenshotTagInput}
-          onTitleChange={setScreenshotTitle}
-          persisted={managedJobPersisted}
-          recoveryPending={managedLocalUploadRecoveryPending}
-          tags={screenshotTagInput}
-          title={screenshotTitle}
-        />
-      ) : null}
+        {managedJob ? (
+          <ScreenshotDetailsDialog
+            deleteArmed={screenshotDeleteArmed}
+            deleting={screenshotDeleting}
+            job={managedJob}
+            metadataSaving={screenshotMetadataSaving}
+            notes={screenshotNotes}
+            onClose={closeScreenshotDetails}
+            onDelete={() => void permanentlyDeleteScreenshot()}
+            onDeleteArmedChange={setScreenshotDeleteArmed}
+            onNotesChange={setScreenshotNotes}
+            onSave={() => void saveScreenshotMetadata()}
+            onTagsChange={setScreenshotTagInput}
+            onTitleChange={setScreenshotTitle}
+            persisted={managedJobPersisted}
+            recoveryPending={managedLocalUploadRecoveryPending}
+            tags={screenshotTagInput}
+            title={screenshotTitle}
+          />
+        ) : null}
 
-      {automationDialogOpen ? (
-        <AutomationDialog
-          allowWarnings={automationAllowWarnings}
-          autoApprove={automationApprove}
-          autoRecommend={automationRecommend}
-          enabled={automationEnabled}
-          onAllowWarningsChange={(value) =>
-            updateAutomationSettings((current) => ({
-              ...current,
-              allowWarnings: value,
-            }))
-          }
-          onAutoApproveChange={updateAutomationApprove}
-          onAutoRecommendChange={(value) =>
-            updateAutomationSettings((current) => ({
-              ...current,
-              autoRecommend: value,
-            }))
-          }
-          onClose={() => setAutomationDialogOpen(false)}
-        />
-      ) : null}
+        {automationDialogOpen ? (
+          <AutomationDialog
+            allowWarnings={automationAllowWarnings}
+            autoApprove={automationApprove}
+            autoRecommend={automationRecommend}
+            enabled={automationEnabled}
+            onAllowWarningsChange={(value) =>
+              updateAutomationSettings((current) => ({
+                ...current,
+                allowWarnings: value,
+              }))
+            }
+            onAutoApproveChange={updateAutomationApprove}
+            onAutoRecommendChange={(value) =>
+              updateAutomationSettings((current) => ({
+                ...current,
+                autoRecommend: value,
+              }))
+            }
+            onClose={() => setAutomationDialogOpen(false)}
+          />
+        ) : null}
 
-      {pipelineDialogOpen ? (
-        <PipelineDialog
-          capabilities={pipelineCapabilities}
-          compatibleLayouts={
-            pipelineCapabilities && pipelineSelection
-              ? compatiblePipelineLayouts(
-                  pipelineCapabilities,
-                  pipelineSelection.parser_provider,
-                )
-              : []
-          }
-          loading={pipelineLoading}
-          onClose={() => setPipelineDialogOpen(false)}
-          onParserChange={updateParserProvider}
-          onParserLayoutChange={(value) =>
-            updatePipelineSelection("parser_layout_profile", value)
-          }
-          onRecommendationChange={updateRecommendationProvider}
-          onRecommendationEngineChange={(value) =>
-            updatePipelineSelection("recommendation_engine", value)
-          }
-          selection={pipelineSelection}
-        />
-      ) : null}
+        {pipelineDialogOpen ? (
+          <PipelineDialog
+            capabilities={pipelineCapabilities}
+            compatibleLayouts={
+              pipelineCapabilities && pipelineSelection
+                ? compatiblePipelineLayouts(
+                    pipelineCapabilities,
+                    pipelineSelection.parser_provider,
+                  )
+                : []
+            }
+            loading={pipelineLoading}
+            onClose={() => setPipelineDialogOpen(false)}
+            onParserChange={updateParserProvider}
+            onParserLayoutChange={(value) =>
+              updatePipelineSelection("parser_layout_profile", value)
+            }
+            onRecommendationChange={updateRecommendationProvider}
+            onRecommendationEngineChange={(value) =>
+              updatePipelineSelection("recommendation_engine", value)
+            }
+            selection={pipelineSelection}
+          />
+        ) : null}
 
-      {helpDialogOpen ? (
-        <UserGuideDialog onClose={() => setHelpDialogOpen(false)} />
-      ) : null}
+        {helpDialogOpen ? (
+          <UserGuideDialog onClose={() => setHelpDialogOpen(false)} />
+        ) : null}
 
-      {infoDialogOpen ? (
-        <InfoDialog
-          backupDownloadUrl={applicationBackupUrl()}
-          backupRestoring={backupRestoring}
-          busy={busy}
-          mcpTokenPending={mcpTokenPending}
-          onClose={() => closeInfoDialog(backupRestoring)}
-          onMcpTokenPendingChange={setMcpTokenPending}
-          onRestoreBackup={(file) => void onApplicationBackupRestore(file)}
-          providers={activeInfoProviders}
-          systemInfoLoading={systemInfoLoading}
-        />
-      ) : null}
+        {infoDialogOpen ? (
+          <InfoDialog
+            backupDownloadUrl={applicationBackupUrl()}
+            backupRestoring={backupRestoring}
+            busy={busy}
+            mcpTokenPending={mcpTokenPending}
+            onClose={() => closeInfoDialog(backupRestoring)}
+            onMcpTokenPendingChange={setMcpTokenPending}
+            onRestoreBackup={(file) => void onApplicationBackupRestore(file)}
+            providers={activeInfoProviders}
+            systemInfoLoading={systemInfoLoading}
+          />
+        ) : null}
 
-      {trainingDialogOpen ? (
-        <TrainingProgressDialog
-          actionDifferenceFocus={actionDifferenceFocus}
-          busy={busy}
-          certaintyFilter={trainingCertaintyFilter}
-          certaintyFocus={certaintyFocus}
-          lessonOrder={trainingLessonOrder}
-          lessonQuery={trainingLessonQuery}
-          lessonSearch={trainingLessonSearch}
-          lessonStreet={trainingLessonStreet}
-          lessonsExportDisabled={trainingLessonsExportDisabled}
-          nextReviewHand={nextReviewHand}
-          onCertaintyFilterChange={updateTrainingCertaintyFilter}
-          onClose={() => {
-            setTrainingDialogOpen(false);
-            navigation.closeSurface();
-          }}
-          onFocusActionDifference={focusTrainingActionDifference}
-          onFocusCertainty={focusTrainingReviewCertainty}
-          onFocusPosition={focusTrainingReviewPosition}
-          onFocusStreet={focusTrainingReviewStreet}
-          onLessonFiltersChange={updateTrainingLessonFilters}
-          onLessonSearchChange={setTrainingLessonSearch}
-          onOpenHand={reviewTrainingHand}
-          onPositionFilterChange={updateTrainingPositionFilter}
-          onReopenHand={reopenTrainingReviewFromProgress}
-          onReviewQueueChange={updateTrainingReviewQueue}
-          onSolverFilterChange={updateTrainingSolverFilter}
-          onStreetFilterChange={updateTrainingStreetFilter}
-          onViewChange={selectTrainingProgressView}
-          positionFilter={trainingPositionFilter}
-          positionFocus={positionFocus}
-          progress={trainingProgress}
-          progressLoading={trainingProgressLoading}
-          reviewCertainty={trainingReviewCertainty}
-          reviewDifference={trainingReviewDifference}
-          reviewJobId={trainingReviewJobId}
-          reviewOrder={trainingReviewOrder}
-          reviewPosition={trainingReviewPosition}
-          reviewQueueStatus={reviewQueueStatus}
-          reviewStreet={trainingReviewStreet}
-          solverFilter={trainingSolverFilter}
-          streetFilter={trainingStreetFilter}
-          streetFocus={trainingFocus}
-          view={trainingProgressView}
-          visibleHands={visibleTrainingHands}
-        />
-      ) : null}
+        {trainingDialogOpen ? (
+          <TrainingProgressDialog
+            actionDifferenceFocus={actionDifferenceFocus}
+            busy={busy}
+            certaintyFilter={trainingCertaintyFilter}
+            certaintyFocus={certaintyFocus}
+            lessonOrder={trainingLessonOrder}
+            lessonQuery={trainingLessonQuery}
+            lessonSearch={trainingLessonSearch}
+            lessonStreet={trainingLessonStreet}
+            lessonsExportDisabled={trainingLessonsExportDisabled}
+            nextReviewHand={nextReviewHand}
+            onCertaintyFilterChange={updateTrainingCertaintyFilter}
+            onClose={() => {
+              setTrainingDialogOpen(false);
+              navigation.closeSurface();
+            }}
+            onFocusActionDifference={focusTrainingActionDifference}
+            onFocusCertainty={focusTrainingReviewCertainty}
+            onFocusPosition={focusTrainingReviewPosition}
+            onFocusStreet={focusTrainingReviewStreet}
+            onLessonFiltersChange={updateTrainingLessonFilters}
+            onLessonSearchChange={setTrainingLessonSearch}
+            onOpenHand={reviewTrainingHand}
+            onPositionFilterChange={updateTrainingPositionFilter}
+            onReopenHand={reopenTrainingReviewFromProgress}
+            onReviewQueueChange={updateTrainingReviewQueue}
+            onSolverFilterChange={updateTrainingSolverFilter}
+            onStreetFilterChange={updateTrainingStreetFilter}
+            onViewChange={selectTrainingProgressView}
+            positionFilter={trainingPositionFilter}
+            positionFocus={positionFocus}
+            progress={trainingProgress}
+            progressLoading={trainingProgressLoading}
+            reviewCertainty={trainingReviewCertainty}
+            reviewDifference={trainingReviewDifference}
+            reviewJobId={trainingReviewJobId}
+            reviewOrder={trainingReviewOrder}
+            reviewPosition={trainingReviewPosition}
+            reviewQueueStatus={reviewQueueStatus}
+            reviewStreet={trainingReviewStreet}
+            solverFilter={trainingSolverFilter}
+            streetFilter={trainingStreetFilter}
+            streetFocus={trainingFocus}
+            view={trainingProgressView}
+            visibleHands={visibleTrainingHands}
+          />
+        ) : null}
 
-      {benchmarkDialogOpen ? (
-        <BenchmarkDialog
-          busy={busy}
-          comparisonProgress={benchmarkComparisonProgress}
-          comparisonReport={benchmarkComparisonReport}
-          comparisonReportLoading={benchmarkComparisonReportLoading}
-          currentJob={job}
-          datasetExportDisabled={benchmarkDatasetExportDisabled}
-          datasetInputRef={benchmarkDatasetInputRef}
-          importInProgress={benchmarkImporting}
-          includedCases={benchmarkIncludedCases}
-          loading={benchmarkLoading}
-          onChooseDatasetImport={() =>
-            benchmarkDatasetInputRef.current?.click()
-          }
-          onClose={() => {
-            closeBenchmarkDialog();
-            navigation.closeSurface();
-          }}
-          onDatasetImport={onBenchmarkDatasetImport}
-          onReviewCase={reviewBenchmarkCase}
-          onRun={onRunBenchmark}
-          onRunComparison={onRunBenchmarkComparison}
-          onSelectPipeline={selectBenchmarkParserPipeline}
-          onSelectReport={selectBenchmarkReport}
-          onToggleInclusion={toggleBenchmarkInclusion}
-          operationsLocked={benchmarkOperationsLocked}
-          overview={benchmarkOverview}
-          parserPipelines={benchmarkParserPipelines}
-          pipelineCapabilities={pipelineCapabilities}
-          pipelineLoading={pipelineLoading}
-          pipelineSelection={pipelineSelection}
-          previousReport={previousBenchmarkReport}
-          recentReports={recentBenchmarkReports}
-          report={benchmarkReport}
-          reportLoading={benchmarkReportLoading}
-          reportParserLabel={benchmarkReportParserLabel}
-          reportStale={benchmarkReportStale}
-          reviewJobId={benchmarkReviewJobId}
-          running={benchmarkRunning}
-          targetLayoutLabel={benchmarkTargetLayoutLabel}
-          updating={benchmarkUpdating}
-        />
-      ) : null}
-    </main>
+        {benchmarkDialogOpen ? (
+          <BenchmarkDialog
+            busy={busy}
+            comparisonProgress={benchmarkComparisonProgress}
+            comparisonReport={benchmarkComparisonReport}
+            comparisonReportLoading={benchmarkComparisonReportLoading}
+            currentJob={job}
+            datasetExportDisabled={benchmarkDatasetExportDisabled}
+            datasetInputRef={benchmarkDatasetInputRef}
+            importInProgress={benchmarkImporting}
+            includedCases={benchmarkIncludedCases}
+            loading={benchmarkLoading}
+            onChooseDatasetImport={() =>
+              benchmarkDatasetInputRef.current?.click()
+            }
+            onClose={() => {
+              closeBenchmarkDialog();
+              navigation.closeSurface();
+            }}
+            onDatasetImport={onBenchmarkDatasetImport}
+            onReviewCase={reviewBenchmarkCase}
+            onRun={onRunBenchmark}
+            onRunComparison={onRunBenchmarkComparison}
+            onSelectPipeline={selectBenchmarkParserPipeline}
+            onSelectReport={selectBenchmarkReport}
+            onToggleInclusion={toggleBenchmarkInclusion}
+            operationsLocked={benchmarkOperationsLocked}
+            overview={benchmarkOverview}
+            parserPipelines={benchmarkParserPipelines}
+            pipelineCapabilities={pipelineCapabilities}
+            pipelineLoading={pipelineLoading}
+            pipelineSelection={pipelineSelection}
+            previousReport={previousBenchmarkReport}
+            recentReports={recentBenchmarkReports}
+            report={benchmarkReport}
+            reportLoading={benchmarkReportLoading}
+            reportParserLabel={benchmarkReportParserLabel}
+            reportStale={benchmarkReportStale}
+            reviewJobId={benchmarkReviewJobId}
+            running={benchmarkRunning}
+            targetLayoutLabel={benchmarkTargetLayoutLabel}
+            updating={benchmarkUpdating}
+          />
+        ) : null}
+      </AnalyzerDialogHost>
+    </AnalyzerLayout>
   );
 }

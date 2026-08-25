@@ -616,7 +616,7 @@ Every implementation PR must include:
 | 7     | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
 | 8     | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |
 | 9     | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
-| 10    | In progress | Durable analyzer, job, training, and benchmark routes now restore and update typed state in both directions; page composition extraction remains                                                     |
+| 10    | In progress | Durable routes restore and update typed state in both directions; the page shell, workspace landmarks, control rail, and dialog layer now have a behavior-neutral composition boundary               |
 | 11-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
 
 ## Exit Criteria
