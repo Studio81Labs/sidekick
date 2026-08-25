@@ -923,6 +923,7 @@ function waveNineMutationBoundaryViolations(): string[] {
   }
 
   const writeBearingCallables = new Map<CallableImplementation, boolean>();
+  const cycleTaintedCallables = new Set<CallableImplementation>();
 
   function argumentCallableWrites(
     argument: ts.Node,
@@ -1032,7 +1033,10 @@ function waveNineMutationBoundaryViolations(): string[] {
       return cached;
     }
     if (active.has(callable)) {
-      return true;
+      active.forEach((activeCallable) =>
+        cycleTaintedCallables.add(activeCallable),
+      );
+      return false;
     }
     active.add(callable);
     let writes = xmlHttpRequestWrites(callable);
@@ -1081,7 +1085,9 @@ function waveNineMutationBoundaryViolations(): string[] {
 
     visit(callable);
     active.delete(callable);
-    writeBearingCallables.set(callable, writes);
+    if (writes || !cycleTaintedCallables.has(callable)) {
+      writeBearingCallables.set(callable, writes);
+    }
     return writes;
   }
 
@@ -2057,15 +2063,29 @@ function waveNineMutationBoundaryViolations(): string[] {
     return callables;
   }
 
+  const LEGACY_TRANSPORT_WRITE_EXPORTS = new Map<string, Set<string>>([
+    ["shared/api/benchmarks.ts", new Set(["runParserBenchmark"])],
+    [
+      "shared/api/mcp.ts",
+      new Set([
+        "createMcpPrincipal",
+        "revokeMcpPrincipal",
+        "rotateMcpPrincipal",
+      ]),
+    ],
+    ["shared/api/transport.ts", new Set(["requestJson"])],
+  ]);
+
   function auditAdapterWriteExports(
     sourceFile: ts.SourceFile,
     sourcePath: string,
   ): void {
     const moduleSymbol = resolvedSymbol(sourceFile);
+    const isDomainAdapter =
+      sourcePath.startsWith("domains/") && sourcePath.includes("/api/");
     if (
       !moduleSymbol ||
-      !sourcePath.startsWith("domains/") ||
-      !sourcePath.includes("/api/")
+      (!isDomainAdapter && !LEGACY_RAW_TRANSPORT_OWNERS.has(sourcePath))
     ) {
       return;
     }
@@ -2078,6 +2098,13 @@ function waveNineMutationBoundaryViolations(): string[] {
         exportName,
       )) {
         if (!callableWrites(exportedCallable.callable)) {
+          continue;
+        }
+        if (
+          LEGACY_TRANSPORT_WRITE_EXPORTS.get(sourcePath)?.has(exportName) &&
+          exportedCallable.topLevel &&
+          exportedCallable.label === exportName
+        ) {
           continue;
         }
         if (
@@ -2097,6 +2124,78 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
   }
 
+  function moduleInitializerWrites(sourceFile: ts.SourceFile): boolean {
+    let writes = false;
+
+    function visit(node: ts.Node): void {
+      if (writes || ts.isFunctionLike(node)) {
+        return;
+      }
+      if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+        for (const member of node.members) {
+          if (ts.isClassStaticBlockDeclaration(member)) {
+            visit(member);
+          } else if (
+            ts.isPropertyDeclaration(member) &&
+            member.initializer &&
+            member.modifiers?.some(
+              (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+            )
+          ) {
+            visit(member.initializer);
+          }
+        }
+        return;
+      }
+      if (ts.isCallExpression(node)) {
+        const reference = callReference(node);
+        const rawTransport = rawTransportSymbol(reference);
+        const directCallable =
+          ts.isArrowFunction(node.expression) ||
+          ts.isFunctionExpression(node.expression)
+            ? node.expression
+            : callableImplementation(resolvedSymbol(reference));
+        const receiver = invocationHelperReceiver(node);
+        const receiverCallable = receiver
+          ? callableImplementation(resolvedSymbol(receiver))
+          : null;
+        let xhrSend = false;
+        if (
+          ts.isPropertyAccessExpression(node.expression) ||
+          ts.isElementAccessExpression(node.expression)
+        ) {
+          const methodName = ts.isPropertyAccessExpression(node.expression)
+            ? node.expression.name.text
+            : ts.isStringLiteralLike(node.expression.argumentExpression)
+              ? node.expression.argumentExpression.text
+              : null;
+          xhrSend =
+            methodName === "send" &&
+            typeContainsGlobalDomType(
+              checker.getTypeAtLocation(node.expression.expression),
+              "XMLHttpRequest",
+            );
+        }
+        writes =
+          xhrSend ||
+          mutationSymbol(reference) !== null ||
+          (rawTransport !== null && rawCallWrites(node)) ||
+          (directCallable !== null && callableWrites(directCallable)) ||
+          (receiverCallable !== null && callableWrites(receiverCallable));
+      } else if (ts.isNewExpression(node)) {
+        writes = constructorImplementations(node.expression).some(
+          (implementation) => callableWrites(implementation),
+        );
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    for (const statement of sourceFile.statements) {
+      visit(statement);
+    }
+    return writes;
+  }
+
   for (const file of scriptFiles) {
     const sourcePath = sourceSegments(file).join("/");
     const sourceFile = program.getSourceFile(file);
@@ -2108,6 +2207,13 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
 
     auditAdapterWriteExports(sourceFile, sourcePath);
+    if (
+      ((sourcePath.startsWith("domains/") && sourcePath.includes("/api/")) ||
+        LEGACY_RAW_TRANSPORT_OWNERS.has(sourcePath)) &&
+      moduleInitializerWrites(sourceFile)
+    ) {
+      violations.add("Module initializer performs a write: " + sourcePath);
+    }
 
     for (const statement of sourceFile.statements) {
       if (
