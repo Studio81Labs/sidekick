@@ -812,8 +812,8 @@ function waveNineMutationBoundaryViolations(): string[] {
   type RequestMethodState = "absent" | "read" | "write";
 
   function methodValueState(value: ts.Expression): RequestMethodState {
-    return ts.isStringLiteralLike(value) &&
-      ["GET", "HEAD"].includes(value.text.toUpperCase())
+    const method = constantStringValue(value);
+    return method && ["GET", "HEAD"].includes(method.toUpperCase())
       ? "read"
       : "write";
   }
@@ -829,6 +829,85 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
     }
     return composed;
+  }
+
+  function executionBoundary(node: ts.Node): ts.Node {
+    let current = node;
+    while (current.parent && !ts.isFunctionLike(current)) {
+      current = current.parent;
+    }
+    return current;
+  }
+
+  function maySkipExecution(node: ts.Node, boundary: ts.Node): boolean {
+    let current = node;
+    while (current.parent && current.parent !== boundary) {
+      const parent = current.parent;
+      if (
+        (ts.isIfStatement(parent) && current !== parent.expression) ||
+        (ts.isConditionalExpression(parent) && current !== parent.condition) ||
+        (ts.isBinaryExpression(parent) &&
+          current === parent.right &&
+          [
+            ts.SyntaxKind.AmpersandAmpersandToken,
+            ts.SyntaxKind.BarBarToken,
+            ts.SyntaxKind.QuestionQuestionToken,
+          ].includes(parent.operatorToken.kind)) ||
+        ts.isCaseClause(parent) ||
+        ts.isDefaultClause(parent) ||
+        ((ts.isForStatement(parent) ||
+          ts.isForInStatement(parent) ||
+          ts.isForOfStatement(parent) ||
+          ts.isWhileStatement(parent)) &&
+          current === parent.statement)
+      ) {
+        return true;
+      }
+      current = parent;
+    }
+    return false;
+  }
+
+  function requestOptionMutationStates(
+    symbol: ts.Symbol,
+    reference: ts.Expression,
+    initialStates: Set<RequestMethodState>,
+  ): Set<RequestMethodState> {
+    let states = new Set(initialStates);
+    const boundary = executionBoundary(reference);
+    const referenceStart = reference.getStart();
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.getEnd() <= referenceStart &&
+        executionBoundary(node) === boundary &&
+        (ts.isPropertyAccessExpression(node.left) ||
+          ts.isElementAccessExpression(node.left))
+      ) {
+        const receiver = node.left.expression;
+        const propertyName = ts.isPropertyAccessExpression(node.left)
+          ? node.left.name.text
+          : ts.isStringLiteralLike(node.left.argumentExpression)
+            ? node.left.argumentExpression.text
+            : null;
+        if (resolvedSymbol(receiver) === symbol && propertyName === "method") {
+          const nextState =
+            node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+              ? methodValueState(node.right)
+              : "write";
+          if (maySkipExecution(node, boundary)) {
+            states.add(nextState);
+          } else {
+            states = new Set([nextState]);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    }
+
+    visit(reference.getSourceFile());
+    return states;
   }
 
   function requestMethodStates(
@@ -865,7 +944,11 @@ function waveNineMutationBoundaryViolations(): string[] {
             ts.isVariableDeclarationList(declaration.parent) &&
             (declaration.parent.flags & ts.NodeFlags.Const) !== 0
           ) {
-            return requestMethodStates(declaration.initializer, seen);
+            return requestOptionMutationStates(
+              symbol,
+              value,
+              requestMethodStates(declaration.initializer, seen),
+            );
           }
         }
       }
@@ -897,7 +980,9 @@ function waveNineMutationBoundaryViolations(): string[] {
       states = new Set([
         ts.isPropertyAssignment(property)
           ? methodValueState(property.initializer)
-          : "write",
+          : ts.isShorthandPropertyAssignment(property)
+            ? methodValueState(property.name)
+            : "write",
       ]);
     }
     return states;
@@ -1110,37 +1195,26 @@ function waveNineMutationBoundaryViolations(): string[] {
       return symbol;
     }
 
-    function maySkipBeforeSend(node: ts.Node): boolean {
-      let current = node;
-      while (current.parent && current.parent !== callable) {
-        const parent = current.parent;
-        if (
-          (ts.isIfStatement(parent) && current !== parent.expression) ||
-          (ts.isConditionalExpression(parent) &&
-            current !== parent.condition) ||
-          (ts.isBinaryExpression(parent) &&
-            current === parent.right &&
-            [
-              ts.SyntaxKind.AmpersandAmpersandToken,
-              ts.SyntaxKind.BarBarToken,
-              ts.SyntaxKind.QuestionQuestionToken,
-            ].includes(parent.operatorToken.kind)) ||
-          ts.isCaseClause(parent) ||
-          ts.isDefaultClause(parent) ||
-          ((ts.isForStatement(parent) ||
-            ts.isForInStatement(parent) ||
-            ts.isForOfStatement(parent) ||
-            ts.isWhileStatement(parent)) &&
-            current === parent.statement)
-        ) {
-          return true;
-        }
-        current = parent;
-      }
-      return false;
-    }
-
     function visit(node: ts.Node): void {
+      if (node !== callable && ts.isFunctionLike(node)) {
+        return;
+      }
+      if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+        for (const member of node.members) {
+          if (ts.isClassStaticBlockDeclaration(member)) {
+            visit(member);
+          } else if (
+            ts.isPropertyDeclaration(member) &&
+            member.initializer &&
+            member.modifiers?.some(
+              (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+            )
+          ) {
+            visit(member.initializer);
+          }
+        }
+        return;
+      }
       if (
         ts.isCallExpression(node) &&
         (ts.isPropertyAccessExpression(node.expression) ||
@@ -1174,7 +1248,7 @@ function waveNineMutationBoundaryViolations(): string[] {
               const writeOpen = node.arguments[0]
                 ? methodValueState(node.arguments[0]) === "write"
                 : true;
-              operation.writeOpen = maySkipBeforeSend(node)
+              operation.writeOpen = maySkipExecution(node, callable)
                 ? operation.writeOpen || writeOpen
                 : writeOpen;
             }
@@ -1313,6 +1387,25 @@ function waveNineMutationBoundaryViolations(): string[] {
 
     function visit(node: ts.Node): void {
       if (writes) {
+        return;
+      }
+      if (node !== callable && ts.isFunctionLike(node)) {
+        return;
+      }
+      if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+        for (const member of node.members) {
+          if (ts.isClassStaticBlockDeclaration(member)) {
+            visit(member);
+          } else if (
+            ts.isPropertyDeclaration(member) &&
+            member.initializer &&
+            member.modifiers?.some(
+              (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+            )
+          ) {
+            visit(member.initializer);
+          }
+        }
         return;
       }
       if (ts.isCallExpression(node)) {
