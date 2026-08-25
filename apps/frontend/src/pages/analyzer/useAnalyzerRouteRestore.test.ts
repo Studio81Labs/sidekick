@@ -13,6 +13,8 @@ function job(id: string): JobRecord {
   return { id } as JobRecord;
 }
 
+const PERSISTED_JOB_ID = "a".repeat(32);
+
 function options(
   overrides: Partial<AnalyzerRouteRestoreOptions> = {},
 ): AnalyzerRouteRestoreOptions {
@@ -82,7 +84,7 @@ describe("useAnalyzerRouteRestore", () => {
   });
 
   it("activates a cached durable job without loading it", () => {
-    const cachedJob = job("job-123");
+    const cachedJob = job(PERSISTED_JOB_ID);
     const current = options({
       jobs: [cachedJob],
       route: analyzerRouteState("job", cachedJob.id),
@@ -110,8 +112,20 @@ describe("useAnalyzerRouteRestore", () => {
     expect(current.loadJob).not.toHaveBeenCalled();
   });
 
+  it("rejects a malformed persisted job route before loading", () => {
+    const malformedJobId = `${PERSISTED_JOB_ID}?junk`;
+    const current = options({
+      route: analyzerRouteState("job", malformedJobId),
+    });
+    renderHook(() => useAnalyzerRouteRestore(current));
+
+    expect(current.onJobUnavailable).toHaveBeenCalledOnce();
+    expect(current.onJobLoading).not.toHaveBeenCalled();
+    expect(current.loadJob).not.toHaveBeenCalled();
+  });
+
   it("loads and activates a missing durable job", async () => {
-    const loadedJob = job("job-123");
+    const loadedJob = job(PERSISTED_JOB_ID);
     const current = options({
       loadJob: vi.fn().mockResolvedValue(loadedJob),
       route: analyzerRouteState("job", loadedJob.id),
@@ -126,7 +140,7 @@ describe("useAnalyzerRouteRestore", () => {
   });
 
   it("restarts a pending job load after leaving and returning", async () => {
-    const loadedJob = job("job-123");
+    const loadedJob = job(PERSISTED_JOB_ID);
     let resolveJob: (job: JobRecord) => void = () => undefined;
     const pendingJob = new Promise<JobRecord>((resolve) => {
       resolveJob = resolve;
@@ -160,12 +174,12 @@ describe("useAnalyzerRouteRestore", () => {
     const failure = new Error("missing job");
     const current = options({
       loadJob: vi.fn().mockRejectedValue(failure),
-      route: analyzerRouteState("job", "job-123"),
+      route: analyzerRouteState("job", PERSISTED_JOB_ID),
     });
     renderHook(() => useAnalyzerRouteRestore(current));
 
     await waitFor(() => expect(current.onError).toHaveBeenCalledWith(failure));
-    expect(current.onJobLoading).toHaveBeenCalledWith("job-123");
+    expect(current.onJobLoading).toHaveBeenCalledWith(PERSISTED_JOB_ID);
     expect(current.onJobUnavailable).toHaveBeenCalledOnce();
     expect(current.activateJob).not.toHaveBeenCalled();
   });

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 
+import { PERSISTED_JOB_ID_PATTERN } from "../../features/workspace/lib/cacheValidationPrimitives";
 import { isLocalUploadError } from "../../features/workspace/lib/reconciliation";
 import type { JobRecord } from "../../shared/types";
 import type { AnalyzerRouteState, AnalyzerSurface } from "./analyzerRouteState";
@@ -56,30 +57,33 @@ export function useAnalyzerRouteRestore(
     ) {
       current.openBenchmarks();
     } else if (current.route.surface === "job" && current.route.jobId) {
-      const cachedJob = current.jobs.find(
-        (job) => job.id === current.route.jobId,
-      );
-      if (cachedJob) {
-        if (isLocalUploadError(cachedJob)) {
-          current.onJobUnavailable();
-        } else if (current.activeJobId !== current.route.jobId) {
-          current.activateJob(cachedJob);
-        }
+      const routeJobId = current.route.jobId;
+      if (!PERSISTED_JOB_ID_PATTERN.test(routeJobId)) {
+        current.onJobUnavailable();
       } else {
-        current.onJobLoading(current.route.jobId);
-        void current
-          .loadJob(current.route.jobId)
-          .then((job) => {
-            if (active) {
-              current.activateJob(job);
-            }
-          })
-          .catch((error: unknown) => {
-            if (active) {
-              current.onJobUnavailable();
-              current.onError(error);
-            }
-          });
+        const cachedJob = current.jobs.find((job) => job.id === routeJobId);
+        if (cachedJob) {
+          if (isLocalUploadError(cachedJob)) {
+            current.onJobUnavailable();
+          } else if (current.activeJobId !== routeJobId) {
+            current.activateJob(cachedJob);
+          }
+        } else {
+          current.onJobLoading(routeJobId);
+          void current
+            .loadJob(routeJobId)
+            .then((job) => {
+              if (active) {
+                current.activateJob(job);
+              }
+            })
+            .catch((error: unknown) => {
+              if (active) {
+                current.onJobUnavailable();
+                current.onError(error);
+              }
+            });
+        }
       }
     }
 
