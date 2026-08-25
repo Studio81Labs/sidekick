@@ -1890,6 +1890,15 @@ function waveNineMutationBoundaryViolations(): string[] {
         !ts.isClassExpression(declaration.initializer)
       ) {
         members.push(
+          ...invocationTargetCallables(declaration.initializer).map(
+            (callable) => ({
+              callable,
+              label: label + "." + staticMemberName(declaration.name),
+              topLevel: false,
+            }),
+          ),
+        );
+        members.push(
           ...callableAliasMembers(
             resolvedSymbol(declaration.initializer),
             label + "." + staticMemberName(declaration.name),
@@ -2091,6 +2100,13 @@ function waveNineMutationBoundaryViolations(): string[] {
           topLevel: true,
         });
       }
+      callables.push(
+        ...invocationTargetCallables(value).map((callable) => ({
+          callable,
+          label: exportName,
+          topLevel: true,
+        })),
+      );
       callables.push(...typedValueCallables(value, exportName));
     }
 
@@ -2300,6 +2316,13 @@ function waveNineMutationBoundaryViolations(): string[] {
               topLevel: target.topLevel,
             });
           }
+          callables.push(
+            ...invocationTargetCallables(node.right).map((callable) => ({
+              callable,
+              label: target.label,
+              topLevel: target.topLevel,
+            })),
+          );
           callables.push(...typedValueCallables(node.right, target.label));
           if (ts.isCallExpression(node.right)) {
             callables.push(
@@ -2393,6 +2416,11 @@ function waveNineMutationBoundaryViolations(): string[] {
           });
         }
         callables.push(
+          ...invocationTargetCallables(declaration.initializer).map(
+            (callable) => ({ callable, label: exportName, topLevel: true }),
+          ),
+        );
+        callables.push(
           ...typedValueCallables(declaration.initializer, exportName),
         );
         if (ts.isCallExpression(declaration.initializer)) {
@@ -2442,6 +2470,13 @@ function waveNineMutationBoundaryViolations(): string[] {
             topLevel: true,
           });
         }
+        callables.push(
+          ...invocationTargetCallables(value).map((callable) => ({
+            callable,
+            label: exportName,
+            topLevel: true,
+          })),
+        );
         if (
           ts.isObjectLiteralExpression(value) ||
           ts.isClassExpression(value)
