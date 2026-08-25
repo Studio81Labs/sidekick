@@ -243,211 +243,244 @@ function sourceFiles(): string[] {
 
 function waveNineMutationBoundaryViolations(): string[] {
   const violations = new Set<string>();
-
-  for (const file of sourceFiles().filter((candidate) =>
+  const scriptFiles = sourceFiles().filter((candidate) =>
     [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"].includes(
       extname(candidate),
     ),
-  )) {
-    const sourcePath = sourceSegments(file).join("/");
-    const source = readFileSync(file, "utf8");
-    const extension = extname(file);
-    const sourceFile = ts.createSourceFile(
-      file,
-      source,
-      ts.ScriptTarget.Latest,
-      true,
-      extension === ".tsx"
-        ? ts.ScriptKind.TSX
-        : extension === ".jsx"
-          ? ts.ScriptKind.JSX
-          : JAVASCRIPT_EXTENSIONS.has(extension)
-            ? ts.ScriptKind.JS
-            : ts.ScriptKind.TS,
+  );
+  const program = ts.createProgram({
+    rootNames: scriptFiles,
+    options: {
+      allowJs: true,
+      checkJs: false,
+      jsx: ts.JsxEmit.ReactJSX,
+      module: ts.ModuleKind.ESNext,
+      moduleResolution: ts.ModuleResolutionKind.Bundler,
+      skipLibCheck: true,
+      target: ts.ScriptTarget.ESNext,
+    },
+  });
+  const checker = program.getTypeChecker();
+
+  function resolvedSymbol(node: ts.Node): ts.Symbol | null {
+    let symbol = checker.getSymbolAtLocation(node);
+    const seen = new Set<ts.Symbol>();
+    while (symbol && (symbol.flags & ts.SymbolFlags.Alias) !== 0) {
+      if (seen.has(symbol)) {
+        break;
+      }
+      seen.add(symbol);
+      const aliased = checker.getAliasedSymbol(symbol);
+      if (aliased === symbol) {
+        break;
+      }
+      symbol = aliased;
+    }
+    return symbol ?? null;
+  }
+
+  function declarationSourcePath(declaration: ts.Declaration): string | null {
+    const declarationFile = resolve(declaration.getSourceFile().fileName);
+    if (!declarationFile.startsWith(SOURCE_ROOT + sep)) {
+      return null;
+    }
+    return sourceSegments(declarationFile).join("/");
+  }
+
+  function mutationSymbol(node: ts.Node): string | null {
+    const symbol = resolvedSymbol(node);
+    const mutation = symbol?.getName() ?? "";
+    if (!symbol || !isWaveNineMutation(mutation)) {
+      return null;
+    }
+    const owners = WAVE_NINE_MUTATION_OWNERS[mutation];
+    return symbol.declarations?.some((declaration) => {
+      const declarationPath = declarationSourcePath(declaration);
+      return declarationPath !== null && owners.has(declarationPath);
+    })
+      ? mutation
+      : null;
+  }
+
+  function rawTransportSymbol(node: ts.Node): string | null {
+    const symbol = resolvedSymbol(node);
+    const transport = symbol?.getName() ?? "";
+    if (!symbol || !RAW_TRANSPORT_REFERENCES.has(transport)) {
+      return null;
+    }
+    const ownsDeclaration = symbol.declarations?.some((declaration) => {
+      const declarationFile = declaration.getSourceFile().fileName;
+      if (transport === "requestJson") {
+        return declarationSourcePath(declaration) === "shared/api/transport.ts";
+      }
+      return declarationFile.endsWith("lib.dom.d.ts");
+    });
+    return ownsDeclaration ? transport : null;
+  }
+
+  function isTypeOnlyReference(node: ts.Node): boolean {
+    let current: ts.Node | undefined = node.parent;
+    while (current && !ts.isSourceFile(current)) {
+      if (ts.isTypeNode(current)) {
+        return true;
+      }
+      if (ts.isImportSpecifier(current)) {
+        const importClause = current.parent.parent;
+        return (
+          current.isTypeOnly ||
+          (ts.isImportClause(importClause) && importClause.isTypeOnly)
+        );
+      }
+      if (ts.isExportSpecifier(current)) {
+        const exportDeclaration = current.parent.parent;
+        return (
+          current.isTypeOnly ||
+          (ts.isExportDeclaration(exportDeclaration) &&
+            exportDeclaration.isTypeOnly)
+        );
+      }
+      current = current.parent;
+    }
+    return false;
+  }
+
+  function isIdentitySpecifier(node: ts.Node, symbolName: string): boolean {
+    const specifier =
+      ts.isImportSpecifier(node.parent) || ts.isExportSpecifier(node.parent)
+        ? node.parent
+        : null;
+    if (!specifier) {
+      return false;
+    }
+    return (
+      (specifier.propertyName ?? specifier.name).text === symbolName &&
+      specifier.name.text === symbolName
     );
-    const importedMutations = new Map<string, string>();
+  }
+
+  function isDirectOwnedReference(node: ts.Node, symbolName: string): boolean {
+    if (isIdentitySpecifier(node, symbolName)) {
+      return true;
+    }
+    const parent = node.parent;
+    if (
+      (ts.isFunctionDeclaration(parent) || ts.isFunctionExpression(parent)) &&
+      parent.name === node
+    ) {
+      return true;
+    }
+
+    let expression: ts.Node = node;
+    if (
+      (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+      (ts.isElementAccessExpression(parent) &&
+        parent.argumentExpression === node)
+    ) {
+      expression = parent;
+    }
+    while (ts.isParenthesizedExpression(expression.parent)) {
+      expression = expression.parent;
+    }
+    return (
+      (ts.isCallExpression(expression.parent) ||
+        ts.isNewExpression(expression.parent)) &&
+      expression.parent.expression === expression
+    );
+  }
+
+  function isApiModuleTarget(target: string): boolean {
+    const targetPath = sourceSegments(target);
+    return (
+      (targetPath[0] === "shared" && targetPath[1] === "api") ||
+      (targetPath[0] === "domains" && targetPath[2] === "api")
+    );
+  }
+
+  for (const file of scriptFiles) {
+    const sourcePath = sourceSegments(file).join("/");
+    const sourceFile = program.getSourceFile(file);
+    if (!sourceFile) {
+      violations.add(
+        "TypeScript program omitted production source: " + sourcePath,
+      );
+      continue;
+    }
 
     for (const statement of sourceFile.statements) {
       if (
-        ts.isExportDeclaration(statement) &&
-        !statement.isTypeOnly &&
-        statement.exportClause &&
-        ts.isNamedExports(statement.exportClause)
+        !ts.isImportDeclaration(statement) ||
+        statement.importClause?.isTypeOnly ||
+        !ts.isStringLiteral(statement.moduleSpecifier) ||
+        !statement.importClause?.namedBindings ||
+        !ts.isNamespaceImport(statement.importClause.namedBindings)
       ) {
-        for (const binding of statement.exportClause.elements) {
-          const originalName = (binding.propertyName ?? binding.name).text;
-          if (
-            !binding.isTypeOnly &&
-            isWaveNineMutation(originalName) &&
-            binding.name.text !== originalName
-          ) {
+        continue;
+      }
+      const target = sourceImportTarget(file, statement.moduleSpecifier.text);
+      if (target && isApiModuleTarget(target)) {
+        violations.add(
+          "API namespace import bypasses owned symbols: " + sourcePath,
+        );
+      }
+    }
+
+    function visit(node: ts.Node): void {
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments.length === 1 &&
+        ts.isStringLiteralLike(node.arguments[0])
+      ) {
+        const target = sourceImportTarget(file, node.arguments[0].text);
+        if (target && isApiModuleTarget(target)) {
+          violations.add(
+            "Dynamic API namespace import bypasses owned symbols: " +
+              sourcePath,
+          );
+        }
+      }
+
+      const referenceNode =
+        ts.isIdentifier(node) || ts.isStringLiteralLike(node) ? node : null;
+      if (referenceNode && !isTypeOnlyReference(referenceNode)) {
+        const mutation = mutationSymbol(referenceNode);
+        if (mutation) {
+          const owners = WAVE_NINE_MUTATION_OWNERS[mutation];
+          if (owners.has(sourcePath)) {
+            if (!isDirectOwnedReference(referenceNode, mutation)) {
+              violations.add(
+                mutation + " aliased inside its owned boundary: " + sourcePath,
+              );
+            }
+          } else if (!isIdentitySpecifier(referenceNode, mutation)) {
             violations.add(
-              `${originalName} re-exported as ${binding.name.text} outside its owned identity: ${sourcePath}`,
+              mutation +
+                " referenced outside its owned boundary: " +
+                sourcePath,
+            );
+          }
+        }
+
+        const rawTransport = rawTransportSymbol(referenceNode);
+        if (rawTransport) {
+          if (ownsRawTransport(sourcePath)) {
+            if (!isDirectOwnedReference(referenceNode, rawTransport)) {
+              violations.add(
+                rawTransport +
+                  " aliased inside its transport boundary: " +
+                  sourcePath,
+              );
+            }
+          } else {
+            violations.add(
+              rawTransport +
+                " referenced outside a domain transport boundary: " +
+                sourcePath,
             );
           }
         }
       }
 
-      if (
-        !ts.isImportDeclaration(statement) ||
-        !ts.isStringLiteral(statement.moduleSpecifier) ||
-        sourceImportTarget(file, statement.moduleSpecifier.text) === null
-      ) {
-        continue;
-      }
-
-      const bindings = statement.importClause?.namedBindings;
-      if (bindings && ts.isNamedImports(bindings)) {
-        for (const binding of bindings.elements) {
-          if (statement.importClause?.isTypeOnly || binding.isTypeOnly) {
-            continue;
-          }
-          const importedName = (binding.propertyName ?? binding.name).text;
-          if (isWaveNineMutation(importedName)) {
-            importedMutations.set(binding.name.text, importedName);
-            if (binding.name.text !== importedName) {
-              violations.add(
-                `${importedName} imported as ${binding.name.text} outside its owned identity: ${sourcePath}`,
-              );
-            }
-            if (!WAVE_NINE_MUTATION_OWNERS[importedName].has(sourcePath)) {
-              violations.add(
-                `${importedName} imported outside its owned boundary: ${sourcePath}`,
-              );
-            }
-          }
-        }
-      }
-    }
-
-    function mutationForCall(node: ts.CallExpression): string | null {
-      let expression: ts.Expression = node.expression;
-      while (ts.isParenthesizedExpression(expression)) {
-        expression = expression.expression;
-      }
-
-      if (ts.isIdentifier(expression)) {
-        return (
-          importedMutations.get(expression.text) ??
-          (isWaveNineMutation(expression.text) ? expression.text : null)
-        );
-      }
-
-      if (
-        ts.isPropertyAccessExpression(expression) &&
-        isWaveNineMutation(expression.name.text)
-      ) {
-        return expression.name.text;
-      }
-
-      return null;
-    }
-
-    function staticMutationPropertyName(node: ts.Node): string | null {
-      if (ts.isIdentifier(node) || ts.isStringLiteralLike(node)) {
-        return isWaveNineMutation(node.text) ? node.text : null;
-      }
-      if (
-        ts.isComputedPropertyName(node) &&
-        ts.isStringLiteralLike(node.expression) &&
-        isWaveNineMutation(node.expression.text)
-      ) {
-        return node.expression.text;
-      }
-      return null;
-    }
-
-    function isDirectOwnerMutationReference(node: ts.Identifier): boolean {
-      const parent = node.parent;
-      if (
-        ts.isImportSpecifier(parent) ||
-        ts.isExportSpecifier(parent) ||
-        ((ts.isFunctionDeclaration(parent) ||
-          ts.isFunctionExpression(parent)) &&
-          parent.name === node)
-      ) {
-        return true;
-      }
-
-      let expression: ts.Node = node;
-      if (ts.isPropertyAccessExpression(parent) && parent.name === node) {
-        expression = parent;
-      }
-      while (ts.isParenthesizedExpression(expression.parent)) {
-        expression = expression.parent;
-      }
-      return (
-        ts.isCallExpression(expression.parent) &&
-        expression.parent.expression === expression
-      );
-    }
-
-    function visit(node: ts.Node): void {
-      if (!ownsRawTransport(sourcePath)) {
-        const rawTransport =
-          ts.isIdentifier(node) && RAW_TRANSPORT_REFERENCES.has(node.text)
-            ? node.text
-            : ts.isElementAccessExpression(node) &&
-                ts.isStringLiteralLike(node.argumentExpression) &&
-                RAW_TRANSPORT_REFERENCES.has(node.argumentExpression.text)
-              ? node.argumentExpression.text
-              : null;
-        if (rawTransport) {
-          violations.add(
-            `${rawTransport} referenced outside a domain transport boundary: ${sourcePath}`,
-          );
-        }
-      }
-
-      if (ts.isIdentifier(node) && isWaveNineMutation(node.text)) {
-        const owners = WAVE_NINE_MUTATION_OWNERS[node.text];
-        if (owners.has(sourcePath) && !isDirectOwnerMutationReference(node)) {
-          violations.add(
-            `${node.text} aliased inside its owned boundary: ${sourcePath}`,
-          );
-        }
-      }
-
-      let referencedMutation: string | null = null;
-      if (
-        ts.isPropertyAccessExpression(node) &&
-        isWaveNineMutation(node.name.text)
-      ) {
-        referencedMutation = node.name.text;
-      } else if (
-        ts.isElementAccessExpression(node) &&
-        ts.isStringLiteralLike(node.argumentExpression) &&
-        isWaveNineMutation(node.argumentExpression.text)
-      ) {
-        referencedMutation = node.argumentExpression.text;
-      } else if (ts.isBindingElement(node)) {
-        const propertyName = node.propertyName ?? node.name;
-        referencedMutation = staticMutationPropertyName(propertyName);
-      } else if (
-        ts.isPropertyAssignment(node) ||
-        ts.isShorthandPropertyAssignment(node)
-      ) {
-        referencedMutation = staticMutationPropertyName(node.name);
-      }
-
-      const referenceOwners = referencedMutation
-        ? WAVE_NINE_MUTATION_OWNERS[referencedMutation]
-        : null;
-      if (referenceOwners && !referenceOwners.has(sourcePath)) {
-        violations.add(
-          `${referencedMutation} referenced outside its owned boundary: ${sourcePath}`,
-        );
-      }
-
-      if (ts.isCallExpression(node)) {
-        const mutation = mutationForCall(node);
-        const owners = mutation ? WAVE_NINE_MUTATION_OWNERS[mutation] : null;
-        if (owners && !owners.has(sourcePath)) {
-          violations.add(
-            `${mutation} called outside its owned boundary: ${sourcePath}`,
-          );
-        }
-      }
       ts.forEachChild(node, visit);
     }
 
