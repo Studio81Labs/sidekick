@@ -2157,6 +2157,25 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
 
     for (const promisedType of promisedValueTypes(type)) {
+      for (const signature of checker.getSignaturesOfType(
+        promisedType,
+        ts.SignatureKind.Call,
+      )) {
+        const declaration = signature.declaration;
+        if (
+          declaration &&
+          (ts.isArrowFunction(declaration) ||
+            ts.isFunctionDeclaration(declaration) ||
+            ts.isFunctionExpression(declaration) ||
+            ts.isMethodDeclaration(declaration))
+        ) {
+          members.push({
+            callable: declaration,
+            label: label + ".[await]",
+            topLevel: false,
+          });
+        }
+      }
       members.push(
         ...reachableTypeCallables(
           promisedType,
