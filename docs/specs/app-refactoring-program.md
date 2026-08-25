@@ -509,6 +509,13 @@ browser workflows pass at desktop and mobile viewports.
 
 Dependencies: may proceed incrementally; completes after Wave 10
 
+Wave 11 is complete. Analyzer workflow suites share one render harness and are
+split by behavior domain, production components have colocated focused tests,
+and frontend CI reports architecture, app-shell/edge-worker, workflow, and
+feature/domain failures in named steps. Backend suites are separated by router, service,
+domain, repository, provider policy, and persistence/archive compatibility.
+Deterministic OpenAPI and archive round-trip fixtures remain explicit gates.
+
 - Replace monolithic fixtures with domain factories and a shared render helper.
 - Introduce MSW only when the first Query adapter needs request-level tests.
 - Split backend tests by router, service, domain, and repository contract.
@@ -609,20 +616,21 @@ Every implementation PR must include:
 
 ## Implementation Status
 
-| Wave  | Status      | Current work                                                                                                                                                                                         |
-| ----- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0     | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                          |
-| 1     | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                  |
-| 2     | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                |
-| 3     | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                              |
-| 4     | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                    |
-| 5     | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; `app/models.py` is an exports-only compatibility facade             |
-| 6     | In progress | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` now owns repository composition, startup recovery, and lock ordering for imports, backups, and restore |
-| 7     | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
-| 8     | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |
-| 9     | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
-| 10    | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands  |
-| 11-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
+| Wave | Status      | Current work                                                                                                                                                                                         |
+| ---- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                          |
+| 1    | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                  |
+| 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                |
+| 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                              |
+| 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                    |
+| 5    | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; `app/models.py` is an exports-only compatibility facade             |
+| 6    | In progress | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` now owns repository composition, startup recovery, and lock ordering for imports, backups, and restore |
+| 7    | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
+| 8    | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |
+| 9    | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
+| 10   | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands  |
+| 11   | Complete    | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain               |
+| 12   | Pending     | Remove compatibility facades and peer-feature allowlists, run final security/performance/release audits, and update final contributor and operations documentation                                   |
 
 ## Exit Criteria
 
