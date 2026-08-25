@@ -875,16 +875,7 @@ function waveNineMutationBoundaryViolations(): string[] {
   ): ExportedCallable[] {
     const members: ExportedCallable[] = [];
     const valueType = checker.getTypeAtLocation(value);
-    for (const property of checker.getPropertiesOfType(valueType)) {
-      members.push(
-        ...callableAliasMembers(
-          resolvedAliasSymbol(property),
-          label + "." + property.getName(),
-          seen,
-        ),
-      );
-    }
-    members.push(...collectionTypeCallables(valueType, label + "[]"));
+    members.push(...reachableTypeCallables(valueType, label, seen));
 
     if (ts.isArrayLiteralExpression(value)) {
       for (const element of value.elements) {
@@ -933,6 +924,100 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
     }
     return members;
+  }
+
+  function reachableTypeCallables(
+    type: ts.Type,
+    label: string,
+    seenSymbols: Set<ts.Symbol>,
+    seenTypes = new Set<ts.Type>(),
+  ): ExportedCallable[] {
+    if (seenTypes.has(type)) {
+      return [];
+    }
+    seenTypes.add(type);
+    if (type.isUnionOrIntersection()) {
+      return type.types.flatMap((member) =>
+        reachableTypeCallables(member, label, seenSymbols, seenTypes),
+      );
+    }
+
+    const members: ExportedCallable[] = [];
+    for (const property of checker.getPropertiesOfType(type)) {
+      members.push(
+        ...callableAliasMembers(
+          resolvedAliasSymbol(property),
+          label + "." + property.getName(),
+          seenSymbols,
+        ),
+      );
+    }
+    members.push(...collectionTypeCallables(type, label + "[]"));
+
+    for (const promisedType of promisedValueTypes(type)) {
+      members.push(
+        ...reachableTypeCallables(
+          promisedType,
+          label + ".[await]",
+          seenSymbols,
+          seenTypes,
+        ),
+      );
+    }
+    return members;
+  }
+
+  function promisedValueTypes(type: ts.Type): ts.Type[] {
+    const thenSymbol = checker.getPropertyOfType(type, "then");
+    const thenDeclaration =
+      thenSymbol?.valueDeclaration ?? thenSymbol?.declarations?.[0];
+    if (!thenSymbol || !thenDeclaration) {
+      return [];
+    }
+    const thenType = checker.getTypeOfSymbolAtLocation(
+      thenSymbol,
+      thenDeclaration,
+    );
+    const callbackTypes: ts.Type[] = [];
+    for (const signature of checker.getSignaturesOfType(
+      thenType,
+      ts.SignatureKind.Call,
+    )) {
+      const callbackSymbol = signature.parameters[0];
+      const callbackDeclaration =
+        callbackSymbol?.valueDeclaration ?? callbackSymbol?.declarations?.[0];
+      if (callbackSymbol && callbackDeclaration) {
+        callbackTypes.push(
+          checker.getTypeOfSymbolAtLocation(
+            callbackSymbol,
+            callbackDeclaration,
+          ),
+        );
+      }
+    }
+
+    const promisedTypes: ts.Type[] = [];
+    function inspectCallback(callbackType: ts.Type): void {
+      if (callbackType.isUnionOrIntersection()) {
+        callbackType.types.forEach(inspectCallback);
+        return;
+      }
+      for (const signature of checker.getSignaturesOfType(
+        callbackType,
+        ts.SignatureKind.Call,
+      )) {
+        const valueSymbol = signature.parameters[0];
+        const valueDeclaration =
+          valueSymbol?.valueDeclaration ?? valueSymbol?.declarations?.[0];
+        if (valueSymbol && valueDeclaration) {
+          promisedTypes.push(
+            checker.getTypeOfSymbolAtLocation(valueSymbol, valueDeclaration),
+          );
+        }
+      }
+    }
+    callbackTypes.forEach(inspectCallback);
+    return promisedTypes;
   }
 
   function nestedValueCallables(
