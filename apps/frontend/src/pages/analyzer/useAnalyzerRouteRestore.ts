@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 
 import type { JobRecord } from "../../shared/types";
-import type { AnalyzerRouteState } from "./analyzerRouteState";
+import type { AnalyzerRouteState, AnalyzerSurface } from "./analyzerRouteState";
 
 export interface AnalyzerRouteRestoreOptions {
   activateJob: (job: JobRecord) => void;
@@ -23,11 +23,14 @@ export function useAnalyzerRouteRestore(
   options: AnalyzerRouteRestoreOptions,
 ): void {
   const optionsRef = useRef(options);
+  const restoredSurfaceRef = useRef<AnalyzerSurface | null>(null);
   optionsRef.current = options;
 
   useEffect(() => {
     let active = true;
     const current = optionsRef.current;
+    const surfaceChanged = restoredSurfaceRef.current !== current.route.surface;
+    restoredSurfaceRef.current = current.route.surface;
 
     if (current.route.surface !== "training") {
       current.closeTraining();
@@ -35,11 +38,16 @@ export function useAnalyzerRouteRestore(
     if (current.route.surface !== "benchmarks") {
       current.closeBenchmarks();
     }
-    if (current.route.surface === "training" && !current.trainingOpen) {
+    if (
+      current.route.surface === "training" &&
+      !current.trainingOpen &&
+      surfaceChanged
+    ) {
       current.openTraining();
     } else if (
       current.route.surface === "benchmarks" &&
-      !current.benchmarksOpen
+      !current.benchmarksOpen &&
+      surfaceChanged
     ) {
       current.openBenchmarks();
     } else if (

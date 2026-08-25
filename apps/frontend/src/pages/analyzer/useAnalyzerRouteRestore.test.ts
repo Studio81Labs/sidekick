@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -62,6 +63,13 @@ describe("useAnalyzerRouteRestore", () => {
     renderHook(() => useAnalyzerRouteRestore(current));
 
     expect(current.openTraining).not.toHaveBeenCalled();
+  });
+
+  it("opens a direct durable surface once under Strict Mode", () => {
+    const current = options({ route: analyzerRouteState("training") });
+    renderHook(() => useAnalyzerRouteRestore(current), { wrapper: StrictMode });
+
+    expect(current.openTraining).toHaveBeenCalledOnce();
   });
 
   it("activates a cached durable job without loading it", () => {
