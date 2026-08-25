@@ -1,5 +1,5 @@
 import type { RecommendationResult } from "../../../shared/types/recommendations";
-import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection";
+import { providerLabel } from "../../pipeline/model/pipelineSelection";
 import { appendPostflopEvidence } from "./postflopEvidence";
 import { appendPreflopEvidence } from "./preflopEvidence";
 import { recommendationCandidatesFromRaw } from "./recommendationCandidates";
@@ -13,7 +13,7 @@ import {
   metadataRatio,
   metadataRecord,
   metadataString,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+} from "./recommendationMetadata";
 
 export function recommendationEvidenceFromRaw(
   raw: Record<string, unknown>,

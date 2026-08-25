@@ -10,7 +10,7 @@ import {
   metadataRecord,
   metadataString,
   metadataStringList,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+} from "./recommendationMetadata";
 
 export function rangeConditioningEvidence(
   value: unknown,

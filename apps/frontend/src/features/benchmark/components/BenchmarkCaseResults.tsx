@@ -12,7 +12,7 @@ import type {
   BenchmarkReportSummary,
 } from "../../../shared/types/benchmarks";
 import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection";
-import { parserRoutingEvidence } from "../../recommendation/lib/recommendationPresentation";
+import { parserRoutingEvidence } from "../../../domains/recommendations/model/parserRoutingPresentation";
 import {
   type BenchmarkCaseFilter,
   benchmarkCaseChanges,

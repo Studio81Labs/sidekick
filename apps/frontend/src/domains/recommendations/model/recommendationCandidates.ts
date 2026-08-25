@@ -5,7 +5,7 @@ import {
   metadataRatio,
   metadataRecord,
   metadataString,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+} from "./recommendationMetadata";
 
 export function recommendationCandidatesFromRaw(
   raw: Record<string, unknown>,

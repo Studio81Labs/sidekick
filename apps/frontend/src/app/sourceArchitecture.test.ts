@@ -4725,28 +4725,16 @@ function mutationLeaseBoundaryViolations(): string[] {
   });
 }
 
-function recommendationPresentationBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
-    barrelPath: "features/recommendation/lib/recommendationPresentation.ts",
-    label: "recommendation presentation",
-    namedExportsAllowed: true,
-  });
-}
-
-function postflopEvidenceBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
-    barrelPath: "features/recommendation/lib/postflopEvidencePresentation.ts",
-    label: "postflop evidence presentation",
-    namedExportsAllowed: true,
-  });
-}
-
-function preflopEvidenceBoundaryViolations(): string[] {
-  return featureLibraryBarrelViolations({
-    barrelPath: "features/recommendation/lib/preflopEvidencePresentation.ts",
-    label: "preflop evidence presentation",
-    namedExportsAllowed: true,
-  });
+function retiredRecommendationFacadeViolations(): string[] {
+  return [
+    "features/recommendation/lib/recommendationPresentation.ts",
+    "features/recommendation/lib/postflopEvidencePresentation.ts",
+    "features/recommendation/lib/preflopEvidencePresentation.ts",
+  ].flatMap((facadePath) =>
+    existsSync(resolve(SOURCE_ROOT, facadePath))
+      ? [`retired recommendation facade exists: ${facadePath}`]
+      : [],
+  );
 }
 
 function retiredTrainingPresentationFacadeViolations(): string[] {
@@ -5026,16 +5014,8 @@ describe("frontend source architecture", () => {
     expect(mutationLeaseBoundaryViolations()).toEqual([]);
   });
 
-  it("keeps recommendation presentation in focused modules", () => {
-    expect(recommendationPresentationBoundaryViolations()).toEqual([]);
-  });
-
-  it("keeps postflop evidence presentation in focused modules", () => {
-    expect(postflopEvidenceBoundaryViolations()).toEqual([]);
-  });
-
-  it("keeps preflop evidence presentation in focused modules", () => {
-    expect(preflopEvidenceBoundaryViolations()).toEqual([]);
+  it("keeps retired recommendation facades removed", () => {
+    expect(retiredRecommendationFacadeViolations()).toEqual([]);
   });
 
   it("keeps the retired training presentation facade removed", () => {

@@ -1,7 +1,7 @@
 import { Check, Play, RefreshCcw } from "lucide-react";
 import "./HandReviewPanel.css";
 
-import type { RecommendationEvidence } from "../../recommendation/lib/recommendationPresentation";
+import type { RecommendationEvidence } from "../../../domains/recommendations/model/recommendationEvidenceTypes";
 import type {
   TrainingActionOption,
   TrainingCertaintyOption,

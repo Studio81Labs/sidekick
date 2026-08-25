@@ -662,16 +662,12 @@ Mutation-lease contracts, job and projection expectations, lease matching,
 legacy decoding, browser storage, and lease factories are separate modules
 behind the stable `features/workspace/lib/mutationLeases.ts` barrel.
 
-Recommendation parser routing, preflop context, postflop range evidence,
-candidate ranking, and display formatting live in focused feature-library
-modules. `features/recommendation/lib/recommendationPresentation.ts` remains a
-temporary compatibility barrel while its peer consumers migrate.
-Postflop evidence keeps solve-tree metadata, generic range context, limped-pot
-derivations, raised-pot derivations, and final composition in focused modules
-behind `postflopEvidencePresentation.ts`.
-Preflop evidence keeps stack and commitment context, limp and isolation lines,
-raised-pot actors and sizing, response ranges, and final composition in focused
-modules behind `preflopEvidencePresentation.ts`.
+Recommendation parser routing, metadata validation, preflop context, postflop
+range evidence, candidate ranking, and display formatting live in focused
+modules under `domains/recommendations/model`. Benchmark, hand-review, and
+recommendation components consume those domain owners directly. The former
+recommendation, postflop-evidence, and preflop-evidence compatibility barrels
+have been removed.
 Training review-queue copy and suggested-focus ranking remain in focused
 feature-library modules; reusable options and decision comparison import the
 training domain model directly, with no presentation barrel.

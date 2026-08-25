@@ -1,8 +1,5 @@
 import type { ParserRoutingEvidence } from "./recommendationEvidenceTypes";
-import {
-  metadataRecord,
-  metadataString,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+import { metadataRecord, metadataString } from "./recommendationMetadata";
 
 export function parserRoutingEvidence(
   value: unknown,

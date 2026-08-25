@@ -8,7 +8,7 @@ import {
   metadataNumber,
   metadataRatio,
   metadataString,
-} from "../../../domains/recommendations/model/recommendationMetadata";
+} from "./recommendationMetadata";
 
 export function appendPostflopLimpRangeEvidence(
   rangeSource: string | null,

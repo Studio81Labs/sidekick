@@ -1,12 +1,12 @@
 import { Check, Pencil, RefreshCcw, X } from "lucide-react";
 import "./RecommendationPanel.css";
 
+import { candidateMatchesRecommendation } from "../../../domains/recommendations/model/recommendationCandidates";
 import {
-  candidateMatchesRecommendation,
   formatEvidenceMetric,
   recommendationContextLabel,
-  type RecommendationEvidence,
-} from "../lib/recommendationPresentation";
+} from "../../../domains/recommendations/model/recommendationFormatting";
+import type { RecommendationEvidence } from "../../../domains/recommendations/model/recommendationEvidenceTypes";
 import {
   trainingCertaintyLabel,
   trainingDecisionComparison,
