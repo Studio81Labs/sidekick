@@ -776,9 +776,49 @@ function waveNineMutationBoundaryViolations(): string[] {
       : "[computed]";
   }
 
+  function callableAliasMembers(
+    symbol: ts.Symbol | null,
+    label: string,
+    seen: Set<ts.Symbol>,
+  ): ExportedCallable[] {
+    if (!symbol || seen.has(symbol)) {
+      return [];
+    }
+    const implementation = callableImplementation(symbol);
+    if (implementation) {
+      return [{ callable: implementation, label, topLevel: false }];
+    }
+    seen.add(symbol);
+    const members: ExportedCallable[] = [];
+    for (const declaration of symbol.declarations ?? []) {
+      if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
+        if (
+          ts.isObjectLiteralExpression(declaration.initializer) ||
+          ts.isClassExpression(declaration.initializer)
+        ) {
+          members.push(
+            ...callableMembers(declaration.initializer, label, seen),
+          );
+        } else {
+          members.push(
+            ...callableAliasMembers(
+              resolvedSymbol(declaration.initializer),
+              label,
+              seen,
+            ),
+          );
+        }
+      } else if (ts.isClassDeclaration(declaration)) {
+        members.push(...callableMembers(declaration, label, seen));
+      }
+    }
+    return members;
+  }
+
   function callableMembers(
     value: ts.Expression | ts.ClassDeclaration,
     label: string,
+    seen = new Set<ts.Symbol>(),
   ): ExportedCallable[] {
     const members: ExportedCallable[] = [];
     const declarations = ts.isObjectLiteralExpression(value)
@@ -803,6 +843,28 @@ function waveNineMutationBoundaryViolations(): string[] {
           label: label + "." + staticMemberName(declaration.name),
           topLevel: false,
         });
+      } else if (ts.isShorthandPropertyAssignment(declaration)) {
+        members.push(
+          ...callableAliasMembers(
+            resolvedAliasSymbol(
+              checker.getShorthandAssignmentValueSymbol(declaration),
+            ),
+            label + "." + declaration.name.text,
+            seen,
+          ),
+        );
+      } else if (
+        ts.isPropertyAssignment(declaration) &&
+        !ts.isObjectLiteralExpression(declaration.initializer) &&
+        !ts.isClassExpression(declaration.initializer)
+      ) {
+        members.push(
+          ...callableAliasMembers(
+            resolvedSymbol(declaration.initializer),
+            label + "." + staticMemberName(declaration.name),
+            seen,
+          ),
+        );
       } else if (
         ts.isPropertyAssignment(declaration) &&
         (ts.isObjectLiteralExpression(declaration.initializer) ||
@@ -812,6 +874,7 @@ function waveNineMutationBoundaryViolations(): string[] {
           ...callableMembers(
             declaration.initializer,
             label + "." + staticMemberName(declaration.name),
+            seen,
           ),
         );
       }
