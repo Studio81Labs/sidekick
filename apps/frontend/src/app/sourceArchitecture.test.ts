@@ -899,6 +899,7 @@ function waveNineMutationBoundaryViolations(): string[] {
         ts.isDefaultClause(parent) ||
         ts.isCatchClause(parent) ||
         (ts.isTryStatement(parent) && current === parent.tryBlock) ||
+        (ts.isForStatement(parent) && current === parent.incrementor) ||
         ((ts.isForStatement(parent) ||
           ts.isForInStatement(parent) ||
           ts.isForOfStatement(parent) ||
