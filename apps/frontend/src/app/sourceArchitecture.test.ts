@@ -957,7 +957,7 @@ function waveNineMutationBoundaryViolations(): string[] {
       return cached;
     }
     if (active.has(callable)) {
-      return false;
+      return true;
     }
     active.add(callable);
     let writes = xmlHttpRequestWrites(callable);
