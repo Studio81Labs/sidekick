@@ -7,7 +7,7 @@ import {
   isRedSuit,
   SUIT_BY_CODE,
 } from "./cardPresentation";
-import type { Card } from "../types";
+import type { Card } from "../types/poker";
 
 describe("card presentation", () => {
   it.each([

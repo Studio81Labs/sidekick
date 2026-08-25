@@ -9,8 +9,8 @@ import {
 import type {
   BenchmarkOverview,
   BenchmarkReport,
-  PipelineSelection,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
+import type { PipelineSelection } from "../../../shared/types/pipeline";
 import { messageFromError } from "../../workspace/lib/workflow";
 import {
   benchmarkReportSummary,

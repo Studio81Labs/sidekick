@@ -30,7 +30,8 @@ import type {
   StateForm,
 } from "../lib/pokerStateForm";
 import { requiresOpponentPosition } from "../lib/pokerStateForm";
-import type { CompletedPostflopStreet, JobRecord } from "../../../shared/types";
+import type { CompletedPostflopStreet } from "../../../shared/types/poker";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 interface UseHandReviewStateOptions {
   activeJobId: string | null;

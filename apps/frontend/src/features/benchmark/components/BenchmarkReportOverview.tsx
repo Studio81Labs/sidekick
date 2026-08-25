@@ -10,8 +10,8 @@ import type {
   BenchmarkOverview,
   BenchmarkReport,
   BenchmarkReportSummary,
-  PipelineCapabilities,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
+import type { PipelineCapabilities } from "../../../shared/types/pipeline";
 import {
   benchmarkPointChange,
   benchmarkReportOption,

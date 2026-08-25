@@ -11,7 +11,7 @@ import {
   TrainingCertaintyCalibration,
   type TrainingCertaintyCalibrationProps,
 } from "./TrainingCertaintyCalibration";
-import type { TrainingTrend } from "../../../shared/types";
+import type { TrainingTrend } from "../../../shared/types/training";
 
 afterEach(cleanup);
 

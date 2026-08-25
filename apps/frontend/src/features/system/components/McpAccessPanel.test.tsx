@@ -10,7 +10,7 @@ import {
   rotateMcpPrincipal,
 } from "../../../shared/api/client";
 import { McpAccessPanel } from "./McpAccessPanel";
-import type { McpPrincipal } from "../../../shared/types";
+import type { McpPrincipal } from "../../../shared/types/mcp";
 
 vi.mock("../../../shared/api/client", () => ({
   createMcpPrincipal: vi.fn(),

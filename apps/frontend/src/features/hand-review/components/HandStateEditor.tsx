@@ -15,7 +15,7 @@ import type {
   PreflopActionForm,
   StateForm,
 } from "../lib/pokerStateForm";
-import type { CompletedPostflopStreet } from "../../../shared/types";
+import type { CompletedPostflopStreet } from "../../../shared/types/poker";
 
 export interface HandStateEditorProps {
   completedPostflopActionCounts: Record<CompletedPostflopStreet, number>;

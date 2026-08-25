@@ -5,11 +5,11 @@ import { ButtonControl } from "../../../shared/components/FormControls";
 import { formatEvLossBb } from "../../../shared/lib/metricPresentation";
 import { SectionHeading } from "../../../shared/components/SectionHeading";
 import { StateMessage } from "../../../shared/components/StateMessage";
+import type { RecommendationAction } from "../../../shared/types/recommendations";
 import type {
-  RecommendationAction,
   TrainingActionDifference,
   TrainingReviewDifference,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 export interface TrainingActionDifferenceFocus {
   difference: TrainingReviewDifference;

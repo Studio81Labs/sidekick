@@ -4,7 +4,7 @@ import {
   benchmarkQueryKeys,
   benchmarkReportQueryOptions,
 } from "../../../domains/benchmarks/api/benchmarksQueries";
-import type { BenchmarkReport } from "../../../shared/types";
+import type { BenchmarkReport } from "../../../shared/types/benchmarks";
 
 export const BENCHMARK_REPORT_CACHE_LIMIT = 20;
 

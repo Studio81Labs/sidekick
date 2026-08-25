@@ -21,11 +21,9 @@ import {
   formatCandidateValue,
   formatEvLossBb,
 } from "../../../shared/lib/metricPresentation";
-import type {
-  JobRecord,
-  RecommendationResult,
-  TrainingDecision,
-} from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
+import type { RecommendationResult } from "../../../shared/types/recommendations";
+import type { TrainingDecision } from "../../../shared/types/training";
 
 export interface RecommendationPanelProps {
   busy: boolean;

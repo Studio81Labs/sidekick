@@ -1,5 +1,5 @@
 import { StatusBadge, type StatusBadgeTone } from "./StatusBadge";
-import type { JobRecord } from "../types";
+import type { JobRecord } from "../types/jobs";
 
 const JOB_STATUS_TONES: Record<JobRecord["status"], StatusBadgeTone> = {
   created: "neutral",

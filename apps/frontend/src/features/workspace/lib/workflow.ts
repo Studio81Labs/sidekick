@@ -2,7 +2,8 @@ import {
   ApiResponseError,
   humanReadableMessage,
 } from "../../../shared/api/client";
-import { type CanonicalState, type JobRecord } from "../../../shared/types";
+import type { CanonicalState } from "../../../shared/types/poker";
+import type { JobRecord } from "../../../shared/types/jobs";
 import { type PersistedJobMutationScope } from "./mutationLeaseTypes";
 import {
   formToCanonical,

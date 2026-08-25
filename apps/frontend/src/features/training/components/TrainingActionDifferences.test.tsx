@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TrainingActionDifferences } from "./TrainingActionDifferences";
-import type { TrainingActionDifference } from "../../../shared/types";
+import type { TrainingActionDifference } from "../../../shared/types/training";
 
 afterEach(cleanup);
 

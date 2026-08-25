@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { BenchmarkReport } from "../../../shared/types";
+import type { BenchmarkReport } from "../../../shared/types/benchmarks";
 import { benchmarkParserRouteSummary } from "./benchmarkRoutePresentation";
 
 const report: BenchmarkReport = {

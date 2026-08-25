@@ -8,7 +8,7 @@ import {
   fetchMock,
   jsonResponse,
 } from "../../../test/analyzerHarness";
-import type { BenchmarkOverview } from "../../../shared/types";
+import type { BenchmarkOverview } from "../../../shared/types/benchmarks";
 import { useBenchmarkReportState } from "./useBenchmarkReportState";
 
 function wrapper({ children }: PropsWithChildren) {

@@ -5,12 +5,9 @@ import { afterEach, beforeEach, vi } from "vitest";
 
 import { AppProviders } from "../app/providers/AppProviders";
 import AnalyzerPage from "../pages/analyzer/AnalyzerPage";
-import type {
-  CanonicalState,
-  DetectedState,
-  JobRecord,
-  RecommendationResult,
-} from "../shared/types";
+import type { CanonicalState, DetectedState } from "../shared/types/poker";
+import type { JobRecord } from "../shared/types/jobs";
+import type { RecommendationResult } from "../shared/types/recommendations";
 
 export function AnalyzerTestApp({ children }: { children?: ReactNode }) {
   return <AppProviders>{children ?? <AnalyzerPage />}</AppProviders>;

@@ -2,7 +2,8 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
-import type { CanonicalState, JobRecord } from "../../../shared/types";
+import type { CanonicalState } from "../../../shared/types/poker";
+import type { JobRecord } from "../../../shared/types/jobs";
 import {
   AnalyzerTestApp as App,
   approvedJob,

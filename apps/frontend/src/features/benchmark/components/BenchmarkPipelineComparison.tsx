@@ -6,8 +6,8 @@ import type {
   BenchmarkOverview,
   BenchmarkParserPipelineSummary,
   BenchmarkReport,
-  PipelineSelection,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
+import type { PipelineSelection } from "../../../shared/types/pipeline";
 import type { BenchmarkComparisonProgress } from "../lib/benchmarkPresentation";
 import {
   benchmarkCorpusIsUnverified,

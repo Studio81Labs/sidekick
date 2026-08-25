@@ -19,7 +19,7 @@ import type {
   McpIssuedPrincipal,
   McpPrincipal,
   McpScope,
-} from "../../../shared/types";
+} from "../../../shared/types/mcp";
 
 export function McpAccessPanel({
   onPendingTokenChange,

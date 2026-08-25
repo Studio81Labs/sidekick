@@ -10,10 +10,12 @@ import type {
   BenchmarkParserPipelineSummary,
   BenchmarkReport,
   BenchmarkReportSummary,
-  JobRecord,
+} from "../../../shared/types/benchmarks";
+import type { JobRecord } from "../../../shared/types/jobs";
+import type {
   PipelineCapabilities,
   PipelineSelection,
-} from "../../../shared/types";
+} from "../../../shared/types/pipeline";
 import type { BenchmarkComparisonProgress } from "../lib/benchmarkPresentation";
 import { BenchmarkDialogActions } from "./BenchmarkDialogActions";
 import { BenchmarkPipelineComparison } from "./BenchmarkPipelineComparison";

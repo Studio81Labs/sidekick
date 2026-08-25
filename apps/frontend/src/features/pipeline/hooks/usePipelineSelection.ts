@@ -6,7 +6,7 @@ import { messageFromError } from "../../workspace/lib/workflow";
 import type {
   PipelineCapabilities,
   PipelineSelection,
-} from "../../../shared/types";
+} from "../../../shared/types/pipeline";
 
 interface UsePipelineSelectionOptions {
   onError: (message: string | null) => void;

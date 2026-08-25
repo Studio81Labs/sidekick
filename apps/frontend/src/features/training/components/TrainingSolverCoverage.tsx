@@ -12,12 +12,12 @@ import {
   trainingTrendWindowLabel,
 } from "../../../shared/lib/metricPresentation";
 import { SectionHeading } from "../../../shared/components/SectionHeading";
+import type { Street } from "../../../shared/types/poker";
 import type {
-  Street,
   TrainingSolverCoverage as TrainingSolverCoverageModel,
   TrainingSolverFilter,
   TrainingTrend,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 const TRAINING_STREET_ORDER: readonly Street[] = [
   "preflop",

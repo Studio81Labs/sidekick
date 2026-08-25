@@ -6,7 +6,8 @@ import {
   ScreenshotQueuePanel,
   type ScreenshotQueuePanelProps,
 } from "./ScreenshotQueuePanel";
-import type { JobRecord, ParserResult } from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
+import type { ParserResult } from "../../../shared/types/poker";
 
 afterEach(cleanup);
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createQueryClient } from "../../../app/providers/queryClient";
 import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQueries";
-import type { BenchmarkReport } from "../../../shared/types";
+import type { BenchmarkReport } from "../../../shared/types/benchmarks";
 import {
   BENCHMARK_REPORT_CACHE_LIMIT,
   cacheBenchmarkReport,

@@ -15,7 +15,7 @@ import {
   MAX_SCREENSHOT_TAG_INPUT_LENGTH,
   MAX_SCREENSHOT_TITLE_LENGTH,
 } from "../lib/screenshotMetadata";
-import type { JobRecord } from "../../../shared/types";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 export interface ScreenshotDetailsDialogProps {
   deleteArmed: boolean;

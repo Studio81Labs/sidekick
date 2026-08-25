@@ -1,4 +1,5 @@
-import type { Card, JobRecord } from "../../../shared/types";
+import type { Card } from "../../../shared/types/poker";
+import type { JobRecord } from "../../../shared/types/jobs";
 
 export interface HistoryItem {
   id: string;

@@ -11,7 +11,7 @@ import { TrainingSolverCoverage } from "./TrainingSolverCoverage";
 import type {
   TrainingSolverCoverage as TrainingSolverCoverageModel,
   TrainingTrend,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 afterEach(cleanup);
 

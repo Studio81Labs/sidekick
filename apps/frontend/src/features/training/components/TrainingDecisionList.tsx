@@ -5,15 +5,15 @@ import { cardToDisplay } from "../../../shared/lib/cardPresentation";
 import { ButtonControl } from "../../../shared/components/FormControls";
 import { formatEvLossBb } from "../../../shared/lib/metricPresentation";
 import { StateMessage } from "../../../shared/components/StateMessage";
+import type { RecommendationAction } from "../../../shared/types/recommendations";
 import type {
-  RecommendationAction,
   TrainingCertainty,
   TrainingOutcome,
   TrainingPositionFilter,
   TrainingRecentHand,
   TrainingSolverFilter,
   TrainingStreetFilter,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 export type TrainingDecisionListView = "recent" | "review" | "lessons";
 

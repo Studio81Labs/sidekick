@@ -8,7 +8,7 @@ import {
 } from "../../../shared/lib/metricPresentation";
 import { SectionHeading } from "../../../shared/components/SectionHeading";
 import { SummaryMetric } from "../../../shared/components/SummaryMetric";
-import type { TrainingProgress } from "../../../shared/types";
+import type { TrainingProgress } from "../../../shared/types/training";
 
 type TrainingOverviewProgress = Pick<
   TrainingProgress,

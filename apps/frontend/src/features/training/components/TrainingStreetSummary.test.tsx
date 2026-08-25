@@ -8,7 +8,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TrainingStreetSummary } from "./TrainingStreetSummary";
-import type { TrainingStreetSummary as TrainingStreetSummaryModel } from "../../../shared/types";
+import type { TrainingStreetSummary as TrainingStreetSummaryModel } from "../../../shared/types/training";
 
 afterEach(cleanup);
 

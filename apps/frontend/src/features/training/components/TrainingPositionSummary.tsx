@@ -15,7 +15,7 @@ import {
 import type {
   TrainingPositionFilter,
   TrainingProgress,
-} from "../../../shared/types";
+} from "../../../shared/types/training";
 
 type TrainingPositionProgress = Pick<
   TrainingProgress,

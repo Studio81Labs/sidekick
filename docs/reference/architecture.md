@@ -511,8 +511,8 @@ training, benchmark, system, and MCP endpoints live in focused modules with
 colocated tests; `src/shared/api/client.ts` remains the stable compatibility
 barrel used by application code.
 Shared API data contracts mirror those domains under `src/shared/types`.
-`src/shared/types.ts` is a type-only compatibility barrel, while API modules
-import their narrowly owned contracts directly.
+The former `src/shared/types.ts` compatibility barrel has been removed;
+production and test code import narrowly owned domain contract modules directly.
 
 A feature must not move unrelated persistence orchestration into its hook merely
 to make the page coordinator shorter. New feature behavior should extend the

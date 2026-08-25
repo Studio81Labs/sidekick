@@ -2,7 +2,14 @@
 
 ## Status
 
-Accepted
+Accepted, amended 2026-08-25
+
+The Wave 12 compatibility-removal program supersedes this decision only where
+it designated `src/shared/types.ts` as a stable type barrel. Focused contract
+modules remain under `src/shared/types`, but all consumers now import their
+owning module directly and the source-architecture suite prevents the barrel
+from being recreated. Other compatibility surfaces named in this ADR remain in
+force until separately amended or superseded.
 
 ## Context
 
@@ -39,9 +46,9 @@ tests stay beside their owning module.
 
 Shared API contracts follow the same ownership split. Poker state,
 recommendations, training, jobs, pipeline capabilities, benchmarks, system,
-backup, and MCP contracts live in focused `shared/types` modules. The stable
-`shared/types.ts` type-only barrel preserves existing feature imports, while
-API domain modules import their owning contracts directly.
+backup, and MCP contracts live in focused `shared/types` modules. Application,
+feature, test, and API modules import their owning contracts directly; no
+cross-domain type barrel is retained.
 
 The workspace feature separates browser-cache validation, mutation leases,
 processing-queue persistence, history persistence, and reconciliation into
@@ -121,9 +128,9 @@ orchestration. New top-level experiences receive their own page and route.
   tests are grouped by workflow domain.
 - Dense dialogs remain readable composition roots; independently interactive
   sections own their calculations, local disclosure state, and direct tests.
-- Shared transport and contract barrels remain compatibility surfaces rather
-  than implementation owners; endpoint and type definitions stay in matching
-  domain modules.
+- The shared transport barrel remains a compatibility surface rather than an
+  implementation owner. Type definitions have no compatibility barrel and are
+  imported from matching domain modules.
 - Workspace recovery keeps one public import surface while storage schemas,
   lease durability, pagination, and reconciliation can be tested independently.
 - Benchmark components and controller code keep one presentation import surface

@@ -3,7 +3,7 @@ import { benchmarkPercent } from "../../../shared/lib/metricPresentation";
 import type {
   BenchmarkReport,
   BenchmarkReportSummary,
-} from "../../../shared/types";
+} from "../../../shared/types/benchmarks";
 import { providerLabel } from "../../pipeline/lib/pipelineSelection";
 import {
   benchmarkParserRouteSummary,

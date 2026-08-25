@@ -7,7 +7,7 @@ import type {
   PreflopActionType,
   PreflopPosition,
   Street,
-} from "../../../shared/types";
+} from "../../../shared/types/poker";
 
 export type StreetOption = "" | Street;
 export type FacingActionOption = "" | FacingAction;

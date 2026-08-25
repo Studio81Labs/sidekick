@@ -12,7 +12,7 @@ import type {
   PipelineCapabilities,
   PipelineOption,
   PipelineSelection,
-} from "../../../shared/types";
+} from "../../../shared/types/pipeline";
 
 export interface PipelineDialogProps {
   capabilities: PipelineCapabilities | null;

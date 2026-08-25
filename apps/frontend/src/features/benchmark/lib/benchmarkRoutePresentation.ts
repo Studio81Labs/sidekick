@@ -1,4 +1,4 @@
-import type { BenchmarkReport } from "../../../shared/types";
+import type { BenchmarkReport } from "../../../shared/types/benchmarks";
 import { providerLabel } from "../../pipeline/lib/pipelineSelection";
 import { parserRoutingEvidence } from "../../recommendation/lib/recommendationPresentation";
 
