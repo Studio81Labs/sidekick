@@ -534,6 +534,14 @@ The application route shell owns canonical analyzer workspace, job, training,
 and benchmark URLs. Typed analyzer route state restores the represented surface
 and optional job identity, while workspace selections and surface closes update
 the same URLs. Transient dialog internals and draft state remain outside the URL.
+The source-architecture suite keeps `AnalyzerRoute.tsx` below 300 lines and
+rejects raw transport, browser persistence, mutation-lease, and poker-state
+transformation ownership there. Visible session status remains owned by the
+tested analyzer toolbar; the product currently has no separate status-footer
+surface. The browser workflow matrix runs the same analyzer scenarios with
+desktop Chrome and a Pixel-class mobile Chromium viewport. Each viewport runs
+in a separate Playwright process so the backend harness provisions an isolated
+temporary workspace for both project suites.
 The analyzer route mounts a typed `AnalyzerWorkflowProvider`. Its pure reducer
 owns cross-feature workflow state without copying server job records; queue
 attention messages, queue-processing progress, and active job selection are

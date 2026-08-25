@@ -481,11 +481,14 @@ and retry coverage.
 
 Dependencies: Wave 9
 
-Wave 10 is in progress. The application route shell now owns canonical analyzer,
+Wave 10 is complete. The application route shell owns canonical analyzer,
 job, training, and benchmark URLs, with `/` retained as a compatibility redirect.
 Typed analyzer route state restores the represented surface and optional job
 identity, while UI selections and closes update the same durable URLs. Transient
-dialog internals and draft state remain outside the URL.
+dialog internals and draft state remain outside the URL. The route mounts the
+workflow provider and behavior-free page layout; existing feature components own
+the input, queue/history, preview, review, toolbar status, and dialog content.
+The full browser workflow matrix runs at desktop and mobile viewports.
 
 - Replace `AnalyzerPage` with a thin `AnalyzerRoute` that mounts providers,
   layout, derived selectors, and feature composition.
@@ -616,7 +619,7 @@ Every implementation PR must include:
 | 7     | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
 | 8     | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |
 | 9     | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
-| 10    | In progress | Durable routes restore and update typed state in both directions; the page shell, workspace landmarks, control rail, and dialog layer now have a behavior-neutral composition boundary               |
+| 10    | Complete    | Durable routes restore and update typed state in both directions; the thin route, page shell, workspace landmarks, feature panes, toolbar status, and dialog layer are architecture-tested           |
 | 11-12 | Pending     | Begin as their documented dependencies and compatibility gates pass                                                                                                                                  |
 
 ## Exit Criteria

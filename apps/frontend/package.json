@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test --project=chromium && playwright test --project=mobile-chromium"
   },
   "dependencies": {
     "@sentry/react": "^10.69.0",

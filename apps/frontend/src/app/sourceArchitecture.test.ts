@@ -4504,6 +4504,37 @@ function componentsMissingTests(): string[] {
     .map((file) => sourceSegments(file).join("/"));
 }
 
+function analyzerRouteBoundaryViolations(): string[] {
+  const routePath = resolve(SOURCE_ROOT, "pages/analyzer/AnalyzerRoute.tsx");
+  const routeSource = readFileSync(routePath, "utf8");
+  const violations: string[] = [];
+  const lineCount = routeSource.split(/\r?\n/).length;
+
+  if (lineCount > 300) {
+    violations.push(`AnalyzerRoute.tsx exceeds 300 lines: ${lineCount}`);
+  }
+
+  const prohibitedBoundaries: ReadonlyArray<
+    readonly [label: string, pattern: RegExp]
+  > = [
+    ["raw HTTP transport", /\b(?:fetch|XMLHttpRequest|requestJson)\b/],
+    ["local storage", /\blocalStorage\b/],
+    ["session storage", /\bsessionStorage\b/],
+    ["mutation leases", /\bmutationLease\w*\b/i],
+    [
+      "poker transformations",
+      /\b(?:parserRoutingFromRaw|stateToForm|validationFromForm)\b/,
+    ],
+  ];
+  for (const [label, pattern] of prohibitedBoundaries) {
+    if (pattern.test(routeSource)) {
+      violations.push(`AnalyzerRoute.tsx may not own ${label}`);
+    }
+  }
+
+  return violations;
+}
+
 function sharedTypeBoundaryViolations(): string[] {
   const violations: string[] = [];
   const barrel = resolve(SOURCE_ROOT, "shared/types.ts");
@@ -4975,6 +5006,10 @@ describe("frontend source architecture", () => {
 
   it("keeps tests colocated with production components", () => {
     expect(componentsMissingTests()).toEqual([]);
+  });
+
+  it("keeps AnalyzerRoute a thin composition root", () => {
+    expect(analyzerRouteBoundaryViolations()).toEqual([]);
   });
 
   it("keeps shared API contracts in domain type modules", () => {
