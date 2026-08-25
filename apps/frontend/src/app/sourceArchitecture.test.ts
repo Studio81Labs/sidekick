@@ -806,6 +806,11 @@ function waveNineMutationBoundaryViolations(): string[] {
         );
       }
     }
+    if (ts.isNewExpression(expression)) {
+      proxyCallables(expression, seenSymbols).forEach((implementation) =>
+        callables.add(implementation),
+      );
+    }
     return [...callables];
   }
 
@@ -1584,9 +1589,10 @@ function waveNineMutationBoundaryViolations(): string[] {
           );
       }
       if (ts.isNewExpression(node)) {
-        writes = constructorImplementations(node.expression).some(
-          (implementation) => callableWrites(implementation, active),
-        );
+        writes = [
+          ...constructorImplementations(node.expression),
+          ...proxyCallables(node),
+        ].some((implementation) => callableWrites(implementation, active));
         if (!writes) {
           writes = (node.arguments ?? []).some((argument) =>
             argumentCallableWrites(argument, active),
@@ -1680,6 +1686,13 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
 
     if (ts.isNewExpression(value)) {
+      members.push(
+        ...proxyCallables(value, seen).map((callable) => ({
+          callable,
+          label: label + ".[proxy]",
+          topLevel: false,
+        })),
+      );
       if (ts.isClassExpression(value.expression)) {
         members.push(...callableMembers(value.expression, label, seen));
       } else {
@@ -2081,6 +2094,34 @@ function waveNineMutationBoundaryViolations(): string[] {
       }
     }
     return members;
+  }
+
+  function proxyCallables(
+    node: ts.NewExpression,
+    seen = new Set<ts.Symbol>(),
+  ): CallableImplementation[] {
+    const proxySymbol = resolvedSymbol(node.expression);
+    const isGlobalProxy =
+      proxySymbol?.getName() === "Proxy" &&
+      proxySymbol.declarations?.some((declaration) =>
+        declaration.getSourceFile().fileName.endsWith("lib.es2015.proxy.d.ts"),
+      );
+    if (!isGlobalProxy || !node.arguments?.[0]) {
+      return [];
+    }
+
+    const callables = new Set<CallableImplementation>(
+      invocationTargetCallables(node.arguments[0], seen),
+    );
+    const handler = node.arguments[1];
+    if (handler) {
+      const handlerMembers =
+        ts.isObjectLiteralExpression(handler) || ts.isClassExpression(handler)
+          ? callableMembers(handler, "[proxy]", seen)
+          : callableAliasMembers(resolvedSymbol(handler), "[proxy]", seen);
+      handlerMembers.forEach((member) => callables.add(member.callable));
+    }
+    return [...callables];
   }
 
   function returnedValueCallables(
@@ -2784,9 +2825,10 @@ function waveNineMutationBoundaryViolations(): string[] {
             (implementation) => callableWrites(implementation),
           );
       } else if (ts.isNewExpression(node)) {
-        writes = constructorImplementations(node.expression).some(
-          (implementation) => callableWrites(implementation),
-        );
+        writes = [
+          ...constructorImplementations(node.expression),
+          ...proxyCallables(node),
+        ].some((implementation) => callableWrites(implementation));
       }
       ts.forEachChild(node, visit);
     }
