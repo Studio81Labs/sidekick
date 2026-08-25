@@ -547,7 +547,12 @@ function AnalyzerWorkspace({
     openBenchmarks: openBenchmarkDialog,
     openTraining: openTrainingDialog,
     route,
-    restoreWorkspace: () => alignWorkspaceToJob(jobsRef.current[0] ?? null),
+    restoreWorkspace: () => {
+      const workspaceJob = processingJobsForCache(jobsRef.current)[0] ?? null;
+      if (activeJobIdRef.current !== (workspaceJob?.id ?? null)) {
+        alignWorkspaceToJob(workspaceJob);
+      }
+    },
     trainingOpen: trainingDialogOpen,
   });
 
