@@ -1935,6 +1935,29 @@ function waveNineMutationBoundaryViolations(): string[] {
             );
           }
         }
+      } else if (ts.isExportAssignment(declaration)) {
+        const value = declaration.expression;
+        const implementation =
+          ts.isArrowFunction(value) || ts.isFunctionExpression(value)
+            ? value
+            : callableImplementation(resolvedSymbol(value));
+        if (implementation) {
+          callables.push({
+            callable: implementation,
+            label: exportName,
+            topLevel: true,
+          });
+        }
+        if (
+          ts.isObjectLiteralExpression(value) ||
+          ts.isClassExpression(value)
+        ) {
+          callables.push(...callableMembers(value, exportName));
+        }
+        callables.push(...typedValueCallables(value, exportName));
+        if (ts.isCallExpression(value)) {
+          callables.push(...callExpressionCallables(value, exportName));
+        }
       }
     }
     callables.push(...assignedExportCallables(symbol, sourcePath, exportName));
