@@ -414,6 +414,27 @@ function waveNineMutationBoundaryViolations(): string[] {
     });
   }
 
+  function templateImportTargets(
+    importer: string,
+    template: ts.TemplateExpression,
+  ): string[] {
+    let pattern =
+      template.head.text +
+      template.templateSpans.map((span) => "*" + span.literal.text).join("");
+    let cwd = dirname(importer);
+    if (pattern.startsWith("/src/")) {
+      cwd = SOURCE_ROOT;
+      pattern = pattern.slice("/src/".length);
+    } else if (!pattern.startsWith(".")) {
+      return [];
+    }
+    return globSync(pattern, {
+      absolute: true,
+      cwd,
+      onlyFiles: true,
+    });
+  }
+
   function reflectedBoundaryName(node: ts.CallExpression): string | null {
     if (
       !ts.isPropertyAccessExpression(node.expression) ||
@@ -483,10 +504,20 @@ function waveNineMutationBoundaryViolations(): string[] {
       if (
         ts.isCallExpression(node) &&
         node.expression.kind === ts.SyntaxKind.ImportKeyword &&
-        node.arguments.length === 1 &&
-        ts.isStringLiteralLike(node.arguments[0])
+        node.arguments.length === 1
       ) {
-        if (moduleExposesBoundary(node.arguments[0])) {
+        const specifier = node.arguments[0];
+        const exposesBoundary = ts.isStringLiteralLike(specifier)
+          ? moduleExposesBoundary(specifier)
+          : ts.isTemplateExpression(specifier)
+            ? templateImportTargets(file, specifier).some((target) => {
+                const targetSource = program.getSourceFile(resolve(target));
+                return targetSource
+                  ? moduleExposesBoundary(targetSource)
+                  : false;
+              })
+            : false;
+        if (exposesBoundary) {
           violations.add(
             "Dynamic API namespace import bypasses owned symbols: " +
               sourcePath,
