@@ -2,6 +2,7 @@ import type { components } from "../../../shared/api/generated/openapi";
 import { apiUrl, readJson } from "../../../shared/api/core";
 import { requestJson } from "../../../shared/api/transport";
 import type { JobQueue, JobRecord } from "../../../shared/types/jobs";
+import type { PipelineSelection } from "../../../shared/types/pipeline";
 import type { CanonicalState } from "../../../shared/types/poker";
 
 type JobQueueResponse = components["schemas"]["JobQueue"];
@@ -23,6 +24,34 @@ export function toJobQueue(response: JobQueueResponse): JobQueue {
 
 export function imageUrl(jobId: string): string {
   return apiUrl(`/api/jobs/${jobId}/image`);
+}
+
+export async function uploadScreenshot(
+  file: File,
+  uploadRequestId: string,
+  signal?: AbortSignal,
+  pipeline?: PipelineSelection,
+): Promise<JobRecord> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("upload_request_id", uploadRequestId);
+  if (pipeline) {
+    form.append("parser_provider", pipeline.parser_provider);
+    form.append("parser_layout_profile", pipeline.parser_layout_profile);
+    form.append("recommendation_provider", pipeline.recommendation_provider);
+    if (pipeline.recommendation_engine) {
+      form.append("recommendation_engine", pipeline.recommendation_engine);
+    }
+  }
+  const response = await requestJson<JobRecordResponse>("/api/jobs", {
+    method: "POST",
+    body: form,
+    signal,
+  });
+  const job = toJobRecord(response);
+  return job.upload_request_id
+    ? job
+    : { ...job, upload_request_id: uploadRequestId };
 }
 
 export async function getJob(
