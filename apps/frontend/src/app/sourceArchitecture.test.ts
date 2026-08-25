@@ -1847,6 +1847,18 @@ function waveNineMutationBoundaryViolations(): string[] {
       "then",
       "toSorted",
     ]);
+    if (
+      methodName === "addEventListener" &&
+      argumentIndex === 1 &&
+      (ts.isPropertyAccessExpression(node.expression) ||
+        ts.isElementAccessExpression(node.expression)) &&
+      typeContainsGlobalDomType(
+        checker.getTypeAtLocation(node.expression.expression),
+        "EventTarget",
+      )
+    ) {
+      return true;
+    }
     if (methodName && callbackMethods.has(methodName)) {
       return methodName === "then" ? argumentIndex <= 1 : argumentIndex === 0;
     }
