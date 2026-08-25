@@ -1075,6 +1075,52 @@ function waveNineMutationBoundaryViolations(): string[] {
     return returned;
   }
 
+  function callExpressionCallables(
+    call: ts.CallExpression,
+    label: string,
+  ): ExportedCallable[] {
+    const callables: ExportedCallable[] = [];
+    const seen = new Set<CallableImplementation>();
+
+    function collect(value: ts.Node): void {
+      if (ts.isArrowFunction(value) || ts.isFunctionExpression(value)) {
+        if (!seen.has(value)) {
+          seen.add(value);
+          callables.push({ callable: value, label, topLevel: true });
+        }
+        return;
+      }
+      if (
+        ts.isIdentifier(value) ||
+        ts.isPropertyAccessExpression(value) ||
+        ts.isElementAccessExpression(value)
+      ) {
+        const implementation = callableImplementation(resolvedSymbol(value));
+        if (implementation && !seen.has(implementation)) {
+          seen.add(implementation);
+          callables.push({ callable: implementation, label, topLevel: true });
+        }
+      }
+      ts.forEachChild(value, collect);
+    }
+
+    const invoked = callableImplementation(resolvedSymbol(callReference(call)));
+    if (invoked) {
+      seen.add(invoked);
+      callables.push({ callable: invoked, label, topLevel: true });
+    }
+    if (
+      ts.isPropertyAccessExpression(call.expression) ||
+      ts.isElementAccessExpression(call.expression)
+    ) {
+      collect(call.expression.expression);
+    }
+    for (const argument of call.arguments) {
+      collect(argument);
+    }
+    return callables;
+  }
+
   function exportedCallables(
     symbol: ts.Symbol | null,
     sourcePath: string,
@@ -1125,6 +1171,11 @@ function waveNineMutationBoundaryViolations(): string[] {
         callables.push(
           ...typedValueCallables(declaration.initializer, exportName),
         );
+        if (ts.isCallExpression(declaration.initializer)) {
+          callables.push(
+            ...callExpressionCallables(declaration.initializer, exportName),
+          );
+        }
       } else if (
         ts.isVariableDeclaration(declaration) &&
         declaration.initializer &&
