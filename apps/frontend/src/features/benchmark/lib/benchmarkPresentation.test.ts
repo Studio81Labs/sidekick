@@ -11,7 +11,6 @@ describe("benchmark presentation compatibility barrel", () => {
       benchmarkReportSummary: expect.any(Function),
       cacheBenchmarkReport: expect.any(Function),
       loadCachedBenchmarkReport: expect.any(Function),
-      normalizePreflopPosition: expect.any(Function),
     });
   });
 });

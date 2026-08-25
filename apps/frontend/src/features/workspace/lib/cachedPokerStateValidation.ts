@@ -4,9 +4,9 @@ import type {
   DetectedState,
   PreflopAction,
 } from "../../../shared/types/poker";
+import { PREFLOP_POSITIONS } from "../../../domains/poker/model/preflopPosition";
 import {
   FACING_ACTIONS,
-  PREFLOP_POSITIONS,
   RANKS,
   STREETS,
   SUITS,

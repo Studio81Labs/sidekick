@@ -4,7 +4,6 @@ export {
   stateFromJob,
   toCanonicalState,
 } from "./canonicalPokerState";
-export { PREFLOP_POSITION_ALIASES, PREFLOP_POSITIONS } from "./preflopPosition";
 export {
   EMPTY_STATE,
   FACING_ACTIONS,

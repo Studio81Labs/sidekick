@@ -1,5 +1,5 @@
 import type { BenchmarkFieldComparison } from "../../../shared/types/benchmarks";
-import { PREFLOP_POSITIONS } from "../../hand-review/lib/preflopPosition";
+import { PREFLOP_POSITIONS } from "../../../domains/poker/model/preflopPosition";
 
 export function benchmarkComparisonValue(value: unknown): string {
   if (value === null || value === undefined || value === "") {

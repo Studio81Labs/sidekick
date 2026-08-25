@@ -7,7 +7,7 @@ import {
 } from "./canonicalPokerState";
 import { CONFIDENCE_KEYS, EMPTY_STATE } from "./pokerStateConstants";
 import { summarizeConfidences } from "./pokerStateConfidence";
-import { normalizePreflopPosition } from "./preflopPosition";
+import { normalizePreflopPosition } from "../../../domains/poker/model/preflopPosition";
 
 describe("poker state identity and confidence", () => {
   it("normalizes common preflop position aliases", () => {
