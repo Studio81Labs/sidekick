@@ -1939,11 +1939,7 @@ function AnalyzerWorkspace({
             currentRoute.jobId === currentActiveId &&
             !nextJobs.some((candidate) => candidate.id === currentRoute.jobId);
           if (activeRouteJobRemoved) {
-            if (nextActiveJob) {
-              navigation.openJob(nextActiveJob.id, { replace: true });
-            } else {
-              navigation.openWorkspace({ replace: true });
-            }
+            navigateToJobOrWorkspace(nextActiveJob, "replace");
           }
         }
         const processingInProgress = nextJobs.some(isProcessingJobInProgress);
@@ -1995,6 +1991,19 @@ function AnalyzerWorkspace({
     };
   }, [processingRestoreRequest]);
 
+  function navigateToJobOrWorkspace(
+    nextJob: JobRecord | null,
+    navigationMode: Exclude<JobNavigationMode, false>,
+  ) {
+    if (!nextJob || isLocalUploadError(nextJob)) {
+      navigation.openWorkspace({ replace: true });
+      return;
+    }
+    navigation.openJob(nextJob.id, {
+      replace: navigationMode === "replace",
+    });
+  }
+
   function activateJob(
     nextJob: JobRecord,
     navigationMode: JobNavigationMode = "push",
@@ -2003,13 +2012,7 @@ function AnalyzerWorkspace({
     setLivePreviewVisible(false);
     setError(null);
     if (navigationMode) {
-      if (isLocalUploadError(nextJob)) {
-        navigation.openWorkspace({ replace: true });
-      } else {
-        navigation.openJob(nextJob.id, {
-          replace: navigationMode === "replace",
-        });
-      }
+      navigateToJobOrWorkspace(nextJob, navigationMode);
     }
   }
 
@@ -3510,11 +3513,7 @@ function AnalyzerWorkspace({
     if (activeJobRemoved) {
       const fallbackJob = nextJobs[0] ?? null;
       alignWorkspaceToJob(fallbackJob);
-      if (fallbackJob) {
-        navigation.openJob(fallbackJob.id, { replace: true });
-      } else {
-        navigation.openWorkspace({ replace: true });
-      }
+      navigateToJobOrWorkspace(fallbackJob, "replace");
     }
     setHistory((current) => {
       const next = current.map((item) =>
@@ -3848,11 +3847,7 @@ function AnalyzerWorkspace({
       );
       const fallbackJob = nextJobs[fallbackIndex] ?? null;
       alignWorkspaceToJob(fallbackJob);
-      if (fallbackJob) {
-        navigation.openJob(fallbackJob.id, { replace: true });
-      } else {
-        navigation.openWorkspace({ replace: true });
-      }
+      navigateToJobOrWorkspace(fallbackJob, "replace");
     }
     if (writeProcessingQueue(nextJobs)) {
       markProcessingQueueSessionSynced();
