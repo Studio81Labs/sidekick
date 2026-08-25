@@ -6,6 +6,7 @@ export interface AnalyzerRouteState {
 }
 
 export interface AnalyzerRouteNavigation {
+  managed: boolean;
   openBenchmarks: () => void;
   openJob: (jobId: string) => void;
   openTraining: () => void;

@@ -154,6 +154,7 @@ const DEFAULT_ANALYZER_ROUTE: AnalyzerRouteState = {
 };
 const ignoreRouteNavigation = () => undefined;
 const DEFAULT_ANALYZER_NAVIGATION: AnalyzerRouteNavigation = {
+  managed: false,
   openBenchmarks: ignoreRouteNavigation,
   openJob: ignoreRouteNavigation,
   openTraining: ignoreRouteNavigation,
@@ -523,7 +524,7 @@ function AnalyzerWorkspace({
   });
 
   useAnalyzerRouteRestore({
-    activateJob: upsertAndActivateJob,
+    activateJob: (nextJob) => upsertAndActivateJob(nextJob, false),
     activeJobId,
     closeBenchmarks: closeBenchmarkDialog,
     closeTraining: () => setTrainingDialogOpen(false),
@@ -1959,11 +1960,13 @@ function AnalyzerWorkspace({
     };
   }, [processingRestoreRequest]);
 
-  function activateJob(nextJob: JobRecord) {
+  function activateJob(nextJob: JobRecord, navigateToJob = true) {
     alignWorkspaceToJob(nextJob);
     setLivePreviewVisible(false);
     setError(null);
-    navigation.openJob(nextJob.id);
+    if (navigateToJob) {
+      navigation.openJob(nextJob.id);
+    }
   }
 
   function updateJobs(updater: (current: JobRecord[]) => JobRecord[]) {
@@ -1999,7 +2002,7 @@ function AnalyzerWorkspace({
     setActiveJobId(updatedJob.id);
   }
 
-  function upsertAndActivateJob(nextJob: JobRecord) {
+  function upsertAndActivateJob(nextJob: JobRecord, navigateToJob = true) {
     updateJobs((current) => {
       const existing = current.some((candidate) => candidate.id === nextJob.id);
       return existing
@@ -2009,7 +2012,7 @@ function AnalyzerWorkspace({
         : [nextJob, ...current];
     });
     updateHistoryJob(nextJob, false);
-    activateJob(nextJob);
+    activateJob(nextJob, navigateToJob);
   }
 
   function updateHistoryJob(updatedJob: JobRecord, revalidateSearch = true) {
@@ -4045,14 +4048,20 @@ function AnalyzerWorkspace({
         onConfigureAutomation={() => setAutomationDialogOpen(true)}
         onConfigurePipeline={openPipelineDialog}
         onOpenBenchmark={() => {
-          openBenchmarkDialog();
-          navigation.openBenchmarks();
+          if (navigation.managed) {
+            navigation.openBenchmarks();
+          } else {
+            openBenchmarkDialog();
+          }
         }}
         onOpenHelp={() => setHelpDialogOpen(true)}
         onOpenInfo={openInfoDialog}
         onOpenTraining={() => {
-          openTrainingDialog();
-          navigation.openTraining();
+          if (navigation.managed) {
+            navigation.openTraining();
+          } else {
+            openTrainingDialog();
+          }
         }}
         onToggleAutomation={() =>
           updateAutomationSettings((current) => ({

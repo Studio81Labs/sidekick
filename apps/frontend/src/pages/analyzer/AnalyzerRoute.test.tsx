@@ -18,6 +18,9 @@ vi.mock("./AnalyzerPage", () => ({
   }) => (
     <>
       <output>{`${route.surface}:${route.jobId ?? "none"}`}</output>
+      <output aria-label="Navigation ownership">
+        {navigation.managed ? "route" : "local"}
+      </output>
       <button onClick={navigation.openTraining}>Open training</button>
       <button onClick={() => navigation.openJob("next-job")}>Open job</button>
       <button onClick={navigation.openWorkspace}>Close surface</button>
@@ -63,6 +66,9 @@ describe("AnalyzerRoute", () => {
     );
 
     expect(screen.getByText("job:job-123")).toBeInTheDocument();
+    expect(screen.getByLabelText("Navigation ownership")).toHaveTextContent(
+      "route",
+    );
   });
 
   it("passes a durable non-job surface without job identity", () => {

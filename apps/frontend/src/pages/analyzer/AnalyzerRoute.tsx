@@ -23,6 +23,7 @@ export default function AnalyzerRoute({ surface }: AnalyzerRouteProps) {
   );
   const navigation = useMemo<AnalyzerRouteNavigation>(
     () => ({
+      managed: true,
       openBenchmarks: () => navigate(analyzerPaths.analyzerBenchmarks),
       openJob: (nextJobId) => navigate(analyzerJobPath(nextJobId)),
       openTraining: () => navigate(analyzerPaths.analyzerTraining),
