@@ -224,16 +224,25 @@ function waveNineMutationBoundaryViolations(): string[] {
   const violations = new Set<string>();
 
   for (const file of sourceFiles().filter((candidate) =>
-    [".ts", ".tsx"].includes(extname(candidate)),
+    [".cjs", ".cts", ".js", ".jsx", ".mjs", ".mts", ".ts", ".tsx"].includes(
+      extname(candidate),
+    ),
   )) {
     const sourcePath = sourceSegments(file).join("/");
     const source = readFileSync(file, "utf8");
+    const extension = extname(file);
     const sourceFile = ts.createSourceFile(
       file,
       source,
       ts.ScriptTarget.Latest,
       true,
-      extname(file) === ".tsx" ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      extension === ".tsx"
+        ? ts.ScriptKind.TSX
+        : extension === ".jsx"
+          ? ts.ScriptKind.JSX
+          : JAVASCRIPT_EXTENSIONS.has(extension)
+            ? ts.ScriptKind.JS
+            : ts.ScriptKind.TS,
     );
     const importedMutations = new Map<string, string>();
 
@@ -286,6 +295,37 @@ function waveNineMutationBoundaryViolations(): string[] {
     }
 
     function visit(node: ts.Node): void {
+      let referencedMutation: string | null = null;
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        isWaveNineMutation(node.name.text)
+      ) {
+        referencedMutation = node.name.text;
+      } else if (
+        ts.isElementAccessExpression(node) &&
+        ts.isStringLiteralLike(node.argumentExpression) &&
+        isWaveNineMutation(node.argumentExpression.text)
+      ) {
+        referencedMutation = node.argumentExpression.text;
+      } else if (ts.isBindingElement(node)) {
+        const propertyName = node.propertyName ?? node.name;
+        if (
+          ts.isIdentifier(propertyName) &&
+          isWaveNineMutation(propertyName.text)
+        ) {
+          referencedMutation = propertyName.text;
+        }
+      }
+
+      const referenceOwners = referencedMutation
+        ? WAVE_NINE_MUTATION_OWNERS[referencedMutation]
+        : null;
+      if (referenceOwners && !referenceOwners.has(sourcePath)) {
+        violations.add(
+          `${referencedMutation} referenced outside its owned boundary: ${sourcePath}`,
+        );
+      }
+
       if (ts.isCallExpression(node)) {
         const mutation = mutationForCall(node);
         const owners = mutation ? WAVE_NINE_MUTATION_OWNERS[mutation] : null;
