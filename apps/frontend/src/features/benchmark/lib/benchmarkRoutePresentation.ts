@@ -1,5 +1,5 @@
 import type { BenchmarkReport } from "../../../shared/types/benchmarks";
-import { providerLabel } from "../../pipeline/lib/pipelineSelection";
+import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection";
 import { parserRoutingEvidence } from "../../recommendation/lib/recommendationPresentation";
 
 export interface BenchmarkParserRouteMetric {

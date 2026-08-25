@@ -542,7 +542,9 @@ The first peer-dependency cleanup moved shared error primitives out of the
 workspace feature and reduced the explicit peer-feature baseline from 41 to 34
 edges. Moving preflop-position normalization into the poker domain removed two
 more peer edges. Extracting the history projection shape, screenshot label, and
-shared rail row removed six more, leaving 26.
+shared rail row removed six more. Moving pipeline labels, layout compatibility,
+and selection reconciliation into the pipeline domain removed seven more,
+leaving 19.
 
 - Remove obsolete handwritten wire types, API client facade, temporary barrels,
   dead page helpers, and duplicated fixtures.
@@ -644,7 +646,7 @@ Every implementation PR must include:
 | 9    | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                                         |
 | 10   | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands                  |
 | 11   | Complete    | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain                               |
-| 12   | In progress | All frontend shared endpoint facades are removed; shared/domain presentation extraction reduced peer-feature exceptions from 41 to 26, while backend facades, remaining edges, release audits, and final docs remain |
+| 12   | In progress | All frontend shared endpoint facades are removed; shared/domain presentation extraction reduced peer-feature exceptions from 41 to 19, while backend facades, remaining edges, release audits, and final docs remain |
 
 ## Exit Criteria
 

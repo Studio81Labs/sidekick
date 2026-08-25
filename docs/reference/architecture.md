@@ -544,6 +544,12 @@ Preflop position labels, aliases, and normalization live in
 consume that poker-domain model directly; no benchmark or hand-review peer
 adapter owns the shared primitive.
 
+Provider labels, parser-layout compatibility, and pipeline-selection
+reconciliation live in `domains/pipeline/model/pipelineSelection.ts`.
+Pipeline, benchmark, recommendation, and training features consume the same
+provider-neutral model; the analyzer page receives display-ready values from
+the pipeline feature hook rather than importing domain internals.
+
 The persisted analyzer history projection uses
 `domains/history/model/historyItem.ts` as its shared domain shape. Screenshot
 label formatting and the reusable screenshot rail row live under `shared/lib`

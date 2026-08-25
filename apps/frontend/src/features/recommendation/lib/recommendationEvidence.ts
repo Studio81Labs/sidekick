@@ -1,5 +1,5 @@
 import type { RecommendationResult } from "../../../shared/types/recommendations";
-import { providerLabel } from "../../pipeline/lib/pipelineSelection";
+import { providerLabel } from "../../../domains/pipeline/model/pipelineSelection";
 import { appendPostflopEvidence } from "./postflopEvidence";
 import { appendPreflopEvidence } from "./preflopEvidence";
 import { recommendationCandidatesFromRaw } from "./recommendationCandidates";
