@@ -83,6 +83,11 @@ poker domain model. Hand review retains confidence presentation and imports the
 precise domain owners; the former `hand-review/lib/pokerState.ts` compatibility
 barrel is removed.
 
+Cross-feature hand-review rendering is composed at the analyzer page layer.
+`HandReviewPanel` receives its decision content as a slot, while
+`HandReviewWorkspace` owns recommendation and training-decision component
+composition from separate typed prop groups.
+
 The parser benchmark dialog composes focused owners for pipeline comparison,
 report overview, result sections, expandable case review, and dataset/run
 actions. The dialog itself retains only its public contract, close lifecycle,

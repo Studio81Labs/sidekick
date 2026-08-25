@@ -2,7 +2,6 @@ import { AutomationDialog } from "../../features/automation/components/Automatio
 import { BenchmarkDialog } from "../../features/benchmark/components/BenchmarkDialog";
 import { InputSourcePanel } from "../../features/capture/components/InputSourcePanel";
 import { TablePreview } from "../../features/capture/components/TablePreview";
-import { HandReviewPanel } from "../../features/hand-review/components/HandReviewPanel";
 import { HistoryPanel } from "../../features/history/components/HistoryPanel";
 import { PipelineDialog } from "../../features/pipeline/components/PipelineDialog";
 import { QueueProcessingDialog } from "../../features/queue/components/QueueProcessingDialog";
@@ -18,6 +17,7 @@ import {
   AnalyzerWorkspaceLayout,
 } from "./AnalyzerLayout";
 import { AnalyzerToolbar } from "./components/AnalyzerToolbar";
+import { HandReviewWorkspace } from "./components/HandReviewWorkspace";
 import {
   type AnalyzerWorkspaceControllerProps,
   useAnalyzerWorkspaceController,
@@ -38,7 +38,7 @@ export function AnalyzerWorkspaceComposition(
           <HistoryPanel {...view.history} />
         </AnalyzerControlRail>
         <TablePreview {...view.preview} />
-        <HandReviewPanel {...view.handReview} />
+        <HandReviewWorkspace {...view.handReview} />
       </AnalyzerWorkspaceLayout>
       <AnalyzerDialogHost>
         {view.dialogs.queueProcessing ? (

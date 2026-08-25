@@ -4124,58 +4124,75 @@ export function useAnalyzerWorkspaceController({
       screenshotUrl,
     },
     handReview: {
-      busy,
-      canApprove,
-      canRecommend,
-      currentStateApproved,
-      decisionComparison,
-      decisionEvidence,
-      editor: {
-        completedPostflopActionCounts,
-        completedPostflopActionsAtLimit,
-        confidences,
-        disabled: busy,
-        form,
-        onAddCompletedPostflopAction: addCompletedPostflopAction,
-        onAddPostflopAction: addPostflopAction,
-        onAddPreflopAction: addPreflopAction,
-        onChange: updateForm,
-        onRemoveCompletedPostflopAction: removeCompletedPostflopAction,
-        onRemovePostflopAction: removePostflopAction,
-        onRemovePreflopAction: removePreflopAction,
-        onUpdateCompletedPostflopAction: updateCompletedPostflopAction,
-        onUpdatePostflopAction: updatePostflopAction,
-        onUpdatePreflopAction: updatePreflopAction,
-        warnings,
+      panel: {
+        busy,
+        canApprove,
+        canRecommend,
+        editor: {
+          completedPostflopActionCounts,
+          completedPostflopActionsAtLimit,
+          confidences,
+          disabled: busy,
+          form,
+          onAddCompletedPostflopAction: addCompletedPostflopAction,
+          onAddPostflopAction: addPostflopAction,
+          onAddPreflopAction: addPreflopAction,
+          onChange: updateForm,
+          onRemoveCompletedPostflopAction: removeCompletedPostflopAction,
+          onRemovePostflopAction: removePostflopAction,
+          onRemovePreflopAction: removePreflopAction,
+          onUpdateCompletedPostflopAction: updateCompletedPostflopAction,
+          onUpdatePostflopAction: updatePostflopAction,
+          onUpdatePreflopAction: updatePreflopAction,
+          warnings,
+        },
+        job,
+        onApprove,
+        onRecommend,
+        onResetToParser: resetToParser,
       },
-      job,
-      onApprove,
-      onCancelTrainingReviewNoteEdit: cancelTrainingReviewNoteEdit,
-      onCompleteTrainingReview,
-      onRecommend,
-      onReopenTrainingReview,
-      onResetToParser: resetToParser,
-      onSaveTrainingDecision,
-      onStartTrainingReviewNoteEdit: startTrainingReviewNoteEdit,
-      onTrainingActionChange: (action: typeof trainingAction) => {
-        setTrainingAction(action);
-        if (action !== "bet" && action !== "raise") {
-          setTrainingSizing("");
-        }
-      },
-      onTrainingCertaintyChange: (certainty: typeof trainingCertainty) =>
-        setTrainingCertainty(trainingCertainty === certainty ? "" : certainty),
-      onTrainingReviewNoteChange: setTrainingReviewNote,
-      onTrainingSizingChange: setTrainingSizing,
-      onUpdateTrainingReviewNote,
-      recommendation: activeRecommendation,
-      trainingAction,
-      trainingCertainty,
-      trainingDecision: activeTrainingDecision,
-      trainingReviewNote,
-      trainingReviewNoteEditing,
-      trainingReviewQueueJobId,
-      trainingSizing,
+      recommendation:
+        job && activeRecommendation
+          ? {
+              busy,
+              decision: activeTrainingDecision,
+              decisionComparison,
+              evidence: decisionEvidence,
+              job,
+              note: trainingReviewNote,
+              noteEditing: trainingReviewNoteEditing,
+              onCancelNoteEdit: cancelTrainingReviewNoteEdit,
+              onCompleteReview: onCompleteTrainingReview,
+              onNoteChange: setTrainingReviewNote,
+              onReopenReview: onReopenTrainingReview,
+              onSaveNote: onUpdateTrainingReviewNote,
+              onStartNoteEdit: startTrainingReviewNoteEdit,
+              recommendation: activeRecommendation,
+              reviewQueueJobId: trainingReviewQueueJobId,
+            }
+          : null,
+      trainingDecision:
+        currentStateApproved && !activeRecommendation
+          ? {
+              action: trainingAction,
+              busy,
+              certainty: trainingCertainty,
+              decision: activeTrainingDecision,
+              onActionChange: (action: typeof trainingAction) => {
+                setTrainingAction(action);
+                if (action !== "bet" && action !== "raise") {
+                  setTrainingSizing("");
+                }
+              },
+              onCertaintyChange: (certainty: typeof trainingCertainty) =>
+                setTrainingCertainty(
+                  trainingCertainty === certainty ? "" : certainty,
+                ),
+              onSave: onSaveTrainingDecision,
+              onSizingChange: setTrainingSizing,
+              sizing: trainingSizing,
+            }
+          : null,
     },
     dialogs: {
       queueProcessing: queueProgress

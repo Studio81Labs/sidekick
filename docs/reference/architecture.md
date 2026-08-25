@@ -677,6 +677,11 @@ preflop-position normalization live in focused modules under
 consumes the domain model directly; the former poker-state compatibility barrel
 has been removed. Persisted job-ID recognition and screenshot metadata
 normalization live under `shared/lib` for page, workspace, and screenshot use.
+
+`HandReviewPanel` owns only hand-state editing and review actions. The analyzer
+page-level `HandReviewWorkspace` composes recommendation and training-decision
+feature panels from separate typed controller prop groups, so no feature
+component imports a peer feature component.
 The parser benchmark dialog is likewise a composition root: pipeline
 comparison, report overview, result presentation, expandable case review, and
 dataset/run actions live in focused benchmark components with direct tests.

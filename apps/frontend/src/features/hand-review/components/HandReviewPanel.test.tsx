@@ -10,14 +10,6 @@ vi.mock("./HandStateEditor", () => ({
   HandStateEditor: () => <div>Hand state editor</div>,
 }));
 
-vi.mock("../../training/components/TrainingDecisionPanel", () => ({
-  TrainingDecisionPanel: () => <div>Training decision</div>,
-}));
-
-vi.mock("../../recommendation/components/RecommendationPanel", () => ({
-  RecommendationPanel: () => <div>Recommendation result</div>,
-}));
-
 afterEach(cleanup);
 
 function panelProps(
@@ -27,9 +19,7 @@ function panelProps(
     busy: false,
     canApprove: true,
     canRecommend: true,
-    currentStateApproved: false,
-    decisionComparison: null,
-    decisionEvidence: null,
+    children: <div>Decision slot</div>,
     editor: {} as HandStateEditorProps,
     job: {
       id: "job-1",
@@ -71,26 +61,8 @@ function panelProps(
       updated_at: "2026-08-14T00:00:00Z",
     } satisfies JobRecord,
     onApprove: vi.fn(),
-    onCancelTrainingReviewNoteEdit: vi.fn(),
-    onCompleteTrainingReview: vi.fn(),
     onRecommend: vi.fn(),
-    onReopenTrainingReview: vi.fn(),
     onResetToParser: vi.fn(),
-    onSaveTrainingDecision: vi.fn(),
-    onStartTrainingReviewNoteEdit: vi.fn(),
-    onTrainingActionChange: vi.fn(),
-    onTrainingCertaintyChange: vi.fn(),
-    onTrainingReviewNoteChange: vi.fn(),
-    onTrainingSizingChange: vi.fn(),
-    onUpdateTrainingReviewNote: vi.fn(),
-    recommendation: null,
-    trainingAction: "",
-    trainingCertainty: "",
-    trainingDecision: null,
-    trainingReviewNote: "",
-    trainingReviewNoteEditing: false,
-    trainingReviewQueueJobId: null,
-    trainingSizing: "",
     ...overrides,
   };
 }
@@ -101,6 +73,7 @@ describe("HandReviewPanel", () => {
     render(<HandReviewPanel {...props} />);
 
     expect(screen.getByText("Hand state editor")).toBeInTheDocument();
+    expect(screen.getByText("Decision slot")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Approve state" }),
     );
