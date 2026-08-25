@@ -492,6 +492,73 @@ describe("Analyzer workspace recovery", () => {
     expect(navigation.openWorkspace).not.toHaveBeenCalled();
   });
 
+  it("suspends a stale hand while an uncached job route loads", async () => {
+    const cachedJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "cached-route-hand.png",
+    });
+    const requestedJob = jobRecord({
+      id: "b".repeat(32),
+      original_filename: "requested-route-hand.png",
+      parser_result: {
+        ...jobRecord().parser_result!,
+        state: {
+          ...detectedState,
+          hero_cards: [
+            { rank: "7", suit: "clubs" },
+            { rank: "6", suit: "diamonds" },
+          ],
+        },
+      },
+    });
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([cachedJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    window.sessionStorage.setItem("poker-training-processing-synced", "true");
+    const pendingJob = deferredResponse();
+    fetchMock().mockReturnValueOnce(pendingJob.promise);
+    const navigation: AnalyzerRouteNavigation = {
+      closeSurface: vi.fn(),
+      managed: true,
+      openBenchmarks: vi.fn(),
+      openJob: vi.fn(),
+      openTraining: vi.fn(),
+      openWorkspace: vi.fn(),
+    };
+    const view = render(
+      <App>
+        <AnalyzerPage
+          navigation={navigation}
+          route={{ jobId: cachedJob.id, surface: "job" }}
+        />
+      </App>,
+    );
+    expect(await screen.findByDisplayValue("Ah Kd")).toBeInTheDocument();
+
+    view.rerender(
+      <App>
+        <AnalyzerPage
+          navigation={navigation}
+          route={{ jobId: requestedJob.id, surface: "job" }}
+        />
+      </App>,
+    );
+    await waitFor(() =>
+      expect(screen.queryByDisplayValue("Ah Kd")).not.toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Approve state" }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      pendingJob.resolve(jsonResponse(requestedJob));
+      await pendingJob.promise;
+    });
+    expect(await screen.findByDisplayValue("7c 6d")).toBeInTheDocument();
+  });
+
   it("preserves dirty processing jobs removed by another tab", async () => {
     const removedJob = jobRecord({
       id: "0".repeat(32),

@@ -542,6 +542,10 @@ function AnalyzerWorkspace({
           "The requested analyzer job could not load",
         ),
       ),
+    onJobLoading: (jobId) => {
+      alignWorkspaceToJob(null);
+      selectActiveJob(jobId);
+    },
     onJobUnavailable: () => {
       alignWorkspaceToJob(null);
       navigation.openWorkspace({ replace: true });

@@ -25,6 +25,7 @@ function options(
     jobs: [],
     loadJob: vi.fn(async (jobId) => job(jobId)),
     onError: vi.fn(),
+    onJobLoading: vi.fn(),
     onJobUnavailable: vi.fn(),
     openBenchmarks: vi.fn(),
     openTraining: vi.fn(),
@@ -103,6 +104,7 @@ describe("useAnalyzerRouteRestore", () => {
     await waitFor(() =>
       expect(current.activateJob).toHaveBeenCalledWith(loadedJob),
     );
+    expect(current.onJobLoading).toHaveBeenCalledWith(loadedJob.id);
     expect(current.loadJob).toHaveBeenCalledWith(loadedJob.id);
   });
 
@@ -115,6 +117,7 @@ describe("useAnalyzerRouteRestore", () => {
     renderHook(() => useAnalyzerRouteRestore(current));
 
     await waitFor(() => expect(current.onError).toHaveBeenCalledWith(failure));
+    expect(current.onJobLoading).toHaveBeenCalledWith("job-123");
     expect(current.onJobUnavailable).toHaveBeenCalledOnce();
     expect(current.activateJob).not.toHaveBeenCalled();
   });

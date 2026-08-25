@@ -12,6 +12,7 @@ export interface AnalyzerRouteRestoreOptions {
   jobs: readonly JobRecord[];
   loadJob: (jobId: string) => Promise<JobRecord>;
   onError: (error: unknown) => void;
+  onJobLoading: (jobId: string) => void;
   onJobUnavailable: () => void;
   openBenchmarks: () => void;
   openTraining: () => void;
@@ -64,6 +65,7 @@ export function useAnalyzerRouteRestore(
       if (cachedJob) {
         current.activateJob(cachedJob);
       } else {
+        current.onJobLoading(current.route.jobId);
         void current
           .loadJob(current.route.jobId)
           .then((job) => {

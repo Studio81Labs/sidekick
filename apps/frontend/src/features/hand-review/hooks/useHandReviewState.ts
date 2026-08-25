@@ -62,7 +62,9 @@ export function useHandReviewState({
 
   const job = useMemo(
     () =>
-      jobs.find((candidate) => candidate.id === activeJobId) ?? jobs[0] ?? null,
+      activeJobId === null
+        ? (jobs[0] ?? null)
+        : (jobs.find((candidate) => candidate.id === activeJobId) ?? null),
     [activeJobId, jobs],
   );
   const validation = useMemo(() => {
