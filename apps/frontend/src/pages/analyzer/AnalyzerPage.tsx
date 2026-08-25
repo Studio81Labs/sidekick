@@ -1994,9 +1994,13 @@ function AnalyzerWorkspace({
     setLivePreviewVisible(false);
     setError(null);
     if (navigationMode) {
-      navigation.openJob(nextJob.id, {
-        replace: navigationMode === "replace",
-      });
+      if (isLocalUploadError(nextJob)) {
+        navigation.openWorkspace({ replace: true });
+      } else {
+        navigation.openJob(nextJob.id, {
+          replace: navigationMode === "replace",
+        });
+      }
     }
   }
 
@@ -2484,10 +2488,7 @@ function AnalyzerWorkspace({
 
   function appendJob(created: JobRecord) {
     updateJobs((current) => [...current, created]);
-    activateJob(
-      created,
-      processingJobsForCache([created]).length > 0 ? "replace" : false,
-    );
+    activateJob(created, "replace");
   }
 
   function applyApprovedJob(
@@ -2782,13 +2783,7 @@ function AnalyzerWorkspace({
       });
     }
     if (completedJobs.length > 1) {
-      const firstCompletedJob = completedJobs[0];
-      activateJob(
-        firstCompletedJob,
-        processingJobsForCache([firstCompletedJob]).length > 0
-          ? "replace"
-          : false,
-      );
+      activateJob(completedJobs[0], "replace");
     }
     if (controller.signal.aborted || queueAbortRequestedRef.current) {
       setError(
