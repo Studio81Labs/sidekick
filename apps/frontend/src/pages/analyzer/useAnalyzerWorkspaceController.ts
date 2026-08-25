@@ -14,7 +14,7 @@ import {
   parseScreenshotTags,
   screenshotTags,
 } from "../../features/screenshots/lib/screenshotMetadata";
-import { screenshotLabel } from "../../features/screenshots/lib/screenshotPresentation";
+import { screenshotLabel } from "../../shared/lib/screenshotPresentation";
 import { useAutomationSettings } from "../../features/automation/hooks/useAutomationSettings";
 import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchmarkController";
 import {

@@ -1,11 +1,6 @@
 import type { Card } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
-
-export interface HistoryItem {
-  id: string;
-  job: JobRecord;
-  savedAt: string;
-}
+export type { HistoryItem } from "../../../domains/history/model/historyItem";
 
 export function historyCards(job: JobRecord): Card[] {
   const state = job.approved_state ?? job.parser_result?.state;

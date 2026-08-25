@@ -16,8 +16,8 @@ import {
   type HistoryItem,
   relativeTimeLabel,
 } from "../lib/historyPresentation";
-import { screenshotLabel } from "../../screenshots/lib/screenshotPresentation";
-import { ScreenshotRailItem } from "../../queue/components/ScreenshotRailItem";
+import { ScreenshotRailItem } from "../../../shared/components/ScreenshotRailItem";
+import { screenshotLabel } from "../../../shared/lib/screenshotPresentation";
 import { StateMessage } from "../../../shared/components/StateMessage";
 import { StatusBadge } from "../../../shared/components/StatusBadge";
 import type { JobRecord } from "../../../shared/types/jobs";
