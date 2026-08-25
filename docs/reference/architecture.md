@@ -149,8 +149,7 @@ their cross-field wager and history validation.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, benchmarks, and
-training aggregation import those contracts directly; the legacy model module
-continues to re-export the same objects while dependent domains migrate.
+training aggregation import those contracts directly.
 
 Upload/job-lifecycle contracts now live under `app/domain/hands`. `JobRecord`,
 `JobQueue`, `JobHistory`, `ScreenshotMetadataRequest`, and
