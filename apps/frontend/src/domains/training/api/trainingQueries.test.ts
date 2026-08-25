@@ -3,8 +3,10 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "../../../app/providers/AppProviders";
-import { resetApiMocks } from "../../../test/api";
+import { createQueryClient } from "../../../app/providers/queryClient";
+import { jsonResponse, resetApiMocks } from "../../../test/api";
 import {
+  fetchTrainingProgressQuery,
   normalizeTrainingProgressQuery,
   trainingProgressQueryOptions,
   trainingQueryKeys,
@@ -34,6 +36,25 @@ describe("training query adapter", () => {
   it("keeps configured retries for hooks and disables them for compatibility reads", () => {
     expect(trainingProgressQueryOptions().retry).toBeUndefined();
     expect(trainingProgressQueryOptions({}, false).retry).toBe(false);
+  });
+
+  it("fetches compatibility reads through the normalized Query key", async () => {
+    const queryClient = createQueryClient();
+    const progress = { review_queue: [] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValueOnce(jsonResponse(progress)),
+    );
+
+    const result = await fetchTrainingProgressQuery(queryClient, {
+      reviewStreet: "turn",
+    });
+    expect(result).toEqual(progress);
+    expect(
+      queryClient.getQueryData(
+        trainingQueryKeys.progress({ reviewStreet: "turn" }),
+      ),
+    ).toBe(result);
   });
 
   it("aborts the transport request when its hook unmounts", async () => {

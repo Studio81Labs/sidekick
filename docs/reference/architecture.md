@@ -519,6 +519,11 @@ Benchmark HTTP transport and dataset-export URL construction are owned by
 `features/benchmark/services/runParserBenchmarkCommand.ts`, which declares the
 benchmark-overview Query invalidation outcome. The former
 `shared/api/benchmarks.ts` facade has been removed.
+
+Training progress reads and lesson-export URL construction are owned by
+`domains/training/api`. Both training hooks and analyzer compatibility flows
+execute the same normalized Query options; the former `shared/api/training.ts`
+facade has been removed.
 Shared API data contracts mirror those domains under `src/shared/types`.
 The former `src/shared/types.ts` compatibility barrel has been removed;
 production and test code import narrowly owned domain contract modules directly.

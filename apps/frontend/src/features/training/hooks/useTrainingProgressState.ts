@@ -2,6 +2,7 @@ import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 
 import {
+  fetchTrainingProgressQuery,
   trainingProgressQueryOptions,
   trainingQueryKeys,
 } from "../../../domains/training/api/trainingQueries";
@@ -62,25 +63,20 @@ function readProgress(
   queryClient: QueryClient,
   query: TrainingProgressQuery,
 ): Promise<TrainingProgress> {
-  return queryClient.fetchQuery(
-    trainingProgressQueryOptions(
-      {
-        certaintyFilter: query.certaintyFilter,
-        lessonOrder: query.lessonOrder,
-        lessonQuery: query.lessonQuery,
-        lessonStreet: query.lessonStreet,
-        positionFilter: query.positionFilter,
-        reviewCertainty: query.reviewCertainty,
-        reviewDifference: query.reviewDifference,
-        reviewOrder: query.reviewOrder,
-        reviewPositionFilter: query.reviewPosition,
-        reviewStreet: query.reviewStreet,
-        solverFilter: query.solverFilter,
-        streetFilter: query.streetFilter,
-      },
-      false,
-    ),
-  );
+  return fetchTrainingProgressQuery(queryClient, {
+    certaintyFilter: query.certaintyFilter,
+    lessonOrder: query.lessonOrder,
+    lessonQuery: query.lessonQuery,
+    lessonStreet: query.lessonStreet,
+    positionFilter: query.positionFilter,
+    reviewCertainty: query.reviewCertainty,
+    reviewDifference: query.reviewDifference,
+    reviewOrder: query.reviewOrder,
+    reviewPositionFilter: query.reviewPosition,
+    reviewStreet: query.reviewStreet,
+    solverFilter: query.solverFilter,
+    streetFilter: query.streetFilter,
+  });
 }
 
 function sameReviewDifference(

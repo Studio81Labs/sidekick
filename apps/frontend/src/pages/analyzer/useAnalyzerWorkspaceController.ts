@@ -51,10 +51,10 @@ import {
   fetchBenchmarkImportReceiptQuery,
   fetchHistoryPageQuery,
   fetchJobQuery,
+  fetchTrainingProgressQuery,
 } from "../../features/workspace/lib/queryReads";
 import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
 import { applicationBackupUrl } from "../../shared/api/system";
-import { getTrainingProgress } from "../../shared/api/training";
 import type { BenchmarkDatasetImportResult } from "../../shared/types/benchmarks";
 import type { CanonicalState } from "../../shared/types/poker";
 import type { JobHistory, JobRecord } from "../../shared/types/jobs";
@@ -3165,20 +3165,16 @@ export function useAnalyzerWorkspaceController({
       }
 
       try {
-        const progress = await getTrainingProgress(
-          trainingReviewOrder,
-          trainingReviewStreet,
-          trainingReviewDifference,
-          trainingReviewCertainty,
-          trainingLessonStreet,
-          trainingLessonQuery,
-          trainingLessonOrder,
-          null,
-          null,
-          null,
-          null,
-          trainingReviewPosition,
-        );
+        const progress = await fetchTrainingProgressQuery(queryClient, {
+          lessonOrder: trainingLessonOrder,
+          lessonQuery: trainingLessonQuery,
+          lessonStreet: trainingLessonStreet,
+          reviewCertainty: trainingReviewCertainty,
+          reviewDifference: trainingReviewDifference,
+          reviewOrder: trainingReviewOrder,
+          reviewPositionFilter: trainingReviewPosition,
+          reviewStreet: trainingReviewStreet,
+        });
         setTrainingProgress(progress);
         const nextHand = progress.review_queue[0] ?? null;
         if (!nextHand) {
@@ -3336,20 +3332,20 @@ export function useAnalyzerWorkspaceController({
       );
       updateHistoryJob(reopenedJob);
       setTrainingProgress(
-        await getTrainingProgress(
-          trainingReviewOrder,
-          trainingReviewStreet,
-          trainingReviewDifference,
-          trainingReviewCertainty,
-          trainingLessonStreet,
-          trainingLessonQuery,
-          trainingLessonOrder,
-          trainingSolverFilter,
-          trainingPositionFilter,
-          trainingStreetFilter,
-          trainingCertaintyFilter,
-          trainingReviewPosition,
-        ),
+        await fetchTrainingProgressQuery(queryClient, {
+          certaintyFilter: trainingCertaintyFilter,
+          lessonOrder: trainingLessonOrder,
+          lessonQuery: trainingLessonQuery,
+          lessonStreet: trainingLessonStreet,
+          positionFilter: trainingPositionFilter,
+          reviewCertainty: trainingReviewCertainty,
+          reviewDifference: trainingReviewDifference,
+          reviewOrder: trainingReviewOrder,
+          reviewPositionFilter: trainingReviewPosition,
+          reviewStreet: trainingReviewStreet,
+          solverFilter: trainingSolverFilter,
+          streetFilter: trainingStreetFilter,
+        }),
       );
       toast.success("Training review reopened");
     } catch (reviewError) {

@@ -7,6 +7,7 @@ import {
   getTrainingProgress,
   recordTrainingDecision,
   reopenTrainingReview,
+  trainingLessonsExportUrl,
   toTrainingProgress,
 } from "./trainingApi";
 
@@ -19,6 +20,12 @@ afterEach(resetApiMocks);
 describe("training API adapter", () => {
   it("preserves the generated response object and JSON shape", () => {
     expect(toTrainingProgress(progressResponse)).toBe(progressResponse);
+  });
+
+  it("encodes lesson export filters in stable order", () => {
+    expect(trainingLessonsExportUrl("turn", "check raise", "ev_loss")).toBe(
+      "http://localhost:8000/api/training/lessons/export?lesson_order=ev_loss&lesson_street=turn&lesson_query=check+raise",
+    );
   });
 
   it("keeps the default progress request backward compatible", async () => {

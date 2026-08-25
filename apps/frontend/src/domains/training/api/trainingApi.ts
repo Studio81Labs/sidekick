@@ -1,4 +1,5 @@
 import type { components } from "../../../shared/api/generated/openapi";
+import { apiUrl } from "../../../shared/api/core";
 import { requestJson } from "../../../shared/api/transport";
 import type { JobRecord } from "../../../shared/types/jobs";
 import type { RecommendationAction } from "../../../shared/types/recommendations";
@@ -32,6 +33,25 @@ export function toTrainingProgress(
   response: TrainingProgressResponse,
 ): TrainingProgress {
   return response as unknown as TrainingProgress;
+}
+
+export function trainingLessonsExportUrl(
+  lessonStreet: TrainingReviewStreet = "all",
+  lessonQuery = "",
+  lessonOrder: TrainingReviewOrder = "recent",
+): string {
+  const search = new URLSearchParams();
+  if (lessonOrder !== "recent") {
+    search.set("lesson_order", lessonOrder);
+  }
+  if (lessonStreet !== "all") {
+    search.set("lesson_street", lessonStreet);
+  }
+  if (lessonQuery.trim()) {
+    search.set("lesson_query", lessonQuery.trim());
+  }
+  const query = search.size > 0 ? `?${search.toString()}` : "";
+  return apiUrl(`/api/training/lessons/export${query}`);
 }
 
 export async function getTrainingProgress(
