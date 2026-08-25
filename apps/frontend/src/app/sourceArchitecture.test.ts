@@ -3746,6 +3746,53 @@ function waveNineMutationBoundaryViolations(): string[] {
         }
       }
       if (ts.isCallExpression(node)) {
+        if (
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "require"
+        ) {
+          const requireSymbol = resolvedSymbol(node.expression);
+          const shadowed =
+            requireSymbol?.declarations?.some(
+              (declaration) =>
+                declaration.getSourceFile() === sourceFile ||
+                declarationSourcePath(declaration) !== null,
+            ) ?? false;
+          if (!shadowed) {
+            const specifier = node.arguments[0];
+            let exposesBoundary = false;
+            let unresolved = node.arguments.length !== 1;
+            if (specifier && ts.isStringLiteralLike(specifier)) {
+              const localTarget = sourceImportTarget(file, specifier.text);
+              if (localTarget !== null) {
+                const resolvedModule = ts.resolveModuleName(
+                  specifier.text,
+                  file,
+                  program.getCompilerOptions(),
+                  ts.sys,
+                ).resolvedModule;
+                const resolvedFile = resolvedModule
+                  ? resolve(resolvedModule.resolvedFileName)
+                  : null;
+                const targetSource = resolvedFile
+                  ? (program.getSourceFile(resolvedFile) ?? null)
+                  : null;
+                unresolved = targetSource === null;
+                exposesBoundary =
+                  targetSource !== null && moduleExposesBoundary(targetSource);
+              }
+            } else {
+              unresolved = true;
+            }
+            if (exposesBoundary || unresolved) {
+              violations.add(
+                (unresolved
+                  ? "Unresolved CommonJS require bypasses owned symbols: "
+                  : "CommonJS API namespace import bypasses owned symbols: ") +
+                  sourcePath,
+              );
+            }
+          }
+        }
         const reflectedName = reflectedBoundaryName(node);
         if (reflectedName) {
           violations.add(
