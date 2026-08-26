@@ -201,9 +201,9 @@ Acceptance gates:
 Port the shared Studio81 baseline, adapting only topology-dependent details.
 
 Before enforcing the baseline, add a numbered ADR that defines required-check
-ownership, release-version policy, dependency/action/container trust sources and
-pin/update rules, exception governance, operational ownership, rollout, and
-rollback for the new security and deployment posture.
+ownership, release-version policy, dependency/action/container/OS-package trust
+sources and pin/update rules, exception governance, operational ownership,
+rollout, and rollback for the new security and deployment posture.
 
 Shared workflows and guards to add or converge:
 
@@ -231,6 +231,9 @@ Concrete convergence rules:
   backend CI `docker run` Rust image, and the backend and PWA build/runtime
   images, to an immutable SHA-256 digest while retaining its readable version
   tag, and configure Renovate to update those pins;
+- replace the backend image's live Debian package resolution with a dated,
+  immutable Debian snapshot and an exact `gosu` package version, retain package
+  signature verification, and add a checked update procedure for both pins;
 - generate committed production and development Python lockfiles with complete
   transitive pins and hashes from `apps/backend/pyproject.toml` using a pinned
   compiler; define exact `[build-system].requires` versions and include their
@@ -306,6 +309,9 @@ Acceptance gates:
   script `container`, `services`, or `docker run` image, uses a tag plus
   `@sha256:` digest; Renovate recognizes each pin, both application images
   build, and the solver CI job passes from those pins;
+- the backend Dockerfile uses only the declared Debian snapshot and exact `gosu`
+  version, the installed package matches that version, and a guard rejects a
+  live Debian mirror or unversioned OS-package installation;
 - CI helper self-tests pass locally;
 - formatting and security scans pass on the migration branch;
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
