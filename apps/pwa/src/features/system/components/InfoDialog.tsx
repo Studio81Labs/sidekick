@@ -23,9 +23,9 @@ export interface InfoDialogProps {
   backupDownloadUrl: string;
   backupRestoring: boolean;
   busy: boolean;
-  mcpTokenPending: boolean;
+  mcpCloseBlocked: boolean;
   onClose: () => void;
-  onMcpTokenPendingChange: (pending: boolean) => void;
+  onMcpCloseBlockedChange: (blocked: boolean) => void;
   onRestoreBackup: (file: File) => void;
   providers: InfoProviderSummary | null;
   systemInfoLoading: boolean;
@@ -35,15 +35,15 @@ export function InfoDialog({
   backupDownloadUrl,
   backupRestoring,
   busy,
-  mcpTokenPending,
+  mcpCloseBlocked,
   onClose,
-  onMcpTokenPendingChange,
+  onMcpCloseBlockedChange,
   onRestoreBackup,
   providers,
   systemInfoLoading,
 }: InfoDialogProps) {
   const backupInputRef = useRef<HTMLInputElement | null>(null);
-  const closeDisabled = backupRestoring || mcpTokenPending;
+  const closeDisabled = backupRestoring || mcpCloseBlocked;
   const backupControlsDisabled = busy || backupRestoring;
 
   return (
@@ -118,7 +118,7 @@ export function InfoDialog({
             agents. Store each token when it is shown; only its hash remains on
             the server.
           </p>
-          <McpAccessPanel onPendingTokenChange={onMcpTokenPendingChange} />
+          <McpAccessPanel onCloseBlockedChange={onMcpCloseBlockedChange} />
         </section>
         <section className="info-dialog-section data-recovery-section">
           <h3>Data and recovery</h3>

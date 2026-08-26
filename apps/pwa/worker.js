@@ -2,7 +2,7 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    if (url.pathname.startsWith("/api/") || url.pathname === "/mcp") {
+    if (isPrivateProxyPath(url.pathname)) {
       if (url.pathname.includes("%")) {
         return privateJsonResponse(400, "Encoded URL paths are not supported");
       }
@@ -32,7 +32,7 @@ export default {
       );
     }
 
-    return env.ASSETS.fetch(request);
+    return staticAssetResponse(request, await env.ASSETS.fetch(request));
   },
 };
 
@@ -43,6 +43,54 @@ const MCP_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 const REQUEST_BODY_TOO_LARGE = Symbol("request-body-too-large");
 const MAX_BACKEND_REDIRECTS = 5;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const CONTENT_ADDRESSED_ASSET = /^\/assets\/.+-[A-Za-z0-9_-]{8,}\.[^/]+$/;
+
+function matchesPrivateProxyPath(pathname) {
+  return (
+    pathname === "/api" || pathname.startsWith("/api/") || pathname === "/mcp"
+  );
+}
+
+function isPrivateProxyPath(pathname) {
+  let candidate = pathname;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (matchesPrivateProxyPath(candidate)) return true;
+    if (!candidate.includes("%")) return false;
+    try {
+      candidate = decodeURIComponent(candidate);
+    } catch {
+      return true;
+    }
+  }
+  return candidate.includes("%") || matchesPrivateProxyPath(candidate);
+}
+
+function staticAssetResponse(request, response) {
+  const pathname = new URL(request.url).pathname;
+  const headers = new Headers(response.headers);
+  const responseType = headers
+    .get("Content-Type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  if (pathname === "/sw.js") {
+    headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+    headers.set("Service-Worker-Allowed", "/");
+  } else if (
+    response.ok &&
+    responseType !== "text/html" &&
+    CONTENT_ADDRESSED_ASSET.test(pathname)
+  ) {
+    headers.set("Cache-Control", "public, max-age=31536000, immutable");
+  } else {
+    headers.set("Cache-Control", "no-cache");
+  }
+  return new Response(response.body, {
+    headers,
+    status: response.status,
+    statusText: response.statusText,
+  });
+}
 
 function isMcpAdminRequest(pathname) {
   return (
@@ -107,7 +155,10 @@ async function proxyApiRequest(
   let proxiedPath = incomingUrl.pathname;
   let allowedRedirectBasePath = basePath;
 
-  if (basePath.endsWith("/api") && proxiedPath.startsWith("/api/")) {
+  if (
+    basePath.endsWith("/api") &&
+    (proxiedPath === "/api" || proxiedPath.startsWith("/api/"))
+  ) {
     proxiedPath = proxiedPath.slice("/api".length);
   } else if (basePath.endsWith("/api") && proxiedPath === "/mcp") {
     basePath = basePath.slice(0, -"/api".length);

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import worker from "./worker.js";
@@ -14,6 +16,9 @@ describe("API Worker proxy", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     for (const path of [
+      "/api%2Fmcp%2Fprincipals",
+      "/%61pi/mcp/principals",
+      "/%2561pi/mcp/principals",
       "/api/mcp/%70rincipals",
       "/api/mcp/principals%2Fmcp_123",
     ]) {
@@ -33,6 +38,30 @@ describe("API Worker proxy", () => {
       expect(response.headers.get("Cache-Control")).toBe("no-store");
     }
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("proxies the exact API root instead of serving the application shell", async () => {
+    let forwardedRequest;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (request) => {
+        forwardedRequest = request;
+        return Response.json({ detail: "API root" });
+      }),
+    );
+    const assetsFetch = vi.fn();
+
+    const response = await worker.fetch(
+      new Request("https://poker.example/api"),
+      {
+        ASSETS: { fetch: assetsFetch },
+        BACKEND_URL: "https://backend.example/api",
+      },
+    );
+
+    expect(response.status).toBe(200);
+    expect(forwardedRequest.url).toBe("https://backend.example/api");
+    expect(assetsFetch).not.toHaveBeenCalled();
   });
 
   it("rejects MCP credential administration without its bearer token", async () => {
@@ -563,4 +592,95 @@ describe("API Worker proxy", () => {
     expect(forwardedBody).toContain("png-bytes");
     expect(forwardedBody).toContain(`--${boundary}--`);
   });
+});
+
+describe("static PWA cache headers", () => {
+  async function staticResponse(
+    pathname,
+    status = 200,
+    contentType = "application/json",
+  ) {
+    return worker.fetch(new Request(`https://poker.example${pathname}`), {
+      ASSETS: {
+        fetch: vi.fn(async () =>
+          Response.json(
+            { pathname },
+            {
+              status,
+              headers: {
+                "Content-Type": contentType,
+                ETag: '"asset-version"',
+              },
+            },
+          ),
+        ),
+      },
+    });
+  }
+
+  it("forces the stable service-worker URL to revalidate at the root scope", async () => {
+    const response = await staticResponse("/sw.js");
+
+    expect(response.headers.get("Cache-Control")).toBe(
+      "no-cache, no-store, must-revalidate",
+    );
+    expect(response.headers.get("Service-Worker-Allowed")).toBe("/");
+    expect(response.headers.get("ETag")).toBe('"asset-version"');
+    expect(await response.json()).toEqual({ pathname: "/sw.js" });
+  });
+
+  it("makes only content-addressed bundles immutable", async () => {
+    const immutable = await staticResponse("/assets/app-A1b2C3d4.js");
+    const mutable = await staticResponse("/assets/app.js");
+
+    expect(immutable.headers.get("Cache-Control")).toBe(
+      "public, max-age=31536000, immutable",
+    );
+    expect(mutable.headers.get("Cache-Control")).toBe("no-cache");
+  });
+
+  it("does not make a missing hash-shaped bundle immutable", async () => {
+    const response = await staticResponse("/assets/app-A1b2C3d4.js", 404);
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Cache-Control")).toBe("no-cache");
+  });
+
+  it("does not make a successful HTML SPA fallback immutable", async () => {
+    const response = await staticResponse(
+      "/assets/app-A1b2C3d4.js",
+      200,
+      "text/html; charset=utf-8",
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-cache");
+  });
+
+  it("keeps the Nginx immutable header limited to successful lookups", () => {
+    const config = readFileSync("nginx.conf", "utf8");
+
+    expect(config).toContain(
+      'location ~ "^/assets/.+-[A-Za-z0-9_-]{8,}\\.[^/]+$" {',
+    );
+    expect(config).toContain(
+      'add_header Cache-Control "public, max-age=31536000, immutable";',
+    );
+    expect(config).toContain(
+      "try_files $uri @missing_content_addressed_asset;",
+    );
+    expect(config).toContain("location @missing_content_addressed_asset {");
+    expect(config).toContain('add_header Cache-Control "no-cache" always;');
+    expect(config).not.toContain(
+      'add_header Cache-Control "public, max-age=31536000, immutable" always;',
+    );
+  });
+
+  it.each(["/", "/manifest.webmanifest", "/icons/icon-192.png"])(
+    "revalidates stable static path %s",
+    async (pathname) => {
+      const response = await staticResponse(pathname);
+      expect(response.headers.get("Cache-Control")).toBe("no-cache");
+    },
+  );
 });

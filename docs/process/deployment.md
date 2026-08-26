@@ -330,6 +330,54 @@ Access service credentials are configured, the authenticated probe forwards
 them only to the validated deployment, configuration, and MCP URLs, including
 the ephemeral principal creation and revocation requests.
 
+The build step also enforces the install contract before deployment: `/sw.js`
+must contain a build-versioned cache with exactly the emitted hashed bundles,
+the manifest must remain root-scoped and standalone, and every declared icon
+must exist at its advertised size. After deploying a new environment or custom
+hostname, verify the runtime headers and manifest from an authorized client:
+
+```bash
+curl --fail --head https://<pwa-origin>/sw.js
+curl --fail https://<pwa-origin>/manifest.webmanifest | jq '{id, scope, start_url, display, icons}'
+```
+
+`/sw.js` must return `Cache-Control: no-cache, no-store, must-revalidate` and
+`Service-Worker-Allowed: /`. A successful generated
+`/assets/<name>-<hash>.<ext>` response must return
+`Cache-Control: public, max-age=31536000, immutable`; HTML, the manifest, icons,
+and missing asset responses—including an HTML SPA fallback—must revalidate. In
+Chromium DevTools, confirm the worker scope is the complete origin, launch once
+online, then disable the network and open another application route. The shell
+and offline notice must render, while an upload and recommendation fail visibly
+and can be retried after reconnecting.
+Also simulate an unreachable PWA origin while retaining another working network
+connection; the manifest reachability probe must show the same notice even when
+the browser still reports that its link is online.
+Cache Storage may contain only `/` and hashed `/assets/` requests—never `/api`,
+`/mcp`, screenshots, poker records, or credentials.
+
+Normal rollback redeploys the last known-good build; its worker still waits for
+the safe update handoff. For an emergency client reset, first preserve or
+discard any visible drafts, then run the following in that origin's DevTools
+console and reload online:
+
+```js
+await Promise.all(
+  (await navigator.serviceWorker.getRegistrations()).map((registration) =>
+    registration.unregister(),
+  ),
+);
+await Promise.all(
+  (await caches.keys())
+    .filter((name) => name.startsWith("poker-hero-shell-"))
+    .map((name) => caches.delete(name)),
+);
+location.reload();
+```
+
+Do not delete other origin caches or browser recovery projections. The next
+successful production load registers the currently deployed worker again.
+
 ## Uptime Monitoring And Alerts
 
 The `Uptime Monitor` workflow runs hourly at minute 17 and can also be dispatched

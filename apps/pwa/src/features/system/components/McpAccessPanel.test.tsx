@@ -61,8 +61,8 @@ describe("McpAccessPanel", () => {
 
   it("blocks token-producing actions until the one-time token is dismissed", async () => {
     const user = userEvent.setup();
-    const onPendingTokenChange = vi.fn();
-    render(<McpAccessPanel onPendingTokenChange={onPendingTokenChange} />);
+    const onCloseBlockedChange = vi.fn();
+    render(<McpAccessPanel onCloseBlockedChange={onCloseBlockedChange} />);
 
     await user.type(
       await screen.findByLabelText("Agent access admin token"),
@@ -84,7 +84,7 @@ describe("McpAccessPanel", () => {
       screen.getByRole("button", { name: "Create credential" }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rotate" })).toBeDisabled();
-    expect(onPendingTokenChange).toHaveBeenLastCalledWith(true);
+    expect(onCloseBlockedChange).toHaveBeenLastCalledWith(true);
     expect(rotateMcpPrincipalCommand).not.toHaveBeenCalled();
     expect(revokeMcpPrincipalCommand).not.toHaveBeenCalled();
 
@@ -94,7 +94,7 @@ describe("McpAccessPanel", () => {
       screen.getByRole("button", { name: "Create credential" }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "Rotate" })).toBeEnabled();
-    expect(onPendingTokenChange).toHaveBeenLastCalledWith(false);
+    expect(onCloseBlockedChange).toHaveBeenLastCalledWith(false);
     expect(listMcpPrincipals).toHaveBeenCalledWith("admin-secret");
     expect(createMcpPrincipalCommand).toHaveBeenCalledWith({
       adminToken: "admin-secret",
@@ -103,6 +103,48 @@ describe("McpAccessPanel", () => {
         scopes: ["read"],
         expires_at: null,
       },
+    });
+  });
+
+  it("blocks dialog close for the full revocation request", async () => {
+    const user = userEvent.setup();
+    const onCloseBlockedChange = vi.fn();
+    let resolveRevocation: ((value: McpPrincipal) => void) | undefined;
+    vi.mocked(revokeMcpPrincipalCommand).mockImplementation(
+      () =>
+        new Promise<McpPrincipal>((resolve) => {
+          resolveRevocation = resolve;
+        }),
+    );
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<McpAccessPanel onCloseBlockedChange={onCloseBlockedChange} />);
+
+    await user.type(
+      await screen.findByLabelText("Agent access admin token"),
+      "admin-secret",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Unlock credential management" }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Revoke" }));
+
+    await waitFor(() =>
+      expect(onCloseBlockedChange).toHaveBeenLastCalledWith(true),
+    );
+    expect(screen.getByRole("button", { name: "Revoke" })).toBeDisabled();
+
+    resolveRevocation?.({
+      ...principal,
+      revoked_at: "2026-08-26T17:00:00Z",
+      status: "revoked",
+    });
+
+    await waitFor(() =>
+      expect(onCloseBlockedChange).toHaveBeenLastCalledWith(false),
+    );
+    expect(revokeMcpPrincipalCommand).toHaveBeenCalledWith({
+      adminToken: "admin-secret",
+      principalId: principal.id,
     });
   });
 

@@ -3,6 +3,9 @@
 The repository security, release, dependency-trust, and required-check baseline
 is defined by
 [ADR 0043](../decisions/0043-adopt-studio81-security-and-ci-baseline.md).
+The installable browser shell, private-route cache exclusions, and coordinated
+update lifecycle are defined by
+[ADR 0044](../decisions/0044-installable-pwa-cache-and-update-lifecycle.md).
 
 ## System Shape
 
@@ -532,6 +535,48 @@ styles, hooks, and non-React presentation or domain support. Route-level styles
 are limited to page composition; feature selectors must stay with their owning
 component or feature. Reusable form and dialog controls, API access, primitive
 types, and generic formatting helpers live under `src/shared`.
+
+The production Vite build has separate document and
+`src/app/pwa/service-worker.ts` entries. The build plugin emits the worker at the
+stable `/sw.js` URL, derives a `poker-hero-shell-<build digest>` cache name, and
+injects an exact allowlist containing `/` plus every emitted content-addressed
+file below `/assets/`. It rejects a mutable asset in that list, and the
+post-build verifier checks the generated worker, manifest, icon dimensions,
+and install metadata. The worker owns the application-shell network boundary,
+so the source-architecture inventory grants only that exact module direct
+`fetch` access outside a domain API adapter.
+
+The install handler fetches and validates the whole version before writing it:
+`/` must be successful HTML, hashed assets must be successful non-HTML
+responses, and redirects are rejected. A validation or write failure deletes
+the version cache so no partial shell can activate.
+
+Navigations are network-first and may fall back to the cached `/` shell.
+Content-addressed bundles are cache-first. Cross-origin requests, `/api`, every
+path below `/api/`, and the exact `/mcp` path receive no service-worker
+response; encoded private equivalents fail closed. No runtime response outside
+the generated allowlist enters Cache Storage. The Cloudflare edge Worker runs
+before Static Assets to revalidate `/sw.js` and stable metadata while marking
+only successful non-HTML hashed-bundle responses immutable. Missing assets and
+successful HTML SPA fallbacks remain revalidatable so a rollback can restore
+them. `apps/pwa/nginx.conf` applies the same header contract for the container
+deployment path.
+
+`shared/pwa/updateSafety.tsx` aggregates named dirty and busy reasons from
+independent feature owners. The analyzer registers all correction, screenshot,
+training, lesson, capture, mutation, restore, and benchmark state; Agent access
+registers administrator and credential drafts, unacknowledged one-time tokens,
+and mutations. The information dialog blocks every close path for the complete
+MCP mutation and unacknowledged-token lifetime, keeping that owner mounted.
+`PwaRuntime` uses the aggregate for unload protection and worker
+updates. Its disconnected status probes the stable manifest with cache bypass
+and a bounded timeout rather than trusting `navigator.onLine`; it retries on
+launch, browser focus, restored link status, and a 30-second interval. A newly
+installed worker waits until the user asks to activate it, never exposes the
+activation action while work is busy, and requires confirmation before
+discarding dirty state. The coordinator rechecks safety on `controllerchange`
+before reloading. New forms and non-replayable operations must register with
+this owner before shipping.
 The shared API layer keeps base URL selection, response decoding, retry
 metadata, and readable error conversion in one transport core. Product
 endpoints live in focused domain adapters with colocated tests. MCP

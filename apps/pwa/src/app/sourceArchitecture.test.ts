@@ -112,6 +112,10 @@ function isWaveNineMutation(value: string): boolean {
 }
 
 const SHARED_RAW_TRANSPORT_OWNERS = new Set(["shared/api/transport.ts"]);
+const SHELL_RAW_TRANSPORT_OWNERS = new Set([
+  "app/pwa/service-worker.ts",
+  "app/pwa/serviceWorkerRuntime.ts",
+]);
 const RAW_TRANSPORT_REFERENCES = new Set([
   "XMLHttpRequest",
   "fetch",
@@ -123,7 +127,8 @@ function ownsRawTransport(sourcePath: string): boolean {
   const segments = sourcePath.split("/");
   return (
     (segments[0] === "domains" && segments[2] === "api") ||
-    SHARED_RAW_TRANSPORT_OWNERS.has(sourcePath)
+    SHARED_RAW_TRANSPORT_OWNERS.has(sourcePath) ||
+    SHELL_RAW_TRANSPORT_OWNERS.has(sourcePath)
   );
 }
 
@@ -353,7 +358,10 @@ function waveNineMutationBoundaryViolations(): string[] {
       if (transport === "requestJson") {
         return declarationSourcePath(declaration) === "shared/api/transport.ts";
       }
-      return declarationFile.endsWith("lib.dom.d.ts");
+      return (
+        declarationFile.endsWith("lib.dom.d.ts") ||
+        declarationFile.endsWith("lib.webworker.d.ts")
+      );
     });
     return ownsDeclaration ? transport : null;
   }
