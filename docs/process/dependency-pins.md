@@ -17,9 +17,11 @@ Review both lock diffs. Validate production and development installs with
 `--require-hashes`, install the local project with `--no-deps
 --no-build-isolation`, and run `python -m pip check`. A compiler or build-backend
 upgrade is part of the same review and must regenerate both locks.
-Existing locks constrain compatible transitive versions during regeneration,
-so PyPI publication timing cannot make a freshness check fail. Raise the
-relevant manifest lower bound when deliberately moving such a dependency.
+`--write` deliberately resolves the complete compatible graph without using the
+existing locks as constraints, allowing changed manifest pins to move; review
+every direct and transitive change it produces. `--check` constrains resolution
+to the committed pins, so later PyPI publication timing cannot make an unchanged
+lock fail freshness validation.
 
 ## Container Images And GitHub Actions
 
