@@ -252,7 +252,7 @@ TOPOLOGY_GATED = {
     ".github/workflows/_release-version-gate.yml": "capability:mobile",
     ".github/workflows/admin-ci.yml": "apps/admin/package.json",
     ".github/workflows/admin-deploy.yml": "apps/marketing/package.json",
-    ".github/workflows/backend-deploy.yml": "capability:backend",
+    ".github/workflows/backend-deploy.yml": "capability:backend-deployment",
     ".github/workflows/marketing-ci.yml": "apps/marketing/package.json",
     ".github/workflows/marketing-deploy.yml": "apps/marketing/package.json",
     ".github/workflows/openapi-check.yml": "capability:openapi",
@@ -286,8 +286,8 @@ CROSS_STACK_REQUIRED = {
 # has either the shared/core package used by Tarmoto or the core package used by
 # Taven and TableTap. Nexcue's generated clients have neither.
 CAPABILITY_MARKER_PATHS = {
-    "capability:backend": (
-        "apps/backend/package.json",
+    "capability:backend-deployment": (
+        "apps/marketing/package.json",
         "apps/backend/pyproject.toml",
     ),
     "capability:independent-packages": (
@@ -314,7 +314,7 @@ ACTION_TOPOLOGY_GATED = {
     ".github/workflows/_release-version-gate.yml": "capability:mobile",
     ".github/workflows/admin-ci.yml": "apps/admin/package.json",
     ".github/workflows/admin-deploy.yml": "apps/marketing/package.json",
-    ".github/workflows/backend-deploy.yml": "capability:backend",
+    ".github/workflows/backend-deploy.yml": "capability:backend-deployment",
     ".github/workflows/marketing-ci.yml": "apps/marketing/package.json",
     ".github/workflows/marketing-deploy.yml": "apps/marketing/package.json",
     ".github/workflows/flutter-pin-check.yml": "apps/mobile/pubspec.yaml",
@@ -3369,6 +3369,7 @@ def self_test() -> int:
     node_backend = {
         "apps/backend/package.json": "{}\n",
         "apps/backend/pyproject.toml": None,
+        "apps/marketing/package.json": "{}\n",
         BACKEND_WORKFLOW: (
             "jobs:\n"
             "  deploy:\n"
@@ -3379,6 +3380,7 @@ def self_test() -> int:
     python_backend_missing_deploy = {
         "apps/backend/package.json": None,
         "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+        "apps/marketing/package.json": None,
         BACKEND_WORKFLOW: None,
     }
     found = [
@@ -3400,6 +3402,7 @@ def self_test() -> int:
     python_backend_without_action = {
         "apps/backend/package.json": None,
         "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+        "apps/marketing/package.json": None,
         BACKEND_WORKFLOW: wf("actions/setup-python@2222222 # v2"),
     }
     backend_action_findings = compare(
@@ -3415,6 +3418,23 @@ def self_test() -> int:
         "backend topology must not hide a one-sided deploy action: "
         f"{backend_action_findings}"
     )
+
+    taven_backend_without_deploy = {
+        "apps/backend/package.json": "{}\n",
+        "apps/backend/pyproject.toml": None,
+        "apps/marketing/package.json": None,
+        BACKEND_WORKFLOW: None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**node_backend_action).get,
+            repo(**taven_backend_without_deploy).get,
+        )
+        if f["name"] == BACKEND_WORKFLOW
+        or (f["kind"] == "action" and "backend-deploy.yml" in f["name"])
+    ]
+    assert found == [], f"a backend without a deploy surface is not an owner: {found}"
 
     MARKER = "apps/mobile/pubspec.yaml"
     MOBILE_MARKER = "apps/mobile/package.json"
