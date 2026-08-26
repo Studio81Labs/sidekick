@@ -241,10 +241,13 @@ shape includes at minimum:
   remain explicitly unknown rather than inferred.
 - Button seat.
 - Seats: for each, seat number, starting stack, and participation status
-  (including dealt-in and sitting-out/not-dealt states). **Derived position**
-  (UTG/MP/CO/BTN/SB/BB) is assigned only to dealt-in players and is computed from
-  their action ring around the button; seated players who were not dealt in never
-  shift another player's position. The heads-up special case (button = SB) is
+  (including dealt-in and sitting-out/not-dealt states). Each dealt-in player
+  preserves the exact dealt-in player count and action index/distance from the
+  button, plus a table-size-specific display label such as UTG, UTG+1, UTG+2/LJ,
+  HJ, CO, BTN, SB, or BB. Distinct full-ring seats are never collapsed into a
+  generic MP label for grading. Positions are computed only from the dealt-in
+  action ring around the button, so a seated player who was not dealt in never
+  shifts another player's position. The heads-up special case (button = SB) is
   handled explicitly.
 - Hero identity and hero hole cards (from the "dealt to" line).
 - Streets: for each of preflop/flop/turn/river, the board cards and an **ordered
@@ -352,10 +355,15 @@ ceiling on learning quality, so it is treated as first-class.
 
 ### 5.1 Coverage, stated honestly
 
-- **Preflop** — solved and cheap. Position-aware charts (RFI, vs-RFI, vs-3bet,
-  blind defense, squeeze, cold-call, short-stack) with explicit stack-depth
-  bands and sizing boundaries. This is trustworthy grading. (V1's extensive
-  preflop routing is retained here.)
+- **Preflop** — tractable and comparatively cheap to solve, but not yet backed by
+  a mastery-gradeable reference in the current implementation. The retained V1
+  chart uses conservative heuristic thresholds; it remains `heuristic` and can
+  never update mastery or generate drills. Phase 0 must source and benchmark an
+  independently solved position-aware policy (RFI, vs-RFI, vs-3bet, blind
+  defense, squeeze, cold-call, short-stack) with explicit table-size, structural
+  position, stack-depth, sizing, economic, and mixed-policy boundaries. V1's
+  routing/context extraction may be reused only where independently validated;
+  its threshold policy must not be relabeled `solved`.
 - **Heads-up postflop** — solved trees, where reviewed history resolves an exact
   supported line. Trustworthy.
 - **Multiway postflop** — _not_ solved. Currently a range/EV heuristic. This is
@@ -367,6 +375,9 @@ fields required to match it. Cash hands with an unknown or different material
 rake structure and tournament hands lacking the payout, field, stack, or bounty
 state required by the reference are heuristic/ungraded for mastery. A generic
 chip-EV chart must never be presented as solved ICM or bounty-aware policy.
+Likewise, every route declares supported dealt-in counts and exact structural
+positions; hands outside that table-size/position coverage remain
+heuristic/ungraded rather than being coerced into the nearest six-max label.
 
 ### 5.2 The trustworthiness gate (non-negotiable)
 
@@ -410,8 +421,11 @@ product honest about its own boundaries, which a study tool must be.
 
 ### 5.3 Sourcing the postflop gap (the open kill-criterion)
 
-Preflop is settled. The multiway-postflop reference is the Phase-0 question that
-gates whether the mastery model covers postflop at all:
+Preflop is tractable, but the retained V1 chart is not a solved reference. Phase
+0 must source and benchmark an independently solved preflop policy before any
+preflop decision can move mastery. Multiway-postflop reference sourcing is the
+additional Phase-0 question that gates whether mastery covers those spots at
+all:
 
 - **Precompute** a bounded, high-value set of postflop solutions once (owned
   license), ship as static lookup — the same model serious tools use (preflop
@@ -602,12 +616,14 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
   reconciliation passing** on ~1,000 real hands; non-pot fields are verified
   against ground truth, source time/order is preserved, and positions are
   verified including heads-up and sit-out cases.
-- _Grading spike:_ confirm trustworthy references. Preflop charts in hand.
-  Resolve §5.3 for postflop (precompute / license / defer). Kill criterion:
-  obtain `solved` references you'd stake the product on, at absorbable cost,
-  under a license permitting commercial serving of outputs, with immutable
-  policy revisions, complete mixed-strategy support, and declared cash/tournament
-  economic assumptions — or consciously ship preflop-first.
+- _Grading spike:_ source and benchmark an independently solved preflop policy;
+  the retained V1 heuristic chart is not eligible. Resolve §5.3 for postflop
+  (precompute / license / defer). Kill criterion: obtain `solved` references
+  you'd stake the product on, at absorbable cost, under a license permitting
+  commercial serving of outputs, with immutable policy revisions, complete
+  mixed-strategy support, and declared table-size/position and cash/tournament
+  economic assumptions. If preflop sourcing fails, the teaching loop does not
+  have a trustworthy MVP grading floor.
 - _Safety prerequisite:_ before any Phase 1 user validation, remove screenshot
   upload, live window/screen/tab capture, and recommendation automation from the
   player workflow. Preserve capture/upload only in the disabled-by-default,
