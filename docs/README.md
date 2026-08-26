@@ -7,6 +7,8 @@
 
 The canonical product source is
 [`specs/poker-hero-product-spec.md`](./specs/poker-hero-product-spec.md).
+It defines Poker Hero V2. The superseded V1 specification is preserved at
+[`specs/archive/2026-08-26-poker-hero-v1-product-spec.md`](./specs/archive/2026-08-26-poker-hero-v1-product-spec.md).
 
 The structural migration is tracked in the
 [app refactoring program](./specs/app-refactoring-program.md).

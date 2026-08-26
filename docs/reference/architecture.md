@@ -9,6 +9,14 @@ update lifecycle are defined by
 Cross-repository drift access, credential ownership, and incident handling are
 defined by
 [ADR 0045](../decisions/0045-enroll-portfolio-sibling-drift-access.md).
+The V2 target player/operator boundary, import-first persistence lifecycle, and
+capture-first migration are defined by
+[ADR 0046](../decisions/0046-adopt-import-first-learning-boundary.md). This
+reference continues to describe the currently deployed V1 architecture until
+the ADR's gated migration work is implemented. In particular, the Worker proxy
+and hosted file-backed API below are not an approved V2 player-data path: Phase 1
+requires the ADR's loopback-only, authenticated co-located player runtime and
+local writable system of record.
 
 ## System Shape
 
