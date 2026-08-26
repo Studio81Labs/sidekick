@@ -40,6 +40,16 @@ docs/process/       Setup, deployment, and operational procedures
 scripts/            Development automation
 ```
 
+## Project Family
+
+Poker Hero, Nexcue, TableTap, Tarmoto, and Taven are the Studio81 Labs project
+family. Each repository's Monday `sibling-drift.yml` workflow compares the other
+four and owns one local `infra-drift` issue. The secret-bearing comparison runs
+only from trusted default-branch code and uses `SIBLING_READ_TOKEN` solely for
+Contents-read access to selected private siblings. Capability gates preserve
+Poker Hero's FastAPI, React/Vite PWA, and Rust topology without requiring
+placeholder applications in any family repository.
+
 ## Codebase Conventions
 
 - Follow existing naming, typing, validation, and error-handling patterns.

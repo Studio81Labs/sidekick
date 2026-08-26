@@ -50,19 +50,18 @@ concurrency:
 env:
   # THE ONLY PER-REPO LINE in this workflow — even the Compare step's secret
   # name (SIBLING_READ_TOKEN) is the same in every sibling. Everything else is
-  # identical too, which is what makes rolling this out to a third and fourth
-  # repo an edit rather than a fork. The script is compared byte-for-byte
+  # identical too, which is what makes adding another family repository an edit
+  # rather than a fork. The script is compared byte-for-byte
   # between repos by its own IDENTICAL manifest, so it must not carry the repo
   # name either.
   #
-  # SPACE-SEPARATED, and plural on purpose. With two repos a single value was
-  # right; with four, each repo watches the other three, and a single-valued
-  # variable would mean silently comparing against one of them. Fewer rows
-  # looks exactly like convergence, which is the failure this whole workflow
-  # exists to prevent.
+  # SPACE-SEPARATED, and plural on purpose. Every repository watches every other
+  # family member; a single-valued variable would silently compare only one of
+  # them. Fewer rows looks exactly like convergence, which is the failure this
+  # whole workflow exists to prevent.
   #
   # SIBLING_TOKEN must be able to read EVERY repo listed here.
-  SIBLING_REPOS: Studio81Labs/nexcue Studio81Labs/tabletap Studio81Labs/tarmoto
+  SIBLING_REPOS: Studio81Labs/nexcue Studio81Labs/tabletap Studio81Labs/tarmoto Studio81Labs/taven
   ISSUE_LABEL: infra-drift
 
 jobs:

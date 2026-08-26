@@ -226,6 +226,10 @@ IDENTICAL = [
     # held here -- the SPM-awareness is the part worth keeping identical, since
     # a copy that predates it reports drift on a correctly-migrated tree.
     "scripts/ci/check-podfile-lock.py",
+    # Cache deletion is destructive policy. Keep its implementation and
+    # fixture suite identical wherever the shared workflow can invoke it.
+    "scripts/ci/prune-stale-caches.py",
+    "scripts/ci/prune-stale-caches.test.py",
     # The checker checks itself. Every repo runs the same file, so a fix made in
     # one and not carried to the others is precisely the drift this exists to
     # catch -- and it would otherwise be the one blind spot in the manifest.
@@ -436,6 +440,21 @@ POKER_JOB_LAYOUTS = {
             "gate": "contract: gate",
         },
         "node": {"validate": "contract: emit + validate"},
+    },
+}
+
+# Actions that are deliberately one-sided at the same Python/Node boundary.
+# This is an exact contract, not a workflow-wide exemption: every listed
+# action must remain on its owning stack only, while any other one-sided action
+# (including a removed shared checkout) is ordinary drift.
+POKER_ACTION_LAYOUTS = {
+    ".github/workflows/backend-ci.yml": {
+        "python": frozenset({"actions/setup-python", "actions/download-artifact"}),
+        "node": frozenset(),
+    },
+    ".github/workflows/openapi-check.yml": {
+        "python": frozenset({"actions/download-artifact"}),
+        "node": frozenset(),
     },
 }
 
@@ -1266,9 +1285,9 @@ def unified(ours: str, theirs: str, path: str) -> str:
 # reports its own correct marker as drift -- the exact false positive this
 # function exists to prevent, wearing the face of a real finding.
 #
-# Both alternatives are anchored to the start of a line AND to the opener, so a
-# sentence that merely mentions the phrase stays content rather than becoming a
-# header.
+# strip_provenance matches this pattern only at byte zero, or immediately after
+# a leading shebang. A provenance-shaped line later in the body is content and
+# must remain visible to the byte comparison.
 #
 # The Markdown branch consumes the WHOLE comment, through its first `-->`, even
 # when that lands on a later line. Line-based stripping was tried first and is
@@ -1285,8 +1304,8 @@ def unified(ours: str, theirs: str, path: str) -> str:
 # else.
 _PORTED_FROM = r"ported from Studio81Labs/[\w.-]+@[0-9a-fA-F]{7,40}"
 PROVENANCE = re.compile(
-    rf"^(?:#\s*{_PORTED_FROM}[^\n]*|<!--\s*{_PORTED_FROM}(?:(?!<!--).)*?-->[^\S\n]*)\n",
-    re.MULTILINE | re.DOTALL,
+    rf"(?:#\s*{_PORTED_FROM}[^\n]*|<!--\s*{_PORTED_FROM}(?:(?!<!--).)*?-->[^\S\n]*)\n",
+    re.DOTALL,
 )
 
 EDITORCONFIG_DART_HEADER = re.compile(
@@ -1313,7 +1332,16 @@ def strip_provenance(text: str) -> str:
     trail; the comparison ignores it, because a sha recording WHERE a copy came
     from is metadata about the copy, not part of the content being compared.
     """
-    return PROVENANCE.sub("", text)
+    header_start = 0
+    if text.startswith("#!"):
+        newline = text.find("\n")
+        if newline == -1:
+            return text
+        header_start = newline + 1
+    match = PROVENANCE.match(text, header_start)
+    if match is None:
+        return text
+    return text[:header_start] + text[match.end():]
 
 
 def strip_editorconfig_dart_section(text: str) -> str:
@@ -1471,7 +1499,8 @@ def compare(local_read, sibling_read) -> list[dict]:
                     # Against a non-mobile repository, require the sole owner
                     # to retain its guard without requiring a counterpart.
                     owned = ours if capability_sides[0] else theirs
-                    return owned is not None
+                    nonowned = theirs if capability_sides[0] else ours
+                    return owned is not None and nonowned is None
             if not cross_stack_owned and not any(stack_sides):
                 # Neither repository implements this stack. Its owned helper
                 # may legitimately be absent even when both repos have a
@@ -1503,7 +1532,131 @@ def compare(local_read, sibling_read) -> list[dict]:
         owned = ours if sides[0] else theirs
         return owned is not None and (ours is None or theirs is None)
 
+    def validate_local_topology_jobs(
+        path: str,
+        names: dict[str, str] | None,
+        side_index: int,
+        side: str,
+    ) -> set[str]:
+        """Validate repository-local job ownership before pair-level skips."""
+        handled: set[str] = set()
+        if names is None or "__error__" in names:
+            return handled
+        for (owned_path, job_id), (
+            marker,
+            owned_when_marked,
+            expected_name,
+        ) in EXPECTED_TOPOLOGY_OWNED_JOBS.items():
+            if owned_path != path:
+                continue
+            owns_job = marker_sides(marker)[side_index] == owned_when_marked
+            actual_name = names.get(job_id)
+            if owns_job and actual_name is None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"topology expects job `{job_id}` {side}, but it is absent",
+                    }
+                )
+            elif owns_job and actual_name != expected_name:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"job `{job_id}` {side}: expected `{expected_name}`, found `{actual_name}`",
+                    }
+                )
+            elif not owns_job and actual_name is not None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"topology expects no job `{job_id}` {side}, found `{actual_name}`",
+                    }
+                )
+            handled.add(job_id)
+        for (variant_path, job_id), variants in EXPECTED_TOPOLOGY_JOB_NAME_VARIANTS.items():
+            if variant_path != path:
+                continue
+            expected_name = next(
+                (
+                    name
+                    for marker, name in variants
+                    if marker_sides(marker)[side_index]
+                ),
+                None,
+            )
+            actual_name = names.get(job_id)
+            if expected_name is None and actual_name is not None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"topology expects no job `{job_id}` {side}, found `{actual_name}`",
+                    }
+                )
+            elif expected_name is not None and actual_name is None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"topology expects job `{job_id}` {side}, but it is absent",
+                    }
+                )
+            elif expected_name is not None and actual_name != expected_name:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"job `{job_id}` {side}: expected `{expected_name}`, found `{actual_name}`",
+                    }
+                )
+            handled.add(job_id)
+        return handled
+
+    invalid_topology_paths: set[str] = set()
+    for path, capability_marker in TOPOLOGY_GATED.items():
+        ours, theirs = local_read(path), sibling_read(path)
+        owner_marker = (
+            STACK_TOPOLOGY_GATED[path]
+            if path in STACK_TOPOLOGY_GATED and path not in CROSS_STACK_REQUIRED
+            else capability_marker
+        )
+        capability_sides = marker_sides(owner_marker)
+        missing_owner = (
+            capability_sides[0] and ours is None,
+            capability_sides[1] and theirs is None,
+        )
+        unexpected_nonowner = (
+            not capability_sides[0] and ours is not None,
+            not capability_sides[1] and theirs is not None,
+        )
+        if not any(missing_owner) and not any(unexpected_nonowner):
+            continue
+        topology = "mobile topology" if path in CROSS_STACK_REQUIRED else "topology"
+        for invalid, detail in (
+            (missing_owner, f"{topology} expects an artifact {{side}}, but it is absent"),
+            (
+                unexpected_nonowner,
+                f"{topology} expects no artifact {{side}} without its owning capability",
+            ),
+        ):
+            if not any(invalid):
+                continue
+            side = "here and there" if all(invalid) else "here" if invalid[0] else "there"
+            findings.append(
+                {
+                    "kind": "workflow" if path.startswith(".github/") else "file",
+                    "name": path,
+                    "detail": detail.format(side=side),
+                }
+            )
+        invalid_topology_paths.add(path)
+
     for path in IDENTICAL:
+        if path in invalid_topology_paths:
+            continue
         ours, theirs = local_read(path), sibling_read(path)
         if topology_skips_artifact(path, ours, theirs):
             continue
@@ -1655,6 +1808,8 @@ def compare(local_read, sibling_read) -> list[dict]:
                             "detail": f"topology expects no action anywhere {side}, but it is present",
                         }
                     )
+        if path in invalid_topology_paths:
+            continue
         if topology_skips_artifact(
             path, local_text, sibling_text, ACTION_TOPOLOGY_GATED, {}
         ):
@@ -1755,6 +1910,46 @@ def compare(local_read, sibling_read) -> list[dict]:
         # empty; this closes the quieter case where both sides still share at
         # least one other action and a set intersection would discard the new
         # action.
+        poker_topology_actions: set[str] = set()
+        if (
+            here
+            and there
+            and our_file_pins
+            and their_file_pins
+            and path in POKER_ACTION_LAYOUTS
+        ):
+            python_sides = marker_sides("apps/backend/pyproject.toml")
+            if python_sides[0] != python_sides[1]:
+                layouts = POKER_ACTION_LAYOUTS[path]
+                poker_topology_actions = set(layouts["python"]) | set(layouts["node"])
+                for action in sorted(poker_topology_actions):
+                    expected = (
+                        action in layouts["python" if python_sides[0] else "node"],
+                        action in layouts["python" if python_sides[1] else "node"],
+                    )
+                    actual = (action in our_file_pins, action in their_file_pins)
+                    if actual == expected:
+                        continue
+                    expected_side = "here" if expected[0] else "there"
+                    actual_side = (
+                        "here and there"
+                        if all(actual)
+                        else "here"
+                        if actual[0]
+                        else "there"
+                        if actual[1]
+                        else "nowhere"
+                    )
+                    findings.append(
+                        {
+                            "kind": "action",
+                            "name": f"{action} — {name}",
+                            "detail": (
+                                f"topology expects the action {expected_side} only, "
+                                f"but it is present {actual_side}"
+                            ),
+                        }
+                    )
         if (
             here
             and there
@@ -1763,6 +1958,8 @@ def compare(local_read, sibling_read) -> list[dict]:
             and action_shapes_comparable(path)
         ):
             for action in sorted(set(our_file_pins) ^ set(their_file_pins)):
+                if action in poker_topology_actions:
+                    continue
                 # Capability-owned entries were asserted above, including
                 # ownership polarity and owner-side deletion. Do not add a
                 # second generic one-sided finding for the same violation.
@@ -1887,37 +2084,21 @@ def compare(local_read, sibling_read) -> list[dict]:
 
     for path in JOB_NAME_WORKFLOWS:
         local_text, sibling_text = local_read(path), sibling_read(path)
-        if topology_skips_artifact(path, local_text, sibling_text):
-            continue
         ours = job_names(local_text, path, "here")
         theirs = job_names(sibling_text, path, "there")
-        # A workflow the manifest names but a repo does not have is itself the
-        # finding, for the same reason ACTION_WORKFLOWS reports it: silently
-        # skipping shrinks the comparison and a smaller comparison looks like
-        # convergence.
-        if ours is None or theirs is None:
-            if ours is None and theirs is None:
-                findings.append(
-                    {
-                        "kind": "jobname",
-                        "name": path,
-                        "detail": "in neither repo — stale entry in JOB_NAME_WORKFLOWS",
-                    }
-                )
-            else:
-                missing = "absent here, present there" if ours is None else "present here, absent there"
-                findings.append({"kind": "jobname", "name": path, "detail": missing})
-            continue
-        broken = ours.get("__error__") or theirs.get("__error__")
+        broken = (ours or {}).get("__error__") or (theirs or {}).get("__error__")
         if broken:
             findings.append(
                 {"kind": "jobname", "name": path, "detail": f"could not read jobs — {broken}"}
             )
             continue
+        handled_topology_jobs = validate_local_topology_jobs(path, ours, 0, "here")
+        handled_topology_jobs.update(
+            validate_local_topology_jobs(path, theirs, 1, "there")
+        )
         poker_pair = marker_sides("apps/backend/pyproject.toml")[0] != marker_sides(
             "apps/backend/pyproject.toml"
         )[1]
-        handled_topology_jobs: set[str] = set()
         if poker_pair and path in POKER_JOB_LAYOUTS:
             python_sides = marker_sides("apps/backend/pyproject.toml")
             layouts = POKER_JOB_LAYOUTS[path]
@@ -1931,6 +2112,8 @@ def compare(local_read, sibling_read) -> list[dict]:
                 (ours, python_sides[0], 0, "here"),
                 (theirs, python_sides[1], 1, "there"),
             ):
+                if names is None:
+                    continue
                 expected = dict(layouts["python" if is_python else "node"])
                 if path == ".github/workflows/backend-ci.yml" and not is_python:
                     database_marker = marker_sides("apps/backend/src/data-source.ts")
@@ -1967,86 +2150,27 @@ def compare(local_read, sibling_read) -> list[dict]:
                             }
                         )
             handled_topology_jobs.update(controlled_jobs)
-        for (owned_path, job_id), (
-            marker,
-            owned_when_marked,
-            expected_name,
-        ) in EXPECTED_TOPOLOGY_OWNED_JOBS.items():
-            if owned_path != path:
-                continue
-            our_marker, their_marker = marker_sides(marker)
-            for names, has_marker, side in (
-                (ours, our_marker, "here"),
-                (theirs, their_marker, "there"),
-            ):
-                owns_job = has_marker == owned_when_marked
-                actual_name = names.get(job_id)
-                if owns_job and actual_name is None:
-                    findings.append(
-                        {
-                            "kind": "jobname",
-                            "name": path,
-                            "detail": f"topology expects job `{job_id}` {side}, but it is absent",
-                        }
-                    )
-                elif owns_job and actual_name != expected_name:
-                    findings.append(
-                        {
-                            "kind": "jobname",
-                            "name": path,
-                            "detail": f"job `{job_id}` {side}: expected `{expected_name}`, found `{actual_name}`",
-                        }
-                    )
-                elif not owns_job and actual_name is not None:
-                    findings.append(
-                        {
-                            "kind": "jobname",
-                            "name": path,
-                            "detail": f"topology expects no job `{job_id}` {side}, found `{actual_name}`",
-                        }
-                    )
-            handled_topology_jobs.add(job_id)
-        for (variant_path, job_id), variants in EXPECTED_TOPOLOGY_JOB_NAME_VARIANTS.items():
-            if variant_path != path:
-                continue
-            for names, side_index, side in (
-                (ours, 0, "here"),
-                (theirs, 1, "there"),
-            ):
-                expected_name = next(
-                    (
-                        name
-                        for marker, name in variants
-                        if marker_sides(marker)[side_index]
-                    ),
-                    None,
+        if path in invalid_topology_paths:
+            continue
+        if topology_skips_artifact(path, local_text, sibling_text):
+            continue
+        # A workflow the manifest names but a repo does not have is itself the
+        # finding, for the same reason ACTION_WORKFLOWS reports it: silently
+        # skipping shrinks the comparison and a smaller comparison looks like
+        # convergence.
+        if ours is None or theirs is None:
+            if ours is None and theirs is None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": "in neither repo — stale entry in JOB_NAME_WORKFLOWS",
+                    }
                 )
-                actual_name = names.get(job_id)
-                if expected_name is None and actual_name is not None:
-                    findings.append(
-                        {
-                            "kind": "jobname",
-                            "name": path,
-                            "detail": f"topology expects no job `{job_id}` {side}, found `{actual_name}`",
-                        }
-                    )
-                elif expected_name is not None and actual_name is None:
-                    findings.append(
-                        {
-                            "kind": "jobname",
-                            "name": path,
-                            "detail": f"topology expects job `{job_id}` {side}, but it is absent",
-                        }
-                    )
-                elif expected_name is not None and actual_name != expected_name:
-                    findings.append(
-                        {
-                            "kind": "jobname",
-                            "name": path,
-                            "detail": f"job `{job_id}` {side}: expected `{expected_name}`, found `{actual_name}`",
-                        }
-                    )
-            handled_topology_jobs.add(job_id)
+            else:
+                missing = "absent here, present there" if ours is None else "present here, absent there"
+                findings.append({"kind": "jobname", "name": path, "detail": missing})
+            continue
         for (pair_path, marker), (marked, unmarked) in EXPECTED_TOPOLOGY_JOB_PAIRS.items():
             if pair_path != path:
                 continue
@@ -2240,6 +2364,14 @@ def self_test() -> int:
             }
         )
         files.update(overrides)
+        # Keep the default fixture internally valid: a repository without the
+        # Flutter stack marker does not carry Flutter-only artifacts. Explicit
+        # overrides are preserved so tests can still model a stale non-owner
+        # copy deliberately.
+        if files.get("apps/mobile/pubspec.yaml") is None:
+            for path in set(STACK_TOPOLOGY_GATED) - CROSS_STACK_REQUIRED:
+                if path not in overrides:
+                    files[path] = None
         return {k: v for k, v in files.items() if v is not None}
 
     ours = {
@@ -2509,6 +2641,15 @@ def self_test() -> int:
     # entry uses today.
     assert strip_provenance("# ported from Studio81Labs/nexcue@e204d2fc\n24\n") == "24\n"
 
+    # A leading shebang is part of the executable, not an obstacle to the
+    # header. Provenance-shaped lines anywhere else are ordinary body content.
+    shebang = "#!/usr/bin/env bash\n# ported from Studio81Labs/nexcue@e204d2fc\nset -e\n"
+    assert strip_provenance(shebang) == "#!/usr/bin/env bash\nset -e\n"
+    body_marker = "first\n# ported from Studio81Labs/nexcue@e204d2fc\nlast\n"
+    assert strip_provenance(body_marker) == body_marker
+    body_html_marker = "first\n" + md_header + "last\n"
+    assert strip_provenance(body_html_marker) == body_html_marker
+
     # ...but real content differences are still reported through the header.
     changed = {".nvmrc": "# ported from Studio81Labs/tabletap@9db05645\n22\n"}
     found = [f for f in compare(repo(**ported).get, repo(**changed).get) if f["kind"] == "file"]
@@ -2702,24 +2843,36 @@ def self_test() -> int:
     # A shared workflow deleted or renamed on one side. Skipping it made every
     # action in the file one-sided, so the loss produced no finding at all and
     # could even lower the count enough to close the standing issue.
-    only_here = {".github/workflows/mobile-release.yml": wf("actions/checkout@aaaaaaa # v7")}
-    found = compare(repo(**only_here).get, repo(**{k: None for k in ACTION_WORKFLOWS}).get)
-    assert any(f["kind"] == "workflow" for f in found), found
+    only_here = {".github/workflows/format-check.yml": wf("actions/checkout@aaaaaaa # v7")}
+    found = [
+        f
+        for f in compare(repo(**only_here).get, repo(**{k: None for k in ACTION_WORKFLOWS}).get)
+        if f["kind"] == "workflow" and f["name"] == "format-check.yml"
+    ]
+    assert len(found) == 1, found
     assert found[0]["detail"] == "present here, absent there", found
-    found = compare(repo(**{k: None for k in ACTION_WORKFLOWS}).get, repo(**only_here).get)
+    found = [
+        f
+        for f in compare(repo(**{k: None for k in ACTION_WORKFLOWS}).get, repo(**only_here).get)
+        if f["kind"] == "workflow" and f["name"] == "format-check.yml"
+    ]
     assert found[0]["detail"] == "absent here, present there", found
 
     # An EMPTY sibling copy is present, not absent. Truthiness conflated the
     # two and reversed the direction, sending the reader to fix the wrong repo.
+    mobile_only_here = {
+        ".github/workflows/mobile-release.yml": wf("actions/checkout@aaaaaaa # v7")
+    }
+    only_here = mobile_only_here
     empty_there = dict.fromkeys(ACTION_WORKFLOWS, "")
     empty_there[".github/workflows/mobile-release.yml"] = ""
-    found = [f for f in compare(repo(**only_here).get, repo(**empty_there).get)
+    found = [f for f in compare(repo(**mobile_only_here).get, repo(**empty_there).get)
              if f["kind"] == "workflow" and f["name"] == "mobile-release.yml"]
     assert len(found) == 1, found
     assert found[0]["detail"] == "present here, no runnable jobs there", found
 
     # ...and the reverse.
-    found = [f for f in compare(repo(**empty_there).get, repo(**only_here).get)
+    found = [f for f in compare(repo(**empty_there).get, repo(**mobile_only_here).get)
              if f["kind"] == "workflow" and f["name"] == "mobile-release.yml"]
     assert found[0]["detail"] == "no runnable jobs here, present there", found
 
@@ -2786,6 +2939,7 @@ def self_test() -> int:
     # A workflow that uses no actions in BOTH repos is agreement, not drift --
     # this is the noise case that would fire every week if got wrong.
     neither = dict.fromkeys(ACTION_WORKFLOWS, "jobs:\n  a:\n    steps:\n      - run: make\n")
+    neither["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**neither).get, repo(**neither).get) if f["kind"] == "workflow"]
     assert found == [], found
 
@@ -2802,6 +2956,7 @@ def self_test() -> int:
     # direction. The earlier condition reported "empty here, has content
     # there" for two identical empty files.
     blank = dict.fromkeys(ACTION_WORKFLOWS, "   \n")
+    blank["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**blank).get, repo(**blank).get) if f["kind"] == "workflow"]
     assert found == [], f"two blank files agree: {found}"
 
@@ -2897,6 +3052,7 @@ def self_test() -> int:
         "jobs:\n  a:\n    if: false\n    steps:\n      - run: make\n"
         "  b:\n    steps:\n      - run: make\n",
     )
+    one_on["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**one_on).get, repo(**one_on).get) if f["kind"] == "workflow"]
     assert found == [], found
 
@@ -2904,6 +3060,7 @@ def self_test() -> int:
     mixed_jobs = dict.fromkeys(
         ACTION_WORKFLOWS, "jobs:\n  empty:\n  real:\n    steps:\n      - run: make\n"
     )
+    mixed_jobs["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**mixed_jobs).get, repo(**mixed_jobs).get)
              if f["kind"] == "workflow"]
     assert found == [], found
@@ -2911,6 +3068,7 @@ def self_test() -> int:
     # ...but a workflow whose jobs only `run:` things still RUNS. It pins
     # nothing, and reporting that would be noise.
     runs_only = dict.fromkeys(ACTION_WORKFLOWS, "jobs:\n  build:\n    steps:\n      - run: make\n")
+    runs_only["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**runs_only).get, repo(**runs_only).get) if f["kind"] == "workflow"]
     assert found == [], found
 
@@ -3007,10 +3165,13 @@ def self_test() -> int:
     found = [
         f
         for f in compare(repo(**gone_actions).get, repo(**gone_actions).get)
-        if f["kind"] == "workflow"
+        if f["kind"] == "workflow" and "stale entry" in f["detail"]
     ]
-    assert len(found) == len(ACTION_WORKFLOWS), len(found)
-    assert "stale entry" in found[0]["detail"], found
+    # Missing owned cross-stack workflows are reported by the stronger
+    # presence contract above, so they do not also produce stale-manifest
+    # duplicates here.
+    expected_stale = set(ACTION_WORKFLOWS) - set(TOPOLOGY_GATED)
+    assert len(found) == len(expected_stale), len(found)
 
     # A commented-out step and an embedded string. Grepping the raw text read
     # both as active pins and INVENTED drift, which keeps the standing issue
@@ -3377,6 +3538,9 @@ def self_test() -> int:
         "apps/marketing/package.json": "{}\n",
         BACKEND_WORKFLOW: (
             "jobs:\n"
+            "  version-gate:\n"
+            "    name: \"release: version gate\"\n"
+            "    steps: []\n"
             "  deploy:\n"
             "    name: \"backend: deploy\"\n"
             "    steps: []\n"
@@ -3396,13 +3560,25 @@ def self_test() -> int:
         )
         if f["name"] == BACKEND_WORKFLOW
     ]
-    assert found and any(
-        "present here, absent there" in f["detail"] for f in found
+    assert any(
+        f["kind"] == "workflow"
+        and "absent" in f["detail"]
+        and ("present here" in f["detail"] or "expects an artifact" in f["detail"])
+        for f in found
     ), f"a backend owner may not lose its deploy workflow: {found}"
 
     node_backend_action = {
         **node_backend,
-        BACKEND_WORKFLOW: wf("actions/checkout@1111111 # v1"),
+        BACKEND_WORKFLOW: (
+            "jobs:\n"
+            "  version-gate:\n"
+            "    name: \"release: version gate\"\n"
+            "    steps: []\n"
+            "  deploy:\n"
+            "    name: \"backend: deploy\"\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@1111111 # v1\n"
+        ),
     }
     python_backend_without_action = {
         "apps/backend/package.json": None,
@@ -3453,16 +3629,17 @@ def self_test() -> int:
     # The same absence between two Flutter repos is a real finding again.
     absent_there = {MARKER: "name: app\n", GATED_FILE: None}
     found = [f for f in compare(repo(**both_flutter).get, repo(**absent_there).get) if f["name"] == GATED_FILE]
-    assert found and found[0]["detail"] == "present here, absent there", found
+    assert found and found[0]["detail"] == (
+        "topology expects an artifact there, but it is absent"
+    ), found
     # Content drift in a gated file is reported when both sides share the
-    # owning stack. A different stack is an explicit implementation boundary;
-    # the broad capability-marker cases below remain strict when files exist.
+    # owning stack. Across stacks the non-owner must not retain a stale copy.
     changed = {MARKER: "name: app\n", GATED_FILE: "different\n"}
     found = [f for f in compare(repo(**both_flutter).get, repo(**changed).get) if f["name"] == GATED_FILE]
     assert len(found) == 1, found
     marker_one_side = {GATED_FILE: "different\n"}
     found = [f for f in compare(repo(**both_flutter).get, repo(**marker_one_side).get) if f["name"] == GATED_FILE]
-    assert found == [], f"different mobile stacks may carry different helpers: {found}"
+    assert len(found) == 1 and "expects no artifact there" in found[0]["detail"], found
 
     # Release guards exist in both mobile stacks even though their contents
     # differ. A React Native owner deleting its copy must not be hidden by the
@@ -3486,7 +3663,9 @@ def self_test() -> int:
         )
         if f["name"] == RELEASE_HELPER
     ]
-    assert found and found[0]["detail"] == "present here, absent there", found
+    assert found and found[0]["detail"] == (
+        "mobile topology expects an artifact there, but it is absent"
+    ), found
     react_native_release = {
         **react_native_missing_release,
         RELEASE_HELPER: "react native guard\n",
@@ -3500,6 +3679,75 @@ def self_test() -> int:
         if f["name"] == RELEASE_HELPER
     ]
     assert found == [], f"cross-stack release guard contents are topology: {found}"
+    non_mobile_with_release = {
+        MARKER: None,
+        MOBILE_MARKER: None,
+        RELEASE_HELPER: "flutter guard\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**flutter_release).get,
+            repo(**non_mobile_with_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert len(found) == 1 and "without its owning capability" in found[0]["detail"], found
+    missing_mobile_release = {
+        MARKER: "name: app\n",
+        MOBILE_MARKER: None,
+        RELEASE_HELPER: None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**missing_mobile_release).get,
+            repo(**non_mobile_with_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert len(found) == 2, found
+    assert any("expects an artifact here" in f["detail"] for f in found), found
+    assert any("expects no artifact there" in f["detail"] for f in found), found
+
+    # Capability-owned workflows are repository-local invariants too. An
+    # identical copy on a non-owner is stale topology, not agreement, and an
+    # owner deletion plus that stale copy must expose both repairs at once.
+    MARKETING_WF = ".github/workflows/marketing-ci.yml"
+    MARKETING_MARKER = "apps/marketing/package.json"
+    marketing_copy = wf("actions/checkout@1111111 # v1")
+    marketing_owner = {MARKETING_MARKER: "{}\n", MARKETING_WF: marketing_copy}
+    marketing_nonowner_stale = {MARKETING_MARKER: None, MARKETING_WF: marketing_copy}
+    found = [
+        f
+        for f in compare(
+            repo(**marketing_owner).get,
+            repo(**marketing_nonowner_stale).get,
+        )
+        if f["name"].endswith("marketing-ci.yml")
+    ]
+    assert len(found) == 1 and "expects no artifact there" in found[0]["detail"], found
+    found = [
+        f
+        for f in compare(
+            repo(**marketing_nonowner_stale).get,
+            repo(**marketing_nonowner_stale).get,
+        )
+        if f["name"].endswith("marketing-ci.yml")
+    ]
+    assert len(found) == 1 and "here and there" in found[0]["detail"], found
+    marketing_owner_missing = {MARKETING_MARKER: "{}\n", MARKETING_WF: None}
+    found = [
+        f
+        for f in compare(
+            repo(**marketing_owner_missing).get,
+            repo(**marketing_nonowner_stale).get,
+        )
+        if f["name"].endswith("marketing-ci.yml")
+    ]
+    assert len(found) == 2, found
+    assert any("expects an artifact here" in f["detail"] for f in found), found
+    assert any("expects no artifact there" in f["detail"] for f in found), found
     changed_react_native_release = {
         **react_native_release,
         RELEASE_HELPER: "changed react native guard\n",
@@ -3523,26 +3771,40 @@ def self_test() -> int:
         for f in compare(repo(**both_flutter).get, repo(**{MARKER: "name: app\n", GATED_WF: None}).get)
         if f["name"] == GATED_WF
     ]
-    assert found and found[0]["detail"] == "present here, absent there", found
+    assert found and found[0]["detail"] == (
+        "topology expects an artifact there, but it is absent"
+    ), found
 
     # Action workflows use a broader capability gate. A repo with no mobile
     # surface is not behind on mobile-release.yml; two repos that both declare
     # mobile still must report a missing workflow.
     MOBILE_ACTION_WF = ".github/workflows/mobile-release.yml"
-    no_mobile = {MOBILE_MARKER: None, MOBILE_ACTION_WF: None}
+    no_mobile = {MARKER: None, MOBILE_MARKER: None, MOBILE_ACTION_WF: None}
     found = [
-        f for f in compare(repo().get, repo(**no_mobile).get)
-        if f["name"] == "mobile-release.yml"
+        f for f in compare(repo(**no_mobile).get, repo(**no_mobile).get)
+        if f["name"].endswith("mobile-release.yml")
     ]
     assert found == [], f"a missing capability must gate its action workflow: {found}"
+    mobile_here = {MARKER: None, MOBILE_MARKER: "{}\n"}
+    mobile_missing_there = {
+        MARKER: None,
+        MOBILE_MARKER: "{}\n",
+        MOBILE_ACTION_WF: None,
+    }
     found = [
-        f for f in compare(repo().get, repo(**{MOBILE_ACTION_WF: None}).get)
-        if f["name"] == "mobile-release.yml"
+        f for f in compare(repo(**mobile_here).get, repo(**mobile_missing_there).get)
+        if f["name"].endswith("mobile-release.yml")
     ]
-    assert found and found[0]["detail"] == "present here, absent there", found
-    mobile_pin_here = {MOBILE_ACTION_WF: wf("actions/x@1111111 # v1")}
+    assert found and found[0]["detail"] == (
+        "mobile topology expects an artifact there, but it is absent"
+    ), found
+    mobile_pin_here = {
+        MARKER: "name: app\n",
+        MOBILE_ACTION_WF: wf("actions/x@1111111 # v1"),
+    }
     mobile_pin_there = {
         MOBILE_MARKER: None,
+        MARKER: "name: app\n",
         MOBILE_ACTION_WF: wf("actions/x@2222222 # v2"),
     }
     found = [
@@ -3552,10 +3814,12 @@ def self_test() -> int:
     assert len(found) == 1, f"present gated workflows must compare pins: {found}"
 
     mobile_actions_here = {
+        MARKER: "name: app\n",
         MOBILE_ACTION_WF: wf("actions/shared@1111111 # v1", "actions/extra@2222222 # v2")
     }
     mobile_actions_there = {
         MOBILE_MARKER: None,
+        MARKER: "name: app\n",
         MOBILE_ACTION_WF: wf("actions/shared@1111111 # v1"),
     }
     found = [
@@ -3579,11 +3843,20 @@ def self_test() -> int:
         if f["name"] == "packages-ci.yml"
     ]
     assert found == [], f"one-sided package workflow is capability topology: {found}"
-    package_owner = {PACKAGE_WF: wf("actions/x@1111111 # v1"), "packages/core/package.json": "{}\n"}
+    package_owner = {
+        PACKAGE_WF: (
+            "jobs:\n"
+            "  build:\n"
+            "    name: \"packages: build & test\"\n"
+            "    steps:\n"
+            "      - uses: actions/x@1111111 # v1\n"
+        ),
+        "packages/core/package.json": "{}\n",
+    }
     package_owner_missing = {PACKAGE_WF: None, "packages/core/package.json": "{}\n"}
     found = [
         f for f in compare(repo(**package_owner).get, repo(**package_owner_missing).get)
-        if f["name"] == "packages-ci.yml"
+        if f["name"].endswith("packages-ci.yml")
     ]
     assert len(found) == 1, f"an owner deleting package CI must report: {found}"
     package_non_owner = {
@@ -3597,7 +3870,7 @@ def self_test() -> int:
             repo(**package_owner_missing).get,
             repo(**package_non_owner).get,
         )
-        if f["name"] == "packages-ci.yml"
+        if f["name"].endswith("packages-ci.yml")
     ]
     assert len(found) == 1, f"an owner deletion must report against a non-owner: {found}"
     package_pin_here = {PACKAGE_WF: wf("actions/x@1111111 # v1")}
@@ -3664,7 +3937,7 @@ def self_test() -> int:
     }
     gated_jobs_there = {
         CAPABILITY_GATED_WF: jobs_yaml(("build", "mobile: changed")),
-        MOBILE_MARKER: None,
+        MOBILE_MARKER: "{}\n",
     }
     found = [
         f for f in compare(repo(**gated_jobs_here).get, repo(**gated_jobs_there).get)
@@ -3716,6 +3989,56 @@ def self_test() -> int:
         ),
         "apps/ingest/package.json": "{}\n",
     }
+    tarmoto_without_prepare = {
+        PACKAGE_WF: (
+            "jobs:\n"
+            "  build:\n"
+            "    name: \"packages: build, test & typecheck\"\n"
+            "    steps:\n"
+            "      - uses: actions/download-artifact@1111111 # v1\n"
+        ),
+        "apps/ingest/package.json": "{}\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**tarmoto_without_prepare).get,
+            repo(**package_non_owner).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert len(found) == 1 and "expects job `prepare-openapi` here" in found[0]["detail"], found
+    package_stale_non_owner = {
+        PACKAGE_WF: jobs_yaml(("stale", "packages: stale placeholder")),
+        "packages/core/package.json": None,
+        "packages/shared/package.json": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**tarmoto_without_prepare).get,
+            repo(**package_stale_non_owner).get,
+        )
+        if f["name"].endswith("packages-ci.yml")
+    ]
+    assert len(found) == 2, found
+    assert any("expects job `prepare-openapi` here" in f["detail"] for f in found), found
+    assert any("expects no artifact there" in f["detail"] for f in found), found
+    tarmoto_without_build = {
+        PACKAGE_WF: jobs_yaml(
+            ("prepare-openapi", "contract: openapi spec"),
+        ),
+        "apps/ingest/package.json": "{}\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**tarmoto_without_build).get,
+            repo(**package_non_owner).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert len(found) == 1 and "expects job `build` here" in found[0]["detail"], found
     tarmoto_with_weaker_claim = {
         **tarmoto_package,
         PACKAGE_WF: jobs_yaml(
@@ -3754,6 +4077,84 @@ def self_test() -> int:
     base = {JOB_WF: jobs_yaml(("build", "backend: build"))}
     found = [f for f in compare(repo(**extra).get, repo(**base).get) if f["kind"] == "jobname"]
     assert len(found) == 1 and "present here, absent there" in found[0]["detail"], found
+
+    # Python and Node workflows have a small exact set of one-sided actions.
+    # Everything else remains shared policy, including presence and pin refs.
+    python_backend_actions = {
+        JOB_WF: wf(
+            "actions/checkout@1111111 # v1",
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+            "actions/setup-python@2222222 # v2",
+            "actions/download-artifact@5555555 # v5",
+        ),
+        "apps/backend/pyproject.toml": "[project]\nname = 'fixture'\n",
+    }
+    node_backend_actions = {
+        JOB_WF: wf(
+            "actions/checkout@1111111 # v1",
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**python_backend_actions).get,
+            repo(**node_backend_actions).get,
+        )
+        if f["kind"] == "action" and "backend-ci.yml" in f["name"]
+    ]
+    assert found == [], f"backend setup actions are stack topology: {found}"
+    node_backend_with_stale_checkout = {
+        JOB_WF: wf(
+            "actions/checkout@6666666 # v6",
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**python_backend_actions).get,
+            repo(**node_backend_with_stale_checkout).get,
+        )
+        if f["kind"] == "action" and f["name"].startswith("actions/checkout")
+    ]
+    assert len(found) == 1, f"shared cross-stack action pins remain strict: {found}"
+    node_backend_without_checkout = {
+        JOB_WF: wf(
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**python_backend_actions).get,
+            repo(**node_backend_without_checkout).get,
+        )
+        if f["kind"] == "action" and f["name"].startswith("actions/checkout")
+    ]
+    assert len(found) == 1, f"removing a shared cross-stack action must report: {found}"
+    python_backend_without_setup = {
+        **python_backend_actions,
+        JOB_WF: wf(
+            "actions/checkout@1111111 # v1",
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+            "actions/download-artifact@5555555 # v5",
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**python_backend_without_setup).get,
+            repo(**node_backend_actions).get,
+        )
+        if f["kind"] == "action" and f["name"].startswith("actions/setup-python")
+    ]
+    assert len(found) == 1 and "expects the action here only" in found[0]["detail"], found
 
     # Poker-only layout exemptions must activate for Python-vs-Node, but the
     # same job IDs remain strict between two Node siblings.
@@ -4061,8 +4462,11 @@ def self_test() -> int:
         )
         if f["name"] == RELEASE_GATE_WF
     ]
-    assert found and any(
-        "present here, absent there" in f["detail"] for f in found
+    assert any(
+        f["kind"] == "workflow"
+        and "absent" in f["detail"]
+        and ("present here" in f["detail"] or "expects an artifact" in f["detail"])
+        for f in found
     ), f"a versioned Python owner may not lose its release gate: {found}"
     taven_without_release_gate = {
         RELEASE_GATE_WF: None,

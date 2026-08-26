@@ -7,7 +7,7 @@ Date: 2026-08-26
 ## Context
 
 Poker Hero now shares the Studio81 Labs repository and infrastructure baseline
-with Nexcue, TableTap, and Tarmoto. The drift checker can compare action pins,
+with Nexcue, TableTap, Tarmoto, and Taven. The drift checker can compare action pins,
 workflow claims, supply-chain policy, and topology-gated shared files, but a
 repository-scoped GitHub Actions token cannot read the private sibling
 repositories. Scheduling the checker therefore introduces a cross-repository
@@ -23,13 +23,13 @@ describe Poker Hero as post-hand training and never as live-play assistance.
 
 Studio81 Labs portfolio maintainers own one fine-grained GitHub personal access
 token dedicated to sibling drift. It is restricted to the repositories named
-by the four sibling workflows and grants only repository Contents read access.
+by the five sibling workflows and grants only repository Contents read access.
 Its private-repository selection is limited to the private siblings that need
 authenticated reads; public siblings do not require an additional token
 entitlement. It grants no issue, pull-request, workflow, administration,
 package, deployment, or organization write permission. The token is stored
-separately in Nexcue, TableTap, Tarmoto, and Poker Hero as the Actions repository secret
-`SIBLING_READ_TOKEN`; it is never committed, exposed to pull-request workflows,
+separately in Nexcue, TableTap, Tarmoto, Taven, and Poker Hero as the Actions
+repository secret `SIBLING_READ_TOKEN`; it is never committed, exposed to pull-request workflows,
 or passed to steps before the hash-locked parser dependency and checker
 self-test complete.
 
@@ -39,9 +39,9 @@ Bearer credential for sibling Contents API requests. The comparison produces
 one report, fails if any sibling cannot be read, and never treats a partial
 comparison as convergence.
 
-This rollout adds Poker Hero, Nexcue, TableTap, and Tarmoto to one another's
-inventories. Existing Taven entries in TableTap and Tarmoto are preserved but
-remain outside this four-project portfolio-alignment decision.
+This rollout makes Poker Hero, Nexcue, TableTap, Tarmoto, and Taven reciprocal
+members of one project-family inventory. Each repository compares the other
+four and owns only its local drift report.
 
 Issue ownership stays local. Each workflow receives `issues: write` only for
 its own repository through the ephemeral repository-scoped GitHub Actions
@@ -55,7 +55,7 @@ for issue operations.
 
 The credential expires within 90 days and is rotated before expiry. Rotation
 creates the replacement with the same repository allowlist and Contents-only
-permission, updates all four encrypted repository secrets, verifies one manual
+permission, updates all five encrypted repository secrets, verifies one manual
 default-branch run in each repository, and then revokes the old token. The
 platform maintainer performing the rotation records no token value in issues,
 logs, shell history, or documentation.
@@ -78,7 +78,7 @@ a cross-repository write channel.
 
 On suspected disclosure, unexpected API access, maintainer departure, or a
 scope mismatch, the credential owner immediately revokes the fine-grained token
-at its issuer and removes or replaces `SIBLING_READ_TOKEN` in all four
+at its issuer and removes or replaces `SIBLING_READ_TOKEN` in all five
 repositories. Repository maintainers disable the schedule if revocation cannot
 be confirmed, inspect Actions logs and the token audit trail, and open a private
 security incident record. Scheduled drift failure is expected while the token
@@ -86,7 +86,7 @@ is absent and must not be converted into a silent skip.
 
 ## Consequences
 
-All four repositories can compare private siblings without granting write
+All five repositories can compare private siblings without granting write
 access outside their own issue trackers. The shared token still has a selected
 private-repository read blast radius and creates a quarterly operational
 obligation. A missing, expired, or under-scoped token makes drift runs fail
@@ -99,7 +99,7 @@ it does not require changing the drift credential boundary.
 
 ## Rollout And Rollback
 
-Rollout verifies that the `SIBLING_READ_TOKEN` secret name exists in all four
+Rollout verifies that the `SIBLING_READ_TOKEN` secret name exists in all five
 repositories, lands this ADR, adds every sibling to the corresponding
 `SIBLING_REPOS` list, enables Poker Hero's Monday schedule, and manually runs
 each workflow from its default branch. Every run must read every listed

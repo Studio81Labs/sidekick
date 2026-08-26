@@ -1309,7 +1309,7 @@ testing.
 ## Portfolio Drift Monitoring
 
 Poker Hero participates in the Studio81 Labs sibling-drift watch with Nexcue,
-TableTap, and Tarmoto. A scheduled repository-owned workflow compares the
+TableTap, Tarmoto, and Taven. A scheduled repository-owned workflow compares the
 narrow shared infrastructure contract against each sibling and writes only a
 single `infra-drift` issue in Poker Hero. Cross-repository source reads use the
 read-only credential boundary from ADR 0045; issue writes continue to use the
