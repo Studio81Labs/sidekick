@@ -67,3 +67,7 @@ jobs:
       - name: Build frontend and audit bundle budgets
         if: ${{ !cancelled() }}
         run: pnpm frontend:performance
+
+      - name: Build frontend image
+        if: ${{ !cancelled() }}
+        run: docker build -f apps/frontend/Dockerfile -t poker-hero-frontend:test .
