@@ -40,6 +40,16 @@ mastery input/aggregate, drill artifact, and proof-of-learning metric. Supersede
 records remain auditable but inactive; one failed hand does not stop unrelated
 imports.
 
+Approval withdrawal, rejection after approval, and deletion atomically clear
+the active canonical pointer and deactivate/rebuild the same complete derived
+learning graph before any physical purge. Failure rolls the operation back or
+places the hand in an immediately learning-ineligible deletion-pending state;
+canonical data is never absent while its grades/mastery/drills/proof remain
+active. Withdrawal/rejection retains an inactive audit trail. Permanent deletion
+purges hand-linked source/canonical/derived audit data only after logical
+deactivation succeeds, with at most a non-sensitive deletion receipt/generation
+retained so backup restore cannot silently resurrect the evidence.
+
 Screenshot upload and live window/screen/tab capture remain only as an
 administrative OCR/parser-test capability. The capability is disabled by default,
 requires explicit deployment opt-in and server-enforced operator authorization,
@@ -107,6 +117,11 @@ revision pointers prevent duplicate or superseded evidence from inflating
 mastery. Reference, taxonomy, and principle revisions are immutable provenance;
 upgrades are staged and either atomically rebuild affected active state or begin
 a separately labeled series.
+
+All write paths, including the existing delete capability, enter this lifecycle
+boundary rather than mutating canonical storage directly. Read models and
+schedulers filter on active revision/deletion generation so pending or purged
+hands cannot continue influencing learning.
 
 ## Consequences
 

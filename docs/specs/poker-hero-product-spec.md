@@ -192,6 +192,9 @@ personal leak, update mastery, or contribute to proof-of-learning metrics.
 - **Never grade involuntary behavior.** Forced posts and client actions caused
   by timeout, disconnect, or automation are not player decisions. Unknown
   action origin stays excluded until explicitly resolved.
+- **Canonical lifecycle changes cascade.** Correction/reapproval, approval
+  withdrawal, post-approval rejection, and deletion deactivate every dependent
+  learning artifact before canonical state can disappear or stop being active.
 - **Learning lives in aggregation and repetition, not in single hands.** The
   single-hand comparison is necessary but weak on its own. Value comes from
   detecting _recurring_ leaks and _drilling_ them.
@@ -314,6 +317,25 @@ metrics. Superseded artifacts remain auditable but never active. If rebuilding
 the new revision fails, the hand is visibly pending/failed and no stale artifact
 from the prior revision may remain in learning state; unrelated hands continue
 independently.
+
+Approval withdrawal, rejection after approval, and deletion use the same
+invalidation boundary. One atomic logical transition removes the active
+canonical pointer and deactivates/rebuilds every derived decision, grade, concept
+tag, mastery input/aggregate, scheduled drill entry/attempt contribution, and
+proof metric before physical removal is allowed. The implementation must never
+delete canonical state first and leave active derived evidence behind. If the
+transition cannot complete atomically, either the operation rolls back with the
+hand still active or the hand becomes visibly deletion-pending and immediately
+excluded from all grading/learning reads while isolated cleanup retries;
+unrelated hands continue independently.
+
+Withdrawal/rejection retains the inactive source, revision, and derived audit
+trail. A permanent-delete request purges the hand-linked raw, detected,
+canonical, conflict, and derived audit records only after logical deactivation
+and aggregate/schedule rebuild succeeds, retaining at most a non-sensitive
+deletion receipt required to prevent silent resurrection. Backup/restore honors
+the deletion generation and cannot reactivate purged evidence from an older
+backup without an explicit user-authorized reimport.
 
 ### 3.3 Decision extraction
 
