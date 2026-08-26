@@ -251,7 +251,10 @@ TOPOLOGY_GATED = {
     ".github/workflows/admin-deploy.yml": ("apps/admin/package.json",),
     ".github/workflows/marketing-ci.yml": ("apps/marketing/package.json",),
     ".github/workflows/marketing-deploy.yml": ("apps/marketing/package.json",),
-    "scripts/ci/compare-marketing-version.py": ("apps/marketing/package.json",),
+    "scripts/ci/compare-marketing-version.py": (
+        "apps/mobile/package.json",
+        "apps/mobile/pubspec.yaml",
+    ),
     ".github/workflows/mobile-ci.yml": (
         "apps/mobile/package.json",
         "apps/mobile/pubspec.yaml",
@@ -2548,6 +2551,10 @@ def self_test() -> int:
     # An EXPECTED_JOB_DIFFS entry suppresses exactly its own job, and nothing
     # else in the same file.
     assert (".github/workflows/mobile-ci.yml", "mobile") in EXPECTED_JOB_DIFFS
+    assert TOPOLOGY_GATED["scripts/ci/compare-marketing-version.py"] == (
+        "apps/mobile/package.json",
+        "apps/mobile/pubspec.yaml",
+    )
     MOB = ".github/workflows/mobile-ci.yml"
     # mobile-ci is topology-gated now, and this case describes the Flutter
     # pair — both sides carry the marker so the gate is open.

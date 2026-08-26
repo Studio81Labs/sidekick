@@ -12,9 +12,9 @@ name: Format Check
 #
 # It runs on every pull request on purpose: a path filter would have to list
 # every extension Prettier owns, and the failure mode of getting that list wrong
-# is silent (the file drifts and no job claims it). The job is ~25s -- it fetches
-# a single package rather than installing the workspace, which matters because
-# the Actions budget is shared across all Studio81Labs repos.
+# is silent (the file drifts and no job claims it). A root-only frozen install
+# keeps the formatter identical to the reviewed lockfile without installing
+# application workspaces or running lifecycle scripts.
 
 on:
   pull_request:
@@ -38,27 +38,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install locked formatter
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter .
 
       - name: Check formatting
-        run: |
-          set -euo pipefail
-          # Resolve the version from package.json rather than hardcoding it here:
-          # a second copy of the number is a thing that goes stale, and the whole
-          # point of this job is that the repo formats the way it declares it
-          # does. `npx` fetches just this package -- a full `pnpm install` would
-          # cost minutes to run a check that needs one binary.
-          VERSION="$(node -p "require('./package.json').devDependencies.prettier")"
-          # Fail loudly on an empty read. `npx prettier@ --check` is valid
-          # syntax that silently installs the LATEST prettier, so a renamed or
-          # moved dependency would turn this job into a check against a version
-          # the repo does not use -- passing or failing for reasons no one can
-          # reproduce locally.
-          if [ -z "$VERSION" ] || [ "$VERSION" = "undefined" ]; then
-            echo "::error::Could not read devDependencies.prettier from package.json"
-            exit 1
-          fi
-          echo "Using prettier ${VERSION} (from package.json)"
-          npx --yes "prettier@${VERSION}" --check .
+        run: pnpm exec prettier --check .
