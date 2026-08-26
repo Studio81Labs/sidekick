@@ -145,8 +145,9 @@ Required changes:
   `openapi-check.yml` as the freshness gate;
 - make backend, PWA, and E2E workflows depend on the same generated contract
   artifact where appropriate;
-- add `packages/openapi/**` and `packages/openapi-client/**` to the PWA
-  deployment push paths so a contract-only change rebuilds staging;
+- add `packages/openapi/**`, `packages/openapi-client/**`, and the root
+  `tsconfig.base.json` to the PWA deployment push paths so contract or shared
+  compiler configuration changes rebuild staging;
 - update the PWA Dockerfile and its build context so workspace package manifests
   are available before `pnpm install` and the OpenAPI package sources are
   available before the production build;
@@ -161,8 +162,9 @@ Acceptance gates:
 - the PWA has no relative imports into an app-owned generated contract folder;
 - `docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:wave-2 .` succeeds with
   the extracted workspace packages available inside the build;
-- a change set touching only either OpenAPI package selects `pwa-deploy.yml`
-  instead of leaving staging on a stale generated client;
+- a change set touching only either OpenAPI package or `tsconfig.base.json`
+  selects `pwa-deploy.yml` instead of leaving staging on stale generated client
+  or compiler configuration;
 - backend tests, PWA tests/build, and browser E2E remain green.
 
 ### Wave 3: Align Repository And CI Infrastructure
