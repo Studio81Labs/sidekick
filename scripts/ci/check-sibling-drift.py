@@ -415,9 +415,6 @@ EXPECTED_JOB_DIFFS = {
     # now build `--no-codesign`; the flavor flag still differs and is real
     # topology, but it lives in the step rather than the job name.
     (".github/workflows/mobile-ci.yml", "mobile"): "android flavor topology",
-    # The gate compares the tag against each repo's actual version source:
-    # pubspec.yaml for Flutter, apps/mobile/package.json for React Native.
-    (".github/workflows/_release-version-gate.yml", "check"): "version-source topology (pubspec vs package.json)",
 }
 
 # Poker Hero's Python backend and always-emitted contract gate use different
@@ -463,7 +460,6 @@ POKER_ACTION_LAYOUTS = {
 # two repositories that share the same topology.
 EXPECTED_JOB_DIFF_MARKERS = {
     (".github/workflows/mobile-ci.yml", "mobile"): "apps/mobile/android/app/src/staging/google-services.json",
-    (".github/workflows/_release-version-gate.yml", "check"): "apps/mobile/package.json",
 }
 
 # Complementary jobs whose IDs differ by backend implementation. Validate the
@@ -509,6 +505,11 @@ EXPECTED_TOPOLOGY_OWNED_JOBS = {
 # marker is deliberately after slicer-contracts because both Taven and TableTap
 # own packages/core, while only Taven has the slicer contract package.
 EXPECTED_TOPOLOGY_JOB_NAME_VARIANTS = {
+    (".github/workflows/_release-version-gate.yml", "check"): (
+        ("apps/backend/pyproject.toml", "release: tag matches root version"),
+        ("apps/mobile/pubspec.yaml", "tag matches pubspec"),
+        ("apps/mobile/package.json", "tag matches the mobile version"),
+    ),
     (".github/workflows/packages-ci.yml", "build"): (
         ("apps/ingest/package.json", "packages: build, test & typecheck"),
         (
@@ -519,18 +520,16 @@ EXPECTED_TOPOLOGY_JOB_NAME_VARIANTS = {
     ),
 }
 
-# These two topology differences rename a job that exists on both sides. Encode
-# the exact documented pair: an arbitrary third name is drift even when the
-# repositories have different topology markers.
+# This topology difference renames a job that exists on both sides. Encode the
+# exact documented pair: an arbitrary third name is drift even when the
+# repositories have different topology markers. Release-gate names use the
+# three-way topology variants above instead.
 EXPECTED_PRESENT_JOB_NAME_PAIRS = {
     (".github/workflows/mobile-ci.yml", "mobile"): frozenset(
         {
             "mobile: format, analyze & test (+ android builds when mobile changes)",
             "mobile: format, analyze & test (+ android release when mobile changes)",
         }
-    ),
-    (".github/workflows/_release-version-gate.yml", "check"): frozenset(
-        {"tag matches pubspec", "tag matches the mobile version"}
     ),
 }
 
@@ -2351,6 +2350,10 @@ def self_test() -> int:
                     "  build:\n    name: \"ci: build\"\n"
                     "  version-gate:\n    name: \"release: version gate\"\n"
                 ),
+                ".github/workflows/_release-version-gate.yml": (
+                    "jobs:\n"
+                    "  check:\n    name: \"tag matches the mobile version\"\n"
+                ),
                 ".github/workflows/admin-deploy.yml": (
                     "jobs:\n"
                     "  build:\n    name: \"ci: build\"\n"
@@ -2372,6 +2375,18 @@ def self_test() -> int:
             for path in set(STACK_TOPOLOGY_GATED) - CROSS_STACK_REQUIRED:
                 if path not in overrides:
                     files[path] = None
+        release_gate = ".github/workflows/_release-version-gate.yml"
+        if release_gate not in overrides:
+            if files.get("apps/backend/pyproject.toml") is not None:
+                release_name = "release: tag matches root version"
+            elif files.get("apps/mobile/pubspec.yaml") is not None:
+                release_name = "tag matches pubspec"
+            else:
+                release_name = "tag matches the mobile version"
+            files[release_gate] = (
+                "jobs:\n"
+                f"  check:\n    name: \"{release_name}\"\n"
+            )
         return {k: v for k, v in files.items() if v is not None}
 
     ours = {
@@ -3933,10 +3948,11 @@ def self_test() -> int:
 
     CAPABILITY_GATED_WF = ".github/workflows/_release-version-gate.yml"
     gated_jobs_here = {
-        CAPABILITY_GATED_WF: jobs_yaml(("build", "mobile: build")),
+        CAPABILITY_GATED_WF: jobs_yaml(("check", "tag matches the mobile version")),
+        MOBILE_MARKER: "{}\n",
     }
     gated_jobs_there = {
-        CAPABILITY_GATED_WF: jobs_yaml(("build", "mobile: changed")),
+        CAPABILITY_GATED_WF: jobs_yaml(("check", "release: changed claim")),
         MOBILE_MARKER: "{}\n",
     }
     found = [
@@ -4448,6 +4464,31 @@ def self_test() -> int:
         if f["kind"] == "jobname" and f["name"] == RELEASE_GATE_WF
     ]
     assert found == [], f"version-source topology may rename the check: {found}"
+    poker_release_gate = {
+        RELEASE_GATE_WF: jobs_yaml(("check", "release: tag matches root version")),
+        "apps/mobile/package.json": None,
+        "apps/mobile/pubspec.yaml": None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+    }
+    found = [
+        f
+        for f in compare(repo(**flutter_gate).get, repo(**poker_release_gate).get)
+        if f["kind"] == "jobname" and f["name"] == RELEASE_GATE_WF
+    ]
+    assert found == [], f"Python release-gate naming is version-source topology: {found}"
+    renamed_poker_release_gate = {
+        **poker_release_gate,
+        RELEASE_GATE_WF: jobs_yaml(("check", "release: unrelated Python claim")),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**poker_release_gate).get,
+            repo(**renamed_poker_release_gate).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == RELEASE_GATE_WF
+    ]
+    assert len(found) == 1, f"Python release-gate naming must remain exact: {found}"
     poker_missing_release_gate = {
         RELEASE_GATE_WF: None,
         "apps/mobile/package.json": None,
