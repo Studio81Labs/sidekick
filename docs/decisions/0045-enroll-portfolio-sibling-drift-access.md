@@ -24,9 +24,11 @@ describe Poker Hero as post-hand training and never as live-play assistance.
 Studio81 Labs portfolio maintainers own one fine-grained GitHub personal access
 token dedicated to sibling drift. It is restricted to the repositories named
 by the four sibling workflows and grants only repository Contents read access.
-It grants no issue, pull-request, workflow, administration, package, deployment,
-or organization write permission. The token is stored separately in Nexcue,
-TableTap, Tarmoto, and Poker Hero as the Actions repository secret
+Its private-repository selection is limited to the private siblings that need
+authenticated reads; public siblings do not require an additional token
+entitlement. It grants no issue, pull-request, workflow, administration,
+package, deployment, or organization write permission. The token is stored
+separately in Nexcue, TableTap, Tarmoto, and Poker Hero as the Actions repository secret
 `SIBLING_READ_TOKEN`; it is never committed, exposed to pull-request workflows,
 or passed to steps before the hash-locked parser dependency and checker
 self-test complete.
@@ -36,6 +38,10 @@ other portfolio siblings in `SIBLING_REPOS`. The read token is used only as the
 Bearer credential for sibling Contents API requests. The comparison produces
 one report, fails if any sibling cannot be read, and never treats a partial
 comparison as convergence.
+
+This rollout adds Poker Hero, Nexcue, TableTap, and Tarmoto to one another's
+inventories. Existing Taven entries in TableTap and Tarmoto are preserved but
+remain outside this four-project portfolio-alignment decision.
 
 Issue ownership stays local. Each workflow receives `issues: write` only for
 its own repository through the ephemeral repository-scoped GitHub Actions
@@ -78,10 +84,10 @@ is absent and must not be converted into a silent skip.
 ## Consequences
 
 All four repositories can compare private siblings without granting write
-access outside their own issue trackers. The shared token still has a four-repo
-read blast radius and creates a quarterly operational obligation. A missing,
-expired, or under-scoped token makes drift runs fail visibly rather than
-reporting false convergence.
+access outside their own issue trackers. The shared token still has a selected
+private-repository read blast radius and creates a quarterly operational
+obligation. A missing, expired, or under-scoped token makes drift runs fail
+visibly rather than reporting false convergence.
 
 The organization profile and repository homepage may link to the public alpha
 Worker while production remains intentionally unconfigured. A future production
