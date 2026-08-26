@@ -330,9 +330,12 @@ Required changes:
 - use network-only handling for all API, MCP, screenshot, upload, history,
   recommendation, benchmark, and backup routes;
 - show a clear offline state instead of presenting stale analysis as current;
-- ensure a newly deployed service worker cannot force a reload while form or
-  workspace state contains unsaved user corrections, or during an active
-  upload, approval, recommendation, restore, or benchmark operation;
+- add a centralized dirty-state contract for every user-authored local draft,
+  including detected-state corrections, screenshot title/notes/tags, training
+  answers, lesson notes, and any other unsaved workspace form;
+- ensure a newly deployed service worker cannot force a reload while that dirty
+  state is present, or during an active upload, approval, recommendation,
+  restore, or benchmark operation;
 - configure Worker/static-asset headers so the service worker is revalidated
   while content-addressed assets remain cacheable;
 - document install, update, offline, and privacy behavior in the product spec
@@ -348,9 +351,10 @@ Acceptance gates:
 - requests below `/api/` and the exact `/mcp` route never enter Cache Storage;
 - upload and recommendation flows still fail visibly and recover correctly
   when the network disappears;
-- an update-lifecycle test with dirty correction state defers reload and
-  preserves every correction until the state is saved or cleared, or the user
-  explicitly confirms discarding it;
+- update-lifecycle tests cover every registered workspace form, including dirty
+  detected-state corrections, screenshot title/notes/tags, training answers,
+  and lesson notes; each defers reload and preserves the full draft until it is
+  saved or cleared, or the user explicitly confirms discarding it;
 - desktop and mobile Playwright projects cover installation metadata, worker
   scope, update behavior, offline shell, and network-only private routes.
 
