@@ -93,7 +93,6 @@ apps/pwa/src/
       lib/          # pure transformations and compatibility adapters
   shared/
     api/
-      generated/    # checked-in OpenAPI output; never hand edited
       transport.ts
       errors.ts
       compatibility/
@@ -104,6 +103,9 @@ apps/pwa/src/
     apiServer.ts
     factories/
     renderApp.tsx
+packages/
+  openapi/           # checked-in backend OpenAPI document and tooling
+  openapi-client/    # checked-in generated TypeScript wire contract
 ```
 
 ### PWA State Ownership
@@ -210,8 +212,11 @@ apps/backend/app/
 1. Give every public FastAPI operation a stable `operation_id` and explicit
    response model.
 2. Export a deterministic OpenAPI 3.1 document from the application factory.
-3. Generate checked-in TypeScript contracts with `openapi-typescript`.
-4. CI regenerates the artifact and fails on a diff.
+3. Commit the document under `packages/openapi` and generate checked-in
+   TypeScript contracts under `packages/openapi-client` with
+   `openapi-typescript`.
+4. CI regenerates both artifacts and fails on missing, untracked, staged,
+   unstaged, or stale output.
 5. A shared transport preserves credentials, multipart uploads, abort signals,
    request IDs, retry metadata, 204 responses, and human-readable errors.
 6. Feature API adapters translate generated wire contracts into stable domain

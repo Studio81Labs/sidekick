@@ -1,5 +1,6 @@
 packages:
   - "apps/*"
+  - "packages/*"
 
 # Refuse newly published dependency versions for 24 hours. Frozen-lockfile
 # installs are unaffected; this only applies while resolving new versions.

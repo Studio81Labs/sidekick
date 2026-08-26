@@ -25,7 +25,11 @@
     },
     {
       "description": "Scope PWA dependency updates",
-      "matchFileNames": ["apps/pwa/**"],
+      "matchFileNames": [
+        "apps/pwa/**",
+        "packages/openapi/**",
+        "packages/openapi-client/**"
+      ],
       "semanticCommitScope": "pwa",
       "addLabels": ["pwa"]
     },

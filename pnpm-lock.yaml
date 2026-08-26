@@ -20,15 +20,15 @@ importers:
       lint-staged:
         specifier: ^17.0.8
         version: 17.3.0
-      openapi-typescript:
-        specifier: 7.13.0
-        version: 7.13.0(typescript@5.9.3)
       prettier:
         specifier: ~3.8.1
         version: 3.8.5
 
   apps/pwa:
     dependencies:
+      '@poker-hero/openapi-client':
+        specifier: workspace:*
+        version: link:../../packages/openapi-client
       '@sentry/react':
         specifier: ^10.69.0
         version: 10.69.0(react@18.3.1)
@@ -99,6 +99,20 @@ importers:
       vitest:
         specifier: ^4.1.10
         version: 4.1.10(@types/node@26.1.1)(jsdom@29.1.1)(vite@8.1.4(@types/node@26.1.1)(jiti@2.6.1)(yaml@2.9.0))
+
+  packages/openapi: {}
+
+  packages/openapi-client:
+    devDependencies:
+      openapi-typescript:
+        specifier: 7.13.0
+        version: 7.13.0(typescript@5.9.3)
+      prettier:
+        specifier: ~3.8.1
+        version: 3.8.5
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
 
 packages:
 

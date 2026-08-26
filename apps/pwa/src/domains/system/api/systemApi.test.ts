@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { jsonResponse, resetApiMocks } from "../../../test/api";
-import type { components } from "../../../shared/api/generated/openapi";
+import type { components } from "@poker-hero/openapi-client";
 import { getSystemInfo, toSystemInfo } from "./systemApi";
 
 afterEach(resetApiMocks);

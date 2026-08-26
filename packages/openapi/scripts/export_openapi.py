@@ -7,18 +7,9 @@ import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 BACKEND_ROOT = REPOSITORY_ROOT / "apps" / "backend"
-DEFAULT_OUTPUT = (
-    REPOSITORY_ROOT
-    / "apps"
-    / "pwa"
-    / "src"
-    / "shared"
-    / "api"
-    / "generated"
-    / "openapi.json"
-)
+DEFAULT_OUTPUT = REPOSITORY_ROOT / "packages" / "openapi" / "openapi.json"
 
 sys.path.insert(0, str(BACKEND_ROOT))
 

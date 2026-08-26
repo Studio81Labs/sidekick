@@ -147,6 +147,15 @@ The PWA is a browser control panel for:
   recommendations, file management, progress, parser benchmarking, plugins,
   and data recovery without leaving the control panel.
 
+### Contract Packages
+
+The backend exports a deterministic OpenAPI document into
+`packages/openapi/openapi.json`. The generated TypeScript wire contract lives in
+`packages/openapi-client` and is consumed by the PWA through the
+`@poker-hero/openapi-client` workspace package. Generated artifacts are
+committed for review, must remain reproducible from the backend application
+factory, and must never depend on live poker data.
+
 ### Backend API
 
 The backend API:

@@ -484,6 +484,24 @@ Cloudflare Access service headers remain available to cross the protected edge.
 API failures retain bounded status, request-ID, and retry metadata for agent
 recovery without logging request bodies or poker evidence.
 
+### Contract Packages
+
+`packages/openapi` owns the deterministic OpenAPI JSON document and the
+isolated export, validation, and freshness tooling. The backend application
+factory remains the source of truth; export always uses temporary empty storage
+and never reads an operator data directory. `packages/openapi-client` owns the
+committed `openapi-typescript` output and exposes its wire declarations from
+`@poker-hero/openapi-client`.
+
+PWA domain API adapters import the workspace package and translate its wire
+schemas into stable domain values. No application owns generated API files or
+imports them from another application tree. CI exports an exact-ref artifact,
+compares it byte-for-byte with the committed document, regenerates the client,
+and rejects missing, untracked, staged, or unstaged outputs. The package
+ownership, Docker inputs, deployment consequences, and rollback contract are
+recorded in
+[ADR 0042](../decisions/0042-extract-openapi-contract-packages.md).
+
 ### PWA
 
 `apps/pwa` owns screenshot upload and capture, queue navigation, review and
@@ -533,7 +551,9 @@ Health and pipeline reads use their existing system and pipeline domain
 adapters. Backup export URL construction now belongs to the backup domain and
 is exposed through the backup feature service used by the analyzer page. The
 former `shared/api/system.ts` facade and duplicate transport are removed.
-Shared API data contracts mirror those domains under `src/shared/types`.
+PWA-only data contracts mirror those domains under `src/shared/types`; backend
+wire schemas come from `@poker-hero/openapi-client` and are confined to domain
+API adapters.
 The former `src/shared/types.ts` compatibility barrel has been removed;
 production and test code import narrowly owned domain contract modules directly.
 

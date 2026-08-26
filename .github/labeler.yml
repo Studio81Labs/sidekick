@@ -1,10 +1,14 @@
 backend:
   - changed-files:
-      - any-glob-to-any-file: "apps/backend/**"
+      - any-glob-to-any-file:
+          - "apps/backend/**"
+          - "packages/openapi/**"
 
 pwa:
   - changed-files:
-      - any-glob-to-any-file: "apps/pwa/**"
+      - any-glob-to-any-file:
+          - "apps/pwa/**"
+          - "packages/openapi-client/**"
 
 solver:
   - changed-files:

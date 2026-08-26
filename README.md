@@ -33,6 +33,9 @@ poker-hero/
 ├── apps/
 │   ├── backend/             FastAPI API, OCR parsers, solvers, storage, tests
 │   └── pwa/                 React/Vite product app and Cloudflare Worker proxy
+├── packages/
+│   ├── openapi/             Deterministic backend OpenAPI document and tooling
+│   └── openapi-client/      Generated TypeScript wire contracts for the PWA
 ├── infra/
 │   └── docker/              Local Compose and deployment env example
 ├── solver-plugins/
@@ -56,6 +59,8 @@ poker-hero/
 | `pnpm backend:recommendation-benchmark <dataset.json>` | Benchmark a recommendation provider against trusted references   |
 | `pnpm backend:backup <command>`                        | Initialize, export, verify, or restore-drill application backups |
 | `pnpm backend:test`                                    | Run the backend pytest suite                                     |
+| `pnpm api:generate`                                    | Regenerate the committed OpenAPI document and TypeScript client  |
+| `pnpm api:check`                                       | Verify that committed OpenAPI artifacts are tracked and current  |
 | `pnpm pwa:dev`                                         | Start Vite on port 5173                                          |
 | `pnpm pwa:test`                                        | Run PWA tests                                                    |
 | `pnpm pwa:build`                                       | Build the production PWA                                         |
