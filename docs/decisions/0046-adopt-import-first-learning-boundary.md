@@ -57,6 +57,16 @@ remain visible educational estimates but cannot move mastery or generate drills.
 Player-facing output describes solved policies as conditional educational
 references, never guaranteed optimal play or guaranteed outcomes.
 
+Player data and grading remain local by default. A non-distributed remote solved
+feed is an optional provider, never an implicit fallback. Before it is enabled,
+the player must explicitly consent to the disclosed minimized lookup fields,
+provider retention/use terms, and network dependency. Requests may contain only
+pseudonymous route state required for lookup and must omit raw histories,
+site/hand/session identifiers, player names, timestamps, screenshots, and
+mastery/profile data. Consent is revocable, transport is encrypted, provenance
+is auditable, and local-only mode remains usable with remote-only coverage
+visibly unavailable.
+
 ## Security And Trust Boundaries
 
 The trusted Worker/backend boundary enforces administrative capture/upload
@@ -64,6 +74,11 @@ authorization and transition denial. A direct caller cannot bypass the PWA to
 turn administrative test input into a recommendation or learning record.
 Administrative authorization is an explicit operator capability, not a role
 implicitly granted to every local user.
+
+The provider boundary separately enforces remote-feed consent and outbound field
+allowlisting. Disabling or revoking a provider stops new requests immediately;
+network/provider failure cannot silently fall back to a different remote source
+or convert missing coverage into a solved grade.
 
 Raw histories, detected state, approved revisions, conflicts, and derived
 learning artifacts are separate persistence layers. Stable identities and active
@@ -85,6 +100,12 @@ deduplication, and rebuild rules add implementation complexity but keep learning
 metrics auditable. Trustworthy solved references and reviewed principles become
 release gates; if they are unavailable, V2 shows honest heuristic evidence or
 does not grade the spot.
+
+A remotely licensed feed can extend coverage without redistributing its dataset,
+but opt-in lookup state leaves the device and offline/local-only users lose that
+coverage. Provider contracts, privacy disclosure, minimization, revocation, and
+failure behavior are therefore part of the grading gate rather than hidden
+deployment details.
 
 ## Migration
 

@@ -106,17 +106,21 @@ ideal two-person test pair that is otherwise hard to assemble.
 - The **poker-player friend** validates that grading is _correct_ — that what the
   app calls a leak is genuinely a leak.
 - The **non-player builder** validates that the teaching is _comprehensible_ —
-  using a fixed assessment of reviewed, solved library spots. The builder first
-  receives the principle-first explanation for one concept, then predicts the
-  action in a new, unseen spot for that concept and explains the principle back
-  in plain language.
+  using a versioned, blinded pool of reviewed, solved library spots matched by
+  concept, coverage band, policy/taxonomy revisions, and reviewed difficulty.
+  For each attempt the builder first receives a principle-first teaching example,
+  then predicts the action in a fresh holdout they have never attempted and
+  explains the principle back in plain language. Holdout identity and answer
+  remain hidden until submission; a used holdout is never considered unseen
+  again, and retries draw a different item. The pool is rotated or replenished
+  before unused holdouts run out.
 
 If the app can teach the non-player builder, that is the strongest possible proof
 it teaches. Phase 1 success (§9) therefore requires **both**: the friend finds a
-real leak he didn't know he had, _and_ the non-player builder passes the fixed
-library-based transfer assessment. Because the builder has no imported playing
-history, this assessment does not claim to detect a personal leak, update mastery,
-or contribute to proof-of-learning metrics.
+real leak he didn't know he had, _and_ the non-player builder passes the blinded
+pool-based transfer assessment with a fresh holdout. Because the builder
+has no imported playing history, this assessment does not claim to detect a
+personal leak, update mastery, or contribute to proof-of-learning metrics.
 
 ---
 
@@ -196,8 +200,13 @@ or contribute to proof-of-learning metrics.
 - **The app must prove it taught.** Previously flagged leaks are re-measured on
   new sessions. "This leak is closing" is the core success signal, surfaced to
   the user.
-- **Local-first, single-user.** No account system, no multi-tenant assumptions
-  in the core. The player's data stays on their machine.
+- **Local-first, single-user.** No account system or multi-tenant assumptions in
+  the core. By default, player data and grading stay on the player's machine.
+  Nothing is sent to a remote solved-data provider unless the player explicitly
+  enables that provider after seeing the exact minimized outbound-data
+  categories, retention/use policy, and network dependency. Local-only mode
+  remains available; remote-only coverage is visibly unavailable when consent
+  is absent or revoked.
 - **Capture is an operator capability, not a player feature.** In a local-first
   deployment, "administrator" means an explicitly authorized operator/tester,
   not an implicit role granted to every local user. Screenshot upload and live
@@ -488,8 +497,15 @@ all:
 - **License** a solved-data feed served from infrastructure covered by explicit
   commercial serving/derived-output rights. A feed license that forbids data
   redistribution is server-side only: its dataset is never embedded in or
-  delivered with the local application. Dependency on someone else's roadmap
-  and on network availability.
+  delivered with the local application. It is eligible only as an optional,
+  explicit-consent provider. Its request contains the minimum pseudonymous
+  route state needed for lookup (game/economic model, table/position, stack and
+  sizing, prior actions, board/hole-card abstractions or cards, and conditioned
+  ranges) and never raw hand history, site/hand/session identity, player names,
+  source timestamps, screenshots, or mastery/profile data. Transport is
+  encrypted, provider retention/training/logging use is disclosed and bounded,
+  consent is revocable, and request/response provenance is auditable. Dependency
+  on someone else's roadmap and on network availability.
 - **Do not grade** postflop multiway at all in early versions — ship
   preflop + heads-up postflop mastery only, and mark everything else
   `heuristic`. Honest, and still valuable (preflop leaks are common and
@@ -498,9 +514,11 @@ all:
 Kill criterion: every trustworthy reference must be usable under rights that
 match its actual delivery mode — embedding and redistribution rights for a
 shipped lookup, or server-side commercial serving/derived-output rights for a
-non-distributed feed. If neither compliant path is available at absorbable cost,
-postflop mastery is deferred and the app ships preflop-first — it is **not**
-faked with heuristics dressed as solver output.
+non-distributed feed. A remote feed must also pass the consent, data-minimization,
+transport, retention/use, audit, revocation, and local-only fallback boundary
+above. If no compliant path is available at absorbable cost, postflop mastery is
+deferred and the app ships preflop-first — it is **not** faked with heuristics
+dressed as solver output.
 
 ### 5.4 The `llm_advice_provider`'s correct role
 
@@ -629,10 +647,13 @@ Drills draw from the player's _own_ hands first (their real leaks), which is the
 wedge incumbents are weak at, and can be topped up with library spots for the
 same concept when the player's own sample is thin.
 
-The dogfooding comprehension check uses a fixed pair of reviewed, solved library
-spots for one concept: one teaching example and one unseen transfer question.
-This assessment is not a personal drill, does not assert that the non-player has
-a leak, and does not update mastery or proof-of-learning metrics.
+The dogfooding comprehension check draws from a versioned, blinded pool of
+reviewed, solved library spots matched by concept, revisions, coverage, and
+difficulty. Each attempt uses a teaching example and a fresh holdout the builder
+has never attempted; the holdout and answer remain blinded until submission,
+retries never reuse a prior holdout, and the pool is rotated/replenished before
+exhaustion. This assessment is not a personal drill, does not assert that the
+non-player has a leak, and does not update mastery or proof-of-learning metrics.
 
 ### 6.6 Spaced repetition
 
@@ -709,9 +730,10 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
   actual delivery mode (embedding/redistribution for shipped lookups or
   commercial serving/derived-output rights for server-only feeds), immutable
   policy revisions, complete mixed-strategy support, and declared
-  table-size/position and cash/tournament economic assumptions. If preflop
-  sourcing fails, the teaching loop does not have a trustworthy MVP grading
-  floor.
+  table-size/position and cash/tournament economic assumptions. Any server-only
+  feed must also pass the explicit-consent and minimized outbound-data boundary
+  in §5.3 while preserving a local-only mode. If preflop sourcing fails, the
+  teaching loop does not have a trustworthy MVP grading floor.
 - _Safety prerequisite:_ before any Phase 1 user validation, remove screenshot
   upload, live window/screen/tab capture, and recommendation automation from the
   player workflow. Preserve capture/upload only in the disabled-by-default,
@@ -731,15 +753,16 @@ reshapes the product; a failed safety prerequisite blocks Phase 1.
   feedback → active-recall drill → spaced repetition.
 - Tested on the two-person dogfooding pair (Target user & boundaries §): the
   poker-player friend for grading correctness, the non-player builder for
-  comprehensibility through the fixed solved-library transfer assessment.
+  comprehensibility through the blinded solved-library transfer assessment.
 - Success metric (**both required**): (a) on a real session the app surfaces a
   leak the friend did not already know he had ("huh, I do that?"), and after
   drilling a _later_ session shows that leak measurably closing; **and** (b) the
   non-player builder can explain one taught principle in plain language and apply
-  it correctly to the fixed new, unseen solved-library spot for the same concept.
-  The builder's assessment does not create a leak or mastery record. If (a)
-  fails, grading or the mastery model is unproven; if (b) fails, the teaching is
-  unproven — and no amount of UI polish fixes either.
+  it correctly to a fresh blinded solved-library holdout for the same concept.
+  Every retry uses a holdout they have never attempted. The builder's assessment
+  does not create a leak or mastery record. If (a) fails, grading or the mastery
+  model is unproven; if (b) fails, the teaching is unproven — and no amount of UI
+  polish fixes either.
 
 **Phase 2 — breadth**
 
