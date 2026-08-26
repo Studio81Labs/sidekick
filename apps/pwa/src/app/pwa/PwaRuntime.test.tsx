@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PwaRuntime } from "./PwaRuntime";
@@ -13,10 +19,17 @@ const lifecycle = vi.hoisted(() => ({
   activated: false,
   activating: false,
   available: true,
+  prepareForReload: null as null | (() => void),
 }));
 
 vi.mock("./useServiceWorkerLifecycle", () => ({
-  useServiceWorkerLifecycle: () => lifecycle,
+  useServiceWorkerLifecycle: (
+    _safety: unknown,
+    prepareForReload: () => void,
+  ) => {
+    lifecycle.prepareForReload = prepareForReload;
+    return lifecycle;
+  },
 }));
 
 function SafetySource({ reasons }: { reasons: UpdateSafetyReasons }) {
@@ -39,6 +52,7 @@ beforeEach(() => {
   lifecycle.activated = false;
   lifecycle.activating = false;
   lifecycle.available = true;
+  lifecycle.prepareForReload = null;
   vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
 });
 
@@ -75,7 +89,7 @@ describe("PWA runtime status and update handoff", () => {
     expect(screen.queryByRole("button")).toBeNull();
   });
 
-  it("guards an unsafe unload but permits the confirmed update reload", () => {
+  it("guards unload until the confirmed update is actually reloading", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     renderRuntime({ busy: [], dirty: ["training answer"] });
 
@@ -84,6 +98,11 @@ describe("PWA runtime status and update handoff", () => {
     expect(unsafeUnload.defaultPrevented).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Discard and reload" }));
+    const deferredUnload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(deferredUnload);
+    expect(deferredUnload.defaultPrevented).toBe(true);
+
+    act(() => lifecycle.prepareForReload?.());
     const confirmedUnload = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(confirmedUnload);
     expect(confirmedUnload.defaultPrevented).toBe(false);

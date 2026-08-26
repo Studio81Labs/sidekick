@@ -2,6 +2,7 @@
 
 import {
   POKER_HERO_CACHE_PREFIX,
+  isHtmlContentType,
   isNetworkOnlyPath,
 } from "../../shared/pwa/serviceWorkerPolicy";
 
@@ -65,7 +66,11 @@ worker.addEventListener("fetch", (event) => {
 async function networkFirstNavigation(request: Request): Promise<Response> {
   try {
     const response = await fetch(request);
-    if (response.ok && response.type === "basic") {
+    if (
+      response.ok &&
+      response.type === "basic" &&
+      isHtmlContentType(response.headers.get("content-type"))
+    ) {
       const cache = await caches.open(CACHE_NAME);
       await cache.put("/", response.clone()).catch(() => undefined);
     }

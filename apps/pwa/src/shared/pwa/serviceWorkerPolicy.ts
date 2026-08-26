@@ -23,3 +23,7 @@ export function isNetworkOnlyPath(pathname: string): boolean {
 export function isContentAddressedAssetPath(pathname: string): boolean {
   return /^\/assets\/.+-[A-Za-z0-9_-]{8,}\.[^/]+$/.test(pathname);
 }
+
+export function isHtmlContentType(contentType: string | null): boolean {
+  return contentType?.split(";", 1)[0]?.trim().toLowerCase() === "text/html";
+}

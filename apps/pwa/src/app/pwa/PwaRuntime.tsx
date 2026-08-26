@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import "./PwaRuntime.css";
 import { useServiceWorkerLifecycle } from "./useServiceWorkerLifecycle";
@@ -6,9 +12,15 @@ import { useUpdateSafetySnapshot } from "../../shared/pwa/updateSafety";
 
 export function PwaRuntime() {
   const safety = useUpdateSafetySnapshot();
-  const update = useServiceWorkerLifecycle(safety);
-  const [online, setOnline] = useState(() => navigator.onLine);
   const permitNextUnloadRef = useRef(false);
+  const prepareForUpdateReload = useCallback(() => {
+    permitNextUnloadRef.current = true;
+    window.setTimeout(() => {
+      permitNextUnloadRef.current = false;
+    }, 0);
+  }, []);
+  const update = useServiceWorkerLifecycle(safety, prepareForUpdateReload);
+  const [online, setOnline] = useState(() => navigator.onLine);
 
   useEffect(() => {
     const onOnline = () => setOnline(true);
@@ -42,10 +54,7 @@ export function PwaRuntime() {
         "Discard every unsaved Poker Hero draft and reload the update?",
       )
     ) {
-      permitNextUnloadRef.current = true;
-      if (!update.activate(true)) {
-        permitNextUnloadRef.current = false;
-      }
+      update.activate(true);
     }
   }
 

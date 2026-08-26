@@ -158,6 +158,10 @@ test("opens the cached shell offline without caching private routes", async ({
     ),
   ).toBe(true);
 
+  // A direct navigation to a successful non-HTML resource must never replace
+  // the cached document shell stored under `/`.
+  await page.goto("/manifest.webmanifest");
+
   await context.setOffline(true);
   try {
     await page.goto("/offline-shell-proof");

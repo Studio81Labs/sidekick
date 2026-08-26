@@ -14,13 +14,30 @@ const INITIAL_STATE: ServiceWorkerUpdateState = {
   available: false,
 };
 
-export function useServiceWorkerLifecycle(safety: UpdateSafetySnapshot) {
+export function shouldReloadForControllerChange(
+  activationRequestedHere: boolean,
+  safety: UpdateSafetySnapshot,
+  discardConfirmed: boolean,
+): boolean {
+  return (
+    activationRequestedHere &&
+    !safety.isBusy &&
+    (!safety.isDirty || discardConfirmed)
+  );
+}
+
+export function useServiceWorkerLifecycle(
+  safety: UpdateSafetySnapshot,
+  prepareForReload: () => void,
+) {
   const [state, setState] = useState(INITIAL_STATE);
   const waitingRef = useRef<ServiceWorker | null>(null);
   const activationRequestedRef = useRef(false);
   const discardConfirmedRef = useRef(false);
   const safetyRef = useRef(safety);
+  const prepareForReloadRef = useRef(prepareForReload);
   safetyRef.current = safety;
+  prepareForReloadRef.current = prepareForReload;
 
   useEffect(() => {
     if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return;
@@ -28,6 +45,7 @@ export function useServiceWorkerLifecycle(safety: UpdateSafetySnapshot) {
     let cancelled = false;
     let registration: ServiceWorkerRegistration | null = null;
     let installing: ServiceWorker | null = null;
+    let controller = navigator.serviceWorker.controller;
 
     const publishWaitingWorker = (worker: ServiceWorker | null) => {
       if (cancelled || !worker) return;
@@ -70,15 +88,26 @@ export function useServiceWorkerLifecycle(safety: UpdateSafetySnapshot) {
       if (document.visibilityState === "visible") onReturnToApp();
     };
     const onControllerChange = () => {
-      if (!activationRequestedRef.current) return;
+      const previouslyControlled = controller !== null;
+      controller = navigator.serviceWorker.controller;
+      if (!previouslyControlled) return;
+
+      const activationRequestedHere = activationRequestedRef.current;
+      activationRequestedRef.current = false;
       waitingRef.current = null;
       const current = safetyRef.current;
-      const mayReload =
-        !current.isBusy && (!current.isDirty || discardConfirmedRef.current);
-      if (mayReload) {
+      if (
+        shouldReloadForControllerChange(
+          activationRequestedHere,
+          current,
+          discardConfirmedRef.current,
+        )
+      ) {
+        prepareForReloadRef.current();
         window.location.reload();
         return;
       }
+      discardConfirmedRef.current = false;
       setState({ activated: true, activating: false, available: true });
     };
 
@@ -118,6 +147,7 @@ export function useServiceWorkerLifecycle(safety: UpdateSafetySnapshot) {
     (discardDirty: boolean) => {
       if (safety.isBusy || (safety.isDirty && !discardDirty)) return false;
       if (state.activated) {
+        prepareForReloadRef.current();
         window.location.reload();
         return true;
       }
