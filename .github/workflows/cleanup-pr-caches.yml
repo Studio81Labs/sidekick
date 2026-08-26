@@ -66,6 +66,7 @@ jobs:
           fi
 
           COUNT=0
+          FAILURES=0
           for ID in $IDS; do
             if DELETE_OUTPUT=$(gh api -X DELETE "repos/${REPO}/actions/caches/${ID}" 2>&1); then
               COUNT=$((COUNT + 1))
@@ -76,8 +77,13 @@ jobs:
             else
               echo "::error::failed to delete cache ${ID}"
               printf '%s\n' "$DELETE_OUTPUT" >&2
-              exit 1
+              FAILURES=$((FAILURES + 1))
             fi
           done
+
+          if [ "$FAILURES" -gt 0 ]; then
+            echo "::error::Failed to delete ${FAILURES} cache(s) for ${REF}"
+            exit 1
+          fi
 
           echo "::notice::Deleted ${COUNT} cache(s) for ${REF}"
