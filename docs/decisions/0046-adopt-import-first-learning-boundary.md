@@ -92,9 +92,14 @@ extraction, and benchmarked reference gates. The current V1 architecture
 reference continues to describe deployed behavior until those migrations land.
 
 Legacy screenshot jobs and V1 training analytics remain readable/auditable but
-are not silently promoted into V2 mastery. A migration may include a legacy hand
-only after it satisfies the V2 approval and trustworthy-grade gates. Backups must
-preserve layer/revision provenance and restore idempotently without merging
+cannot be promoted into V2 canonical hands, decisions, mastery, drills, or proof
+metrics. They lack the qualifying imported ordered action stream and real table
+action; neither later approval nor a trustworthy grade can supply that missing
+provenance. The underlying historical hand may enter V2 only through a new
+qualifying hand-history import with its own stable identity and source
+chronology. A V1 screenshot, recommendation, or pre-reveal training answer is
+never reinterpreted as played-hand evidence. Backups must preserve
+layer/revision provenance and restore idempotently without merging
 administrative test data into player learning state.
 
 ## Rollout And Rollback

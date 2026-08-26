@@ -328,29 +328,41 @@ client layouts:
 - Test data is visibly marked, separately retained, and excluded from player
   exports, learning analytics, and proof-of-learning metrics.
 
+Legacy V1 screenshot jobs and training answers remain audit-only. They cannot be
+converted into canonical V2 hands or learning evidence because they do not
+contain the imported ordered action stream and real table action required by
+§3.3. A historical hand can enter V2 only through a new qualifying
+hand-history import; the V1 screenshot, recommendation, or pre-reveal answer is
+never reinterpreted as played-hand provenance.
+
 This boundary preserves recognition development without exposing a workflow
 that could be used as real-time poker assistance. Authorization must be enforced
 by the backend/Worker boundary; frontend visibility alone is insufficient.
 
 ---
 
-## 4. The player's real action vs. the study prediction
+## 4. The player's real action vs. a later study prediction
 
-Import gives the real table decision. But the strongest learning lever is
-_active recall_, so V2 captures up to two signals per decision point:
+Import gives the real table decision. Active recall adds a second, explicitly
+later signal, so V2 captures up to two signals per decision point:
 
 - **Table action** — what the player actually did, live, under real conditions
   (from the imported history).
 - **Study prediction** (optional) — in drill/replay mode the hand is replayed to
-  a decision point with the outcome hidden, and the player predicts what they'd
-  do now, in calm study conditions.
+  a decision point with the outcome hidden, and the player predicts what they
+  would do now, in calm study conditions. The attempt records its own timestamp
+  and whether any Poker Hero feedback for that decision/concept had already been
+  revealed.
 
-The divergence between them is itself a lesson: "at the table you flatted; in
-study you say 3-bet, and 3-bet is right — you know this, it escaped you live."
-That gap distinguishes a _knowledge_ leak (you don't know the right play) from an
-_execution_ leak (you know it but miss it in the moment), and they need different
-remedies. This is richer than V1's single locked answer and is a core V2
-capability.
+Their divergence is a useful **temporal comparison** between historical table
+behavior and current study knowledge. It does not prove what the player knew
+when the hand was played: later review, drills, or outside study may have changed
+their knowledge. Even a prediction captured before Poker Hero reveals feedback
+is only a clean current baseline, not proof of historical knowledge. The product
+therefore does not classify a single divergence as an execution-versus-knowledge
+leak or choose a remedy on that basis. Remedy selection requires repeated
+prediction evidence plus genuinely later imported play (§6.7). This remains
+richer than V1's single locked answer without inventing chronology.
 
 ---
 
@@ -404,12 +416,12 @@ Every graded decision carries a `grade_source`:
 `grade_source: solved` is necessary but not sufficient for right/wrong grading.
 Each solved result also preserves the reference policy for the resolved spot:
 supported actions and sizings, their frequencies when available, candidate EVs,
-the matched economic assumptions, and the immutable reference/policy/tolerance
-revision used to decide support. The player's action is a supported policy match
-when it has meaningful reference frequency or is within the accepted
-EV-equivalence tolerance, even when it is not the solver's headline action. Such
-a mixed-strategy alternative is not a mistake and cannot create a leak or
-corrective drill.
+the EV/cost unit and utility-model provenance, the matched economic assumptions,
+and the immutable reference/policy/tolerance revision used to decide support.
+The player's action is a supported policy match when it has meaningful reference
+frequency or is within the accepted EV-equivalence tolerance, even when it is
+not the solver's headline action. Such a mixed-strategy alternative is not a
+mistake and cannot create a leak or corrective drill.
 
 Only an action outside the complete solved policy support can be called a
 mistake and contribute an error to mastery. If the reference response omits the
@@ -551,10 +563,17 @@ but do not support directional regression or proof-of-learning claims.
 
 ### 6.3 Prioritization
 
-Leaks are ranked by **frequency × EV cost**, so a recurring, fixable, expensive
-error outranks a one-off cooler. The primary actionable surface is "your biggest
-leaks right now," each expressed as a concept in plain language ("you defend the
-big blind too tight vs button opens"), not as a hand list.
+Within one comparable economic/utility stratum, leaks are ranked by **frequency
+× EV cost**, so a recurring, fixable, expensive error outranks a one-off
+cooler. Cash big-blind EV, tournament chip EV, ICM utility, bounty utility, and
+other models are not directly comparable. Every cost retains its unit and
+utility-model provenance, and the default product maintains separate priority
+queues for incompatible strata. A single cross-format ranking is allowed only
+when a validated, versioned normalization explicitly maps those units with
+visible uncertainty; raw costs are never mixed. The actionable surface shows
+the biggest leaks for the selected comparable context, each expressed as a
+concept in plain language ("you defend the big blind too tight vs button
+opens"), not as a hand list.
 
 ### 6.4 Feedback — elaborative, principle-first
 
