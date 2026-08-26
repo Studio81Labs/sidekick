@@ -212,9 +212,10 @@ IDENTICAL = [
     ".github/workflows/cleanup-pr-caches.yml",
     ".github/workflows/format-check.yml",
     ".github/workflows/prune-stale-caches.yml",
-    # check-release-tag.sh is deliberately excluded: each topology reads a
-    # different canonical version source. The reusable workflow's job name is
-    # still compared, with that version-source difference documented below.
+    # The implementation is shared by the Flutter siblings. Poker Hero and the
+    # React Native sibling use a different canonical version topology, so the
+    # pubspec marker below keeps this byte comparison on the Flutter pair.
+    "scripts/ci/check-release-tag.sh",
     # check-semgrep-fixture.py is topology-neutral and must stay identical.
     "scripts/ci/check-semgrep-fixture.py",
     "scripts/ci/compare-marketing-version.py",
@@ -243,6 +244,7 @@ IDENTICAL = [
 # from two repositories that both still declare the surface remains a finding.
 TOPOLOGY_GATED = {
     "scripts/lib/resolve-flutter.sh": ("apps/mobile/pubspec.yaml",),
+    "scripts/ci/check-release-tag.sh": ("apps/mobile/pubspec.yaml",),
     "scripts/ci/check-podfile-lock.py": ("apps/mobile/pubspec.yaml",),
     ".github/workflows/flutter-pin-check.yml": ("apps/mobile/pubspec.yaml",),
     ".github/workflows/admin-ci.yml": ("apps/admin/package.json",),
@@ -300,7 +302,7 @@ JOB_NAME_WORKFLOWS = [
 # no longer holds is how this list stays honest; an entry that outlives its
 # reason silently suppresses real drift, the same failure mode as an override
 # that matches nothing.
-EXPECTED_JOB_DIFFS = {
+POKER_JOB_DIFFS = {
     # Poker Hero's FastAPI backend validates an exported OpenAPI artifact and a
     # separately built runtime image; the Node siblings typecheck/build in one
     # job and add database-specific jobs. These job ids are implementation
@@ -309,6 +311,16 @@ EXPECTED_JOB_DIFFS = {
     (".github/workflows/backend-ci.yml", "image"): "backend language topology (Node build vs FastAPI artifact/image jobs)",
     (".github/workflows/backend-ci.yml", "prepare-openapi"): "backend language topology (Node build vs FastAPI artifact/image jobs)",
     (".github/workflows/backend-ci.yml", "test"): "backend language topology (Node build vs FastAPI artifact/image jobs)",
+    # Poker Hero's OpenAPI context is required on every PR, so it detects paths
+    # inside the workflow and ends at an always-emitted gate. The siblings'
+    # contract checks are not required contexts and remain one validate job.
+    (".github/workflows/openapi-check.yml", "changes"): "required contract-gate topology",
+    (".github/workflows/openapi-check.yml", "gate"): "required contract-gate topology",
+    (".github/workflows/openapi-check.yml", "prepare-openapi"): "required contract-gate topology",
+    (".github/workflows/openapi-check.yml", "validate"): "required contract-gate topology",
+}
+
+EXPECTED_JOB_DIFFS = {
     # The mobile flavors differ: one repo has per-flavor source sets and a
     # per-flavor google-services.json, the other's flavors differ only by
     # applicationIdSuffix. The android half of the format/analyze job therefore
@@ -332,13 +344,6 @@ EXPECTED_JOB_DIFFS = {
     # untypechecked spec files, which is debt rather than topology.
     (".github/workflows/backend-ci.yml", "schema"): "backend test topology (schema-from-zero vs full e2e)",
     (".github/workflows/backend-ci.yml", "test-e2e"): "backend test topology (schema-from-zero vs full e2e)",
-    # Poker Hero's OpenAPI context is required on every PR, so it detects paths
-    # inside the workflow and ends at an always-emitted gate. The siblings'
-    # contract checks are not required contexts and remain one validate job.
-    (".github/workflows/openapi-check.yml", "changes"): "required contract-gate topology",
-    (".github/workflows/openapi-check.yml", "gate"): "required contract-gate topology",
-    (".github/workflows/openapi-check.yml", "prepare-openapi"): "required contract-gate topology",
-    (".github/workflows/openapi-check.yml", "validate"): "required contract-gate topology",
     # tarmoto's backend-deploy.yml is a workflow_call-only reusable workflow
     # gated by its deploy.yml ORCHESTRATOR (which sequences ingest before
     # backend — a constraint the Prisma pair do not have); the gate job
@@ -1500,7 +1505,18 @@ def compare(local_read, sibling_read) -> list[dict]:
                 {"kind": "jobname", "name": path, "detail": f"could not read jobs — {broken}"}
             )
             continue
+        # Poker's FastAPI/runtime-image and always-emitted contract-gate jobs
+        # are pair-specific. Do not let those exemptions hide drift between the
+        # three Node siblings: activate them only when exactly one side carries
+        # the Python backend topology marker.
+        poker_pair = (
+            local_read("apps/backend/pyproject.toml") is None
+        ) != (
+            sibling_read("apps/backend/pyproject.toml") is None
+        )
         for job in sorted(set(ours) | set(theirs)):
+            if poker_pair and (path, job) in POKER_JOB_DIFFS:
+                continue
             if (path, job) in EXPECTED_JOB_DIFFS:
                 continue
             our_name, their_name = ours.get(job), theirs.get(job)
@@ -2539,6 +2555,18 @@ def self_test() -> int:
     against = {MOB: jobs_yaml(("mobile", "mobile: b"), ("other", "mobile: y")), MARKER: "name: app\n"}
     found = [f for f in compare(repo(**allowed).get, repo(**against).get) if f["kind"] == "jobname"]
     assert len(found) == 1 and "`other`" in found[0]["detail"], found
+
+    # Poker-only exceptions activate for a Python-vs-Node comparison, but must
+    # not silence the same job ids when two Node siblings are compared.
+    BACK = ".github/workflows/backend-ci.yml"
+    node_a = {BACK: jobs_yaml(("build", "backend: build a"))}
+    node_b = {BACK: jobs_yaml(("build", "backend: build b"))}
+    found = [f for f in compare(repo(**node_a).get, repo(**node_b).get) if f["kind"] == "jobname"]
+    assert any("`build`" in f["detail"] for f in found), found
+    python_side = dict(node_a)
+    python_side["apps/backend/pyproject.toml"] = "[project]\nname = 'fixture'\n"
+    found = [f for f in compare(repo(**python_side).get, repo(**node_b).get) if f["kind"] == "jobname"]
+    assert not any("`build`" in f["detail"] for f in found), found
 
     print("check-sibling-drift self-test passed")
     return 0
