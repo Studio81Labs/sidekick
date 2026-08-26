@@ -179,6 +179,9 @@ Concrete convergence rules:
   quick merges cannot cancel validation of an intervening `main` commit;
 - use the same pinned GitHub Action revisions across all four repositories;
 - use job names in `<area>: <what it proves>` form;
+- whenever that naming change affects a required check, atomically replace the
+  old context in the `main` ruleset or branch protection with the exact emitted
+  context before relying on the renamed workflow;
 - keep deployment promotion as `main` to staging, `v*` to production, and
   explicit manual environment selection;
 - require the release-version gate before every production-capable deploy;
@@ -206,6 +209,9 @@ creating permanent topology noise.
 Acceptance gates:
 
 - every workflow parses and every referenced local reusable workflow exists;
+- every final required-check context matches a check emitted by the converged
+  workflows, no superseded context remains required, and a test PR cannot merge
+  before those checks succeed;
 - CI helper self-tests pass locally;
 - formatting and security scans pass on the migration branch;
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
