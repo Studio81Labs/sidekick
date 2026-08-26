@@ -111,8 +111,8 @@ Acceptance gates:
 - no live reference to `apps/frontend` remains outside archived documentation;
 - `pnpm pwa:test`, `pnpm pwa:performance`, and `pnpm test:e2e` pass;
 - both Docker images build from the repository root;
-- `docker compose -f infra/docker/docker-compose.yml config` succeeds after the
-  Compose filename change in Wave 3.
+- `docker compose -f infra/docker/compose.yaml config` succeeds using the
+  pre-alignment Compose filename.
 
 ### Wave 2: Extract The API Contract Packages
 
@@ -166,6 +166,9 @@ Concrete convergence rules:
   explicit manual environment selection;
 - require the release-version gate before every production-capable deploy;
 - include every Docker/workspace/CI script input in deployment path filters;
+- rename `infra/docker/compose.yaml` to the portfolio-standard
+  `infra/docker/docker-compose.yml` and update every script and current
+  documentation reference atomically;
 - update to the portfolio pnpm pin and enable the common
   `minimumReleaseAge`, `blockExoticSubdeps`, and `trustPolicy` posture;
 - extend `github>Studio81Labs/.github:renovate-base`, retaining only Poker
@@ -185,6 +188,8 @@ Acceptance gates:
 - CI helper self-tests pass locally;
 - formatting and security scans pass on the migration branch;
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
+- `docker compose -f infra/docker/docker-compose.yml config` succeeds after the
+  Compose rename;
 - a dry local four-way drift comparison reports only documented topology
   differences;
 - the required `SIBLING_READ_TOKEN` secret is configured before enabling the
