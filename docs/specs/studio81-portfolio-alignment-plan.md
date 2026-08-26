@@ -222,10 +222,10 @@ Concrete convergence rules:
   quick merges cannot cancel validation of an intervening `main` commit;
 - use the same pinned GitHub Action revisions across all four repositories;
 - pin every external container image used by production Dockerfiles, CI
-  workflows, or scripts, including the backend CI `docker run` Rust image and
-  the backend and PWA build/runtime images, to an immutable SHA-256 digest while
-  retaining its readable version tag, and configure Renovate to update those
-  pins;
+  workflows, or scripts, including Dockerfile `# syntax` frontend images, the
+  backend CI `docker run` Rust image, and the backend and PWA build/runtime
+  images, to an immutable SHA-256 digest while retaining its readable version
+  tag, and configure Renovate to update those pins;
 - generate committed production and development Python lockfiles with complete
   transitive pins and hashes from `apps/backend/pyproject.toml` using a pinned
   compiler; require a no-diff freshness check; install the development lock in
@@ -293,10 +293,10 @@ Acceptance gates:
 - the PWA deployment reports the declared lockfile-pinned Wrangler version and
   no deployment workflow contains `pnpm dlx wrangler@latest` or another
   floating CLI invocation;
-- every Dockerfile base and CI workflow or script `container`, `services`, or
-  `docker run` image uses a tag plus `@sha256:` digest, Renovate recognizes each
-  pin, both application images build, and the solver CI job passes from those
-  pins;
+- every Dockerfile `# syntax` frontend and `FROM` base, plus every CI workflow or
+  script `container`, `services`, or `docker run` image, uses a tag plus
+  `@sha256:` digest; Renovate recognizes each pin, both application images
+  build, and the solver CI job passes from those pins;
 - CI helper self-tests pass locally;
 - formatting and security scans pass on the migration branch;
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
