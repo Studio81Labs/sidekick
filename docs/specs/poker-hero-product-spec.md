@@ -7,6 +7,8 @@ and its linked Phase [0](https://github.com/Studio81Labs/poker-hero/issues/405),
 [1](https://github.com/Studio81Labs/poker-hero/issues/406),
 [2](https://github.com/Studio81Labs/poker-hero/issues/407), and
 [3](https://github.com/Studio81Labs/poker-hero/issues/408) epics.
+The durable player/operator, persistence, and migration boundary is recorded in
+[ADR 0046](../decisions/0046-adopt-import-first-learning-boundary.md).
 
 ---
 
@@ -87,13 +89,14 @@ experiences.
 
 ### This does not change the V2 architecture
 
-The reference for grading remains solver/chart (§5); there is no other source of
-truth about the correct action, and that inherently assumes a player who knows
-the vocabulary. What the primary-user choice adds is a **pedagogical / onboarding
-layer on top of the existing model**: the app teaches its own vocabulary
-progressively (what a 3-bet is, position, range, EV), principle-first (§6.4), and
-throttles density so the studying-but-not-expert user is never drowned in EV-loss
-decimals. It is a layer over the skill tree, not a second skill tree.
+The reference for grading remains a solved chart/tree (§5), but it is an
+educational model conditional on its verified inputs, economics, abstractions,
+policy revision, and tolerances — not universal or guaranteed optimal play. What
+the primary-user choice adds is a **pedagogical / onboarding layer on top of the
+existing model**: the app teaches its own vocabulary progressively (what a 3-bet
+is, position, range, EV), principle-first (§6.4), and throttles density so the
+studying-but-not-expert user is never drowned in EV-loss decimals. It is a layer
+over the skill tree, not a second skill tree.
 
 ### Consequence for validation (the dogfooding pair)
 
@@ -197,6 +200,9 @@ or contribute to proof-of-learning metrics.
   not an implicit role granted to every local user. Screenshot upload and live
   capture fail closed when the administrative test mode is disabled or the
   caller is unauthorized.
+- **Solved policy is educational reference guidance.** Player-facing grades,
+  recommendations, principles, mastery, and drills state the policy assumptions
+  and uncertainty and never claim guaranteed optimal play or guaranteed results.
 
 ---
 
@@ -409,8 +415,13 @@ Only an action outside the complete solved policy support can be called a
 mistake and contribute an error to mastery. If the reference response omits the
 policy detail needed to distinguish a supported mix from an error, the decision
 remains visible as solved evidence but ungraded for mastery and drills. Aggregate
-frequency adherence may be shown as diagnostic detail, but it does not
-retroactively turn an individually supported action into a mistake.
+frequency adherence is evaluated separately over sufficiently large samples of
+comparable decisions under the same reference and taxonomy revisions. A
+statistically meaningful, material systematic deviation from the solved mix is
+concept-level mastery/leak evidence, even when each individual action was
+supported. It may prevent Mastered or prioritize practice, but it never
+retroactively labels an individual supported realization a mistake. Small or
+non-comparable samples remain diagnostic only.
 
 Solved eligibility also requires evidence that every route-critical canonical
 input matches the reference. A provider fallback or default for effective stack,
@@ -422,9 +433,12 @@ revision. A new chart, solved tree, economic model, or support tolerance is
 staged and benchmarked before activation. It must then either atomically regrade
 all affected active decisions and rebuild mastery, drills, and proof metrics, or
 start a clearly separate mastery series; old and new policy classifications are
-never combined. Until migration succeeds, the prior revision stays active or
-the affected decisions are visibly excluded. Historical grades retain their
-original reference revision for audit.
+never combined. Activation also requires a human-reviewed principle version
+compatible with the new reference and taxonomy for every affected concept that
+can appear in review or drills. Until migration and teaching-content approval
+succeed, the prior revision stays active or the affected decisions are visibly
+excluded; the new revision cannot schedule drills. Historical grades retain
+their original reference revision for audit.
 
 This directly prevents the app from teaching wrong things. A player can never
 have a leak "detected" or drilled on the basis of a guess. It also makes the
@@ -520,6 +534,12 @@ recent play degrades. Mastery is a function of mixed-strategy-aware
 supported-policy accuracy on solved-graded decisions, sample size (for
 confidence), recency (recent play weighted higher), and EV-loss magnitude (a
 small-but-constant error can still be a Leak).
+
+For mixed policies, mastery also measures aggregate action/sizing frequency
+calibration across sufficiently comparable decisions with versioned confidence,
+sample-size, and materiality thresholds. Systematically overusing a supported
+low-frequency action can block Mastered or become leak evidence without changing
+the supported status of any single realization.
 
 A **leak is a concept where the player systematically deviates from the
 reference**; that is the object the app teaches against — not an individual
@@ -712,6 +732,9 @@ Poker Hero V2 is successful when:
 - Feedback teaches a **transferable principle**, verifiable by the player
   applying it to a new, unseen spot for the same concept; every displayed
   principle is human-reviewed, approved, and versioned.
+- All grades, recommendations, principles, mastery states, and drills are framed
+  as conditional educational reference guidance, never guaranteed optimal play
+  or guaranteed outcomes.
 - The player can **drill their own leaks** via active recall, with missed spots
   spaced-repeated.
 - The app **proves it taught**: a previously flagged leak is re-measured on later

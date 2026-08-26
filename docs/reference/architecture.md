@@ -9,6 +9,11 @@ update lifecycle are defined by
 Cross-repository drift access, credential ownership, and incident handling are
 defined by
 [ADR 0045](../decisions/0045-enroll-portfolio-sibling-drift-access.md).
+The V2 target player/operator boundary, import-first persistence lifecycle, and
+capture-first migration are defined by
+[ADR 0046](../decisions/0046-adopt-import-first-learning-boundary.md). This
+reference continues to describe the currently deployed V1 architecture until
+the ADR's gated migration work is implemented.
 
 ## System Shape
 
