@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   isContentAddressedAssetPath,
-  isHtmlContentType,
   isNetworkOnlyPath,
 } from "./serviceWorkerPolicy";
 
@@ -44,19 +43,4 @@ describe("service-worker route policy", () => {
   ])("rejects mutable asset path %s", (pathname) => {
     expect(isContentAddressedAssetPath(pathname)).toBe(false);
   });
-
-  it.each([
-    "text/html",
-    "text/html; charset=utf-8",
-    " TEXT/HTML ; charset=UTF-8",
-  ])("accepts HTML shell content type %s", (contentType) => {
-    expect(isHtmlContentType(contentType)).toBe(true);
-  });
-
-  it.each([null, "application/json", "image/svg+xml", "text/plain"])(
-    "rejects non-HTML shell content type %s",
-    (contentType) => {
-      expect(isHtmlContentType(contentType)).toBe(false);
-    },
-  );
 });

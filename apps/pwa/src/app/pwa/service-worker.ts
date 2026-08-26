@@ -2,9 +2,9 @@
 
 import {
   POKER_HERO_CACHE_PREFIX,
-  isHtmlContentType,
   isNetworkOnlyPath,
 } from "../../shared/pwa/serviceWorkerPolicy";
+import { networkFirstNavigation } from "./serviceWorkerRuntime";
 
 const worker = self as unknown as ServiceWorkerGlobalScope;
 const CACHE_NAME = "__POKER_HERO_CACHE_NAME__";
@@ -54,7 +54,7 @@ worker.addEventListener("fetch", (event) => {
   }
 
   if (request.mode === "navigate") {
-    event.respondWith(networkFirstNavigation(request));
+    event.respondWith(networkFirstNavigation(request, CACHE_NAME));
     return;
   }
 
@@ -62,26 +62,6 @@ worker.addEventListener("fetch", (event) => {
     event.respondWith(contentAddressedAsset(request, url.pathname));
   }
 });
-
-async function networkFirstNavigation(request: Request): Promise<Response> {
-  try {
-    const response = await fetch(request);
-    if (
-      response.ok &&
-      response.type === "basic" &&
-      isHtmlContentType(response.headers.get("content-type"))
-    ) {
-      const cache = await caches.open(CACHE_NAME);
-      await cache.put("/", response.clone()).catch(() => undefined);
-    }
-    return response;
-  } catch (error) {
-    const cache = await caches.open(CACHE_NAME);
-    const shell = await cache.match("/");
-    if (shell) return shell;
-    throw error;
-  }
-}
 
 async function contentAddressedAsset(
   request: Request,

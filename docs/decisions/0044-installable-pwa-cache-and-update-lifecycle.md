@@ -33,9 +33,11 @@ The install cache contains only:
 - exact emitted, content-addressed files below `/assets/`.
 
 Those asset URLs are cache-first because their content hashes make them
-immutable. Navigations are network-first; a successful navigation refreshes the
-cached `/` shell, and a network failure falls back to that shell. Cross-origin
-requests are never intercepted.
+immutable. Navigations are network-first; a successful navigation is returned
+without mutating the active worker's install cache, and a network failure falls
+back to that worker's install-time shell. This keeps the HTML paired with the
+hashed assets and policy from the same build until the waiting worker is
+explicitly activated. Cross-origin requests are never intercepted.
 
 Every request at `/api`, below `/api/`, or at the exact `/mcp` path is
 network-only. The path check fails closed for encoded equivalents. This excludes
@@ -59,7 +61,8 @@ initial registry covers:
 - edited lesson notes;
 - MCP administration drafts and an unacknowledged one-time credential;
 - active screen capture, upload, approval, recommendation, screenshot mutation,
-  backup restore, MCP mutation, and benchmark operations.
+  backup restore, training-review mutation, MCP mutation, and benchmark
+  operations.
 
 New local drafts and non-replayable operations must register before they ship.
 The same aggregate state guards browser unloads. When a worker is waiting, the
