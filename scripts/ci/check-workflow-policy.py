@@ -37,8 +37,15 @@ def validate_workflow(path: Path, root: Path) -> list[str]:
     for job_id, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        name = job.get("name", job_id)
-        if name != "Validate PR title" and ": " not in str(name):
+        name = job.get("name")
+        # Reusable workflow callers already supply the area-prefixed check
+        # name. Keeping an inner job unnamed renders the accurate bare job id
+        # (for example, `contract: openapi spec / export`) instead of a doubled
+        # area. All directly triggered workflows still require an explicit
+        # area/proof name.
+        if name is None and not path.name.startswith("_"):
+            errors.append(f"{path}:{job_id}: job name must use '<area>: <proof>'")
+        elif name is not None and name != "Validate PR title" and ": " not in str(name):
             errors.append(f"{path}:{job_id}: job name must use '<area>: <proof>'")
 
         reusable = job.get("uses")
@@ -112,6 +119,12 @@ def self_test() -> int:
         workflow.write_text("jobs:\n  test:\n    name: test\n    steps:\n      - uses: actions/checkout@v7\n")
         errors = validate_workflow(workflow, root)
         assert len(errors) == 2, errors
+        reusable = workflow.with_name("_reusable.yml")
+        reusable.write_text("jobs:\n  export:\n    runs-on: ubuntu-latest\n")
+        assert validate_workflow(reusable, root) == []
+        direct = workflow.with_name("direct.yml")
+        direct.write_text("jobs:\n  export:\n    runs-on: ubuntu-latest\n")
+        assert len(validate_workflow(direct, root)) == 1
     print("check-workflow-policy self-test passed")
     return 0
 
