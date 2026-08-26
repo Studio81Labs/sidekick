@@ -9,6 +9,22 @@ function invariant(condition, message) {
   if (!condition) throw new Error(`PWA build contract: ${message}`);
 }
 
+function lifecycleHandlerStart(source, eventName) {
+  return source.search(
+    new RegExp(`addEventListener\\(\\s*(["'\\x60])${eventName}\\1`),
+  );
+}
+
+for (const quote of ['"', "'", "`"]) {
+  invariant(
+    lifecycleHandlerStart(
+      `self.addEventListener(${quote}install${quote}, () => undefined)`,
+      "install",
+    ) >= 0,
+    `lifecycle parser does not accept ${quote} string literals`,
+  );
+}
+
 async function filesBelow(directory, prefix = "") {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = [];
@@ -58,8 +74,8 @@ invariant(
   worker.includes(expectedPrecache),
   "precache is not the exact emitted asset allowlist",
 );
-const installStart = worker.indexOf("addEventListener(`install`");
-const activateStart = worker.indexOf("addEventListener(`activate`");
+const installStart = lifecycleHandlerStart(worker, "install");
+const activateStart = lifecycleHandlerStart(worker, "activate");
 invariant(
   installStart >= 0 && activateStart > installStart,
   "worker lifecycle handlers are missing",
