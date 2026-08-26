@@ -4,7 +4,11 @@ import {
   POKER_HERO_CACHE_PREFIX,
   isNetworkOnlyPath,
 } from "../../shared/pwa/serviceWorkerPolicy";
-import { networkFirstNavigation } from "./serviceWorkerRuntime";
+import {
+  isExpectedPrecacheResponse,
+  networkFirstNavigation,
+  precacheVersion,
+} from "./serviceWorkerRuntime";
 
 const worker = self as unknown as ServiceWorkerGlobalScope;
 const CACHE_NAME = "__POKER_HERO_CACHE_NAME__";
@@ -12,9 +16,7 @@ const PRECACHE_URLS = "__POKER_HERO_PRECACHE_URLS__" as unknown as string[];
 const PRECACHE_PATHS = new Set(PRECACHE_URLS);
 
 worker.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(PRECACHE_URLS)),
-  );
+  event.waitUntil(precacheVersion(CACHE_NAME, PRECACHE_URLS));
 });
 
 worker.addEventListener("activate", (event) => {
@@ -72,7 +74,10 @@ async function contentAddressedAsset(
   if (cached) return cached;
 
   const response = await fetch(request);
-  if (response.ok && response.type === "basic") {
+  if (
+    response.type === "basic" &&
+    isExpectedPrecacheResponse(pathname, response)
+  ) {
     await cache.put(pathname, response.clone());
   }
   return response;

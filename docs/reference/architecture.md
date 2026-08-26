@@ -546,15 +546,21 @@ and install metadata. The worker owns the application-shell network boundary,
 so the source-architecture inventory grants only that exact module direct
 `fetch` access outside a domain API adapter.
 
+The install handler fetches and validates the whole version before writing it:
+`/` must be successful HTML, hashed assets must be successful non-HTML
+responses, and redirects are rejected. A validation or write failure deletes
+the version cache so no partial shell can activate.
+
 Navigations are network-first and may fall back to the cached `/` shell.
 Content-addressed bundles are cache-first. Cross-origin requests, `/api`, every
 path below `/api/`, and the exact `/mcp` path receive no service-worker
 response; encoded private equivalents fail closed. No runtime response outside
 the generated allowlist enters Cache Storage. The Cloudflare edge Worker runs
 before Static Assets to revalidate `/sw.js` and stable metadata while marking
-only successful hashed-bundle responses immutable. Missing assets remain
-revalidatable so a rollback can restore them. `apps/pwa/nginx.conf` applies the
-same header contract for the container deployment path.
+only successful non-HTML hashed-bundle responses immutable. Missing assets and
+successful HTML SPA fallbacks remain revalidatable so a rollback can restore
+them. `apps/pwa/nginx.conf` applies the same header contract for the container
+deployment path.
 
 `shared/pwa/updateSafety.tsx` aggregates named dirty and busy reasons from
 independent feature owners. The analyzer registers all correction, screenshot,

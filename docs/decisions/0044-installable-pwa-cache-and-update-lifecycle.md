@@ -32,6 +32,11 @@ The install cache contains only:
 - `/`, the minimum navigation shell; and
 - exact emitted, content-addressed files below `/assets/`.
 
+Installation fetches the complete version before writing it, requires an HTML
+shell and non-HTML successful asset responses, and deletes the version cache if
+validation or a cache write fails. A successful SPA fallback therefore cannot
+stand in for a missing bundle.
+
 Those asset URLs are cache-first because their content hashes make them
 immutable. Navigations are network-first; a successful navigation is returned
 without mutating the active worker's install cache, and a network failure falls
@@ -77,10 +82,10 @@ new worker may take control but reload remains deferred.
 The deployed edge Worker runs before static assets so it can apply response
 headers consistently. `/sw.js` is revalidated on every load and receives
 `Service-Worker-Allowed: /`; HTML and other stable-name metadata are revalidated;
-successful content-addressed `/assets/` files receive a one-year immutable cache
-policy. Missing asset responses remain revalidatable so a later rollback can
-restore that hash. The Nginx image applies the same header contract for its
-static deployment path.
+successful non-HTML content-addressed `/assets/` files receive a one-year
+immutable cache policy. Missing asset responses, including successful HTML SPA
+fallbacks, remain revalidatable so a later rollback can restore that hash. The
+Nginx image applies the same header contract for its static deployment path.
 
 ## Threat Boundaries
 

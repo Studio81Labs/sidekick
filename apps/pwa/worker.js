@@ -68,10 +68,19 @@ function isPrivateProxyPath(pathname) {
 function staticAssetResponse(request, response) {
   const pathname = new URL(request.url).pathname;
   const headers = new Headers(response.headers);
+  const responseType = headers
+    .get("Content-Type")
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
   if (pathname === "/sw.js") {
     headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
     headers.set("Service-Worker-Allowed", "/");
-  } else if (response.ok && CONTENT_ADDRESSED_ASSET.test(pathname)) {
+  } else if (
+    response.ok &&
+    responseType !== "text/html" &&
+    CONTENT_ADDRESSED_ASSET.test(pathname)
+  ) {
     headers.set("Cache-Control", "public, max-age=31536000, immutable");
   } else {
     headers.set("Cache-Control", "no-cache");

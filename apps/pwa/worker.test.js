@@ -595,13 +595,23 @@ describe("API Worker proxy", () => {
 });
 
 describe("static PWA cache headers", () => {
-  async function staticResponse(pathname, status = 200) {
+  async function staticResponse(
+    pathname,
+    status = 200,
+    contentType = "application/json",
+  ) {
     return worker.fetch(new Request(`https://poker.example${pathname}`), {
       ASSETS: {
         fetch: vi.fn(async () =>
           Response.json(
             { pathname },
-            { status, headers: { ETag: '"asset-version"' } },
+            {
+              status,
+              headers: {
+                "Content-Type": contentType,
+                ETag: '"asset-version"',
+              },
+            },
           ),
         ),
       },
@@ -636,6 +646,17 @@ describe("static PWA cache headers", () => {
     expect(response.headers.get("Cache-Control")).toBe("no-cache");
   });
 
+  it("does not make a successful HTML SPA fallback immutable", async () => {
+    const response = await staticResponse(
+      "/assets/app-A1b2C3d4.js",
+      200,
+      "text/html; charset=utf-8",
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toBe("no-cache");
+  });
+
   it("keeps the Nginx immutable header limited to successful lookups", () => {
     const config = readFileSync("nginx.conf", "utf8");
 
@@ -645,6 +666,11 @@ describe("static PWA cache headers", () => {
     expect(config).toContain(
       'add_header Cache-Control "public, max-age=31536000, immutable";',
     );
+    expect(config).toContain(
+      "try_files $uri @missing_content_addressed_asset;",
+    );
+    expect(config).toContain("location @missing_content_addressed_asset {");
+    expect(config).toContain('add_header Cache-Control "no-cache" always;');
     expect(config).not.toContain(
       'add_header Cache-Control "public, max-age=31536000, immutable" always;',
     );

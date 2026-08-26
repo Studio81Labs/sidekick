@@ -1,3 +1,49 @@
+export function isHtmlResponse(response: Response): boolean {
+  return (
+    response.headers
+      .get("content-type")
+      ?.split(";", 1)[0]
+      ?.trim()
+      .toLowerCase() === "text/html"
+  );
+}
+
+export function isExpectedPrecacheResponse(
+  pathname: string,
+  response: Response,
+): boolean {
+  if (!response.ok || response.redirected) return false;
+  return pathname === "/"
+    ? isHtmlResponse(response)
+    : !isHtmlResponse(response);
+}
+
+export async function precacheVersion(
+  cacheName: string,
+  pathnames: readonly string[],
+): Promise<void> {
+  try {
+    const responses = await Promise.all(
+      pathnames.map(async (pathname) => {
+        const response = await fetch(pathname, { cache: "reload" });
+        if (!isExpectedPrecacheResponse(pathname, response)) {
+          throw new Error(`Invalid precache response for ${pathname}`);
+        }
+        return [pathname, response] as const;
+      }),
+    );
+    const cache = await caches.open(cacheName);
+    await Promise.all(
+      responses.map(([pathname, response]) =>
+        cache.put(pathname, response.clone()),
+      ),
+    );
+  } catch (error) {
+    await caches.delete(cacheName);
+    throw error;
+  }
+}
+
 export async function networkFirstNavigation(
   request: Request,
   cacheName: string,
