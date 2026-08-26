@@ -184,6 +184,11 @@ Acceptance gates:
 
 Port the shared Studio81 baseline, adapting only topology-dependent details.
 
+Before enforcing the baseline, add a numbered ADR that defines required-check
+ownership, release-version policy, dependency/action/container trust sources and
+pin/update rules, exception governance, operational ownership, rollout, and
+rollback for the new security and deployment posture.
+
 Shared workflows and guards to add or converge:
 
 - `_release-version-gate.yml` using the root Poker Hero version as the source;
@@ -247,6 +252,9 @@ creating permanent topology noise.
 
 Acceptance gates:
 
+- the numbered security-baseline ADR is linked from the architecture reference
+  and matches the implemented ruleset, release gates, scanners, trust policy,
+  pinning, exception, and rollback behavior;
 - every workflow parses and every referenced local reusable workflow exists;
 - every final required-check context matches a check emitted by the converged
   workflows, no superseded context remains required, and a test PR cannot merge
