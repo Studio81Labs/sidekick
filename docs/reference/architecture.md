@@ -3,6 +3,9 @@
 The repository security, release, dependency-trust, and required-check baseline
 is defined by
 [ADR 0043](../decisions/0043-adopt-studio81-security-and-ci-baseline.md).
+The installable browser shell, private-route cache exclusions, and coordinated
+update lifecycle are defined by
+[ADR 0044](../decisions/0044-installable-pwa-cache-and-update-lifecycle.md).
 
 ## System Shape
 
