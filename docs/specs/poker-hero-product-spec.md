@@ -157,7 +157,9 @@ The PWA is a browser control panel for:
 - Receiving application updates through an explicit prompt. Updates wait while
   a mutation is active, and an unsaved correction, screenshot metadata edit,
   training answer, lesson note, selected file, or agent-access credential draft
-  cannot be discarded without confirmation.
+  cannot be discarded without confirmation. The information dialog remains
+  open for the full lifetime of any agent-access mutation or unacknowledged
+  one-time credential.
 
 The install cache contains only the navigation shell and exact
 content-addressed application bundles. Screenshots, API and MCP responses,

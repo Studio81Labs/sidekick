@@ -375,9 +375,9 @@ export function useAnalyzerWorkspaceController({
     closeDialog: closeInfoDialog,
     dialogOpen: infoDialogOpen,
     loading: systemInfoLoading,
-    mcpTokenPending,
+    mcpCloseBlocked,
     openDialog: openInfoDialog,
-    setMcpTokenPending,
+    setMcpCloseBlocked,
     systemInfo,
   } = useSystemInfoDialog();
   const {
@@ -4335,9 +4335,9 @@ export function useAnalyzerWorkspaceController({
             backupDownloadUrl: applicationBackupUrl(),
             backupRestoring,
             busy,
-            mcpTokenPending,
+            mcpCloseBlocked,
             onClose: () => closeInfoDialog(backupRestoring),
-            onMcpTokenPendingChange: setMcpTokenPending,
+            onMcpCloseBlockedChange: setMcpCloseBlocked,
             onRestoreBackup: (file: File) =>
               void onApplicationBackupRestore(file),
             providers: activeInfoProviders,

@@ -70,6 +70,9 @@ initial registry covers:
   operations.
 
 New local drafts and non-replayable operations must register before they ship.
+The information dialog cannot close while an MCP mutation is active or a
+one-time credential remains unacknowledged, so the MCP safety owner stays
+mounted for the full operation lifetime.
 The same aggregate state guards browser unloads. When a worker is waiting, the
 UI announces the update but never activates it while an operation is active.
 With dirty state, activation requires an explicit discard confirmation. With no

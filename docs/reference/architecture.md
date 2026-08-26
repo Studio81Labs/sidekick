@@ -566,7 +566,9 @@ deployment path.
 independent feature owners. The analyzer registers all correction, screenshot,
 training, lesson, capture, mutation, restore, and benchmark state; Agent access
 registers administrator and credential drafts, unacknowledged one-time tokens,
-and mutations. `PwaRuntime` uses the aggregate for unload protection and worker
+and mutations. The information dialog blocks every close path for the complete
+MCP mutation and unacknowledged-token lifetime, keeping that owner mounted.
+`PwaRuntime` uses the aggregate for unload protection and worker
 updates. Its disconnected status probes the stable manifest with cache bypass
 and a bounded timeout rather than trusting `navigator.onLine`; it retries on
 launch, browser focus, restored link status, and a 30-second interval. A newly

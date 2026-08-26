@@ -6,12 +6,12 @@ import { InfoDialog, type InfoDialogProps } from "./InfoDialog";
 
 vi.mock("./McpAccessPanel", () => ({
   McpAccessPanel: ({
-    onPendingTokenChange,
+    onCloseBlockedChange,
   }: {
-    onPendingTokenChange?: (pending: boolean) => void;
+    onCloseBlockedChange?: (blocked: boolean) => void;
   }) => (
-    <button type="button" onClick={() => onPendingTokenChange?.(true)}>
-      Simulate pending token
+    <button type="button" onClick={() => onCloseBlockedChange?.(true)}>
+      Simulate blocked close
     </button>
   ),
 }));
@@ -25,9 +25,9 @@ function dialogProps(
     backupDownloadUrl: "http://localhost:8000/api/backups/export",
     backupRestoring: false,
     busy: false,
-    mcpTokenPending: false,
+    mcpCloseBlocked: false,
     onClose: vi.fn(),
-    onMcpTokenPendingChange: vi.fn(),
+    onMcpCloseBlockedChange: vi.fn(),
     onRestoreBackup: vi.fn(),
     providers: {
       recognition: "External vision model",
@@ -69,7 +69,7 @@ describe("InfoDialog", () => {
     const input = within(dialog).getByLabelText("Application backup ZIP");
     await userEvent.upload(input, backup);
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Simulate pending token" }),
+      within(dialog).getByRole("button", { name: "Simulate blocked close" }),
     );
     await userEvent.click(
       within(dialog).getByRole("button", { name: "Close app information" }),
@@ -78,7 +78,7 @@ describe("InfoDialog", () => {
 
     expect(props.onRestoreBackup).toHaveBeenCalledWith(backup);
     expect(input).toHaveValue("");
-    expect(props.onMcpTokenPendingChange).toHaveBeenCalledWith(true);
+    expect(props.onMcpCloseBlockedChange).toHaveBeenCalledWith(true);
     expect(props.onClose).toHaveBeenCalledTimes(2);
   });
 
@@ -110,7 +110,7 @@ describe("InfoDialog", () => {
         {...dialogProps({
           backupRestoring: true,
           busy: true,
-          mcpTokenPending: true,
+          mcpCloseBlocked: true,
         })}
       />,
     );

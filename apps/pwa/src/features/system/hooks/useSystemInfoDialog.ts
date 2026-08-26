@@ -8,7 +8,7 @@ import {
 
 export function useSystemInfoDialog() {
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [mcpTokenPending, setMcpTokenPending] = useState(false);
+  const [mcpCloseBlocked, setMcpCloseBlocked] = useState(false);
   const queryClient = useQueryClient();
   const { data, isFetching } = useSystemInfoQuery(false);
 
@@ -20,7 +20,7 @@ export function useSystemInfoDialog() {
   }
 
   function closeDialog(blocked = false) {
-    if (blocked || mcpTokenPending) {
+    if (blocked || mcpCloseBlocked) {
       return;
     }
     setDialogOpen(false);
@@ -30,9 +30,9 @@ export function useSystemInfoDialog() {
     closeDialog,
     dialogOpen,
     loading: isFetching,
-    mcpTokenPending,
+    mcpCloseBlocked,
     openDialog,
-    setMcpTokenPending,
+    setMcpCloseBlocked,
     systemInfo: data ?? null,
   };
 }
