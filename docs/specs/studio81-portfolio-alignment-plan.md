@@ -143,6 +143,9 @@ Required changes:
 - add `packages/*` to `pnpm-workspace.yaml` and add the root TypeScript base;
 - add `_build-openapi.yml` as the reusable artifact producer and
   `openapi-check.yml` as the freshness gate;
+- run `openapi-check.yml` on every pull request with internal change detection
+  and an always-emitted final context, then add that exact context to the `main`
+  ruleset as a required check;
 - make backend, PWA, and E2E workflows depend on the same generated contract
   artifact where appropriate;
 - add `packages/openapi/**`, `packages/openapi-client/**`, and the root
@@ -163,6 +166,9 @@ Acceptance gates:
   implemented package boundary;
 - `pnpm api:generate` produces no uncommitted diff on a clean tree;
 - `pnpm api:check` passes;
+- a controlled stale-contract test PR fails the required OpenAPI freshness
+  context and cannot merge, while an unrelated test PR still emits and
+  completes that context;
 - the PWA has no relative imports into an app-owned generated contract folder;
 - `docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:wave-2 .` succeeds with
   the extracted workspace packages available inside the build;
@@ -196,6 +202,10 @@ Concrete convergence rules:
 - use `github.event.pull_request.number || github.sha` for CI concurrency so
   quick merges cannot cancel validation of an intervening `main` commit;
 - use the same pinned GitHub Action revisions across all four repositories;
+- pin every production Dockerfile `FROM` image, including the Rust builder,
+  backend runtime, PWA builder, and PWA runtime, to an immutable SHA-256 digest
+  while retaining its readable version tag, and configure Renovate to update
+  those pins;
 - use job names in `<area>: <what it proves>` form;
 - whenever that naming change affects a required check, atomically replace the
   old context in the `main` ruleset or branch protection with the exact emitted
@@ -247,6 +257,8 @@ Acceptance gates:
 - the PWA deployment reports the declared lockfile-pinned Wrangler version and
   no deployment workflow contains `pnpm dlx wrangler@latest` or another
   floating CLI invocation;
+- every production Dockerfile base uses a tag plus `@sha256:` digest, Renovate
+  recognizes each pin, and both backend and PWA images build from those pins;
 - CI helper self-tests pass locally;
 - formatting and security scans pass on the migration branch;
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
