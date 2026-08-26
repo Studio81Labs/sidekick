@@ -251,6 +251,10 @@ Add PWA capability after the app is named and deployed as `apps/pwa`.
 
 Required changes:
 
+- add a numbered ADR before registering the service worker. It must define cache
+  ownership and versioning, private-route exclusions, offline behavior,
+  activation and update coordination, threat boundaries, and rollback through
+  worker unregistration and cache removal;
 - add a web app manifest with Poker Hero name, short name, scope, start URL,
   standalone display mode, theme colors, categories, and complete regular and
   maskable icon sets;
@@ -270,6 +274,8 @@ Required changes:
 
 Acceptance gates:
 
+- the numbered service-worker ADR is linked from the architecture reference and
+  matches the implemented persistence, security, update, and rollback behavior;
 - Chromium recognizes the deployed application as installable;
 - manifest icons, start URL, scope, display mode, and theme metadata validate;
 - the service worker serves the shell offline after one successful load;
