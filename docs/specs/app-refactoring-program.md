@@ -281,6 +281,10 @@ unchanged OpenAPI, and hosted MCP integration pass.
 
 Dependencies: Wave 2
 
+Wave 4 is complete. Benchmark, training, history, job-detail, and processing
+reads execute domain-owned Query options. Browser queue and history records are
+bounded recovery projections rather than authoritative server caches.
+
 - Migrate benchmark overview/report, training progress, history reads, job
   reads, and queue reads to feature query adapters.
 - Preserve queue/history browser caches as startup projections.
@@ -334,8 +338,8 @@ operations dispatch through `app/application/benchmarks.py`. Backup export and
 restore operations now dispatch through `app/application/backups.py`, and health
 and pipeline queries dispatch through `app/application/system.py`. MCP
 configuration, principal listing, issuance, rotation, and revocation dispatch
-through `app/application/mcp_admin.py`. Application services still receive
-bootstrap-composed callbacks pending deeper repository and service slices.
+through `app/application/mcp_admin.py`. Application services receive
+bootstrap-composed repository protocols and workspace coordination callbacks.
 
 Wave 8 progress: job-detail and paged processing-queue reads now have a typed
 domain API adapter plus cancellable TanStack Query options. Existing imperative
@@ -423,9 +427,8 @@ Dependencies: Waves 4 and 7
 
 Wave 9 progress: screenshot metadata writes now use a screenshot-owned command
 that returns the updated job and explicit Query cache outcomes. The jobs domain
-owns the generated-contract transport, the shared API preserves its export
-identity, and only job-detail, processing, and history query families are
-updated or invalidated.
+owns the generated-contract transport, and only job-detail, processing, and
+history query families are updated or invalidated.
 Permanent screenshot deletion now follows the same boundary: confirmed success
 removes the detail cache and invalidates processing/history families, while
 failed or ambiguous transport leaves cache state untouched for lease recovery.
@@ -437,20 +440,18 @@ those keys, and seeds returned detail records plus the default history page.
 Benchmark inclusion now uses a benchmark-owned generated-contract command that
 updates the returned job detail, invalidates processing/history/overview query
 families, and preserves existing lease recovery and corpus presentation. Prior
-benchmark report caches remain immutable, and the shared transport symbol is an
-identity-preserving compatibility alias.
+benchmark report caches remain immutable, and consumers import the command
+owner directly.
 Benchmark dataset upload now uses a benchmark-owned multipart command that
 preserves the caller-generated idempotency ID, guards stale reads, and
 invalidates imported detail, processing, history, and overview keys only after
 confirmed success. Existing projection leases and receipt-based ambiguous
-failure recovery remain Analyzer-owned, and the shared transport symbol retains
-its signature and object identity.
+failure recovery remain Analyzer-owned.
 Application backup restore now uses a backup-owned multipart command. Confirmed
 restore removes job, history, training, and benchmark Query families after
 guarding against stale reads, while Analyzer composition retains projection
 reset and recovery scheduling. Failure leaves caches untouched and preserves
-the existing same-file idempotent retry path; the shared API remains an
-identity-preserving alias.
+the existing same-file idempotent retry path.
 Approval and recommendation now use separate abort-aware hand-review commands.
 They preserve the recommendation idempotency ID and signal, seed confirmed job
 detail without overwriting newer concurrent metadata, and invalidate
@@ -489,7 +490,7 @@ Wave 10 is complete. The application route shell owns canonical analyzer,
 job, training, and benchmark URLs, with `/` retained as a compatibility redirect.
 Typed analyzer route state restores the represented surface and optional job
 identity, while UI selections and closes update the same durable URLs. Transient
-dialog internals and draft state remain outside the URL. A thin compatibility
+dialog internals and draft state remain outside the URL. A thin route-scoped
 page mounts the workflow provider, a non-rendering controller retains the
 cross-feature protocols, and a guarded composition component owns the
 behavior-free page layout. Existing feature components own the input,
@@ -534,15 +535,14 @@ domain.
 
 Dependencies: Waves 1-11
 
-Wave 12 is in progress. The frontend shared-type barrel and shared API client,
+Wave 12 is complete. The frontend shared-type barrel and shared API client,
 jobs/history, benchmark, training, and system facades have been retired, and
 architecture checks prevent production code from recreating or importing those
 compatibility surfaces. MCP transport now belongs to its domain adapter and
 principal writes use feature commands. The backend `app.models`, `app.api`, and
 `app.storage` compatibility exports are retired. The remaining workspace and
-benchmark feature-library barrels are also retired, leaving controller
-ownership, final release audits, and final documentation for subsequent bounded
-slices. The controller ownership audit now proves that Query-aware command
+benchmark feature-library barrels are also retired. The controller ownership
+audit proves that Query-aware command
 orchestration and injected browser projections do not create a module that owns
 both raw HTTP transport and browser persistence.
 The first peer-dependency cleanup moved shared error primitives out of the
@@ -556,14 +556,17 @@ eight more. Moving recommendation evidence and formatting into its domain and
 retiring three presentation barrels removed four more. Moving canonical poker
 state plus job identity/metadata to domain and shared owners removed five more,
 and lifting hand-review decision rendering to page composition removed the final
-two. The peer-feature baseline is now empty.
+two. The peer-feature baseline is now empty. Automated release gates cover
+dependency vulnerabilities, deployment monitoring, WCAG accessibility in both
+browser profiles, production bundle budgets, browser workflows, container
+builds, persistence/backup compatibility, and the pinned solver suite.
 
-- Remove obsolete handwritten wire types, API client facade, temporary barrels,
+- Removed obsolete handwritten wire types, API client facade, temporary barrels,
   dead page helpers, and duplicated fixtures.
-- Verify frontend and backend package dependency direction.
-- Run security, privacy, accessibility, performance, Docker, backup/restore,
+- Verified frontend and backend package dependency direction.
+- Ran security, privacy, accessibility, performance, Docker, backup/restore,
   E2E, and deployment smoke checks.
-- Update architecture, contributor, and operational documentation.
+- Updated architecture, contributor, and operational documentation.
 
 Gate: all exit criteria pass and no compatibility layer remains without a
 documented external consumer and removal policy.
@@ -644,21 +647,21 @@ Every implementation PR must include:
 
 ## Implementation Status
 
-| Wave | Status      | Current work                                                                                                                                                                                         |
-| ---- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 0    | In progress | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                          |
-| 1    | In progress | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                  |
-| 2    | In progress | Query provider, shared transport, and system/pipeline domain reads landed with compatibility behavior                                                                                                |
-| 3    | Complete    | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                              |
-| 4    | Pending     | Begin as its documented dependencies and compatibility gates pass                                                                                                                                    |
-| 5    | Complete    | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; the `app/models.py` facade is retired and guarded                   |
-| 6    | In progress | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` now owns repository composition, startup recovery, and lock ordering for imports, backups, and restore |
-| 7    | Complete    | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                           |
-| 8    | Complete    | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                     |
-| 9    | Complete    | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                         |
-| 10   | Complete    | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands  |
-| 11   | Complete    | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain               |
-| 12   | In progress | Frontend/backend compatibility exports are removed, peer-feature baseline is empty, and transport/persistence ownership is guarded; release audits and final docs remain                             |
+| Wave | Status   | Current work                                                                                                                                                                                        |
+| ---- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 0    | Complete | Plan, architecture guardrails, dependency baseline, and full-suite baseline are established                                                                                                         |
+| 1    | Complete | Stable operation IDs, deterministic generation, binary contracts, and schema dependency pins landed                                                                                                 |
+| 2    | Complete | Query provider, shared transport, and system/pipeline domain reads landed                                                                                                                           |
+| 3    | Complete | All HTTP route domains have focused routers and runtime boundaries; route integration suites are split by domain, and the legacy shared API flow suite has been removed                             |
+| 4    | Complete | Benchmark, training, history, job, and queue reads use domain Query adapters while browser caches remain bounded recovery projections                                                               |
+| 5    | Complete | Pipeline, poker state, recommendation, training, job-lifecycle, health, backup, and benchmark contracts live under `app/domain`; the `app/models.py` facade is retired and guarded                  |
+| 6    | Complete | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` owns repository composition, startup recovery, and lock ordering for imports, backups, and restore    |
+| 7    | Complete | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                          |
+| 8    | Complete | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                    |
+| 9    | Complete | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                        |
+| 10   | Complete | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands |
+| 11   | Complete | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain              |
+| 12   | Complete | Compatibility exports and peer-feature baselines are removed; transport/persistence ownership and automated accessibility, performance, security, and release audits are enforced                   |
 
 ## Exit Criteria
 
