@@ -552,8 +552,9 @@ path below `/api/`, and the exact `/mcp` path receive no service-worker
 response; encoded private equivalents fail closed. No runtime response outside
 the generated allowlist enters Cache Storage. The Cloudflare edge Worker runs
 before Static Assets to revalidate `/sw.js` and stable metadata while marking
-hashed bundles immutable. `apps/pwa/nginx.conf` applies the same header contract
-for the container deployment path.
+only successful hashed-bundle responses immutable. Missing assets remain
+revalidatable so a rollback can restore them. `apps/pwa/nginx.conf` applies the
+same header contract for the container deployment path.
 
 `shared/pwa/updateSafety.tsx` aggregates named dirty and busy reasons from
 independent feature owners. The analyzer registers all correction, screenshot,

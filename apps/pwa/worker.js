@@ -71,7 +71,7 @@ function staticAssetResponse(request, response) {
   if (pathname === "/sw.js") {
     headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
     headers.set("Service-Worker-Allowed", "/");
-  } else if (CONTENT_ADDRESSED_ASSET.test(pathname)) {
+  } else if (response.ok && CONTENT_ADDRESSED_ASSET.test(pathname)) {
     headers.set("Cache-Control", "public, max-age=31536000, immutable");
   } else {
     headers.set("Cache-Control", "no-cache");

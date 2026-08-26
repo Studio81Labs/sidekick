@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import worker from "./worker.js";
@@ -593,11 +595,14 @@ describe("API Worker proxy", () => {
 });
 
 describe("static PWA cache headers", () => {
-  async function staticResponse(pathname) {
+  async function staticResponse(pathname, status = 200) {
     return worker.fetch(new Request(`https://poker.example${pathname}`), {
       ASSETS: {
         fetch: vi.fn(async () =>
-          Response.json({ pathname }, { headers: { ETag: '"asset-version"' } }),
+          Response.json(
+            { pathname },
+            { status, headers: { ETag: '"asset-version"' } },
+          ),
         ),
       },
     });
@@ -622,6 +627,27 @@ describe("static PWA cache headers", () => {
       "public, max-age=31536000, immutable",
     );
     expect(mutable.headers.get("Cache-Control")).toBe("no-cache");
+  });
+
+  it("does not make a missing hash-shaped bundle immutable", async () => {
+    const response = await staticResponse("/assets/app-A1b2C3d4.js", 404);
+
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Cache-Control")).toBe("no-cache");
+  });
+
+  it("keeps the Nginx immutable header limited to successful lookups", () => {
+    const config = readFileSync("nginx.conf", "utf8");
+
+    expect(config).toContain(
+      'location ~ "^/assets/.+-[A-Za-z0-9_-]{8,}\\.[^/]+$" {',
+    );
+    expect(config).toContain(
+      'add_header Cache-Control "public, max-age=31536000, immutable";',
+    );
+    expect(config).not.toContain(
+      'add_header Cache-Control "public, max-age=31536000, immutable" always;',
+    );
   });
 
   it.each(["/", "/manifest.webmanifest", "/icons/icon-192.png"])(

@@ -77,8 +77,10 @@ new worker may take control but reload remains deferred.
 The deployed edge Worker runs before static assets so it can apply response
 headers consistently. `/sw.js` is revalidated on every load and receives
 `Service-Worker-Allowed: /`; HTML and other stable-name metadata are revalidated;
-content-addressed `/assets/` files receive a one-year immutable cache policy.
-The Nginx image applies the same header contract for its static deployment path.
+successful content-addressed `/assets/` files receive a one-year immutable cache
+policy. Missing asset responses remain revalidatable so a later rollback can
+restore that hash. The Nginx image applies the same header contract for its
+static deployment path.
 
 ## Threat Boundaries
 
