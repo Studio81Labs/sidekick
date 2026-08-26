@@ -151,6 +151,9 @@ Required changes:
 - run `openapi-check.yml` on every pull request with internal change detection
   and an always-emitted final context, then add that exact context to the `main`
   ruleset as a required check;
+- make `pnpm api:check` verify that every expected generated artifact is tracked,
+  regenerate the contract, and reject staged, unstaged, or untracked changes in
+  the generated output paths instead of relying on `git diff --exit-code` alone;
 - make backend, PWA, and E2E workflows depend on the same generated contract
   artifact where appropriate;
 - add `packages/openapi/**`, `packages/openapi-client/**`, and the root
@@ -174,6 +177,9 @@ Acceptance gates:
 - a controlled stale-contract test PR fails the required OpenAPI freshness
   context and cannot merge, while an unrelated test PR still emits and
   completes that context;
+- controlled deletion of each generated output fails `pnpm api:check` and the
+  required freshness context even when regeneration recreates it as an
+  untracked file;
 - the PWA has no relative imports into an app-owned generated contract folder;
 - `docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:wave-2 .` succeeds with
   the extracted workspace packages available inside the build;
