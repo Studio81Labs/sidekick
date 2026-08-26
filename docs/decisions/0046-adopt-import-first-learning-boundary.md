@@ -25,9 +25,12 @@ is implemented, so the transition and rollback boundary must be explicit.
 The player product becomes import-first. Hand-history files are the only player
 data-source path. Site adapters preserve raw input and emit detected state with
 confidence, warnings, source evidence, stable hand identity, source chronology,
-and game/economic context. A player reviews/corrects detected state and explicitly
-approves a canonical hand revision before decision extraction or grading. User
-corrections always win.
+game/economic context, and voluntary/forced/client-automatic/unknown action
+origin. A player reviews/corrects detected state and explicitly approves a
+canonical hand revision before decision extraction or grading. User corrections
+always win. Only actions approved as player-selected become V2 decision points;
+forced, automatic, and unresolved-origin actions remain auditable but excluded
+from grading and learning.
 
 Exact and overlapping reimports are idempotent. Materially different inputs for
 one stable hand identity become an explicit conflict and never silently replace

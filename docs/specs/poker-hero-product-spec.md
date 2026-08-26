@@ -185,6 +185,9 @@ or contribute to proof-of-learning metrics.
 - **Never teach from a guess.** If a decision cannot be graded against a real
   reference, it is shown but does not move mastery, does not generate a drill,
   and is not called a "mistake."
+- **Never grade involuntary behavior.** Forced posts and client actions caused
+  by timeout, disconnect, or automation are not player decisions. Unknown
+  action origin stays excluded until explicitly resolved.
 - **Learning lives in aggregation and repetition, not in single hands.** The
   single-hand comparison is necessary but weak on its own. Value comes from
   detecting _recurring_ leaks and _drilling_ them.
@@ -257,7 +260,13 @@ shape includes at minimum:
   handled explicitly.
 - Hero identity and hero hole cards (from the "dealt to" line).
 - Streets: for each of preflop/flop/turn/river, the board cards and an **ordered
-  action list** (actor, action type, total committed).
+  action list** (actor, action type, total committed, and action origin). Action
+  origin distinguishes known player-selected actions from forced/system posts,
+  client-automatic actions caused by timeout/disconnect/automation, and unknown
+  origin, with source evidence and confidence. An adapter may treat an unmarked
+  normal action as player-selected only when its versioned source semantics make
+  the absence of an automatic-action marker meaningful; otherwise origin stays
+  unknown for review.
 - Showdown and results.
 
 **Identity and re-import semantics:** `(site, source hand id)` is the stable hand
@@ -299,16 +308,22 @@ The learning system does not consume hands — it consumes **decision points**.
 From a user-approved canonical hand, extract each hero decision as:
 
 - The canonical decision state (everything the recommendation provider needs).
-- The **actual action taken** (from the history — this is the key gift of
-  import: the real decision is already known).
+- The **actual player-selected action taken**, including its approved action
+  origin and source evidence (from the history — this is the key gift of import
+  when voluntariness is known).
 - The optional **primary concept tag** (§6.1), derivable from the state and
   absent when the taxonomy does not support the decision.
 
 One approved imported hand yields zero or more decision points (preflop, flop,
 turn, river). A valid no-decision hand, such as a big-blind walk, is retained with
 its provenance and an explicit no-decision outcome; it is not failed, graded, or
-given a fabricated action. A real decision point is the atomic unit for grading,
-mastery, and drilling.
+given a fabricated action. Forced/system actions, known client-automatic actions
+(including timeout/disconnect folds or checks), and actions whose origin remains
+unknown are retained with their exclusion reason but are not emitted as player
+decision points and never update mastery or schedule drills. A user may resolve
+an unknown origin during approval only by explicitly confirming the action was
+player-selected; the detected value and correction remain auditable. A real
+voluntary decision point is the atomic unit for grading, mastery, and drilling.
 
 ### 3.4 Administrative OCR test path — screenshot upload and live capture
 
