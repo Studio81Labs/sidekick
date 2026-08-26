@@ -92,11 +92,11 @@ Required changes:
 
 - move the directory with Git history preserved;
 - rename the workspace package to `@poker-hero/pwa`;
-- introduce `pwa:dev`, `pwa:test`, `pwa:build`, `pwa:performance`, and PWA E2E
-  root scripts;
-- keep deprecated `frontend:*` aliases for one migration cycle only, then
-  remove them in Wave 3 after local scripts and deployment configuration are
-  updated;
+- introduce `pwa:dev`, `pwa:test`, `pwa:test:watch`, `pwa:build`,
+  `pwa:performance`, and PWA E2E root scripts;
+- keep deprecated `frontend:*` aliases, including `frontend:test:watch`, for one
+  migration cycle only, then remove them in Wave 3 after local scripts and
+  deployment configuration are updated;
 - rename `frontend-ci.yml` and `frontend-deploy.yml` to `pwa-ci.yml` and
   `pwa-deploy.yml` and update path filters, job names, concurrency groups, and
   deployment comments;
@@ -145,8 +145,9 @@ Required changes:
   `openapi-check.yml` as the freshness gate;
 - make backend, PWA, and E2E workflows depend on the same generated contract
   artifact where appropriate;
-- add the root `tsconfig.base.json` to the internal PWA CI change detector so a
-  shared compiler configuration change runs PWA validation instead of taking
+- add `packages/openapi/**`, `packages/openapi-client/**`, and the root
+  `tsconfig.base.json` to the internal PWA CI change detector so contract and
+  shared compiler configuration changes run PWA validation instead of taking
   the intentional-skip path;
 - add `packages/openapi/**`, `packages/openapi-client/**`, and the root
   `tsconfig.base.json` to the PWA deployment push paths so contract or shared
@@ -165,8 +166,9 @@ Acceptance gates:
 - the PWA has no relative imports into an app-owned generated contract folder;
 - `docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:wave-2 .` succeeds with
   the extracted workspace packages available inside the build;
-- a change set touching only `tsconfig.base.json` selects and passes PWA
-  validation rather than reporting an intentional skip from the required gate;
+- a change set touching only either OpenAPI package or `tsconfig.base.json`
+  selects and passes PWA tests and build rather than reporting an intentional
+  skip from the required gate;
 - a change set touching only either OpenAPI package or `tsconfig.base.json`
   selects `pwa-deploy.yml` instead of leaving staging on stale generated client
   or compiler configuration;
