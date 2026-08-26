@@ -192,9 +192,12 @@ rollback for the new security and deployment posture.
 Shared workflows and guards to add or converge:
 
 - `_release-version-gate.yml` using the root Poker Hero version as the source;
-- `format-check.yml`;
-- `security-scan.yml` with secret, dependency, and JavaScript/TypeScript/Python
-  Semgrep coverage, including the PWA edge Worker proxy boundary;
+- `format-check.yml`, running on every pull request with an always-emitted final
+  context that is required by the `main` ruleset;
+- `security-scan.yml` with secret scanning; Node, Python, and Rust dependency
+  scanning over `pnpm-lock.yaml`, `apps/backend/pyproject.toml`, and
+  `solver-plugins/postflop/Cargo.lock`; and JavaScript/TypeScript/Python Semgrep
+  coverage, including the PWA edge Worker proxy boundary;
 - `ci-scripts.yml` with self-tests for every added CI helper;
 - `cleanup-pr-caches.yml` and `prune-stale-caches.yml`;
 - `sibling-drift.yml` and its checked script;
@@ -259,9 +262,12 @@ Acceptance gates:
 - every final required-check context matches a check emitted by the converged
   workflows, no superseded context remains required, and a test PR cannot merge
   before those checks succeed;
-- a test PR with a controlled secret, vulnerable dependency fixture, or Semgrep
-  violation fails the corresponding required security context and cannot merge;
-  the Semgrep cases include a JavaScript violation in the PWA edge Worker;
+- a controlled formatting violation fails the always-emitted required format
+  context and blocks its test PR from merging;
+- test PRs with a controlled secret, vulnerable Node, Python, and Rust dependency
+  fixtures, or a Semgrep violation fail the corresponding required security
+  context and cannot merge; the Semgrep cases include a JavaScript violation in
+  the PWA edge Worker;
 - documentation-only and backend-only test PRs emit every required gate and do
   not remain pending because a workflow-level path filter skipped the context;
 - the PWA deployment reports the declared lockfile-pinned Wrangler version and
