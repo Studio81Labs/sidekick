@@ -160,6 +160,9 @@ Required changes:
   `tsconfig.base.json` to the internal PWA CI change detector so contract and
   shared compiler configuration changes run PWA validation instead of taking
   the intentional-skip path;
+- add the same OpenAPI package and root TypeScript configuration paths to
+  Browser E2E selection so a contract-only or shared compiler change starts the
+  browser workflow instead of being excluded by its pull-request path filter;
 - add `packages/openapi/**`, `packages/openapi-client/**`, and the root
   `tsconfig.base.json` to the PWA deployment push paths so contract or shared
   compiler configuration changes rebuild staging;
@@ -186,6 +189,8 @@ Acceptance gates:
 - a change set touching only either OpenAPI package or `tsconfig.base.json`
   selects and passes PWA tests and build rather than reporting an intentional
   skip from the required gate;
+- the same package-only and shared-config-only change sets select and pass
+  Browser E2E;
 - a change set touching only either OpenAPI package or `tsconfig.base.json`
   selects `pwa-deploy.yml` instead of leaving staging on stale generated client
   or compiler configuration;
@@ -228,9 +233,11 @@ Concrete convergence rules:
   tag, and configure Renovate to update those pins;
 - generate committed production and development Python lockfiles with complete
   transitive pins and hashes from `apps/backend/pyproject.toml` using a pinned
-  compiler; require a no-diff freshness check; install the development lock in
-  backend CI and the production lock in the backend image with hash checking,
-  then install the local project with `--no-deps` instead of resolving ranges;
+  compiler; define exact `[build-system].requires` versions and include their
+  build backend in both locks; require a no-diff freshness check; install the
+  development lock in backend CI and the production lock in the backend image
+  with hash checking, then install the local project with `--no-deps` and
+  `--no-build-isolation` instead of resolving runtime or build-system ranges;
 - use job names in `<area>: <what it proves>` form;
 - whenever that naming change affects a required check, atomically replace the
   old context in the `main` ruleset or branch protection with the exact emitted
@@ -287,7 +294,9 @@ Acceptance gates:
   the PWA edge Worker;
 - regenerating both Python locks from the backend manifest produces no diff;
   backend CI and Docker use hash-checked frozen inputs, `pip check` passes, and
-  no backend build path performs unconstrained dependency resolution;
+  a network-disabled local project installation succeeds with both `--no-deps`
+  and `--no-build-isolation`; no backend build path performs unconstrained
+  runtime or isolated build-system dependency resolution;
 - documentation-only and backend-only test PRs emit every required gate and do
   not remain pending because a workflow-level path filter skipped the context;
 - the PWA deployment reports the declared lockfile-pinned Wrangler version and
