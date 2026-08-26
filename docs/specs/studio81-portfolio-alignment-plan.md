@@ -202,10 +202,11 @@ Concrete convergence rules:
 - use `github.event.pull_request.number || github.sha` for CI concurrency so
   quick merges cannot cancel validation of an intervening `main` commit;
 - use the same pinned GitHub Action revisions across all four repositories;
-- pin every production Dockerfile `FROM` image, including the Rust builder,
-  backend runtime, PWA builder, and PWA runtime, to an immutable SHA-256 digest
-  while retaining its readable version tag, and configure Renovate to update
-  those pins;
+- pin every external container image used by production Dockerfiles, CI
+  workflows, or scripts, including the backend CI `docker run` Rust image and
+  the backend and PWA build/runtime images, to an immutable SHA-256 digest while
+  retaining its readable version tag, and configure Renovate to update those
+  pins;
 - use job names in `<area>: <what it proves>` form;
 - whenever that naming change affects a required check, atomically replace the
   old context in the `main` ruleset or branch protection with the exact emitted
@@ -257,8 +258,10 @@ Acceptance gates:
 - the PWA deployment reports the declared lockfile-pinned Wrangler version and
   no deployment workflow contains `pnpm dlx wrangler@latest` or another
   floating CLI invocation;
-- every production Dockerfile base uses a tag plus `@sha256:` digest, Renovate
-  recognizes each pin, and both backend and PWA images build from those pins;
+- every Dockerfile base and CI workflow or script `container`, `services`, or
+  `docker run` image uses a tag plus `@sha256:` digest, Renovate recognizes each
+  pin, both application images build, and the solver CI job passes from those
+  pins;
 - CI helper self-tests pass locally;
 - formatting and security scans pass on the migration branch;
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
