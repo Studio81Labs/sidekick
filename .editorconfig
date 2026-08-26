@@ -11,9 +11,6 @@ trim_trailing_whitespace = true
 [*.md]
 trim_trailing_whitespace = false
 
-[*.dart]
-indent_size = 2
-
 [*.py]
 indent_size = 4
 

@@ -6,6 +6,9 @@ is defined by
 The installable browser shell, private-route cache exclusions, and coordinated
 update lifecycle are defined by
 [ADR 0044](../decisions/0044-installable-pwa-cache-and-update-lifecycle.md).
+Cross-repository drift access, credential ownership, and incident handling are
+defined by
+[ADR 0045](../decisions/0045-enroll-portfolio-sibling-drift-access.md).
 
 ## System Shape
 
@@ -1302,3 +1305,12 @@ user.
 The PWA Worker proxy removes mixed-content and browser CORS issues from the
 normal deployed path. Backend CORS remains configurable for local and direct API
 testing.
+
+## Portfolio Drift Monitoring
+
+Poker Hero participates in the Studio81 Labs sibling-drift watch with Nexcue,
+TableTap, Tarmoto, and Taven. A scheduled repository-owned workflow compares the
+narrow shared infrastructure contract against each sibling and writes only a
+single `infra-drift` issue in Poker Hero. Cross-repository source reads use the
+read-only credential boundary from ADR 0045; issue writes continue to use the
+repository-scoped GitHub Actions token and cannot affect a sibling repository.

@@ -37,9 +37,9 @@ Usage:
     check-sibling-drift.py --self-test
 
 Requires SIBLING_REPO (the `owner/name` to compare against) and SIBLING_TOKEN
-(a token that can read it) in the environment. The sibling is private, so there
-is no unauthenticated fallback. Neither has a default: a drift check pointed at
-nothing reports no drift, which reads exactly like convergence.
+(a token that can read it) in the environment. Some siblings are private, so
+there is no unauthenticated fallback. Neither has a default: a drift check
+pointed at nothing reports no drift, which reads exactly like convergence.
 """
 
 from __future__ import annotations
@@ -59,8 +59,8 @@ except ModuleNotFoundError:  # pragma: no cover
     print(
         "check-sibling-drift: PyYAML is required. Workflow pins are parsed "
         "rather than grepped, because a regex cannot tell an active step from "
-        "a commented-out one. Same dependency and same install-if-missing "
-        "guard as list-main-push-workflows.py.",
+        "a commented-out one. Install the hash-locked dependency from "
+        "scripts/ci/sibling-drift-requirements.txt.",
         file=sys.stderr,
     )
     raise SystemExit(1)
@@ -212,11 +212,13 @@ IDENTICAL = [
     ".github/workflows/cleanup-pr-caches.yml",
     ".github/workflows/format-check.yml",
     ".github/workflows/prune-stale-caches.yml",
-    # The implementation is shared by the Flutter siblings. Poker Hero and the
-    # React Native sibling use a different canonical version topology, so the
-    # pubspec marker below keeps this byte comparison on the Flutter pair.
+    # Release-safety guards, converged 2026-08-18. check-release-tag.sh gates
+    # every production tag; check-semgrep-fixture.py is the only thing proving
+    # the hand-written Dart rules still fire; compare-marketing-version.py is
+    # the version comparison the pre-tag floor depends on. A repo running an
+    # older copy of any of them is a repo whose release gate is weaker than it
+    # looks, which is not visible from the outside.
     "scripts/ci/check-release-tag.sh",
-    # check-semgrep-fixture.py is topology-neutral and must stay identical.
     "scripts/ci/check-semgrep-fixture.py",
     "scripts/ci/compare-marketing-version.py",
     # Guards the CocoaPods half of the iOS plugin split. Its prose was made
@@ -224,47 +226,150 @@ IDENTICAL = [
     # held here -- the SPM-awareness is the part worth keeping identical, since
     # a copy that predates it reports drift on a correctly-migrated tree.
     "scripts/ci/check-podfile-lock.py",
+    # Cache deletion is destructive policy. Keep its implementation and
+    # fixture suite identical wherever the shared workflow can invoke it.
+    "scripts/ci/prune-stale-caches.py",
+    "scripts/ci/prune-stale-caches.test.py",
     # The checker checks itself. Every repo runs the same file, so a fix made in
     # one and not carried to the others is precisely the drift this exists to
     # catch -- and it would otherwise be the one blind spot in the manifest.
     # Safe to compare byte-for-byte only because SIBLING now comes from the
     # environment and strip_provenance() removes the ported-from header.
     "scripts/ci/check-sibling-drift.py",
+    "scripts/ci/sibling-drift-requirements.txt",
 ]
 
-# Entries whose comparison only makes sense when both repositories own the
-# corresponding product surface. A value is a tuple of alternative marker
-# files; a gate opens when each repository has at least one marker. Alternatives
-# let a Flutter and a React Native mobile app share workflow checks without
-# pretending that their framework-specific helpers should also match.
-#
-# The same gate applies to byte identity, job names, and action pins. Without
-# action gating, a repository that intentionally lacks admin or marketing is
-# permanently reported as missing those workflows; with it, deleting a workflow
-# from two repositories that both still declare the surface remains a finding.
+# Capability markers may excuse an ABSENT owned artifact, but never disable the
+# comparison of two present artifacts. The markers are deliberately broad:
+# Flutter and React Native both carry apps/mobile/.gitignore, for example.
 TOPOLOGY_GATED = {
-    "scripts/lib/resolve-flutter.sh": ("apps/mobile/pubspec.yaml",),
-    "scripts/ci/check-release-tag.sh": ("apps/mobile/pubspec.yaml",),
-    "scripts/ci/check-podfile-lock.py": ("apps/mobile/pubspec.yaml",),
-    ".github/workflows/flutter-pin-check.yml": ("apps/mobile/pubspec.yaml",),
-    ".github/workflows/admin-ci.yml": ("apps/admin/package.json",),
-    ".github/workflows/admin-deploy.yml": ("apps/admin/package.json",),
-    ".github/workflows/marketing-ci.yml": ("apps/marketing/package.json",),
-    ".github/workflows/marketing-deploy.yml": ("apps/marketing/package.json",),
-    "scripts/ci/compare-marketing-version.py": (
+    "scripts/lib/resolve-flutter.sh": "capability:mobile",
+    "scripts/ci/check-podfile-lock.py": "capability:mobile",
+    "scripts/ci/check-release-tag.sh": "capability:versioned-release",
+    "scripts/ci/check-semgrep-fixture.py": "capability:semgrep-fixture",
+    "scripts/ci/compare-marketing-version.py": "capability:mobile",
+    ".github/workflows/flutter-pin-check.yml": "capability:mobile",
+    ".github/workflows/mobile-ci.yml": "capability:mobile",
+    ".github/workflows/mobile-release.yml": "capability:mobile",
+    ".github/workflows/packages-ci.yml": "capability:independent-packages",
+    ".github/workflows/_build-openapi.yml": "capability:openapi-artifact",
+    ".github/workflows/_release-version-gate.yml": "capability:versioned-release",
+    ".github/workflows/admin-ci.yml": "apps/admin/package.json",
+    ".github/workflows/admin-deploy.yml": "apps/marketing/package.json",
+    ".github/workflows/backend-deploy.yml": "capability:backend-deployment",
+    ".github/workflows/marketing-ci.yml": "apps/marketing/package.json",
+    ".github/workflows/marketing-deploy.yml": "apps/marketing/package.json",
+    ".github/workflows/openapi-check.yml": "capability:openapi",
+}
+
+# A smaller set genuinely has different implementations between Flutter and
+# React Native. pubspec.yaml is the stack manifest, not an incidental marker:
+# when either side lacks it, the pair does not share the Flutter implementation.
+# Whole-file contents and job layouts may differ across that boundary, while
+# action pins remain comparable through ACTION_TOPOLOGY_GATED below.
+STACK_TOPOLOGY_GATED = {
+    "scripts/lib/resolve-flutter.sh": "apps/mobile/pubspec.yaml",
+    "scripts/ci/check-podfile-lock.py": "apps/mobile/pubspec.yaml",
+    ".github/workflows/flutter-pin-check.yml": "apps/mobile/pubspec.yaml",
+    ".github/workflows/mobile-ci.yml": "apps/mobile/pubspec.yaml",
+    ".github/workflows/mobile-release.yml": "apps/mobile/pubspec.yaml",
+}
+
+# These artifacts have stack-specific implementations, but every repository
+# with any mobile app must retain one. Across Flutter and React Native their
+# contents and job layouts are not comparable; their presence still is.
+CROSS_STACK_REQUIRED = {
+    ".github/workflows/mobile-ci.yml",
+    ".github/workflows/mobile-release.yml",
+}
+
+# Some shared helpers implement the same guard against different source files.
+# Require every capability owner to retain a copy, compare equal variants
+# byte-for-byte, and skip only the expected implementation delta between
+# distinct variants.
+CONTENT_VARIANT_TOPOLOGY = {
+    "scripts/ci/check-release-tag.sh": (
+        "apps/backend/pyproject.toml",
+        "apps/mobile/pubspec.yaml",
+        "apps/mobile/package.json",
+    ),
+}
+
+# Some capabilities have equivalent markers because sibling implementations
+# use different package names. A repository owns independent package CI when it
+# has either the shared/core package used by Tarmoto or the core package used by
+# Taven and TableTap. Nexcue's generated clients have neither.
+CAPABILITY_MARKER_PATHS = {
+    "capability:backend-deployment": (
+        "apps/marketing/package.json",
+        "apps/backend/pyproject.toml",
+    ),
+    "capability:independent-packages": (
+        "packages/core/package.json",
+        "packages/shared/package.json",
+    ),
+    "capability:mobile": (
         "apps/mobile/package.json",
         "apps/mobile/pubspec.yaml",
     ),
-    ".github/workflows/mobile-ci.yml": (
+    "capability:openapi": ("packages/openapi/package.json",),
+    "capability:openapi-artifact": (
+        "apps/marketing/package.json",
+        "apps/backend/pyproject.toml",
+    ),
+    "capability:versioned-release": (
         "apps/mobile/package.json",
         "apps/mobile/pubspec.yaml",
+        "apps/backend/pyproject.toml",
     ),
-    ".github/workflows/mobile-release.yml": (
-        "apps/mobile/package.json",
-        "apps/mobile/pubspec.yaml",
+    "capability:semgrep-fixture": (
+        ".semgrep/poker-hero-worker.js",
+        ".semgrep/nexcue-dart.dart",
+        ".semgrep/tabletap-dart.dart",
+        ".semgrep/tarmoto-rn.ts",
     ),
-    ".github/workflows/_build-openapi.yml": ("packages/openapi/package.json",),
-    ".github/workflows/openapi-check.yml": ("packages/openapi/package.json",),
+}
+
+# A shared workflow is compared only when both repositories declare the
+# capability that owns it. This keeps a backend/admin-only sibling in the loop
+# without inventing empty mobile, marketing or deployment workflows merely to
+# satisfy the drift checker.
+ACTION_TOPOLOGY_GATED = {
+    ".github/workflows/_build-openapi.yml": "capability:openapi-artifact",
+    ".github/workflows/_release-version-gate.yml": "capability:versioned-release",
+    ".github/workflows/admin-ci.yml": "apps/admin/package.json",
+    ".github/workflows/admin-deploy.yml": "apps/marketing/package.json",
+    ".github/workflows/backend-deploy.yml": "capability:backend-deployment",
+    ".github/workflows/marketing-ci.yml": "apps/marketing/package.json",
+    ".github/workflows/marketing-deploy.yml": "apps/marketing/package.json",
+    ".github/workflows/flutter-pin-check.yml": "apps/mobile/pubspec.yaml",
+    ".github/workflows/mobile-ci.yml": "capability:mobile",
+    ".github/workflows/mobile-release.yml": "capability:mobile",
+    ".github/workflows/openapi-check.yml": "capability:openapi",
+    ".github/workflows/packages-ci.yml": "capability:independent-packages",
+}
+
+# Optional jobs can introduce actions inside an otherwise shared workflow.
+# Each entry records the owning job id, its capability marker, and which marker
+# state owns the action. This is an assertion, not merely an exemption: an
+# action moved to another job no longer satisfies the topology contract.
+ACTION_ENTRY_TOPOLOGY_GATED = {
+    (".github/workflows/admin-ci.yml", "build", "actions/download-artifact"): (
+        "apps/marketing/package.json",
+        True,
+    ),
+    (".github/workflows/admin-ci.yml", "build", "actions/upload-artifact"): (
+        "apps/marketing/package.json",
+        True,
+    ),
+    (".github/workflows/ci-scripts.yml", "test", "actions/setup-node"): (
+        "scripts/ci/check-workflow-coverage.mjs",
+        True,
+    ),
+    (".github/workflows/packages-ci.yml", "build", "actions/download-artifact"): (
+        "apps/ingest/package.json",
+        True,
+    ),
 }
 
 # Workflows whose JOB NAMES are compared, keyed by job id.
@@ -287,13 +392,19 @@ JOB_NAME_WORKFLOWS = [
     ".github/workflows/backend-ci.yml",
     ".github/workflows/backend-deploy.yml",
     ".github/workflows/ci-scripts.yml",
+    ".github/workflows/cleanup-pr-caches.yml",
     ".github/workflows/flutter-pin-check.yml",
+    ".github/workflows/format-check.yml",
+    ".github/workflows/labeler.yml",
     ".github/workflows/marketing-ci.yml",
     ".github/workflows/marketing-deploy.yml",
     ".github/workflows/mobile-ci.yml",
     ".github/workflows/mobile-release.yml",
     ".github/workflows/openapi-check.yml",
+    ".github/workflows/packages-ci.yml",
     ".github/workflows/security-scan.yml",
+    ".github/workflows/sibling-drift.yml",
+    ".github/workflows/prune-stale-caches.yml",
 ]
 
 # Job-name differences that are EXPECTED, each with the reason. An entry here is
@@ -305,24 +416,6 @@ JOB_NAME_WORKFLOWS = [
 # no longer holds is how this list stays honest; an entry that outlives its
 # reason silently suppresses real drift, the same failure mode as an override
 # that matches nothing.
-POKER_JOB_DIFFS = {
-    # Poker Hero's FastAPI backend validates an exported OpenAPI artifact and a
-    # separately built runtime image; the Node siblings typecheck/build in one
-    # job and add database-specific jobs. These job ids are implementation
-    # topology, while shared action pins remain compared independently.
-    (".github/workflows/backend-ci.yml", "build"): "backend language topology (Node build vs FastAPI artifact/image jobs)",
-    (".github/workflows/backend-ci.yml", "image"): "backend language topology (Node build vs FastAPI artifact/image jobs)",
-    (".github/workflows/backend-ci.yml", "prepare-openapi"): "backend language topology (Node build vs FastAPI artifact/image jobs)",
-    (".github/workflows/backend-ci.yml", "test"): "backend language topology (Node build vs FastAPI artifact/image jobs)",
-    # Poker Hero's OpenAPI context is required on every PR, so it detects paths
-    # inside the workflow and ends at an always-emitted gate. The siblings'
-    # contract checks are not required contexts and remain one validate job.
-    (".github/workflows/openapi-check.yml", "changes"): "required contract-gate topology",
-    (".github/workflows/openapi-check.yml", "gate"): "required contract-gate topology",
-    (".github/workflows/openapi-check.yml", "prepare-openapi"): "required contract-gate topology",
-    (".github/workflows/openapi-check.yml", "validate"): "required contract-gate topology",
-}
-
 EXPECTED_JOB_DIFFS = {
     # The mobile flavors differ: one repo has per-flavor source sets and a
     # per-flavor google-services.json, the other's flavors differ only by
@@ -338,27 +431,130 @@ EXPECTED_JOB_DIFFS = {
     # now build `--no-codesign`; the flavor flag still differs and is real
     # topology, but it lives in the step rather than the job name.
     (".github/workflows/mobile-ci.yml", "mobile"): "android flavor topology",
-    # The TypeORM/React-Native sibling (tarmoto) against the Prisma/Flutter
-    # pair: its second backend job builds the schema from zero on PostGIS
-    # rather than running the full e2e suite, so `schema` and `test-e2e` are
-    # the one-sided job ids of the same split. The `build` job's NAME is
-    # deliberately NOT expected here — tarmoto's claims lint where the pair
-    # claim typecheck, and that difference is a standing reminder of its
-    # untypechecked spec files, which is debt rather than topology.
-    (".github/workflows/backend-ci.yml", "schema"): "backend test topology (schema-from-zero vs full e2e)",
-    (".github/workflows/backend-ci.yml", "test-e2e"): "backend test topology (schema-from-zero vs full e2e)",
-    # tarmoto's backend-deploy.yml is a workflow_call-only reusable workflow
-    # gated by its deploy.yml ORCHESTRATOR (which sequences ingest before
-    # backend — a constraint the Prisma pair do not have); the gate job
-    # therefore lives one level up rather than inside this file.
-    (".github/workflows/backend-deploy.yml", "version-gate"): "orchestrator topology (gate lives in deploy.yml)",
-    # tarmoto resolves the deploy environment inline in its admin deploy job;
-    # the Flutter pair carry a separate resolve job for checkout-ref reasons
-    # their admin surface has and tarmoto's does not.
-    (".github/workflows/admin-deploy.yml", "resolve"): "admin checkout-ref topology",
-    # The gate compares the tag against each repo's actual version source:
-    # pubspec.yaml for Flutter, apps/mobile/package.json for React Native.
-    (".github/workflows/_release-version-gate.yml", "check"): "version-source topology (pubspec vs package.json)",
+}
+
+# Poker Hero's Python backend and always-emitted contract gate use different
+# job layouts from the Node siblings. Encode both sides' exact claims instead
+# of exempting their job IDs: deletion or arbitrary renaming is still drift.
+POKER_JOB_LAYOUTS = {
+    ".github/workflows/backend-ci.yml": {
+        "python": {
+            "prepare-openapi": "contract: openapi spec",
+            "test": "backend: tests and solver",
+            "image": "backend: immutable image",
+        },
+        "node": {"build": "backend: lint, typecheck, test & build"},
+    },
+    ".github/workflows/openapi-check.yml": {
+        "python": {
+            "changes": "contract: detect inputs",
+            "prepare-openapi": "contract: openapi spec",
+            "validate": "contract: generated artifacts",
+            "gate": "contract: gate",
+        },
+        "node": {"validate": "contract: emit + validate"},
+    },
+}
+
+# Actions that are deliberately one-sided at the same Python/Node boundary.
+# This is an exact contract, not a workflow-wide exemption: every listed
+# action must remain on its owning stack only, while any other one-sided action
+# (including a removed shared checkout) is ordinary drift.
+POKER_ACTION_LAYOUTS = {
+    ".github/workflows/_build-openapi.yml": {
+        "python": frozenset({"actions/setup-python"}),
+        "node": frozenset(),
+    },
+    ".github/workflows/backend-ci.yml": {
+        "python": frozenset({"actions/setup-python", "actions/download-artifact"}),
+        "node": frozenset(),
+    },
+    ".github/workflows/backend-deploy.yml": {
+        "python": frozenset({"actions/setup-node", "pnpm/action-setup"}),
+        "node": frozenset(),
+    },
+    ".github/workflows/openapi-check.yml": {
+        "python": frozenset({"actions/download-artifact"}),
+        "node": frozenset(),
+    },
+}
+
+# Every expected difference has a marker that identifies the topology forcing
+# it. An exception without a marker is global, which would hide drift between
+# two repositories that share the same topology.
+EXPECTED_JOB_DIFF_MARKERS = {
+    (".github/workflows/mobile-ci.yml", "mobile"): "apps/mobile/android/app/src/staging/google-services.json",
+}
+
+# Complementary jobs whose IDs differ by backend implementation. Validate the
+# expected job and exact rendered name on EACH side before suppressing their
+# one-sided IDs; otherwise deleting one half could make the pair disappear from
+# the union and turn lost real-database coverage into false convergence.
+EXPECTED_TOPOLOGY_JOB_PAIRS = {
+    (".github/workflows/backend-ci.yml", "apps/backend/src/data-source.ts"): (
+        ("schema", "backend: schema from zero (real postgres)"),
+        ("test-e2e", "backend: e2e (real postgres)"),
+    ),
+}
+
+# Jobs owned by exactly one side of a capability boundary. Unlike a permissible
+# difference in a union, these encode WHO must retain the job and its exact
+# rendered claim, so deleting it from the owning side cannot disappear from the
+# comparison merely because the other topology never had that job.
+EXPECTED_TOPOLOGY_OWNED_JOBS = {
+    (".github/workflows/admin-ci.yml", "prepare-openapi"): (
+        "apps/marketing/package.json",
+        True,
+        "contract: openapi spec",
+    ),
+    (".github/workflows/backend-deploy.yml", "version-gate"): (
+        "apps/ingest/package.json",
+        False,
+        "release: version gate",
+    ),
+    (".github/workflows/admin-deploy.yml", "resolve"): (
+        "apps/ingest/package.json",
+        False,
+        "admin: resolve environment",
+    ),
+    (".github/workflows/packages-ci.yml", "prepare-openapi"): (
+        "apps/ingest/package.json",
+        True,
+        "contract: openapi spec",
+    ),
+}
+
+# Some capability owners share a job ID but prove different work. Select the
+# exact claim by the most specific topology marker, in order. The final core
+# marker is deliberately after slicer-contracts because both Taven and TableTap
+# own packages/core, while only Taven has the slicer contract package.
+EXPECTED_TOPOLOGY_JOB_NAME_VARIANTS = {
+    (".github/workflows/_release-version-gate.yml", "check"): (
+        ("apps/backend/pyproject.toml", "release: tag matches root version"),
+        ("apps/mobile/pubspec.yaml", "tag matches pubspec"),
+        ("apps/mobile/package.json", "tag matches the mobile version"),
+    ),
+    (".github/workflows/packages-ci.yml", "build"): (
+        ("apps/ingest/package.json", "packages: build, test & typecheck"),
+        (
+            "packages/slicer-contracts/package.json",
+            "packages: lint, typecheck, test & build",
+        ),
+        ("packages/core/package.json", "packages: build & test"),
+    ),
+}
+
+# This topology difference renames a job that exists on both sides. Encode the
+# exact documented pair: an arbitrary third name is drift even when the
+# repositories have different topology markers. Release-gate names use the
+# three-way topology variants above instead.
+EXPECTED_PRESENT_JOB_NAME_PAIRS = {
+    (".github/workflows/mobile-ci.yml", "mobile"): frozenset(
+        {
+            "mobile: format, analyze & test (+ android builds when mobile changes)",
+            "mobile: format, analyze & test (+ android release when mobile changes)",
+        }
+    ),
 }
 
 SHARED_PRESET = "github>Studio81Labs/.github:renovate-base"
@@ -424,10 +620,12 @@ KEYS = [
     ("renovate.json", "shared preset", "json", shared_preset),
 ]
 
-# Workflows scanned for action pins. Both repos have all of these; per-app
-# workflows are excluded because their presence differs by topology.
+# Workflows scanned for action pins. This includes shared workflows that
+# currently use no actions so adding the first action on only one side is still
+# visible. Capability gates above handle surfaces a sibling does not own.
 ACTION_WORKFLOWS = [
     ".github/workflows/_build-openapi.yml",
+    ".github/workflows/_release-version-gate.yml",
     ".github/workflows/openapi-check.yml",
     ".github/workflows/lint-pr.yml",
     ".github/workflows/labeler.yml",
@@ -439,6 +637,14 @@ ACTION_WORKFLOWS = [
     ".github/workflows/marketing-deploy.yml",
     ".github/workflows/mobile-ci.yml",
     ".github/workflows/mobile-release.yml",
+    ".github/workflows/ci-scripts.yml",
+    ".github/workflows/cleanup-pr-caches.yml",
+    ".github/workflows/flutter-pin-check.yml",
+    ".github/workflows/format-check.yml",
+    ".github/workflows/packages-ci.yml",
+    ".github/workflows/prune-stale-caches.yml",
+    ".github/workflows/security-scan.yml",
+    ".github/workflows/sibling-drift.yml",
 ]
 
 # Deliberately NOT compared, with the reason. Kept in code because the useful
@@ -632,7 +838,7 @@ def enabled_steps(job) -> list:
     ]
 
 
-def runnable_jobs(root) -> list:
+def runnable_job_entries(root) -> list[tuple[str, object]]:
     """Jobs that actually do something: enabled, and holding enabled work.
 
     ONE definition of "runs", because two of them drifted apart twice. Both
@@ -645,19 +851,24 @@ def runnable_jobs(root) -> list:
     if not isinstance(jobs, yaml.MappingNode):
         return []
     alive = []
-    for _, job in jobs.value:
+    for key, job in jobs.value:
         if not (isinstance(job, yaml.MappingNode) and job.value):
             continue
         if statically_disabled(job):
             continue
         calls_workflow = isinstance(_map_get(job, "uses"), yaml.ScalarNode)
         if calls_workflow or enabled_steps(job):
-            alive.append(job)
+            alive.append((str(key.value), job))
     return alive
 
 
-def uses_entries(text: str, path: str) -> list[tuple[str, int]]:
-    """Every executed `uses:` as (value, source line), from the composed tree.
+def runnable_jobs(root) -> list:
+    """Runnable job nodes, retained as the shared definition used by is_blank()."""
+    return [job for _, job in runnable_job_entries(root)]
+
+
+def job_uses_entries(text: str, path: str) -> list[tuple[str, str, int]]:
+    """Every executed `uses:` as (job id, value, source line).
 
     Composed rather than loaded so each value keeps its line number, which is
     what binds a `# vX.Y.Z` annotation to the pin it actually annotates. Labels
@@ -676,16 +887,31 @@ def uses_entries(text: str, path: str) -> list[tuple[str, int]]:
     except yaml.YAMLError as error:
         raise SystemExit(f"::error::{path}: cannot parse as YAML: {error}")
 
-    entries: list[tuple[str, int]] = []
-    for job in runnable_jobs(root):
+    entries: list[tuple[str, str, int]] = []
+    for job_id, job in runnable_job_entries(root):
         called = _map_get(job, "uses")  # a reusable workflow call
         if isinstance(called, yaml.ScalarNode):
-            entries.append((called.value, called.start_mark.line))
+            entries.append((job_id, called.value, called.start_mark.line))
         for step in enabled_steps(job):
             step_uses = _map_get(step, "uses")
             if isinstance(step_uses, yaml.ScalarNode):
-                entries.append((step_uses.value, step_uses.start_mark.line))
+                entries.append((job_id, step_uses.value, step_uses.start_mark.line))
     return entries
+
+
+def uses_entries(text: str, path: str) -> list[tuple[str, int]]:
+    """Every executed `uses:` as (value, source line), across runnable jobs."""
+    return [(value, line) for _, value, line in job_uses_entries(text, path)]
+
+
+def job_actions(text: str, path: str) -> set[tuple[str, str]]:
+    """Remote action names keyed by their owning job id."""
+    actions = set()
+    for job_id, value, _ in job_uses_entries(text, path):
+        parts = split_ref(value)
+        if parts is not None:
+            actions.add((job_id, parts[0]))
+    return actions
 
 
 TRAILING_COMMENT = re.compile(r"#\s*(?P<comment>v?\d+(?:\.\d+)*(?:[-+][\w.]+)?)\s*$")
@@ -1082,9 +1308,9 @@ def unified(ours: str, theirs: str, path: str) -> str:
 # reports its own correct marker as drift -- the exact false positive this
 # function exists to prevent, wearing the face of a real finding.
 #
-# Both alternatives are anchored to the start of a line AND to the opener, so a
-# sentence that merely mentions the phrase stays content rather than becoming a
-# header.
+# strip_provenance matches this pattern only at byte zero, or immediately after
+# a leading shebang. A provenance-shaped line later in the body is content and
+# must remain visible to the byte comparison.
 #
 # The Markdown branch consumes the WHOLE comment, through its first `-->`, even
 # when that lands on a later line. Line-based stripping was tried first and is
@@ -1101,8 +1327,18 @@ def unified(ours: str, theirs: str, path: str) -> str:
 # else.
 _PORTED_FROM = r"ported from Studio81Labs/[\w.-]+@[0-9a-fA-F]{7,40}"
 PROVENANCE = re.compile(
-    rf"^(?:#\s*{_PORTED_FROM}[^\n]*|<!--\s*{_PORTED_FROM}(?:(?!<!--).)*?-->[^\S\n]*)\n",
-    re.MULTILINE | re.DOTALL,
+    rf"(?:#\s*{_PORTED_FROM}[^\n]*|<!--\s*{_PORTED_FROM}(?:(?!<!--).)*?-->[^\S\n]*)\n",
+    re.DOTALL,
+)
+
+EDITORCONFIG_DART_HEADER = re.compile(
+    r"(?m)^\[\*\.dart\][ \t]*(?=\r(?:\n|$)|\n|$)"
+)
+EDITORCONFIG_TRAILING_DART_SECTION = re.compile(
+    r"(?ms)(?:^[ \t]*(?:\r\n|\n|\r))?^\[\*\.dart\][ \t]*(?:\r\n|\n|\r)(?:(?!^\[).)*\Z"
+)
+EDITORCONFIG_DART_SECTION = re.compile(
+    r"(?ms)^\[\*\.dart\][ \t]*(?:\r\n|\n|\r).*?(?=^\[|\Z)"
 )
 
 
@@ -1119,7 +1355,22 @@ def strip_provenance(text: str) -> str:
     trail; the comparison ignores it, because a sha recording WHERE a copy came
     from is metadata about the copy, not part of the content being compared.
     """
-    return PROVENANCE.sub("", text)
+    header_start = 0
+    if text.startswith("#!"):
+        newline = text.find("\n")
+        if newline == -1:
+            return text
+        header_start = newline + 1
+    match = PROVENANCE.match(text, header_start)
+    if match is None:
+        return text
+    return text[:header_start] + text[match.end():]
+
+
+def strip_editorconfig_dart_section(text: str) -> str:
+    """Remove only the Dart section while retaining shared editor policy."""
+    text = EDITORCONFIG_TRAILING_DART_SECTION.sub("", text)
+    return EDITORCONFIG_DART_SECTION.sub("", text)
 
 
 def line_endings(text: str) -> list[str]:
@@ -1211,23 +1462,246 @@ def compare(local_read, sibling_read) -> list[dict]:
 
     # Memoised per marker, not per entry: one marker gates several entries and
     # sibling reads go over the network.
-    marker_state: dict[tuple[str, ...], bool] = {}
+    marker_state: dict[str, tuple[bool, bool]] = {}
 
-    def gate_open(path: str) -> bool:
-        markers = TOPOLOGY_GATED.get(path)
-        if markers is None:
-            return True
-        if markers not in marker_state:
-            marker_state[markers] = (
-                any(local_read(marker) is not None for marker in markers)
-                and any(sibling_read(marker) is not None for marker in markers)
+    def marker_sides(marker: str) -> tuple[bool, bool]:
+        if marker not in marker_state:
+            paths = CAPABILITY_MARKER_PATHS.get(marker, (marker,))
+            marker_state[marker] = (
+                any(local_read(path) is not None for path in paths),
+                any(sibling_read(path) is not None for path in paths),
             )
-        return marker_state[markers]
+        return marker_state[marker]
+
+    def marker_open(marker: str) -> bool:
+        return all(marker_sides(marker))
+
+    def action_shapes_comparable(path: str) -> bool:
+        """Whether one-sided actions represent drift rather than topology."""
+        stack_marker = STACK_TOPOLOGY_GATED.get(path)
+        return stack_marker is None or len(set(marker_sides(stack_marker))) == 1
+
+    def topology_skips_artifact(
+        path: str,
+        ours,
+        theirs,
+        gates=TOPOLOGY_GATED,
+        stack_gates=STACK_TOPOLOGY_GATED,
+    ) -> bool:
+        """Whether topology explains why this artifact should not be compared.
+
+        Markers describe why a capability-owned artifact may be absent; they
+        do not disable comparison of an artifact that both repositories still
+        carry. Keeping that distinction here prevents an incidental marker
+        deletion from making real content, action-pin, or job-name drift quiet.
+        A missing stack manifest is different: it says at least one side does
+        not implement the Flutter-owned artifact whose whole-file contents or
+        job layout is being compared.
+        """
+        variant_markers = CONTENT_VARIANT_TOPOLOGY.get(path)
+        if variant_markers is not None:
+            variants = tuple(
+                next(
+                    (
+                        marker
+                        for marker in variant_markers
+                        if marker_sides(marker)[side_index]
+                    ),
+                    None,
+                )
+                for side_index in (0, 1)
+            )
+            if None not in variants and variants[0] != variants[1]:
+                # Presence remains an ownership invariant. Only two existing
+                # implementations with different version sources may skip
+                # their expected content delta.
+                return ours is not None and theirs is not None
+
+        stack_marker = stack_gates.get(path)
+        if stack_marker is not None:
+            stack_sides = marker_sides(stack_marker)
+            cross_stack_owned = False
+            if path in CROSS_STACK_REQUIRED:
+                capability_marker = gates.get(path)
+                capability_sides = (
+                    marker_sides(capability_marker)
+                    if capability_marker is not None
+                    else (False, False)
+                )
+                if all(capability_sides):
+                    # Both repositories own this mobile guard. Its absence is
+                    # drift even across stacks; when both copies exist, only
+                    # their stack-specific contents may be skipped.
+                    if ours is None or theirs is None:
+                        return False
+                    if stack_sides[0] != stack_sides[1]:
+                        return True
+                    cross_stack_owned = True
+                elif any(capability_sides):
+                    # Against a non-mobile repository, require the sole owner
+                    # to retain its guard without requiring a counterpart.
+                    owned = ours if capability_sides[0] else theirs
+                    nonowned = theirs if capability_sides[0] else ours
+                    return owned is not None and nonowned is None
+            if not cross_stack_owned and not any(stack_sides):
+                # Neither repository implements this stack. Its owned helper
+                # may legitimately be absent even when both repos have a
+                # broader mobile surface (for example, two React Native apps).
+                return True
+            if stack_sides[0] != stack_sides[1]:
+                # Across implementations, contents are not comparable, but
+                # the owning side must still retain its artifact. Checking
+                # that first prevents deleting the Flutter copy from looking
+                # like an expected Flutter/non-Flutter difference.
+                owned = ours if stack_sides[0] else theirs
+                return owned is not None
+
+        marker = gates.get(path)
+        if marker is None:
+            return False
+        sides = marker_sides(marker)
+        if all(sides):
+            return False
+        if not any(sides):
+            # With no owner on either side, absence is expected and a
+            # one-sided leftover does not make the capability shared.
+            return ours is None or theirs is None
+
+        # Exactly one repository owns the capability. Topology explains the
+        # artifact's absence only when the owner still has its copy. Without
+        # this ownership check, deleting the owner's file made two absences
+        # compare as topology and silently removed the protection.
+        owned = ours if sides[0] else theirs
+        return owned is not None and (ours is None or theirs is None)
+
+    def validate_local_topology_jobs(
+        path: str,
+        names: dict[str, str] | None,
+        side_index: int,
+        side: str,
+    ) -> set[str]:
+        """Validate repository-local job ownership before pair-level skips."""
+        handled: set[str] = set()
+        if names is None or "__error__" in names:
+            return handled
+        for (owned_path, job_id), (
+            marker,
+            owned_when_marked,
+            expected_name,
+        ) in EXPECTED_TOPOLOGY_OWNED_JOBS.items():
+            if owned_path != path:
+                continue
+            owns_job = marker_sides(marker)[side_index] == owned_when_marked
+            actual_name = names.get(job_id)
+            if owns_job and actual_name is None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"topology expects job `{job_id}` {side}, but it is absent",
+                    }
+                )
+            elif owns_job and actual_name != expected_name:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"job `{job_id}` {side}: expected `{expected_name}`, found `{actual_name}`",
+                    }
+                )
+            elif not owns_job and actual_name is not None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"topology expects no job `{job_id}` {side}, found `{actual_name}`",
+                    }
+                )
+            handled.add(job_id)
+        for (variant_path, job_id), variants in EXPECTED_TOPOLOGY_JOB_NAME_VARIANTS.items():
+            if variant_path != path:
+                continue
+            expected_name = next(
+                (
+                    name
+                    for marker, name in variants
+                    if marker_sides(marker)[side_index]
+                ),
+                None,
+            )
+            actual_name = names.get(job_id)
+            if expected_name is None and actual_name is not None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"topology expects no job `{job_id}` {side}, found `{actual_name}`",
+                    }
+                )
+            elif expected_name is not None and actual_name is None:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"topology expects job `{job_id}` {side}, but it is absent",
+                    }
+                )
+            elif expected_name is not None and actual_name != expected_name:
+                findings.append(
+                    {
+                        "kind": "jobname",
+                        "name": path,
+                        "detail": f"job `{job_id}` {side}: expected `{expected_name}`, found `{actual_name}`",
+                    }
+                )
+            handled.add(job_id)
+        return handled
+
+    invalid_topology_paths: set[str] = set()
+    for path, capability_marker in TOPOLOGY_GATED.items():
+        ours, theirs = local_read(path), sibling_read(path)
+        owner_marker = (
+            STACK_TOPOLOGY_GATED[path]
+            if path in STACK_TOPOLOGY_GATED and path not in CROSS_STACK_REQUIRED
+            else capability_marker
+        )
+        capability_sides = marker_sides(owner_marker)
+        missing_owner = (
+            capability_sides[0] and ours is None,
+            capability_sides[1] and theirs is None,
+        )
+        unexpected_nonowner = (
+            not capability_sides[0] and ours is not None,
+            not capability_sides[1] and theirs is not None,
+        )
+        if not any(missing_owner) and not any(unexpected_nonowner):
+            continue
+        topology = "mobile topology" if path in CROSS_STACK_REQUIRED else "topology"
+        for invalid, detail in (
+            (missing_owner, f"{topology} expects an artifact {{side}}, but it is absent"),
+            (
+                unexpected_nonowner,
+                f"{topology} expects no artifact {{side}} without its owning capability",
+            ),
+        ):
+            if not any(invalid):
+                continue
+            side = "here and there" if all(invalid) else "here" if invalid[0] else "there"
+            findings.append(
+                {
+                    "kind": "workflow" if path.startswith(".github/") else "file",
+                    "name": path,
+                    "detail": detail.format(side=side),
+                }
+            )
+        invalid_topology_paths.add(path)
 
     for path in IDENTICAL:
-        if not gate_open(path):
+        if path in invalid_topology_paths:
             continue
         ours, theirs = local_read(path), sibling_read(path)
+        if topology_skips_artifact(path, ours, theirs):
+            continue
         # Absent from BOTH is not agreement. `None == None` used to fall
         # through the equality check below and report nothing, so a renamed or
         # deleted file left an entry here that could never fail again -- the
@@ -1241,6 +1715,53 @@ def compare(local_read, sibling_read) -> list[dict]:
             continue
         if ours is not None and theirs is not None:
             ours, theirs = strip_provenance(ours), strip_provenance(theirs)
+            if path == ".editorconfig":
+                flutter_sides = marker_sides("apps/mobile/pubspec.yaml")
+                has_dart = (
+                    bool(EDITORCONFIG_DART_HEADER.search(ours)),
+                    bool(EDITORCONFIG_DART_HEADER.search(theirs)),
+                )
+                missing_dart = (
+                    flutter_sides[0] and not has_dart[0],
+                    flutter_sides[1] and not has_dart[1],
+                )
+                if any(missing_dart):
+                    side = (
+                        "here and there"
+                        if all(missing_dart)
+                        else "here"
+                        if missing_dart[0]
+                        else "there"
+                    )
+                    findings.append(
+                        {
+                            "kind": "file",
+                            "name": path,
+                            "detail": f"Flutter topology expects a [*.dart] section {side}, but it is absent",
+                        }
+                    )
+                invalid_dart = (
+                    not flutter_sides[0] and has_dart[0],
+                    not flutter_sides[1] and has_dart[1],
+                )
+                if any(invalid_dart):
+                    side = (
+                        "here and there"
+                        if all(invalid_dart)
+                        else "here"
+                        if invalid_dart[0]
+                        else "there"
+                    )
+                    findings.append(
+                        {
+                            "kind": "file",
+                            "name": path,
+                            "detail": f"contains a [*.dart] section {side} without a Flutter app",
+                        }
+                    )
+                if not all(flutter_sides) or any(missing_dart):
+                    ours = strip_editorconfig_dart_section(ours)
+                    theirs = strip_editorconfig_dart_section(theirs)
         if ours == theirs:
             continue
         if ours is None or theirs is None:
@@ -1290,9 +1811,51 @@ def compare(local_read, sibling_read) -> list[dict]:
     ours_pins: dict[tuple[str, str], dict[str, str]] = {}
     theirs_pins: dict[tuple[str, str], dict[str, str]] = {}
     for path in ACTION_WORKFLOWS:
-        if not gate_open(path):
-            continue
         local_text, sibling_text = local_read(path), sibling_read(path)
+        # Entry ownership is a repository-local invariant, so validate it
+        # before a whole-workflow topology gate can skip the pair. Otherwise,
+        # an owner deleting its required action went quiet whenever the other
+        # repository legitimately lacked the entire workflow.
+        our_job_actions = job_actions(local_text, path) if local_text else set()
+        their_job_actions = job_actions(sibling_text, path) if sibling_text else set()
+        for (entry_path, job_id, action), (
+            marker,
+            owned_when_marked,
+        ) in ACTION_ENTRY_TOPOLOGY_GATED.items():
+            if entry_path != path:
+                continue
+            our_marker, their_marker = marker_sides(marker)
+            for actions, has_marker, side in (
+                (our_job_actions, our_marker, "here"),
+                (their_job_actions, their_marker, "there"),
+            ):
+                owns_action = has_marker == owned_when_marked
+                has_owned_action = (job_id, action) in actions
+                has_action_anywhere = any(
+                    found_action == action for _, found_action in actions
+                )
+                if owns_action and not has_owned_action:
+                    findings.append(
+                        {
+                            "kind": "action",
+                            "name": f"{action} — {path.rsplit('/', 1)[-1]}",
+                            "detail": f"topology expects the action in job `{job_id}` {side}, but it is absent",
+                        }
+                    )
+                elif not owns_action and has_action_anywhere:
+                    findings.append(
+                        {
+                            "kind": "action",
+                            "name": f"{action} — {path.rsplit('/', 1)[-1]}",
+                            "detail": f"topology expects no action anywhere {side}, but it is present",
+                        }
+                    )
+        if path in invalid_topology_paths:
+            continue
+        if topology_skips_artifact(
+            path, local_text, sibling_text, ACTION_TOPOLOGY_GATED, {}
+        ):
+            continue
         # The manifest DEFINES these as workflows both repos have, so a missing
         # one is a finding in its own right -- and silently skipping it is worse
         # than missing a pin: every action in that file becomes one-sided, the
@@ -1380,6 +1943,87 @@ def compare(local_read, sibling_read) -> list[dict]:
                     "detail": "in neither repo — stale entry in ACTION_WORKFLOWS",
                 }
             )
+        # In a shared workflow owned by both repositories, adding or replacing
+        # an action on only one side is drift too. A broad capability gate
+        # excuses this only while ownership is asymmetric, and a stack gate
+        # only across different implementations; merely listing a workflow in
+        # ACTION_TOPOLOGY_GATED must not silence drift between two owners. Keep
+        # the existing pins-nothing finding singular when one whole set is
+        # empty; this closes the quieter case where both sides still share at
+        # least one other action and a set intersection would discard the new
+        # action.
+        poker_topology_actions: set[str] = set()
+        if (
+            here
+            and there
+            and our_file_pins
+            and their_file_pins
+            and path in POKER_ACTION_LAYOUTS
+        ):
+            python_sides = marker_sides("apps/backend/pyproject.toml")
+            if python_sides[0] != python_sides[1]:
+                layouts = POKER_ACTION_LAYOUTS[path]
+                poker_topology_actions = set(layouts["python"]) | set(layouts["node"])
+                for action in sorted(poker_topology_actions):
+                    expected = (
+                        action in layouts["python" if python_sides[0] else "node"],
+                        action in layouts["python" if python_sides[1] else "node"],
+                    )
+                    actual = (action in our_file_pins, action in their_file_pins)
+                    if actual == expected:
+                        continue
+                    expected_side = "here" if expected[0] else "there"
+                    actual_side = (
+                        "here and there"
+                        if all(actual)
+                        else "here"
+                        if actual[0]
+                        else "there"
+                        if actual[1]
+                        else "nowhere"
+                    )
+                    findings.append(
+                        {
+                            "kind": "action",
+                            "name": f"{action} — {name}",
+                            "detail": (
+                                f"topology expects the action {expected_side} only, "
+                                f"but it is present {actual_side}"
+                            ),
+                        }
+                    )
+        if (
+            here
+            and there
+            and our_file_pins
+            and their_file_pins
+            and action_shapes_comparable(path)
+        ):
+            for action in sorted(set(our_file_pins) ^ set(their_file_pins)):
+                if action in poker_topology_actions:
+                    continue
+                # Capability-owned entries were asserted above, including
+                # ownership polarity and owner-side deletion. Do not add a
+                # second generic one-sided finding for the same violation.
+                if any(
+                    entry_path == path and entry_action == action
+                    for entry_path, _, entry_action in ACTION_ENTRY_TOPOLOGY_GATED
+                ):
+                    continue
+                refs = our_file_pins.get(action) or their_file_pins[action]
+                described = " + ".join(
+                    sorted(f"{label} ({ref})" for ref, label in refs.items())
+                )
+                is_here = action in our_file_pins
+                findings.append(
+                    {
+                        "kind": "action",
+                        "name": f"{action} — {name}",
+                        "detail": f"`{described}` here, absent there"
+                        if is_here
+                        else f"absent here, `{described}` there",
+                    }
+                )
         for values, side in ((our_unparsed, "here"), (their_unparsed, "there")):
             for value in values:
                 findings.append(
@@ -1395,9 +2039,9 @@ def compare(local_read, sibling_read) -> list[dict]:
         for action, refs in their_file_pins.items():
             theirs_pins[(path, action)] = refs
 
-    # Only pairs BOTH repos have. An action in a workflow one repo does not run
-    # that way is a topology difference, not drift, and reporting it is the
-    # noise this check is built to avoid.
+    # Compare ref versions for action names BOTH repositories have. One-sided
+    # actions in topology-independent workflows were reported above; capability
+    # workflows retain this intersection because their implementations differ.
     #
     # Collapsed by (action, our_ref, their_ref): one action drifting identically
     # across eight workflows is ONE fact, and eight rows saying so is the same
@@ -1481,10 +2125,77 @@ def compare(local_read, sibling_read) -> list[dict]:
         )
 
     for path in JOB_NAME_WORKFLOWS:
-        if not gate_open(path):
+        local_text, sibling_text = local_read(path), sibling_read(path)
+        ours = job_names(local_text, path, "here")
+        theirs = job_names(sibling_text, path, "there")
+        broken = (ours or {}).get("__error__") or (theirs or {}).get("__error__")
+        if broken:
+            findings.append(
+                {"kind": "jobname", "name": path, "detail": f"could not read jobs — {broken}"}
+            )
             continue
-        ours = job_names(local_read(path), path, "here")
-        theirs = job_names(sibling_read(path), path, "there")
+        handled_topology_jobs = validate_local_topology_jobs(path, ours, 0, "here")
+        handled_topology_jobs.update(
+            validate_local_topology_jobs(path, theirs, 1, "there")
+        )
+        poker_pair = marker_sides("apps/backend/pyproject.toml")[0] != marker_sides(
+            "apps/backend/pyproject.toml"
+        )[1]
+        if poker_pair and path in POKER_JOB_LAYOUTS:
+            python_sides = marker_sides("apps/backend/pyproject.toml")
+            layouts = POKER_JOB_LAYOUTS[path]
+            controlled_jobs = set(layouts["python"]) | set(layouts["node"])
+            if path == ".github/workflows/backend-ci.yml":
+                database_pair = EXPECTED_TOPOLOGY_JOB_PAIRS[
+                    (path, "apps/backend/src/data-source.ts")
+                ]
+                controlled_jobs.update((database_pair[0][0], database_pair[1][0]))
+            for names, is_python, side_index, side in (
+                (ours, python_sides[0], 0, "here"),
+                (theirs, python_sides[1], 1, "there"),
+            ):
+                if names is None:
+                    continue
+                expected = dict(layouts["python" if is_python else "node"])
+                if path == ".github/workflows/backend-ci.yml" and not is_python:
+                    database_marker = marker_sides("apps/backend/src/data-source.ts")
+                    marked, unmarked = EXPECTED_TOPOLOGY_JOB_PAIRS[
+                        (path, "apps/backend/src/data-source.ts")
+                    ]
+                    job_id, expected_name = marked if database_marker[side_index] else unmarked
+                    expected[job_id] = expected_name
+                for job_id in sorted(controlled_jobs):
+                    actual_name = names.get(job_id)
+                    expected_name = expected.get(job_id)
+                    if expected_name is None and actual_name is not None:
+                        findings.append(
+                            {
+                                "kind": "jobname",
+                                "name": path,
+                                "detail": f"topology expects no job `{job_id}` {side}, found `{actual_name}`",
+                            }
+                        )
+                    elif expected_name is not None and actual_name is None:
+                        findings.append(
+                            {
+                                "kind": "jobname",
+                                "name": path,
+                                "detail": f"topology expects job `{job_id}` {side}, but it is absent",
+                            }
+                        )
+                    elif expected_name is not None and actual_name != expected_name:
+                        findings.append(
+                            {
+                                "kind": "jobname",
+                                "name": path,
+                                "detail": f"job `{job_id}` {side}: expected `{expected_name}`, found `{actual_name}`",
+                            }
+                        )
+            handled_topology_jobs.update(controlled_jobs)
+        if path in invalid_topology_paths:
+            continue
+        if topology_skips_artifact(path, local_text, sibling_text):
+            continue
         # A workflow the manifest names but a repo does not have is itself the
         # finding, for the same reason ACTION_WORKFLOWS reports it: silently
         # skipping shrinks the comparison and a smaller comparison looks like
@@ -1502,29 +2213,63 @@ def compare(local_read, sibling_read) -> list[dict]:
                 missing = "absent here, present there" if ours is None else "present here, absent there"
                 findings.append({"kind": "jobname", "name": path, "detail": missing})
             continue
-        broken = ours.get("__error__") or theirs.get("__error__")
-        if broken:
-            findings.append(
-                {"kind": "jobname", "name": path, "detail": f"could not read jobs — {broken}"}
-            )
-            continue
-        # Poker's FastAPI/runtime-image and always-emitted contract-gate jobs
-        # are pair-specific. Do not let those exemptions hide drift between the
-        # three Node siblings: activate them only when exactly one side carries
-        # the Python backend topology marker.
-        poker_pair = (
-            local_read("apps/backend/pyproject.toml") is None
-        ) != (
-            sibling_read("apps/backend/pyproject.toml") is None
-        )
+        for (pair_path, marker), (marked, unmarked) in EXPECTED_TOPOLOGY_JOB_PAIRS.items():
+            if pair_path != path:
+                continue
+            if poker_pair and pair_path == ".github/workflows/backend-ci.yml":
+                continue
+            our_marked, their_marked = marker_sides(marker)
+            if our_marked == their_marked:
+                continue
+            for names, is_marked, side in (
+                (ours, our_marked, "here"),
+                (theirs, their_marked, "there"),
+            ):
+                job_id, expected_name = marked if is_marked else unmarked
+                actual_name = names.get(job_id)
+                if actual_name is None:
+                    findings.append(
+                        {
+                            "kind": "jobname",
+                            "name": path,
+                            "detail": f"backend topology expects job `{job_id}` {side}, but it is absent",
+                        }
+                    )
+                elif actual_name != expected_name:
+                    findings.append(
+                        {
+                            "kind": "jobname",
+                            "name": path,
+                            "detail": f"job `{job_id}` {side}: expected `{expected_name}`, found `{actual_name}`",
+                        }
+                    )
+            marked_id, unmarked_id = marked[0], unmarked[0]
+            for job_id, expected_here in (
+                (marked_id, our_marked),
+                (unmarked_id, not our_marked),
+            ):
+                if (
+                    (job_id in ours) == expected_here
+                    and (job_id in theirs) != expected_here
+                ):
+                    handled_topology_jobs.add(job_id)
         for job in sorted(set(ours) | set(theirs)):
-            if poker_pair and (path, job) in POKER_JOB_DIFFS:
-                continue
-            if (path, job) in EXPECTED_JOB_DIFFS:
-                continue
             our_name, their_name = ours.get(job), theirs.get(job)
+            if job in handled_topology_jobs:
+                continue
             if our_name == their_name:
                 continue
+            if (path, job) in EXPECTED_JOB_DIFFS:
+                marker = EXPECTED_JOB_DIFF_MARKERS.get((path, job))
+                if (
+                    marker is not None
+                    and marker_sides(marker)[0] != marker_sides(marker)[1]
+                    and our_name is not None
+                    and their_name is not None
+                    and frozenset((our_name, their_name))
+                    == EXPECTED_PRESENT_JOB_NAME_PAIRS.get((path, job))
+                ):
+                    continue
             if our_name is None or their_name is None:
                 side = "present here, absent there" if their_name is None else "absent here, present there"
                 detail = f"job `{job}` {side}"
@@ -1551,9 +2296,9 @@ def render(findings: list[dict]) -> str:
         f"[`{SIBLING}`](https://github.com/{SIBLING}) (`{SIBLING_REF}`).",
         "",
         "**This reports that two things differ, not that either repo is wrong.**",
-        "Nexcue is primary for infrastructure, but the reverse channel is real —",
-        "TableTap shipped the unified `v*` release tag before this repo did. Read",
-        "each row and decide which direction the fix travels.",
+        "Nexcue is the default baseline for shared infrastructure. The valid",
+        "exceptions are capability topology or a linked back-port; infrastructure",
+        "can still move in either direction. Read each row before choosing.",
         "",
         f"{len(findings)} difference(s).",
         "",
@@ -1622,17 +2367,75 @@ def self_test() -> int:
         # hole the stale-entry check closes, which would otherwise fire on
         # every baseline.
         files.update({path: "stub\n" for path in IDENTICAL if path not in files})
-        # Most tests exercise comparison behavior rather than topology. Open
-        # all declared surfaces by default; topology-specific tests remove the
-        # relevant markers explicitly.
-        for markers in TOPOLOGY_GATED.values():
-            files.setdefault(markers[0], "surface marker\n")
+        # Established siblings declare both broad capabilities compared by the
+        # action-pin manifest. Individual tests can remove a marker explicitly
+        # to model a deliberately smaller sibling.
+        broad_markers = (
+            set(ACTION_TOPOLOGY_GATED.values())
+            | set(TOPOLOGY_GATED.values())
+        ) - set(STACK_TOPOLOGY_GATED.values())
+        for marker in broad_markers:
+            paths = CAPABILITY_MARKER_PATHS.get(marker, (marker,))
+            files.setdefault(paths[0], "marker\n")
+        files.update(
+            {
+                "packages/core/package.json": "{}\n",
+                ".github/workflows/admin-ci.yml": (
+                    "jobs:\n"
+                    "  build:\n"
+                    "    name: \"ci: build\"\n"
+                    "    steps:\n"
+                    "      - uses: actions/download-artifact@1111111 # v1\n"
+                    "      - uses: actions/upload-artifact@1111111 # v1\n"
+                    "  prepare-openapi:\n    name: \"contract: openapi spec\"\n"
+                ),
+                ".github/workflows/backend-deploy.yml": (
+                    "jobs:\n"
+                    "  build:\n    name: \"ci: build\"\n"
+                    "  version-gate:\n    name: \"release: version gate\"\n"
+                ),
+                ".github/workflows/_release-version-gate.yml": (
+                    "jobs:\n"
+                    "  check:\n    name: \"tag matches the mobile version\"\n"
+                ),
+                ".github/workflows/admin-deploy.yml": (
+                    "jobs:\n"
+                    "  build:\n    name: \"ci: build\"\n"
+                    "  resolve:\n    name: \"admin: resolve environment\"\n"
+                ),
+                ".github/workflows/packages-ci.yml": (
+                    "jobs:\n"
+                    "  build:\n"
+                    "    name: \"packages: build & test\"\n"
+                ),
+            }
+        )
         files.update(overrides)
+        # Keep the default fixture internally valid: a repository without the
+        # Flutter stack marker does not carry Flutter-only artifacts. Explicit
+        # overrides are preserved so tests can still model a stale non-owner
+        # copy deliberately.
+        if files.get("apps/mobile/pubspec.yaml") is None:
+            for path in set(STACK_TOPOLOGY_GATED) - CROSS_STACK_REQUIRED:
+                if path not in overrides:
+                    files[path] = None
+        release_gate = ".github/workflows/_release-version-gate.yml"
+        if release_gate not in overrides:
+            if files.get("apps/backend/pyproject.toml") is not None:
+                release_name = "release: tag matches root version"
+            elif files.get("apps/mobile/pubspec.yaml") is not None:
+                release_name = "tag matches pubspec"
+            else:
+                release_name = "tag matches the mobile version"
+            files[release_gate] = (
+                "jobs:\n"
+                f"  check:\n    name: \"{release_name}\"\n"
+            )
         return {k: v for k, v in files.items() if v is not None}
 
     ours = {
         ".nvmrc": "22\n",
-        ".editorconfig": "root = true\n[*.dart]\n",
+        ".editorconfig": "root = true\n[*.py]\nindent_size = 4\n",
         "pnpm-workspace.yaml": "minimumReleaseAge: 1440\ntrustPolicy: no-downgrade\n",
         "tsconfig.base.json": '{ "strict": true, "noImplicitOverride": true }',
         ".github/workflows/labeler.yml": wf("actions/labeler@aaaaaaa # v7.0.0"),
@@ -1646,6 +2449,98 @@ def self_test() -> int:
     theirs[".editorconfig"] = "root = true\n"
     found = compare(repo(**ours).get, repo(**theirs).get)
     assert [f["name"] for f in found] == [".editorconfig"], found
+
+    common_editorconfig = "root = true\n[*.py]\nindent_size = 4\n"
+    flutter_editorconfig = "root = true\n[*.dart]\nindent_size = 2\n\n[*.py]\nindent_size = 4\n"
+    flutter_editor = {
+        ".editorconfig": flutter_editorconfig,
+        "apps/mobile/pubspec.yaml": "name: mobile\n",
+    }
+    plain_editor = {".editorconfig": common_editorconfig}
+    found = [
+        f for f in compare(repo(**flutter_editor).get, repo(**plain_editor).get)
+        if f["name"] == ".editorconfig"
+    ]
+    assert found == [], f"Dart-only editor policy is stack topology: {found}"
+    trailing_flutter_editor = {
+        ".editorconfig": common_editorconfig + "\n[*.dart]\nindent_size = 2\n",
+        "apps/mobile/pubspec.yaml": "name: mobile\n",
+    }
+    found = [
+        f
+        for f in compare(repo(**trailing_flutter_editor).get, repo(**plain_editor).get)
+        if f["name"] == ".editorconfig"
+    ]
+    assert found == [], f"a trailing Dart section must not leave its separator behind: {found}"
+    missing_flutter_editor = {
+        ".editorconfig": common_editorconfig,
+        "apps/mobile/pubspec.yaml": "name: mobile\n",
+    }
+    found = [
+        f
+        for f in compare(repo(**missing_flutter_editor).get, repo(**plain_editor).get)
+        if f["name"] == ".editorconfig"
+    ]
+    assert len(found) == 1 and "expects a [*.dart] section here" in found[0]["detail"], found
+    found = [
+        f
+        for f in compare(
+            repo(**missing_flutter_editor).get,
+            repo(**missing_flutter_editor).get,
+        )
+        if f["name"] == ".editorconfig"
+    ]
+    assert len(found) == 1 and "here and there" in found[0]["detail"], found
+    found = [
+        f
+        for f in compare(repo(**flutter_editor).get, repo(**missing_flutter_editor).get)
+        if f["name"] == ".editorconfig"
+    ]
+    assert len(found) == 1 and "expects a [*.dart] section there" in found[0]["detail"], found
+    invalid_plain_editor = {".editorconfig": flutter_editorconfig}
+    found = [
+        f for f in compare(repo(**invalid_plain_editor).get, repo(**plain_editor).get)
+        if f["name"] == ".editorconfig"
+    ]
+    assert len(found) == 1 and "without a Flutter app" in found[0]["detail"], found
+    crlf_common_editorconfig = common_editorconfig.replace("\n", "\r\n")
+    crlf_invalid_plain_editor = {
+        ".editorconfig": (
+            "root = true\r\n[*.dart]\r\nindent_size = 2\r\n\r\n"
+            "[*.py]\r\nindent_size = 4\r\n"
+        )
+    }
+    crlf_plain_editor = {".editorconfig": crlf_common_editorconfig}
+    found = [
+        f
+        for f in compare(
+            repo(**crlf_invalid_plain_editor).get,
+            repo(**crlf_plain_editor).get,
+        )
+        if f["name"] == ".editorconfig"
+    ]
+    assert len(found) == 1 and "without a Flutter app" in found[0]["detail"], found
+    found = [
+        f
+        for f in compare(
+            repo(**invalid_plain_editor).get,
+            repo(**invalid_plain_editor).get,
+        )
+        if f["name"] == ".editorconfig"
+    ]
+    assert len(found) == 1 and "here and there" in found[0]["detail"], found
+    differing_invalid_plain_editor = {
+        ".editorconfig": flutter_editorconfig.replace("indent_size = 2", "indent_size = 4")
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**invalid_plain_editor).get,
+            repo(**differing_invalid_plain_editor).get,
+        )
+        if f["name"] == ".editorconfig"
+    ]
+    assert len(found) == 1 and "here and there" in found[0]["detail"], found
 
     # A file absent on the sibling. `None` rather than `del`: repo() seeds
     # every manifest path, so deleting the key only gets it seeded back with
@@ -1805,6 +2700,15 @@ def self_test() -> int:
     # entry uses today.
     assert strip_provenance("# ported from Studio81Labs/nexcue@e204d2fc\n24\n") == "24\n"
 
+    # A leading shebang is part of the executable, not an obstacle to the
+    # header. Provenance-shaped lines anywhere else are ordinary body content.
+    shebang = "#!/usr/bin/env bash\n# ported from Studio81Labs/nexcue@e204d2fc\nset -e\n"
+    assert strip_provenance(shebang) == "#!/usr/bin/env bash\nset -e\n"
+    body_marker = "first\n# ported from Studio81Labs/nexcue@e204d2fc\nlast\n"
+    assert strip_provenance(body_marker) == body_marker
+    body_html_marker = "first\n" + md_header + "last\n"
+    assert strip_provenance(body_html_marker) == body_html_marker
+
     # ...but real content differences are still reported through the header.
     changed = {".nvmrc": "# ported from Studio81Labs/tabletap@9db05645\n22\n"}
     found = [f for f in compare(repo(**ported).get, repo(**changed).get) if f["kind"] == "file"]
@@ -1942,12 +2846,13 @@ def self_test() -> int:
     theirs[".github/workflows/labeler.yml"] = wf("actions/labeler@aaaaaaa # v7")
     assert compare(repo(**ours).get, repo(**theirs).get) == [], "same SHA, coarser comment, must be quiet"
 
-    # An action only ONE repo uses is topology, not drift.
+    # An action only ONE repo uses in a topology-independent workflow is drift.
     theirs = dict(ours)
     theirs[".github/workflows/lint-pr.yml"] = (
         wf("actions/checkout@bbbbbbb # v7.0.1", "pwa-only/action@ddddddd # v1")
     )
-    assert compare(repo(**ours).get, repo(**theirs).get) == [], "one-sided actions must not report"
+    found = [f for f in compare(repo(**ours).get, repo(**theirs).get) if f["kind"] == "action"]
+    assert len(found) == 1 and found[0]["name"].startswith("pwa-only/action"), found
 
     # A pin with no version comment still participates, by SHA.
     theirs = dict(ours)
@@ -1997,24 +2902,36 @@ def self_test() -> int:
     # A shared workflow deleted or renamed on one side. Skipping it made every
     # action in the file one-sided, so the loss produced no finding at all and
     # could even lower the count enough to close the standing issue.
-    only_here = {".github/workflows/mobile-release.yml": wf("actions/checkout@aaaaaaa # v7")}
-    found = compare(repo(**only_here).get, repo(**{k: None for k in ACTION_WORKFLOWS}).get)
-    assert any(f["kind"] == "workflow" for f in found), found
+    only_here = {".github/workflows/format-check.yml": wf("actions/checkout@aaaaaaa # v7")}
+    found = [
+        f
+        for f in compare(repo(**only_here).get, repo(**{k: None for k in ACTION_WORKFLOWS}).get)
+        if f["kind"] == "workflow" and f["name"] == "format-check.yml"
+    ]
+    assert len(found) == 1, found
     assert found[0]["detail"] == "present here, absent there", found
-    found = compare(repo(**{k: None for k in ACTION_WORKFLOWS}).get, repo(**only_here).get)
+    found = [
+        f
+        for f in compare(repo(**{k: None for k in ACTION_WORKFLOWS}).get, repo(**only_here).get)
+        if f["kind"] == "workflow" and f["name"] == "format-check.yml"
+    ]
     assert found[0]["detail"] == "absent here, present there", found
 
     # An EMPTY sibling copy is present, not absent. Truthiness conflated the
     # two and reversed the direction, sending the reader to fix the wrong repo.
+    mobile_only_here = {
+        ".github/workflows/mobile-release.yml": wf("actions/checkout@aaaaaaa # v7")
+    }
+    only_here = mobile_only_here
     empty_there = dict.fromkeys(ACTION_WORKFLOWS, "")
     empty_there[".github/workflows/mobile-release.yml"] = ""
-    found = [f for f in compare(repo(**only_here).get, repo(**empty_there).get)
+    found = [f for f in compare(repo(**mobile_only_here).get, repo(**empty_there).get)
              if f["kind"] == "workflow" and f["name"] == "mobile-release.yml"]
     assert len(found) == 1, found
     assert found[0]["detail"] == "present here, no runnable jobs there", found
 
     # ...and the reverse.
-    found = [f for f in compare(repo(**empty_there).get, repo(**only_here).get)
+    found = [f for f in compare(repo(**empty_there).get, repo(**mobile_only_here).get)
              if f["kind"] == "workflow" and f["name"] == "mobile-release.yml"]
     assert found[0]["detail"] == "no runnable jobs here, present there", found
 
@@ -2081,6 +2998,7 @@ def self_test() -> int:
     # A workflow that uses no actions in BOTH repos is agreement, not drift --
     # this is the noise case that would fire every week if got wrong.
     neither = dict.fromkeys(ACTION_WORKFLOWS, "jobs:\n  a:\n    steps:\n      - run: make\n")
+    neither["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**neither).get, repo(**neither).get) if f["kind"] == "workflow"]
     assert found == [], found
 
@@ -2097,6 +3015,7 @@ def self_test() -> int:
     # direction. The earlier condition reported "empty here, has content
     # there" for two identical empty files.
     blank = dict.fromkeys(ACTION_WORKFLOWS, "   \n")
+    blank["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**blank).get, repo(**blank).get) if f["kind"] == "workflow"]
     assert found == [], f"two blank files agree: {found}"
 
@@ -2192,6 +3111,7 @@ def self_test() -> int:
         "jobs:\n  a:\n    if: false\n    steps:\n      - run: make\n"
         "  b:\n    steps:\n      - run: make\n",
     )
+    one_on["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**one_on).get, repo(**one_on).get) if f["kind"] == "workflow"]
     assert found == [], found
 
@@ -2199,6 +3119,7 @@ def self_test() -> int:
     mixed_jobs = dict.fromkeys(
         ACTION_WORKFLOWS, "jobs:\n  empty:\n  real:\n    steps:\n      - run: make\n"
     )
+    mixed_jobs["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**mixed_jobs).get, repo(**mixed_jobs).get)
              if f["kind"] == "workflow"]
     assert found == [], found
@@ -2206,6 +3127,7 @@ def self_test() -> int:
     # ...but a workflow whose jobs only `run:` things still RUNS. It pins
     # nothing, and reporting that would be noise.
     runs_only = dict.fromkeys(ACTION_WORKFLOWS, "jobs:\n  build:\n    steps:\n      - run: make\n")
+    runs_only["apps/mobile/pubspec.yaml"] = "name: app\n"
     found = [f for f in compare(repo(**runs_only).get, repo(**runs_only).get) if f["kind"] == "workflow"]
     assert found == [], found
 
@@ -2265,7 +3187,7 @@ def self_test() -> int:
     build_lower = {".github/workflows/backend-ci.yml": wf("owner/repo/build@2222222 # v2")}
     found = [f for f in compare(repo(**build_upper).get, repo(**build_lower).get)
              if f["kind"] == "action"]
-    assert found == [], f"different subpaths are different actions: {found}"
+    assert len(found) == 2, f"different subpaths are one-sided actions: {found}"
 
     # ...and the owner/repo halves of such a reference still normalise.
     reusable_upper = {".github/workflows/backend-ci.yml":
@@ -2295,9 +3217,20 @@ def self_test() -> int:
     assert "release-2026-b" in found[0]["detail"], found
 
     # Gone from both: a manifest entry that no longer compares anything.
-    found = [f for f in compare(repo(**{k: None for k in ACTION_WORKFLOWS}).get, repo(**{k: None for k in ACTION_WORKFLOWS}).get) if f["kind"] == "workflow"]
-    assert len(found) == len(ACTION_WORKFLOWS), len(found)
-    assert "stale entry" in found[0]["detail"], found
+    gone_actions = {path: None for path in ACTION_WORKFLOWS}
+    for marker in set(ACTION_TOPOLOGY_GATED.values()):
+        for marker_path in CAPABILITY_MARKER_PATHS.get(marker, (marker,)):
+            gone_actions[marker_path] = "marker\n"
+    found = [
+        f
+        for f in compare(repo(**gone_actions).get, repo(**gone_actions).get)
+        if f["kind"] == "workflow" and "stale entry" in f["detail"]
+    ]
+    # Missing owned cross-stack workflows are reported by the stronger
+    # presence contract above, so they do not also produce stale-manifest
+    # duplicates here.
+    expected_stale = set(ACTION_WORKFLOWS) - set(TOPOLOGY_GATED)
+    assert len(found) == len(expected_stale), len(found)
 
     # A commented-out step and an embedded string. Grepping the raw text read
     # both as active pins and INVENTED drift, which keeps the standing issue
@@ -2389,6 +3322,234 @@ def self_test() -> int:
     found = compare(repo(**floating).get, repo(**pinned).get)
     assert found[0]["detail"] == "`main` here, `v7.0.1` there", found
 
+    shared_plus_ours = {
+        ".github/workflows/backend-ci.yml": wf(
+            "actions/checkout@1111111 # v1",
+            "owner/ours@2222222 # v2",
+        )
+    }
+    shared_plus_theirs = {
+        ".github/workflows/backend-ci.yml": wf(
+            "actions/checkout@1111111 # v1",
+            "owner/theirs@3333333 # v3",
+        )
+    }
+    found = [
+        f for f in compare(repo(**shared_plus_ours).get, repo(**shared_plus_theirs).get)
+        if f["kind"] == "action" and "backend-ci.yml" in f["name"]
+    ]
+    assert len(found) == 2, f"one-sided shared actions must report: {found}"
+
+    admin_with_download = {
+        ".github/workflows/admin-ci.yml": wf(
+            "actions/checkout@1111111 # v1",
+            "actions/download-artifact@2222222 # v2",
+            "actions/upload-artifact@3333333 # v3",
+        )
+    }
+    admin_without_capability = {
+        ".github/workflows/admin-ci.yml": wf("actions/checkout@1111111 # v1"),
+        "apps/marketing/package.json": None,
+    }
+    found = [
+        f for f in compare(repo(**admin_with_download).get, repo(**admin_without_capability).get)
+        if f["kind"] == "action" and "admin-ci.yml" in f["name"]
+    ]
+    assert found == [], f"optional job actions follow their capability: {found}"
+    admin_with_preview = {
+        ".github/workflows/admin-ci.yml": wf(
+            "actions/checkout@1111111 # v1",
+            "actions/download-artifact@2222222 # v2",
+            "actions/upload-artifact@2222222 # v2",
+        )
+    }
+    found = [
+        f
+        for f in compare(repo(**admin_with_preview).get, repo(**admin_without_capability).get)
+        if f["kind"] == "action" and "admin-ci.yml" in f["name"]
+    ]
+    assert found == [], f"admin preview uploads follow deployment capability: {found}"
+    admin_without_capability_with_download = {
+        ".github/workflows/admin-ci.yml": admin_with_download[".github/workflows/admin-ci.yml"],
+        "apps/marketing/package.json": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**admin_without_capability_with_download).get,
+            repo(**admin_without_capability).get,
+        )
+        if f["kind"] == "action" and "admin-ci.yml" in f["name"]
+    ]
+    assert len(found) == 2, f"entry gates require asymmetric ownership: {found}"
+    admin_owner_without_download = {
+        ".github/workflows/admin-ci.yml": wf(
+            "actions/checkout@1111111 # v1",
+            "actions/upload-artifact@3333333 # v3",
+        ),
+    }
+    found = [
+        f for f in compare(repo(**admin_with_download).get, repo(**admin_owner_without_download).get)
+        if f["kind"] == "action" and "admin-ci.yml" in f["name"]
+    ]
+    assert len(found) == 1, f"an owner losing an optional action must report: {found}"
+    owner_without_download = admin_owner_without_download
+    non_owner_without_download = {
+        ".github/workflows/admin-ci.yml": wf("actions/checkout@1111111 # v1"),
+        "apps/marketing/package.json": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**owner_without_download).get,
+            repo(**non_owner_without_download).get,
+        )
+        if f["kind"] == "action"
+        and f["name"].startswith("actions/download-artifact")
+    ]
+    assert len(found) == 1, f"a sole owner must retain its gated action: {found}"
+    inverted_download = {
+        ".github/workflows/admin-ci.yml": wf(
+            "actions/checkout@1111111 # v1",
+            "actions/download-artifact@2222222 # v2",
+        ),
+        "apps/marketing/package.json": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**owner_without_download).get,
+            repo(**inverted_download).get,
+        )
+        if f["kind"] == "action"
+        and f["name"].startswith("actions/download-artifact")
+    ]
+    assert len(found) == 2, f"an inverted gated action must report both sides: {found}"
+    non_owner_download_in_other_job = {
+        ".github/workflows/admin-ci.yml": (
+            "jobs:\n"
+            "  other:\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@1111111 # v1\n"
+            "      - uses: actions/download-artifact@2222222 # v2\n"
+        ),
+        "apps/marketing/package.json": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**admin_with_download).get,
+            repo(**non_owner_download_in_other_job).get,
+        )
+        if f["kind"] == "action"
+        and f["name"].startswith("actions/download-artifact")
+    ]
+    assert len(found) == 1, f"a non-owner action in any job must report: {found}"
+    assert "no action anywhere there" in found[0]["detail"], found
+
+    PACKAGE_ACTION_WF = ".github/workflows/packages-ci.yml"
+    package_with_download = {
+        PACKAGE_ACTION_WF: wf(
+            "actions/checkout@1111111 # v1",
+            "actions/download-artifact@2222222 # v2",
+        ),
+        "apps/ingest/package.json": "{}\n",
+    }
+    package_without_ingest = {
+        PACKAGE_ACTION_WF: wf("actions/checkout@1111111 # v1"),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**package_with_download).get,
+            repo(**package_without_ingest).get,
+        )
+        if f["kind"] == "action" and "packages-ci.yml" in f["name"]
+    ]
+    assert found == [], f"the ingest app owns the package artifact handoff: {found}"
+    package_without_app = {
+        **package_with_download,
+        "apps/ingest/package.json": None,
+        "packages/ingest/package.json": "{}\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**package_without_app).get,
+            repo(**package_without_ingest).get,
+        )
+        if f["kind"] == "action" and "packages-ci.yml" in f["name"]
+    ]
+    assert len(found) == 1, f"a shared ingest package alone must not gate the handoff: {found}"
+    package_download_in_wrong_job = {
+        PACKAGE_ACTION_WF: (
+            "jobs:\n"
+            "  prepare-openapi:\n"
+            "    name: \"contract: openapi spec\"\n"
+            "    steps:\n"
+            "      - uses: actions/download-artifact@2222222 # v2\n"
+            "  build:\n"
+            "    name: \"packages: build, test & typecheck\"\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@1111111 # v1\n"
+        ),
+        "apps/ingest/package.json": "{}\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**package_download_in_wrong_job).get,
+            repo(**package_without_ingest).get,
+        )
+        if f["kind"] == "action"
+        and f["name"].startswith("actions/download-artifact")
+    ]
+    assert len(found) == 1, f"a gated action in the wrong job must report: {found}"
+    assert "job `build`" in found[0]["detail"], found
+    package_owner_missing_action = {
+        PACKAGE_ACTION_WF: wf("actions/checkout@1111111 # v1"),
+        "apps/ingest/package.json": "{}\n",
+    }
+    package_capability_absent = {
+        PACKAGE_ACTION_WF: None,
+        "packages/core/package.json": None,
+        "packages/shared/package.json": None,
+        "apps/ingest/package.json": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**package_owner_missing_action).get,
+            repo(**package_capability_absent).get,
+        )
+        if f["kind"] == "action"
+        and f["name"].startswith("actions/download-artifact")
+    ]
+    assert len(found) == 1, (
+        "a whole-workflow gate must not bypass the owner's entry assertion: "
+        f"{found}"
+    )
+    assert "job `build` here" in found[0]["detail"], found
+
+    mobile_plus_ours = {
+        ".github/workflows/mobile-ci.yml": wf(
+            "actions/checkout@1111111 # v1",
+            "owner/flutter-only@2222222 # v2",
+        ),
+        "apps/mobile/pubspec.yaml": "name: flutter_app\n",
+    }
+    mobile_plus_theirs = {
+        ".github/workflows/mobile-ci.yml": wf(
+            "actions/checkout@1111111 # v1",
+            "owner/native-only@3333333 # v3",
+        )
+    }
+    found = [
+        f for f in compare(repo(**mobile_plus_ours).get, repo(**mobile_plus_theirs).get)
+        if f["kind"] == "action" and "mobile-ci.yml" in f["name"]
+    ]
+    assert found == [], f"capability workflow actions may be topology: {found}"
+
     # A same-line-count content change must still show WHAT changed.
     n1 = {".nvmrc": "22\n"}
     n2 = {".nvmrc": "24\n"}
@@ -2412,94 +3573,469 @@ def self_test() -> int:
     # gated entries are exempt while no shared marker exists: between two
     # React Native repos a Flutter guard is absent by design, not stale.
     gone = {path: None for path in IDENTICAL}
-    gone.update(
-        {
-            marker: None
-            for markers in TOPOLOGY_GATED.values()
-            for marker in markers
-        }
-    )
+    for marker in set(TOPOLOGY_GATED.values()):
+        for marker_path in CAPABILITY_MARKER_PATHS.get(marker, (marker,)):
+            gone[marker_path] = None
     found = [f for f in compare(repo(**gone).get, repo(**gone).get) if f["kind"] == "file"]
     ungated = [path for path in IDENTICAL if path not in TOPOLOGY_GATED]
     assert len(found) == len(ungated), found
     assert all("stale entry in IDENTICAL" in f["detail"] for f in found), found
     # With the marker on both sides the gate opens and a gated entry absent
     # from both repos is a stale guard again, exactly as before the gate.
-    gone_all_surfaces = dict(gone)
-    for markers in TOPOLOGY_GATED.values():
-        gone_all_surfaces[markers[0]] = "surface marker\n"
-    found = [f for f in compare(repo(**gone_all_surfaces).get, repo(**gone_all_surfaces).get) if f["kind"] == "file"]
+    gone_flutter = dict(gone)
+    for marker in set(TOPOLOGY_GATED.values()) | set(STACK_TOPOLOGY_GATED.values()):
+        marker_path = CAPABILITY_MARKER_PATHS.get(marker, (marker,))[0]
+        gone_flutter[marker_path] = "marker\n"
+    found = [f for f in compare(repo(**gone_flutter).get, repo(**gone_flutter).get) if f["kind"] == "file"]
     assert len(found) == len(IDENTICAL), found
 
     # --- topology gating ---------------------------------------------------
+    BACKEND_WORKFLOW = ".github/workflows/backend-deploy.yml"
+    node_backend = {
+        "apps/backend/package.json": "{}\n",
+        "apps/backend/pyproject.toml": None,
+        "apps/marketing/package.json": "{}\n",
+        BACKEND_WORKFLOW: (
+            "jobs:\n"
+            "  version-gate:\n"
+            "    name: \"release: version gate\"\n"
+            "    steps: []\n"
+            "  deploy:\n"
+            "    name: \"backend: deploy\"\n"
+            "    steps: []\n"
+        ),
+    }
+    python_backend_missing_deploy = {
+        "apps/backend/package.json": None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+        "apps/marketing/package.json": None,
+        BACKEND_WORKFLOW: None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**node_backend).get,
+            repo(**python_backend_missing_deploy).get,
+        )
+        if f["name"] == BACKEND_WORKFLOW
+    ]
+    assert any(
+        f["kind"] == "workflow"
+        and "absent" in f["detail"]
+        and ("present here" in f["detail"] or "expects an artifact" in f["detail"])
+        for f in found
+    ), f"a backend owner may not lose its deploy workflow: {found}"
+
+    node_backend_action = {
+        **node_backend,
+        BACKEND_WORKFLOW: (
+            "jobs:\n"
+            "  version-gate:\n"
+            "    name: \"release: version gate\"\n"
+            "    steps: []\n"
+            "  deploy:\n"
+            "    name: \"backend: deploy\"\n"
+            "    steps:\n"
+            "      - uses: actions/checkout@1111111 # v1\n"
+        ),
+    }
+    python_backend_without_action = {
+        "apps/backend/package.json": None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+        "apps/marketing/package.json": None,
+        BACKEND_WORKFLOW: wf("actions/setup-python@2222222 # v2"),
+    }
+    backend_action_findings = compare(
+        repo(**node_backend_action).get,
+        repo(**python_backend_without_action).get,
+    )
+    found = [
+        f
+        for f in backend_action_findings
+        if f["kind"] == "action" and "actions/checkout" in f["name"]
+    ]
+    assert found and "backend-deploy.yml" in found[0]["name"], (
+        "backend topology must not hide a one-sided deploy action: "
+        f"{backend_action_findings}"
+    )
+
+    taven_backend_without_deploy = {
+        "apps/backend/package.json": "{}\n",
+        "apps/backend/pyproject.toml": None,
+        "apps/marketing/package.json": None,
+        BACKEND_WORKFLOW: None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**node_backend_action).get,
+            repo(**taven_backend_without_deploy).get,
+        )
+        if f["name"] == BACKEND_WORKFLOW
+        or (f["kind"] == "action" and "backend-deploy.yml" in f["name"])
+    ]
+    assert found == [], f"a backend without a deploy surface is not an owner: {found}"
+
     MARKER = "apps/mobile/pubspec.yaml"
+    MOBILE_MARKER = "apps/mobile/package.json"
     GATED_FILE = "scripts/lib/resolve-flutter.sh"
     both_flutter = {MARKER: "name: app\n"}
 
     # Present on one side only, no marker anywhere: stack topology, silent.
-    flutterless = {MARKER: None, GATED_FILE: None}
-    found = [
-        f
-        for f in compare(repo(**{MARKER: None}).get, repo(**flutterless).get)
-        if f["name"] == GATED_FILE
-    ]
+    flutterless = {GATED_FILE: None}
+    found = [f for f in compare(repo().get, repo(**flutterless).get) if f["name"] == GATED_FILE]
     assert found == [], f"a gated file missing on the stackless side is topology: {found}"
     # The same absence between two Flutter repos is a real finding again.
     absent_there = {MARKER: "name: app\n", GATED_FILE: None}
     found = [f for f in compare(repo(**both_flutter).get, repo(**absent_there).get) if f["name"] == GATED_FILE]
-    assert found and found[0]["detail"] == "present here, absent there", found
-    # Content drift in a gated file: reported between two Flutter repos,
-    # silent when only one side has the stack — a repo without the toolchain
-    # cannot be "behind" on a guard for it.
+    assert found and found[0]["detail"] == (
+        "topology expects an artifact there, but it is absent"
+    ), found
+    # Content drift in a gated file is reported when both sides share the
+    # owning stack. Across stacks the non-owner must not retain a stale copy.
     changed = {MARKER: "name: app\n", GATED_FILE: "different\n"}
     found = [f for f in compare(repo(**both_flutter).get, repo(**changed).get) if f["name"] == GATED_FILE]
     assert len(found) == 1, found
-    marker_one_side = {MARKER: None, GATED_FILE: "different\n"}
+    marker_one_side = {GATED_FILE: "different\n"}
     found = [f for f in compare(repo(**both_flutter).get, repo(**marker_one_side).get) if f["name"] == GATED_FILE]
-    assert found == [], f"gated content drift without a shared stack is topology: {found}"
-    # Job names behind the gate follow the same rule: the whole workflow being
-    # one-sided is silent across stacks, reported within one.
-    GATED_WF = ".github/workflows/flutter-pin-check.yml"
+    assert len(found) == 1 and "expects no artifact there" in found[0]["detail"], found
+
+    # Release guards exist in every versioned-release topology even though they
+    # read different source files. An owner deleting its copy must not be hidden
+    # by the expected implementation difference.
+    RELEASE_HELPER = "scripts/ci/check-release-tag.sh"
+    flutter_release = {
+        MARKER: "name: app\n",
+        MOBILE_MARKER: None,
+        RELEASE_HELPER: "flutter guard\n",
+    }
+    react_native_missing_release = {
+        MARKER: None,
+        MOBILE_MARKER: "{}\n",
+        RELEASE_HELPER: None,
+    }
     found = [
         f
         for f in compare(
-            repo(**{MARKER: None}).get,
-            repo(**{MARKER: None, GATED_WF: None}).get,
+            repo(**flutter_release).get,
+            repo(**react_native_missing_release).get,
         )
-        if f["name"] == GATED_WF
+        if f["name"] == RELEASE_HELPER
     ]
+    assert found and found[0]["detail"] == (
+        "topology expects an artifact there, but it is absent"
+    ), found
+    react_native_release = {
+        **react_native_missing_release,
+        RELEASE_HELPER: "react native guard\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**flutter_release).get,
+            repo(**react_native_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert found == [], f"cross-stack release guard contents are topology: {found}"
+    poker_release = {
+        MARKER: None,
+        MOBILE_MARKER: None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+        RELEASE_HELPER: "python guard\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**react_native_release).get,
+            repo(**poker_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert found == [], f"React Native/Python release helpers are source topology: {found}"
+    changed_poker_release = {
+        **poker_release,
+        RELEASE_HELPER: "changed python guard\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**poker_release).get,
+            repo(**changed_poker_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert len(found) == 1, f"same-source Python release helper drift must report: {found}"
+    non_mobile_with_release = {
+        MARKER: None,
+        MOBILE_MARKER: None,
+        RELEASE_HELPER: "flutter guard\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**flutter_release).get,
+            repo(**non_mobile_with_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert len(found) == 1 and "without its owning capability" in found[0]["detail"], found
+    missing_mobile_release = {
+        MARKER: "name: app\n",
+        MOBILE_MARKER: None,
+        RELEASE_HELPER: None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**missing_mobile_release).get,
+            repo(**non_mobile_with_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert len(found) == 2, found
+    assert any("expects an artifact here" in f["detail"] for f in found), found
+    assert any("expects no artifact there" in f["detail"] for f in found), found
+
+    # Capability-owned workflows are repository-local invariants too. An
+    # identical copy on a non-owner is stale topology, not agreement, and an
+    # owner deletion plus that stale copy must expose both repairs at once.
+    MARKETING_WF = ".github/workflows/marketing-ci.yml"
+    MARKETING_MARKER = "apps/marketing/package.json"
+    marketing_copy = wf("actions/checkout@1111111 # v1")
+    marketing_owner = {MARKETING_MARKER: "{}\n", MARKETING_WF: marketing_copy}
+    marketing_nonowner_stale = {MARKETING_MARKER: None, MARKETING_WF: marketing_copy}
+    found = [
+        f
+        for f in compare(
+            repo(**marketing_owner).get,
+            repo(**marketing_nonowner_stale).get,
+        )
+        if f["name"].endswith("marketing-ci.yml")
+    ]
+    assert len(found) == 1 and "expects no artifact there" in found[0]["detail"], found
+    found = [
+        f
+        for f in compare(
+            repo(**marketing_nonowner_stale).get,
+            repo(**marketing_nonowner_stale).get,
+        )
+        if f["name"].endswith("marketing-ci.yml")
+    ]
+    assert len(found) == 1 and "here and there" in found[0]["detail"], found
+    marketing_owner_missing = {MARKETING_MARKER: "{}\n", MARKETING_WF: None}
+    found = [
+        f
+        for f in compare(
+            repo(**marketing_owner_missing).get,
+            repo(**marketing_nonowner_stale).get,
+        )
+        if f["name"].endswith("marketing-ci.yml")
+    ]
+    assert len(found) == 2, found
+    assert any("expects an artifact here" in f["detail"] for f in found), found
+    assert any("expects no artifact there" in f["detail"] for f in found), found
+    changed_react_native_release = {
+        **react_native_release,
+        RELEASE_HELPER: "changed react native guard\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**react_native_release).get,
+            repo(**changed_react_native_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert len(found) == 1, f"same-stack release guard drift must report: {found}"
+    # Job names behind the gate follow the same rule: the whole workflow being
+    # one-sided is silent across stacks, reported within one.
+    GATED_WF = ".github/workflows/flutter-pin-check.yml"
+    found = [f for f in compare(repo().get, repo(**{GATED_WF: None}).get) if f["name"] == GATED_WF]
     assert found == [], found
     found = [
         f
         for f in compare(repo(**both_flutter).get, repo(**{MARKER: "name: app\n", GATED_WF: None}).get)
         if f["name"] == GATED_WF
     ]
-    assert found and found[0]["detail"] == "present here, absent there", found
+    assert found and found[0]["detail"] == (
+        "topology expects an artifact there, but it is absent"
+    ), found
 
-    # Alternative markers open one logical surface across different stacks:
-    # React Native and Flutter both own mobile-ci even though only one has a
-    # pubspec. Action pin drift must still be visible between them.
-    MOBILE_WF = ".github/workflows/mobile-ci.yml"
-    RN_MARKER = "apps/mobile/package.json"
-    react_native = {
+    # Action workflows use a broader capability gate. A repo with no mobile
+    # surface is not behind on mobile-release.yml; two repos that both declare
+    # mobile still must report a missing workflow.
+    MOBILE_ACTION_WF = ".github/workflows/mobile-release.yml"
+    no_mobile = {MARKER: None, MOBILE_MARKER: None, MOBILE_ACTION_WF: None}
+    found = [
+        f for f in compare(repo(**no_mobile).get, repo(**no_mobile).get)
+        if f["name"].endswith("mobile-release.yml")
+    ]
+    assert found == [], f"a missing capability must gate its action workflow: {found}"
+    mobile_here = {MARKER: None, MOBILE_MARKER: "{}\n"}
+    mobile_missing_there = {
         MARKER: None,
-        RN_MARKER: '{"name":"mobile"}\n',
-        MOBILE_WF: wf("actions/checkout@aaaaaaa # v7.0.1"),
-    }
-    flutter = {
-        MARKER: "name: app\n",
-        RN_MARKER: None,
-        MOBILE_WF: wf("actions/checkout@bbbbbbb # v6.0.0"),
+        MOBILE_MARKER: "{}\n",
+        MOBILE_ACTION_WF: None,
     }
     found = [
-        finding
-        for finding in compare(repo(**react_native).get, repo(**flutter).get)
-        if finding["kind"] == "action" and finding["name"].startswith("actions/checkout")
+        f for f in compare(repo(**mobile_here).get, repo(**mobile_missing_there).get)
+        if f["name"].endswith("mobile-release.yml")
     ]
-    assert len(found) == 1, found
+    assert found and found[0]["detail"] == (
+        "mobile topology expects an artifact there, but it is absent"
+    ), found
+    mobile_pin_here = {
+        MARKER: "name: app\n",
+        MOBILE_ACTION_WF: wf("actions/x@1111111 # v1"),
+    }
+    mobile_pin_there = {
+        MOBILE_MARKER: None,
+        MARKER: "name: app\n",
+        MOBILE_ACTION_WF: wf("actions/x@2222222 # v2"),
+    }
+    found = [
+        f for f in compare(repo(**mobile_pin_here).get, repo(**mobile_pin_there).get)
+        if f["kind"] == "action" and f["name"].startswith("actions/x")
+    ]
+    assert len(found) == 1, f"present gated workflows must compare pins: {found}"
+
+    mobile_actions_here = {
+        MARKER: "name: app\n",
+        MOBILE_ACTION_WF: wf("actions/shared@1111111 # v1", "actions/extra@2222222 # v2")
+    }
+    mobile_actions_there = {
+        MOBILE_MARKER: None,
+        MARKER: "name: app\n",
+        MOBILE_ACTION_WF: wf("actions/shared@1111111 # v1"),
+    }
+    found = [
+        f for f in compare(repo(**mobile_actions_here).get, repo(**mobile_actions_there).get)
+        if f["kind"] == "action" and f["name"].startswith("actions/extra")
+    ]
+    assert len(found) == 1, f"present workflows must report one-sided actions: {found}"
+
+    PACKAGE_WF = ".github/workflows/packages-ci.yml"
+    found = [
+        f
+        for f in compare(
+            repo(**{"packages/core/package.json": None}).get,
+            repo(
+                **{
+                    "packages/core/package.json": None,
+                    PACKAGE_WF: None,
+                }
+            ).get,
+        )
+        if f["name"] == "packages-ci.yml"
+    ]
+    assert found == [], f"one-sided package workflow is capability topology: {found}"
+    package_owner = {
+        PACKAGE_WF: (
+            "jobs:\n"
+            "  build:\n"
+            "    name: \"packages: build & test\"\n"
+            "    steps:\n"
+            "      - uses: actions/x@1111111 # v1\n"
+        ),
+        "packages/core/package.json": "{}\n",
+    }
+    package_owner_missing = {PACKAGE_WF: None, "packages/core/package.json": "{}\n"}
+    found = [
+        f for f in compare(repo(**package_owner).get, repo(**package_owner_missing).get)
+        if f["name"].endswith("packages-ci.yml")
+    ]
+    assert len(found) == 1, f"an owner deleting package CI must report: {found}"
+    package_non_owner = {
+        PACKAGE_WF: None,
+        "packages/core/package.json": None,
+        "packages/shared/package.json": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**package_owner_missing).get,
+            repo(**package_non_owner).get,
+        )
+        if f["name"].endswith("packages-ci.yml")
+    ]
+    assert len(found) == 1, f"an owner deletion must report against a non-owner: {found}"
+    package_pin_here = {PACKAGE_WF: wf("actions/x@1111111 # v1")}
+    package_pin_there = {PACKAGE_WF: wf("actions/x@2222222 # v2")}
+    found = [
+        f for f in compare(repo(**package_pin_here).get, repo(**package_pin_there).get)
+        if f["kind"] == "action" and f["name"].startswith("actions/x")
+    ]
+    assert len(found) == 1, f"shared package workflows must compare pins: {found}"
+
+    # The Semgrep fixture verifier is shared by every repository that validates
+    # an explicit fixture, independent of mobile ownership. Taven scans its
+    # sources without a fixture and remains a legitimate non-owner.
+    SEMGREP_HELPER = "scripts/ci/check-semgrep-fixture.py"
+    flutter_helper = {
+        SEMGREP_HELPER: "flutter copy\n",
+        "apps/mobile/pubspec.yaml": "name: app\n",
+        ".semgrep/nexcue-dart.dart": "// fixture\n",
+    }
+    react_native_helper = {
+        SEMGREP_HELPER: "react native copy\n",
+        "apps/mobile/pubspec.yaml": None,
+        ".semgrep/tarmoto-rn.ts": "// fixture\n",
+    }
+    found = [
+        f for f in compare(repo(**flutter_helper).get, repo(**react_native_helper).get)
+        if f["name"] == SEMGREP_HELPER
+    ]
+    assert len(found) == 1, f"cross-stack Semgrep helper drift must report: {found}"
+    react_native_without_incidental_marker = {
+        **react_native_helper,
+        MOBILE_MARKER: None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**flutter_helper).get,
+            repo(**react_native_without_incidental_marker).get,
+        )
+        if f["name"] == SEMGREP_HELPER
+    ]
+    assert len(found) == 1, f"an incidental marker deletion must not hide drift: {found}"
+    poker_helper = {
+        SEMGREP_HELPER: "poker copy\n",
+        MOBILE_MARKER: None,
+        MARKER: None,
+        ".semgrep/poker-hero-worker.js": "// fixture\n",
+    }
+    found = [
+        f
+        for f in compare(repo(**flutter_helper).get, repo(**poker_helper).get)
+        if f["name"] == SEMGREP_HELPER
+    ]
+    assert len(found) == 1, f"Poker's non-mobile verifier must remain comparable: {found}"
+    no_semgrep_markers = {
+        marker: None
+        for marker in CAPABILITY_MARKER_PATHS["capability:semgrep-fixture"]
+    }
+    no_mobile_helper = {
+        **no_semgrep_markers,
+        MOBILE_MARKER: None,
+        SEMGREP_HELPER: None,
+    }
+    poker_missing_helper = {**poker_helper, SEMGREP_HELPER: None}
+    found = [
+        f
+        for f in compare(repo(**poker_missing_helper).get, repo(**no_mobile_helper).get)
+        if f["name"] == SEMGREP_HELPER
+    ]
+    assert len(found) == 1 and "expects an artifact here" in found[0]["detail"], found
+    found = [
+        f for f in compare(repo().get, repo(**no_mobile_helper).get)
+        if f["name"] == SEMGREP_HELPER
+    ]
+    assert found == [], f"a sibling without a Semgrep fixture has no verifier: {found}"
 
     # --- job names -------------------------------------------------------
-    JOB_WF = ".github/workflows/security-scan.yml"
+    JOB_WF = ".github/workflows/backend-ci.yml"
 
     def jobs_yaml(*pairs):
         out = ["jobs:"]
@@ -2510,6 +4046,139 @@ def self_test() -> int:
             out.append("    steps:")
             out.append("      - uses: actions/x@1111111 # v1")
         return "\n".join(out) + "\n"
+
+    CAPABILITY_GATED_WF = ".github/workflows/_release-version-gate.yml"
+    gated_jobs_here = {
+        CAPABILITY_GATED_WF: jobs_yaml(("check", "tag matches the mobile version")),
+        MOBILE_MARKER: "{}\n",
+    }
+    gated_jobs_there = {
+        CAPABILITY_GATED_WF: jobs_yaml(("check", "release: changed claim")),
+        MOBILE_MARKER: "{}\n",
+    }
+    found = [
+        f for f in compare(repo(**gated_jobs_here).get, repo(**gated_jobs_there).get)
+        if f["kind"] == "jobname" and f["name"] == CAPABILITY_GATED_WF
+    ]
+    assert len(found) == 1, f"present gated workflows must compare job names: {found}"
+
+    valid_package = {
+        PACKAGE_WF: jobs_yaml(("build", "packages: build & test"))
+    }
+    renamed_package = {
+        PACKAGE_WF: jobs_yaml(("build", "packages: build, test & typecheck"))
+    }
+    found = [
+        f
+        for f in compare(repo(**valid_package).get, repo(**renamed_package).get)
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert len(found) == 1 and "expected" in found[0]["detail"], found
+    taven_package = {
+        PACKAGE_WF: jobs_yaml(
+            ("build", "packages: lint, typecheck, test & build")
+        ),
+        "packages/slicer-contracts/package.json": "{}\n",
+    }
+    found = [
+        f
+        for f in compare(repo(**valid_package).get, repo(**taven_package).get)
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert found == [], f"the slicer package topology owns Taven's exact claim: {found}"
+    taven_with_tabletap_claim = {
+        PACKAGE_WF: jobs_yaml(("build", "packages: build & test")),
+        "packages/slicer-contracts/package.json": "{}\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**taven_package).get,
+            repo(**taven_with_tabletap_claim).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert len(found) == 1 and "expected" in found[0]["detail"], found
+    tarmoto_package = {
+        PACKAGE_WF: jobs_yaml(
+            ("prepare-openapi", "contract: openapi spec"),
+            ("build", "packages: build, test & typecheck"),
+        ),
+        "apps/ingest/package.json": "{}\n",
+    }
+    tarmoto_without_prepare = {
+        PACKAGE_WF: (
+            "jobs:\n"
+            "  build:\n"
+            "    name: \"packages: build, test & typecheck\"\n"
+            "    steps:\n"
+            "      - uses: actions/download-artifact@1111111 # v1\n"
+        ),
+        "apps/ingest/package.json": "{}\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**tarmoto_without_prepare).get,
+            repo(**package_non_owner).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert len(found) == 1 and "expects job `prepare-openapi` here" in found[0]["detail"], found
+    package_stale_non_owner = {
+        PACKAGE_WF: jobs_yaml(("stale", "packages: stale placeholder")),
+        "packages/core/package.json": None,
+        "packages/shared/package.json": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**tarmoto_without_prepare).get,
+            repo(**package_stale_non_owner).get,
+        )
+        if f["name"].endswith("packages-ci.yml")
+    ]
+    assert len(found) == 2, found
+    assert any("expects job `prepare-openapi` here" in f["detail"] for f in found), found
+    assert any("expects no artifact there" in f["detail"] for f in found), found
+    tarmoto_without_build = {
+        PACKAGE_WF: jobs_yaml(
+            ("prepare-openapi", "contract: openapi spec"),
+        ),
+        "apps/ingest/package.json": "{}\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**tarmoto_without_build).get,
+            repo(**package_non_owner).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert len(found) == 1 and "expects job `build` here" in found[0]["detail"], found
+    tarmoto_with_weaker_claim = {
+        **tarmoto_package,
+        PACKAGE_WF: jobs_yaml(
+            ("prepare-openapi", "contract: openapi spec"),
+            ("build", "packages: build & test"),
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**tarmoto_package).get,
+            repo(**tarmoto_with_weaker_claim).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert len(found) == 1 and "expected" in found[0]["detail"], found
+    missing_package_build = {PACKAGE_WF: "jobs: {}\n"}
+    found = [
+        f
+        for f in compare(repo(**valid_package).get, repo(**missing_package_build).get)
+        if f["kind"] == "jobname" and f["name"] == PACKAGE_WF
+    ]
+    assert len(found) == 1 and "expects job `build` there" in found[0]["detail"], found
 
     named = {JOB_WF: jobs_yaml(("build", "backend: typecheck, test & build"))}
     renamed = {JOB_WF: jobs_yaml(("build", "backend: lint, test & build"))}
@@ -2525,6 +4194,262 @@ def self_test() -> int:
     base = {JOB_WF: jobs_yaml(("build", "backend: build"))}
     found = [f for f in compare(repo(**extra).get, repo(**base).get) if f["kind"] == "jobname"]
     assert len(found) == 1 and "present here, absent there" in found[0]["detail"], found
+
+    # Python and Node workflows have a small exact set of one-sided actions.
+    # Everything else remains shared policy, including presence and pin refs.
+    python_backend_actions = {
+        JOB_WF: wf(
+            "actions/checkout@1111111 # v1",
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+            "actions/setup-python@2222222 # v2",
+            "actions/download-artifact@5555555 # v5",
+        ),
+        "apps/backend/pyproject.toml": "[project]\nname = 'fixture'\n",
+    }
+    node_backend_actions = {
+        JOB_WF: wf(
+            "actions/checkout@1111111 # v1",
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**python_backend_actions).get,
+            repo(**node_backend_actions).get,
+        )
+        if f["kind"] == "action" and "backend-ci.yml" in f["name"]
+    ]
+    assert found == [], f"backend setup actions are stack topology: {found}"
+    node_backend_with_stale_checkout = {
+        JOB_WF: wf(
+            "actions/checkout@6666666 # v6",
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**python_backend_actions).get,
+            repo(**node_backend_with_stale_checkout).get,
+        )
+        if f["kind"] == "action" and f["name"].startswith("actions/checkout")
+    ]
+    assert len(found) == 1, f"shared cross-stack action pins remain strict: {found}"
+    node_backend_without_checkout = {
+        JOB_WF: wf(
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**python_backend_actions).get,
+            repo(**node_backend_without_checkout).get,
+        )
+        if f["kind"] == "action" and f["name"].startswith("actions/checkout")
+    ]
+    assert len(found) == 1, f"removing a shared cross-stack action must report: {found}"
+    python_backend_without_setup = {
+        **python_backend_actions,
+        JOB_WF: wf(
+            "actions/checkout@1111111 # v1",
+            "actions/setup-node@3333333 # v3",
+            "pnpm/action-setup@4444444 # v4",
+            "actions/download-artifact@5555555 # v5",
+        ),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**python_backend_without_setup).get,
+            repo(**node_backend_actions).get,
+        )
+        if f["kind"] == "action" and f["name"].startswith("actions/setup-python")
+    ]
+    assert len(found) == 1 and "expects the action here only" in found[0]["detail"], found
+
+    for workflow, python_only_action in (
+        (".github/workflows/_build-openapi.yml", "actions/setup-python"),
+        (".github/workflows/backend-deploy.yml", "pnpm/action-setup"),
+    ):
+        python_owner = {
+            workflow: wf(
+                "actions/checkout@1111111 # v1",
+                *(
+                    f"{action}@2222222 # v2"
+                    for action in sorted(POKER_ACTION_LAYOUTS[workflow]["python"])
+                ),
+            ),
+            "apps/backend/pyproject.toml": "[project]\nname = 'fixture'\n",
+            "apps/marketing/package.json": None,
+        }
+        node_owner = {
+            workflow: wf("actions/checkout@1111111 # v1"),
+            "apps/backend/pyproject.toml": None,
+            "apps/marketing/package.json": "{}\n",
+        }
+        found = [
+            f
+            for f in compare(repo(**python_owner).get, repo(**node_owner).get)
+            if f["kind"] == "action" and f["name"].startswith(python_only_action)
+        ]
+        assert found == [], f"{workflow} Python setup is stack topology: {found}"
+        python_owner_missing_setup = {
+            **python_owner,
+            workflow: wf(
+                "actions/checkout@1111111 # v1",
+                *(
+                    f"{action}@2222222 # v2"
+                    for action in sorted(POKER_ACTION_LAYOUTS[workflow]["python"])
+                    if action != python_only_action
+                ),
+            ),
+        }
+        found = [
+            f
+            for f in compare(
+                repo(**python_owner_missing_setup).get,
+                repo(**node_owner).get,
+            )
+            if f["kind"] == "action" and f["name"].startswith(python_only_action)
+        ]
+        assert len(found) == 1 and "expects the action here only" in found[0]["detail"], found
+
+    # Poker-only layout exemptions must activate for Python-vs-Node, but the
+    # same job IDs remain strict between two Node siblings.
+    poker_backend = {
+        JOB_WF: jobs_yaml(
+            ("prepare-openapi", "contract: openapi spec"),
+            ("test", "backend: tests and solver"),
+            ("image", "backend: immutable image"),
+        ),
+        "apps/backend/pyproject.toml": "[project]\nname = 'fixture'\n",
+    }
+    node_backend = {
+        JOB_WF: jobs_yaml(
+            ("build", "backend: lint, typecheck, test & build"),
+            ("test-e2e", "backend: e2e (real postgres)"),
+        )
+    }
+    found = [
+        f
+        for f in compare(repo(**poker_backend).get, repo(**node_backend).get)
+        if f["kind"] == "jobname" and f["name"] == JOB_WF
+    ]
+    assert found == [], f"Python-vs-Node job layout is pair topology: {found}"
+    poker_without_image = {
+        **poker_backend,
+        JOB_WF: jobs_yaml(
+            ("prepare-openapi", "contract: openapi spec"),
+            ("test", "backend: tests and solver"),
+        ),
+    }
+    found = [
+        f
+        for f in compare(repo(**poker_without_image).get, repo(**node_backend).get)
+        if f["kind"] == "jobname" and f["name"] == JOB_WF
+    ]
+    assert len(found) == 1 and "expects job `image` here" in found[0]["detail"], found
+    poker_renamed_test = {
+        **poker_backend,
+        JOB_WF: jobs_yaml(
+            ("prepare-openapi", "contract: openapi spec"),
+            ("test", "backend: renamed tests"),
+            ("image", "backend: immutable image"),
+        ),
+    }
+    found = [
+        f
+        for f in compare(repo(**poker_renamed_test).get, repo(**node_backend).get)
+        if f["kind"] == "jobname" and f["name"] == JOB_WF
+    ]
+    assert len(found) == 1 and "expected `backend: tests and solver`" in found[0]["detail"], found
+    POKER_OPENAPI_WF = ".github/workflows/openapi-check.yml"
+    poker_openapi = {
+        POKER_OPENAPI_WF: jobs_yaml(
+            ("changes", "contract: detect inputs"),
+            ("prepare-openapi", "contract: openapi spec"),
+            ("validate", "contract: generated artifacts"),
+            ("gate", "contract: gate"),
+        ),
+        "apps/backend/pyproject.toml": "[project]\nname = 'fixture'\n",
+    }
+    node_openapi = {
+        POKER_OPENAPI_WF: jobs_yaml(("validate", "contract: emit + validate"))
+    }
+    found = [
+        f
+        for f in compare(repo(**poker_openapi).get, repo(**node_openapi).get)
+        if f["kind"] == "jobname" and f["name"] == POKER_OPENAPI_WF
+    ]
+    assert found == [], f"Python-vs-Node OpenAPI layout is topology: {found}"
+    poker_without_gate = {
+        **poker_openapi,
+        POKER_OPENAPI_WF: jobs_yaml(
+            ("changes", "contract: detect inputs"),
+            ("prepare-openapi", "contract: openapi spec"),
+            ("validate", "contract: generated artifacts"),
+        ),
+    }
+    found = [
+        f
+        for f in compare(repo(**poker_without_gate).get, repo(**node_openapi).get)
+        if f["kind"] == "jobname" and f["name"] == POKER_OPENAPI_WF
+    ]
+    assert len(found) == 1 and "expects job `gate` here" in found[0]["detail"], found
+    other_node = {
+        JOB_WF: jobs_yaml(
+            ("build", "backend: lint, test & build"),
+            ("test-e2e", "backend: e2e (real postgres)"),
+        )
+    }
+    found = [
+        f
+        for f in compare(repo(**node_backend).get, repo(**other_node).get)
+        if f["kind"] == "jobname" and f["name"] == JOB_WF
+    ]
+    assert len(found) == 1 and "job `build`" in found[0]["detail"], found
+
+    # Optional jobs are gated independently so the shared jobs in the same
+    # workflow remain strict for a sibling without the owning capability.
+    ADMIN_WF = ".github/workflows/admin-ci.yml"
+    with_prepare = {
+        ADMIN_WF: jobs_yaml(
+            ("build", "admin: build"),
+            ("prepare-openapi", "contract: openapi spec"),
+        )
+    }
+    without_prepare = {
+        ADMIN_WF: jobs_yaml(("build", "admin: build")),
+        "apps/marketing/package.json": None,
+    }
+    found = [
+        f for f in compare(repo(**with_prepare).get, repo(**without_prepare).get)
+        if f["kind"] == "jobname" and f["name"] == ADMIN_WF
+    ]
+    assert found == [], f"an optional job without its capability is topology: {found}"
+    owner_without_prepare = {
+        ADMIN_WF: jobs_yaml(("build", "admin: build")),
+    }
+    found = [
+        f for f in compare(repo(**owner_without_prepare).get, repo(**without_prepare).get)
+        if f["kind"] == "jobname" and f["name"] == ADMIN_WF
+    ]
+    assert len(found) == 1 and "expects job `prepare-openapi` here" in found[0]["detail"], found
+
+    SIBLING_DRIFT_WF = ".github/workflows/sibling-drift.yml"
+    renamed_drift = {SIBLING_DRIFT_WF: jobs_yaml(("drift", "ci: renamed drift"))}
+    expected_drift = {SIBLING_DRIFT_WF: jobs_yaml(("drift", "ci: sibling drift"))}
+    found = [
+        f for f in compare(repo(**expected_drift).get, repo(**renamed_drift).get)
+        if f["kind"] == "jobname" and f["name"] == SIBLING_DRIFT_WF
+    ]
+    assert len(found) == 1, f"the drift workflow's own claim must be compared: {found}"
 
     # An unnamed job compares under its id rather than reading as absent --
     # otherwise adding an explicit `name:` to one repo would report the job as
@@ -2551,29 +4476,277 @@ def self_test() -> int:
     # An EXPECTED_JOB_DIFFS entry suppresses exactly its own job, and nothing
     # else in the same file.
     assert (".github/workflows/mobile-ci.yml", "mobile") in EXPECTED_JOB_DIFFS
-    assert TOPOLOGY_GATED["scripts/ci/compare-marketing-version.py"] == (
-        "apps/mobile/package.json",
-        "apps/mobile/pubspec.yaml",
-    )
     MOB = ".github/workflows/mobile-ci.yml"
+    FLAVOR_MARKER = "apps/mobile/android/app/src/staging/google-services.json"
     # mobile-ci is topology-gated now, and this case describes the Flutter
-    # pair — both sides carry the marker so the gate is open.
-    allowed = {MOB: jobs_yaml(("mobile", "mobile: a"), ("other", "mobile: x")), MARKER: "name: app\n"}
-    against = {MOB: jobs_yaml(("mobile", "mobile: b"), ("other", "mobile: y")), MARKER: "name: app\n"}
+    # pair — both sides carry the stack marker, while only one carries the
+    # per-flavor source-set marker that forces the expected name difference.
+    allowed = {
+        MOB: jobs_yaml(
+            (
+                "mobile",
+                "mobile: format, analyze & test (+ android builds when mobile changes)",
+            ),
+            ("other", "mobile: x"),
+        ),
+        MARKER: "name: app\n",
+        FLAVOR_MARKER: "{}\n",
+    }
+    against = {
+        MOB: jobs_yaml(
+            (
+                "mobile",
+                "mobile: format, analyze & test (+ android release when mobile changes)",
+            ),
+            ("other", "mobile: y"),
+        ),
+        MARKER: "name: app\n",
+    }
     found = [f for f in compare(repo(**allowed).get, repo(**against).get) if f["kind"] == "jobname"]
     assert len(found) == 1 and "`other`" in found[0]["detail"], found
+    missing_mobile = {
+        MOB: jobs_yaml(("other", "mobile: y")),
+        MARKER: "name: app\n",
+        FLAVOR_MARKER: "{}\n",
+    }
+    found = [
+        f for f in compare(repo(**missing_mobile).get, repo(**against).get)
+        if f["kind"] == "jobname" and f["name"] == MOB
+    ]
+    assert len(found) == 1 and "job `mobile` absent here" in found[0]["detail"], found
+    same_flavor = {
+        MOB: jobs_yaml(
+            (
+                "mobile",
+                "mobile: format, analyze & test (+ android builds when mobile changes)",
+            ),
+            ("other", "mobile: x"),
+        ),
+        MARKER: "name: app\n",
+    }
+    found = [
+        f for f in compare(repo(**same_flavor).get, repo(**against).get)
+        if f["kind"] == "jobname"
+    ]
+    assert len(found) == 2, f"same-topology job names must stay strict: {found}"
 
-    # Poker-only exceptions activate for a Python-vs-Node comparison, but must
-    # not silence the same job ids when two Node siblings are compared.
-    BACK = ".github/workflows/backend-ci.yml"
-    node_a = {BACK: jobs_yaml(("build", "backend: build a"))}
-    node_b = {BACK: jobs_yaml(("build", "backend: build b"))}
-    found = [f for f in compare(repo(**node_a).get, repo(**node_b).get) if f["kind"] == "jobname"]
-    assert any("`build`" in f["detail"] for f in found), found
-    python_side = dict(node_a)
-    python_side["apps/backend/pyproject.toml"] = "[project]\nname = 'fixture'\n"
-    found = [f for f in compare(repo(**python_side).get, repo(**node_b).get) if f["kind"] == "jobname"]
-    assert not any("`build`" in f["detail"] for f in found), found
+    INGEST_MARKER = "apps/ingest/package.json"
+    BACKEND_DEPLOY_WF = ".github/workflows/backend-deploy.yml"
+    deploy_with_gate = {
+        BACKEND_DEPLOY_WF: jobs_yaml(
+            ("version-gate", "release: version gate"),
+            ("deploy", "backend: deploy"),
+        )
+    }
+    ingest_without_gate = {
+        BACKEND_DEPLOY_WF: jobs_yaml(("deploy", "backend: deploy")),
+        INGEST_MARKER: "{}\n",
+    }
+    found = [
+        f for f in compare(repo(**deploy_with_gate).get, repo(**ingest_without_gate).get)
+        if f["kind"] == "jobname" and f["name"] == BACKEND_DEPLOY_WF
+    ]
+    assert found == [], f"ingest orchestration owns the one-sided gate: {found}"
+    deploy_without_gate = {
+        BACKEND_DEPLOY_WF: jobs_yaml(("deploy", "backend: deploy")),
+    }
+    found = [
+        f for f in compare(repo(**deploy_without_gate).get, repo(**ingest_without_gate).get)
+        if f["kind"] == "jobname" and f["name"] == BACKEND_DEPLOY_WF
+    ]
+    assert len(found) == 1 and "expects job `version-gate` here" in found[0]["detail"], found
+
+    ADMIN_DEPLOY_WF = ".github/workflows/admin-deploy.yml"
+    deploy_with_resolve = {
+        ADMIN_DEPLOY_WF: jobs_yaml(
+            ("resolve", "admin: resolve environment"),
+            ("deploy", "admin: deploy"),
+        )
+    }
+    ingest_admin_deploy = {
+        ADMIN_DEPLOY_WF: jobs_yaml(("deploy", "admin: deploy")),
+        INGEST_MARKER: "{}\n",
+    }
+    found = [
+        f for f in compare(repo(**deploy_with_resolve).get, repo(**ingest_admin_deploy).get)
+        if f["kind"] == "jobname" and f["name"] == ADMIN_DEPLOY_WF
+    ]
+    assert found == [], f"ingest admin deploy resolves inline: {found}"
+    admin_deploy_without_resolve = {
+        ADMIN_DEPLOY_WF: jobs_yaml(("deploy", "admin: deploy")),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**admin_deploy_without_resolve).get,
+            repo(**ingest_admin_deploy).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == ADMIN_DEPLOY_WF
+    ]
+    assert len(found) == 1 and "expects job `resolve` here" in found[0]["detail"], found
+    renamed_gate = {
+        BACKEND_DEPLOY_WF: jobs_yaml(
+            ("version-gate", "release: renamed gate"),
+            ("deploy", "backend: deploy"),
+        )
+    }
+    found = [
+        f for f in compare(repo(**deploy_with_gate).get, repo(**renamed_gate).get)
+        if f["kind"] == "jobname" and f["name"] == BACKEND_DEPLOY_WF
+    ]
+    assert len(found) == 1, f"same-topology deploy names must stay strict: {found}"
+
+    RELEASE_GATE_WF = ".github/workflows/_release-version-gate.yml"
+    flutter_gate = {
+        RELEASE_GATE_WF: jobs_yaml(("check", "tag matches pubspec")),
+        "apps/mobile/package.json": None,
+        "apps/mobile/pubspec.yaml": "name: mobile\n",
+    }
+    react_native_gate = {
+        RELEASE_GATE_WF: jobs_yaml(("check", "tag matches the mobile version")),
+        "apps/mobile/package.json": "{}\n",
+        "apps/mobile/pubspec.yaml": None,
+    }
+    found = [
+        f for f in compare(repo(**flutter_gate).get, repo(**react_native_gate).get)
+        if f["kind"] == "jobname" and f["name"] == RELEASE_GATE_WF
+    ]
+    assert found == [], f"version-source topology may rename the check: {found}"
+    poker_release_gate = {
+        RELEASE_GATE_WF: jobs_yaml(("check", "release: tag matches root version")),
+        "apps/mobile/package.json": None,
+        "apps/mobile/pubspec.yaml": None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+    }
+    found = [
+        f
+        for f in compare(repo(**flutter_gate).get, repo(**poker_release_gate).get)
+        if f["kind"] == "jobname" and f["name"] == RELEASE_GATE_WF
+    ]
+    assert found == [], f"Python release-gate naming is version-source topology: {found}"
+    renamed_poker_release_gate = {
+        **poker_release_gate,
+        RELEASE_GATE_WF: jobs_yaml(("check", "release: unrelated Python claim")),
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**poker_release_gate).get,
+            repo(**renamed_poker_release_gate).get,
+        )
+        if f["kind"] == "jobname" and f["name"] == RELEASE_GATE_WF
+    ]
+    assert len(found) == 1, f"Python release-gate naming must remain exact: {found}"
+    poker_missing_release_gate = {
+        RELEASE_GATE_WF: None,
+        "apps/mobile/package.json": None,
+        "apps/mobile/pubspec.yaml": None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**flutter_gate).get,
+            repo(**poker_missing_release_gate).get,
+        )
+        if f["name"] == RELEASE_GATE_WF
+    ]
+    assert any(
+        f["kind"] == "workflow"
+        and "absent" in f["detail"]
+        and ("present here" in f["detail"] or "expects an artifact" in f["detail"])
+        for f in found
+    ), f"a versioned Python owner may not lose its release gate: {found}"
+    taven_without_release_gate = {
+        RELEASE_GATE_WF: None,
+        "apps/mobile/package.json": None,
+        "apps/mobile/pubspec.yaml": None,
+        "apps/backend/package.json": "{}\n",
+        "apps/backend/pyproject.toml": None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**flutter_gate).get,
+            repo(**taven_without_release_gate).get,
+        )
+        if f["name"] == RELEASE_GATE_WF
+        or (f["kind"] == "action" and "_release-version-gate.yml" in f["name"])
+    ]
+    assert found == [], f"an unversioned backend is not a release-gate owner: {found}"
+    unrelated_native_gate = {
+        RELEASE_GATE_WF: jobs_yaml(("check", "release: unrelated claim")),
+        "apps/mobile/package.json": "{}\n",
+        "apps/mobile/pubspec.yaml": None,
+    }
+    found = [
+        f for f in compare(repo(**flutter_gate).get, repo(**unrelated_native_gate).get)
+        if f["kind"] == "jobname" and f["name"] == RELEASE_GATE_WF
+    ]
+    assert len(found) == 1, f"topology cannot excuse an arbitrary name: {found}"
+    renamed_flutter_gate = {
+        RELEASE_GATE_WF: jobs_yaml(("check", "tag matches renamed pubspec")),
+        "apps/mobile/package.json": None,
+        "apps/mobile/pubspec.yaml": "name: mobile\n",
+    }
+    found = [
+        f for f in compare(repo(**flutter_gate).get, repo(**renamed_flutter_gate).get)
+        if f["kind"] == "jobname" and f["name"] == RELEASE_GATE_WF
+    ]
+    assert len(found) == 1, f"same-source release names must stay strict: {found}"
+
+    # Backend schema/e2e exceptions are Tarmoto-specific, not global. Two
+    # Prisma repositories must report a missing e2e job; a TypeORM-to-Prisma
+    # comparison suppresses the one-sided schema/e2e pair as topology.
+    TYPEORM_MARKER = "apps/backend/src/data-source.ts"
+    prisma_e2e = {
+        JOB_WF: jobs_yaml(
+            ("build", "backend: build"),
+            ("test-e2e", "backend: e2e (real postgres)"),
+        )
+    }
+    prisma_without_e2e = {JOB_WF: jobs_yaml(("build", "backend: build"))}
+    found = [
+        f for f in compare(repo(**prisma_e2e).get, repo(**prisma_without_e2e).get)
+        if f["kind"] == "jobname" and f["name"] == JOB_WF
+    ]
+    assert len(found) == 1 and "test-e2e" in found[0]["detail"], found
+
+    typeorm_schema = {
+        JOB_WF: jobs_yaml(
+            ("build", "backend: build"),
+            ("schema", "backend: schema from zero (real postgres)"),
+        ),
+        TYPEORM_MARKER: "export const dataSource = true;\n",
+    }
+    found = [
+        f for f in compare(repo(**prisma_e2e).get, repo(**typeorm_schema).get)
+        if f["kind"] == "jobname" and f["name"] == JOB_WF
+    ]
+    assert found == [], f"TypeORM schema vs Prisma e2e is topology: {found}"
+
+    typeorm_without_schema = {
+        JOB_WF: jobs_yaml(("build", "backend: build")),
+        TYPEORM_MARKER: "export const dataSource = true;\n",
+    }
+    found = [
+        f for f in compare(repo(**prisma_e2e).get, repo(**typeorm_without_schema).get)
+        if f["kind"] == "jobname" and f["name"] == JOB_WF
+    ]
+    assert len(found) == 1 and "expects job `schema` there" in found[0]["detail"], found
+
+    typeorm_schema_renamed = {
+        JOB_WF: jobs_yaml(
+            ("build", "backend: build"),
+            ("schema", "backend: renamed schema check"),
+        ),
+        TYPEORM_MARKER: "export const dataSource = true;\n",
+    }
+    found = [
+        f for f in compare(repo(**prisma_e2e).get, repo(**typeorm_schema_renamed).get)
+        if f["kind"] == "jobname" and f["name"] == JOB_WF
+    ]
+    assert len(found) == 1 and "job `schema` there: expected" in found[0]["detail"], found
 
     print("check-sibling-drift self-test passed")
     return 0

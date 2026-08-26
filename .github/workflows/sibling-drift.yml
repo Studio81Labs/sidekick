@@ -1,36 +1,228 @@
 name: Sibling Drift
 
-# Poker Hero remains unenrolled until Wave 5: manual comparison only, with no
-# persistent SIBLING_REPOS list and no schedule.
+# ported from Studio81Labs/nexcue@f0452ea2
+
+# Compares shared infrastructure against every sibling named in SIBLING_REPOS
+# below, and files the result as a single, continuously-updated issue in THIS
+# repository.
+#
+# Why: drift between the sibling repos is currently found by someone deciding to
+# go looking. That has happened once, produced 11 issues, and took a full manual
+# comparison of two working trees. Between audits they diverge silently, and
+# they are production apps (#745).
+#
+# EVERY SIBLING RUNS ITS OWN COPY and reports only on itself. The comparison is
+# symmetric but the reporting is not: each repo opens its own issue, against its
+# own default branch, so nobody is filing work in someone else's tracker. That
+# is what makes this scale past two repos — each sibling gets a copy with
+# SIBLING_REPOS pointed wherever it belongs.
+#
+# What is compared, and the reason for every deliberate omission, lives in
+# scripts/ci/check-sibling-drift.py. It is narrow on purpose: a check that
+# reports the same 13 topology differences every week is muted within two weeks.
+# That script is itself in the compared set, so a fix made here and not carried
+# to the siblings is reported like any other drift.
+#
+# REQUIRES a read token for the siblings — one fine-grained PAT with Contents:
+# Read on every sibling repository, stored under the SAME secret name
+# (SIBLING_READ_TOKEN) in every repo and exposed to the Compare step as
+# SIBLING_TOKEN. Some siblings are private, and the default GITHUB_TOKEN is
+# scoped to this repository only, so there is no unauthenticated fallback.
+# Without it the job FAILS rather than skipping: a drift check that quietly does
+# nothing looks exactly like one that finds nothing, which is the failure this
+# whole workflow exists to prevent.
+#
+
 on:
+  schedule:
+    # Monday 06:00 UTC, after the Renovate window (before 4am Europe/Prague),
+    # so dependency-driven drift and config drift surface together.
+    - cron: "0 6 * * 1"
   workflow_dispatch:
-    inputs:
-      sibling_repo:
-        description: "Studio81Labs repository to compare (owner/name)"
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: sibling-drift-${{ github.ref }}
+  group: sibling-drift
   cancel-in-progress: false
+
+env:
+  # THE ONLY PER-REPO LINE in this workflow — even the Compare step's secret
+  # name (SIBLING_READ_TOKEN) is the same in every sibling. Everything else is
+  # identical too, which is what makes adding another family repository an edit
+  # rather than a fork. The script is compared byte-for-byte
+  # between repos by its own IDENTICAL manifest, so it must not carry the repo
+  # name either.
+  #
+  # SPACE-SEPARATED, and plural on purpose. Every repository watches every other
+  # family member; a single-valued variable would silently compare only one of
+  # them. Fewer rows looks exactly like convergence, which is the failure this
+  # whole workflow exists to prevent.
+  #
+  # SIBLING_TOKEN must be able to read EVERY repo listed here.
+  SIBLING_REPOS: Studio81Labs/nexcue Studio81Labs/tabletap Studio81Labs/tarmoto Studio81Labs/taven
+  ISSUE_LABEL: infra-drift
 
 jobs:
   drift:
     name: "ci: sibling drift"
+    # The read token spans selected private sibling repositories, so never pass
+    # it to code checked out from a feature branch. A manual dispatch targeting
+    # any non-default ref is intentionally skipped; validate checker changes in
+    # CI with the token-free self-test, then exercise the credential after merge.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Ensure parser dependency
-        run: python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
-      - name: Verify comparison logic
+
+      - name: Ensure PyYAML
+        # Workflow pins are PARSED, not grepped -- a regex cannot tell an
+        # active step from `# uses: actions/checkout@old`, and treating either
+        # as a pin invents drift. Always load the exact, wheel-only,
+        # hash-checked dependency rather than an arbitrary copy supplied by a
+        # mutable runner image. Installation finishes before a later step
+        # receives the cross-repository read token.
+        run: |
+          python_deps="$RUNNER_TEMP/sibling-drift-python-deps"
+          python3 -m pip install \
+            --quiet \
+            --disable-pip-version-check \
+            --no-deps \
+            --only-binary=:all: \
+            --require-hashes \
+            --target "$python_deps" \
+            --requirement scripts/ci/sibling-drift-requirements.txt
+          echo "PYTHONPATH=$python_deps" >> "$GITHUB_ENV"
+
+      - name: Verify the comparison logic
+        # The self-test runs before the comparison, not after: if the comparison
+        # logic is broken, "no drift" is the output either way, and a green run
+        # would certify convergence that was never checked.
         run: python3 scripts/ci/check-sibling-drift.py --self-test
-      - name: Compare selected sibling
+
+      - name: Compare
+        id: compare
         env:
-          SIBLING_REPO: ${{ inputs.sibling_repo }}
           SIBLING_TOKEN: ${{ secrets.SIBLING_READ_TOKEN }}
-        run: python3 scripts/ci/check-sibling-drift.py --out drift-report.md
-      - name: Publish report
-        run: cat drift-report.md >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          set -euo pipefail
+
+          # One report, one issue, a section per sibling. The alternative --
+          # an issue per sibling -- multiplies the thing a person has to read
+          # by the number of repos, for a check whose whole value is being
+          # glanceable.
+          : > drift-report.md
+          total=0
+
+          for sib in $SIBLING_REPOS; do
+            name="${sib##*/}"
+
+            # GITHUB_OUTPUT is redirected per sibling. The script APPENDS
+            # `count=`, and GitHub takes the last line, so looping against the
+            # real file would report only the final sibling's count and call
+            # the rest convergence.
+            tmp="$RUNNER_TEMP/drift-out-$name"
+            : > "$tmp"
+
+            SIBLING_REPO="$sib" GITHUB_OUTPUT="$tmp" \
+              python3 scripts/ci/check-sibling-drift.py --out "drift-$name.md"
+
+            n="$(grep -m1 '^count=' "$tmp" | cut -d= -f2 || true)"
+            # No count means the comparison did not complete. Fail rather than
+            # treat a missing number as zero.
+            [ -n "$n" ] || { echo "::error::no count returned for ${sib}"; exit 1; }
+
+            total=$(( total + n ))
+            if [ "$n" != "0" ]; then
+              {
+                printf '## vs %s\n\n' "$name"
+                cat "drift-$name.md"
+                printf '\n'
+              } >> drift-report.md
+            fi
+          done
+
+          # Written once, after every sibling succeeded. `set -e` means a
+          # sibling that cannot be read aborts the step with no count at all,
+          # so the issue logic never runs on a partial comparison.
+          echo "count=$total" >> "$GITHUB_OUTPUT"
+
+      - name: Publish the report to the run summary
+        run: |
+          set -euo pipefail
+          {
+            echo "### Sibling drift"
+            echo
+            if [ "$COUNT" = "0" ]; then
+              echo "No differences."
+            else
+              cat drift-report.md
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+        env:
+          COUNT: ${{ steps.compare.outputs.count }}
+
+      - name: File or update the drift issue
+        # Defense in depth: the job-level condition already restricts execution
+        # to the default branch, and this step independently protects the one
+        # repository-wide issue from evidence produced by any other ref.
+        # The FULL ref, not `ref_name`. `ref_name` strips both `refs/heads/`
+        # and `refs/tags/`, so a tag named after the default branch would
+        # satisfy a short-name test and let tag evidence rewrite shared state.
+        if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COUNT: ${{ steps.compare.outputs.count }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          gh label create "$ISSUE_LABEL" --description "Infra drift against a sibling repo" \
+            --color ededed 2>/dev/null || true
+
+          # The label is the identity, not the title: a title match would lose
+          # the issue the moment someone edits it.
+          EXISTING="$(gh issue list --state open --label "$ISSUE_LABEL" \
+            --json number --jq '.[0].number // empty')"
+
+          if [ "$COUNT" = "0" ]; then
+            if [ -n "$EXISTING" ]; then
+              gh issue close "$EXISTING" --comment \
+                "Converged — the comparison now reports no differences. [Run]($RUN_URL)"
+              echo "closed #$EXISTING: drift resolved"
+            else
+              echo "no drift, no open issue: nothing to do"
+            fi
+            exit 0
+          fi
+
+          {
+            cat drift-report.md
+            printf '\n[Run](%s) · updated %s\n' "$RUN_URL" "$(date -u +%Y-%m-%dT%H:%MZ)"
+          } > issue-body.md
+
+          if [ -n "$EXISTING" ]; then
+            # Edit in place. Appending a comment per run turns a standing report
+            # into an unreadable pile within a month.
+            gh issue edit "$EXISTING" --body-file issue-body.md
+            echo "updated #$EXISTING: $COUNT difference(s)"
+          else
+            # Derived, not another per-repo env line: SIBLING_REPOS already
+            # names them, and a second copy is a second thing to keep in sync.
+            # Keeps the exact title this workflow has always used while there
+            # is one sibling, and generalises once there are several.
+            read -r -a sibling_repos <<< "$SIBLING_REPOS"
+            if [ "${#sibling_repos[@]}" -eq 1 ]; then
+              TITLE="chore(infra): drift detected against ${sibling_repos[0]##*/}"
+            else
+              TITLE="chore(infra): drift detected against the sibling repos"
+            fi
+            gh issue create --title "$TITLE" \
+              --label "$ISSUE_LABEL" --body-file issue-body.md
+            echo "opened a new drift issue: $COUNT difference(s)"
+          fi

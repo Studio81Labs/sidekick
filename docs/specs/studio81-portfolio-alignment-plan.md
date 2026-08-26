@@ -7,7 +7,7 @@ Date: 2026-08-26
 ## Objective
 
 Bring Poker Hero into the Studio81 Labs repository and infrastructure baseline
-used by Nexcue, TableTap, and Tarmoto without changing Poker Hero's product
+used by Nexcue, TableTap, Tarmoto, and Taven without changing Poker Hero's product
 behavior or forcing unrelated application surfaces into the monorepo.
 
 This plan is based on the local default branches at these revisions:
@@ -15,6 +15,7 @@ This plan is based on the local default branches at these revisions:
 - Nexcue: `314cec8972589780072e641591b16eca9805d7dd`
 - TableTap: `6bfbddc11466cd662089763f81e2d8bdaa689b12`
 - Tarmoto: `84e94d72d97e2733b4d99b91715d81f832a12503`
+- Taven: `9b167b62c8638a7de37264ae5c0310586f816823`
 
 ## Narrowing Decisions
 
@@ -226,7 +227,7 @@ Concrete convergence rules:
 
 - use `github.event.pull_request.number || github.sha` for CI concurrency so
   quick merges cannot cancel validation of an intervening `main` commit;
-- use the same pinned GitHub Action revisions across all four repositories;
+- use the same pinned GitHub Action revisions across all five repositories;
 - pin every external container image used by production Dockerfiles, CI
   workflows, or scripts, including Dockerfile `# syntax` frontend images, the
   backend CI `docker run` Rust image, and the backend and PWA build/runtime
@@ -275,7 +276,7 @@ Concrete convergence rules:
 The sibling drift checker must be generalized in this wave before Poker Hero is
 enrolled in Wave 5. Its current manifest assumes that every sibling has admin,
 marketing, mobile, and shared OpenAPI workflows. Add marker-based topology gates
-for those surfaces and copy the generalized checker to all four repositories.
+for those surfaces and copy the generalized checker to all five repositories.
 Install Poker Hero's workflow with manual dispatch only, and leave every
 `SIBLING_REPOS` list and the Poker Hero schedule unchanged until Wave 5. This
 keeps the checker testable without prematurely enrolling the repository or
@@ -321,7 +322,7 @@ Acceptance gates:
 - no deprecated `frontend:*` command alias or enforced `frontend` commit scope
   remains in root scripts, current workflow, lint configuration, or current
   process documentation;
-- a dry local four-way drift comparison reports only documented topology
+- a dry local five-way drift comparison reports only documented topology
   differences;
 - Poker Hero is not yet present in a sibling list and its drift schedule remains
   disabled.
@@ -379,6 +380,14 @@ Acceptance gates:
 Complete the cross-repository organization work after a stable public PWA URL
 and release status are known.
 
+Rollout record (2026-08-26): the current public release is the smoke-tested
+alpha PWA at `https://poker.studio81.workers.dev`; production remains
+intentionally unconfigured. The organization profile and repository metadata
+publish that alpha status explicitly. The marketing site does not yet have an
+individual-product showcase, so that follow-up is tracked separately in
+[Studio81Labs/studio81labs#15](https://github.com/Studio81Labs/studio81labs/issues/15)
+instead of placing portfolio copy in unrelated journal content.
+
 Required changes:
 
 - add a numbered ADR before granting cross-repository workflow access. It must
@@ -391,8 +400,8 @@ Required changes:
   that surface is implemented, or track that work separately rather than
   editing unrelated journal content;
 - set GitHub repository description, homepage, and topics consistently;
-- add Poker Hero to the sibling lists in Nexcue, TableTap, and Tarmoto and add
-  all three siblings to Poker Hero's list;
+- make Poker Hero, Nexcue, TableTap, Tarmoto, and Taven reciprocal family
+  members, with each repository listing the other four;
 - configure the same `SIBLING_READ_TOKEN` and `infra-drift` workflow posture in
   every repository, then enable Poker Hero's scheduled drift trigger;
 
