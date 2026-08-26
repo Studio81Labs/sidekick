@@ -31,6 +31,8 @@ an educational recommendation from a configurable provider.
 ```text
 apps/backend/       FastAPI API, parsers, providers, storage, tests
 apps/pwa/           React control panel and Cloudflare Worker
+packages/openapi/   Deterministic backend OpenAPI document and tooling
+packages/openapi-client/ Generated TypeScript contract consumed by the PWA
 infra/docker/       Local Compose and backend deployment env example
 docs/specs/         Canonical product spec and historical plans
 docs/reference/     Architecture and system reference

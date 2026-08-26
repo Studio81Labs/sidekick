@@ -11,6 +11,7 @@ apps/pwa
 docs
 infra
 node_modules
+packages
 *.pyc
 *.pyo
 *.pyd

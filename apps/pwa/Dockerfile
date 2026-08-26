@@ -19,12 +19,16 @@ ENV VITE_SENTRY_DSN=${VITE_SENTRY_DSN}
 ENV VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT}
 ENV VITE_SENTRY_RELEASE=${VITE_SENTRY_RELEASE}
 
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/pwa/package.json apps/pwa/package.json
+COPY packages/openapi/package.json packages/openapi/package.json
+COPY packages/openapi-client/package.json packages/openapi-client/package.json
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile --filter @poker-hero/pwa...
 
 COPY apps/pwa apps/pwa
+COPY packages/openapi packages/openapi
+COPY packages/openapi-client packages/openapi-client
 RUN pnpm pwa:build
 
 FROM nginx:1.27-alpine

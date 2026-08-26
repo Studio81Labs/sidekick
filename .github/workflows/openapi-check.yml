@@ -1,4 +1,4 @@
-name: PWA CI
+name: OpenAPI Check
 
 on:
   push:
@@ -15,16 +15,16 @@ concurrency:
 
 jobs:
   changes:
-    name: PWA Changes
+    name: OpenAPI Changes
     runs-on: ubuntu-latest
     outputs:
-      pwa: ${{ steps.detect.outputs.pwa }}
+      contract: ${{ steps.detect.outputs.contract }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
-      - name: Detect PWA inputs
+      - name: Detect contract inputs
         id: detect
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -41,28 +41,28 @@ jobs:
             DIFF_BASE=$(git rev-list --max-parents=0 "$HEAD_SHA")
           fi
 
-          PWA_CHANGED=false
+          CONTRACT_CHANGED=false
           while IFS= read -r changed_path; do
             case "$changed_path" in
-              apps/pwa/* | packages/openapi/* | packages/openapi-client/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml | tsconfig.base.json | scripts/check-pwa-bundle.mjs | .github/workflows/_build-openapi.yml | .github/workflows/pwa-ci.yml)
-                PWA_CHANGED=true
+              apps/backend/* | packages/openapi/* | packages/openapi-client/* | package.json | pnpm-lock.yaml | pnpm-workspace.yaml | tsconfig.base.json | .github/workflows/_build-openapi.yml | .github/workflows/openapi-check.yml)
+                CONTRACT_CHANGED=true
                 break
                 ;;
             esac
           done < <(git diff --name-only "$DIFF_BASE" "$HEAD_SHA")
 
-          echo "pwa=$PWA_CHANGED" >> "$GITHUB_OUTPUT"
+          echo "contract=$CONTRACT_CHANGED" >> "$GITHUB_OUTPUT"
 
   prepare-openapi:
     name: Contract Artifact
     needs: changes
-    if: ${{ needs.changes.outputs.pwa == 'true' }}
+    if: ${{ needs.changes.outputs.contract == 'true' }}
     uses: ./.github/workflows/_build-openapi.yml
 
   validate:
-    name: PWA Test & Build
+    name: OpenAPI Freshness
     needs: [changes, prepare-openapi]
-    if: ${{ needs.changes.outputs.pwa == 'true' }}
+    if: ${{ needs.changes.outputs.contract == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -83,64 +83,44 @@ jobs:
           name: openapi-spec
           path: ${{ runner.temp }}/openapi-artifact
 
-      - name: Verify generated OpenAPI document
+      - name: Restore generated OpenAPI document
         run: |
           mkdir -p "$RUNNER_TEMP/openapi-generated"
           tar -xzf "$RUNNER_TEMP/openapi-artifact/openapi-spec.tgz" -C "$RUNNER_TEMP/openapi-generated"
-          cmp packages/openapi/openapi.json "$RUNNER_TEMP/openapi-generated/openapi.json"
 
-      - name: Audit production JavaScript dependencies
-        run: pnpm audit --prod --audit-level high
+      - name: Verify committed contract artifacts
+        env:
+          OPENAPI_SPEC_PATH: ${{ runner.temp }}/openapi-generated/openapi.json
+        run: pnpm api:check:artifact
 
-      - name: Test PWA architecture
-        run: pnpm -C apps/pwa test --run src/app/sourceArchitecture.test.ts
-
-      - name: Test application shell and edge worker
-        if: ${{ !cancelled() }}
-        run: >-
-          pnpm -C apps/pwa test --run src/app worker.test.js
-          --exclude src/app/sourceArchitecture.test.ts
-
-      - name: Test analyzer workflows
-        if: ${{ !cancelled() }}
-        run: pnpm -C apps/pwa test --run src/pages
-
-      - name: Test features, domains, and shared UI
-        if: ${{ !cancelled() }}
-        run: pnpm -C apps/pwa test --run src/features src/domains src/shared
-
-      - name: Build PWA and audit bundle budgets
-        if: ${{ !cancelled() }}
-        run: pnpm pwa:performance
-
-      - name: Build PWA image
-        if: ${{ !cancelled() }}
-        run: docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:test .
+      - name: Typecheck generated client package
+        run: pnpm api:typecheck
 
   gate:
-    name: PWA Gate
+    name: OpenAPI Gate
     needs: [changes, prepare-openapi, validate]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
-      - name: Require PWA validation when selected
+      - name: Require contract validation when selected
         env:
           CHANGES_RESULT: ${{ needs.changes.result }}
-          PWA_CHANGED: ${{ needs.changes.outputs.pwa }}
+          CONTRACT_CHANGED: ${{ needs.changes.outputs.contract }}
           ARTIFACT_RESULT: ${{ needs.prepare-openapi.result }}
           VALIDATION_RESULT: ${{ needs.validate.result }}
         run: |
           set -euo pipefail
           if [ "$CHANGES_RESULT" != "success" ]; then
-            echo "::error::PWA change detection did not complete successfully"
+            echo "::error::OpenAPI change detection did not complete successfully"
             exit 1
           fi
-          if [ "$PWA_CHANGED" = "true" ] && { [ "$ARTIFACT_RESULT" != "success" ] || [ "$VALIDATION_RESULT" != "success" ]; }; then
-            echo "::error::PWA contract artifact result was $ARTIFACT_RESULT and validation result was $VALIDATION_RESULT"
+          if [ "$CONTRACT_CHANGED" = "true" ]; then
+            if [ "$ARTIFACT_RESULT" != "success" ] || [ "$VALIDATION_RESULT" != "success" ]; then
+              echo "::error::OpenAPI artifact result was $ARTIFACT_RESULT and validation result was $VALIDATION_RESULT"
+              exit 1
+            fi
+          elif [ "$ARTIFACT_RESULT" != "skipped" ] || [ "$VALIDATION_RESULT" != "skipped" ]; then
+            echo "::error::OpenAPI jobs should be skipped when no contract input changed"
             exit 1
           fi
-          if [ "$PWA_CHANGED" != "true" ] && { [ "$ARTIFACT_RESULT" != "skipped" ] || [ "$VALIDATION_RESULT" != "skipped" ]; }; then
-            echo "::error::PWA contract and validation should be skipped when no PWA input changed"
-            exit 1
-          fi
-          echo "PWA validation passed or was intentionally skipped."
+          echo "OpenAPI validation passed or was intentionally skipped."

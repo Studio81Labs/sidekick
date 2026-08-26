@@ -1,4 +1,4 @@
-import type { components } from "../../../shared/api/generated/openapi";
+import type { components } from "@poker-hero/openapi-client";
 import { apiUrl } from "../../../shared/api/core";
 import {
   type JsonRequestOptions,

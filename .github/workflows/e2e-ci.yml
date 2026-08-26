@@ -6,34 +6,47 @@ on:
     paths:
       - "apps/backend/**"
       - "apps/pwa/**"
+      - "packages/openapi/**"
+      - "packages/openapi-client/**"
       - "scripts/e2e_provider_stub.py"
       - "scripts/start-e2e-backend.sh"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - ".github/workflows/_build-openapi.yml"
       - ".github/workflows/e2e-ci.yml"
   pull_request:
     branches: [main]
     paths:
       - "apps/backend/**"
       - "apps/pwa/**"
+      - "packages/openapi/**"
+      - "packages/openapi-client/**"
       - "scripts/e2e_provider_stub.py"
       - "scripts/start-e2e-backend.sh"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
+      - "tsconfig.base.json"
+      - ".github/workflows/_build-openapi.yml"
       - ".github/workflows/e2e-ci.yml"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 jobs:
+  prepare-openapi:
+    name: Contract Artifact
+    uses: ./.github/workflows/_build-openapi.yml
+
   test:
     name: Chromium workflow
+    needs: prepare-openapi
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -57,6 +70,18 @@ jobs:
           pnpm install --frozen-lockfile
           python -m pip install -e apps/backend
           pnpm -C apps/pwa exec playwright install --with-deps chromium
+
+      - name: Download generated OpenAPI document
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
+        with:
+          name: openapi-spec
+          path: ${{ runner.temp }}/openapi-artifact
+
+      - name: Verify generated API contract
+        run: |
+          mkdir -p "$RUNNER_TEMP/openapi-generated"
+          tar -xzf "$RUNNER_TEMP/openapi-artifact/openapi-spec.tgz" -C "$RUNNER_TEMP/openapi-generated"
+          cmp packages/openapi/openapi.json "$RUNNER_TEMP/openapi-generated/openapi.json"
 
       - name: Run browser workflow tests
         env:

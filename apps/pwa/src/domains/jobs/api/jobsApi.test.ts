@@ -2,7 +2,7 @@ import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import { canonicalState } from "../../../test/analyzerHarness";
-import type { components } from "../../../shared/api/generated/openapi";
+import type { components } from "@poker-hero/openapi-client";
 import {
   approveState,
   deleteJob,

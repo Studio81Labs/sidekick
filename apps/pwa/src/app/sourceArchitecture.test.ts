@@ -200,7 +200,7 @@ function domainCompatibilityFacadeImportAllowed(
   return false;
 }
 
-function generatedOpenApiImportAllowed(sourcePath: readonly string[]): boolean {
+function openApiClientImportAllowed(sourcePath: readonly string[]): boolean {
   if (sourcePath[0] === "domains" && sourcePath[2] === "api") {
     return true;
   }
@@ -4416,6 +4416,19 @@ function layerViolations(): string[] {
       continue;
     }
 
+    const openApiClientImports = scriptImports(
+      readFileSync(file, "utf8"),
+      file,
+    ).filter((specifier) => specifier.startsWith("@poker-hero/openapi-client"));
+    if (
+      openApiClientImports.length > 0 &&
+      !openApiClientImportAllowed(sourcePath)
+    ) {
+      violations.push(
+        `generated OpenAPI contracts may only be imported by shared API transport or domain API adapters: ${sourcePath.join("/")} -> ${openApiClientImports.join(", ")}`,
+      );
+    }
+
     for (const { specifier, target } of sourceImports(file)) {
       const targetPath = sourceSegments(target);
       const targetLayer = sourceLayer(targetPath) ?? targetPath[0];
@@ -4430,10 +4443,10 @@ function layerViolations(): string[] {
 
       if (
         isGeneratedOpenApiPath(targetPath) &&
-        !generatedOpenApiImportAllowed(sourcePath)
+        !openApiClientImportAllowed(sourcePath)
       ) {
         violations.push(
-          `generated OpenAPI contracts may only be imported by shared API transport or compatibility modules and domain API adapters: ${importDescription}`,
+          `generated OpenAPI contracts must come from @poker-hero/openapi-client and may only be imported by shared API transport or domain API adapters: ${importDescription}`,
         );
       }
 
