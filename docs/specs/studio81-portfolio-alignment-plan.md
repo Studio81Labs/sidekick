@@ -95,7 +95,8 @@ Required changes:
 - introduce `pwa:dev`, `pwa:test`, `pwa:build`, `pwa:performance`, and PWA E2E
   root scripts;
 - keep deprecated `frontend:*` aliases for one migration cycle only, then
-  remove them after local scripts and deployment configuration are updated;
+  remove them in Wave 3 after local scripts and deployment configuration are
+  updated;
 - rename `frontend-ci.yml` and `frontend-deploy.yml` to `pwa-ci.yml` and
   `pwa-deploy.yml` and update path filters, job names, concurrency groups, and
   deployment comments;
@@ -121,6 +122,10 @@ without changing the backend contract.
 
 Required changes:
 
+- add a numbered ADR before moving files. It must define generator and artifact
+  ownership, package dependency direction, Docker and CI build inputs,
+  deployment and supply-chain consequences, and rollout and rollback behavior
+  for the new contract boundary;
 - move the deterministic OpenAPI JSON artifact out of the PWA source tree;
 - generate the TypeScript contract into `packages/openapi-client`;
 - expose generated types from `@poker-hero/openapi-client` and update PWA
@@ -137,6 +142,8 @@ Required changes:
 
 Acceptance gates:
 
+- the numbered ADR is linked from the architecture reference and describes the
+  implemented package boundary;
 - `pnpm api:generate` produces no uncommitted diff on a clean tree;
 - `pnpm api:check` passes;
 - the PWA has no relative imports into an app-owned generated contract folder;
@@ -178,14 +185,18 @@ Concrete convergence rules:
   `minimumReleaseAge`, `blockExoticSubdeps`, and `trustPolicy` posture;
 - extend `github>Studio81Labs/.github:renovate-base`, retaining only Poker
   Hero-specific scopes, Python/Rust managers, and exclusions locally;
+- remove the deprecated `frontend:*` root-script aliases after every live
+  consumer uses the `pwa:*` commands;
 - preserve `uptime-monitor.yml` as a Poker Hero-specific additional workflow.
 
-The sibling drift checker must be generalized before Poker Hero is enrolled.
-Its current manifest assumes that every sibling has admin, marketing, mobile,
-and shared OpenAPI workflows. Add marker-based topology gates for those
-surfaces, copy the generalized checker to all four repositories, and only then
-add Poker Hero to each `SIBLING_REPOS` list. Otherwise the scheduled report will
-permanently flag intentionally absent applications and become noise.
+The sibling drift checker must be generalized in this wave before Poker Hero is
+enrolled in Wave 5. Its current manifest assumes that every sibling has admin,
+marketing, mobile, and shared OpenAPI workflows. Add marker-based topology gates
+for those surfaces and copy the generalized checker to all four repositories.
+Install Poker Hero's workflow with manual dispatch only, and leave every
+`SIBLING_REPOS` list and the Poker Hero schedule unchanged until Wave 5. This
+keeps the checker testable without prematurely enrolling the repository or
+creating permanent topology noise.
 
 Acceptance gates:
 
@@ -195,10 +206,12 @@ Acceptance gates:
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
 - `docker compose -f infra/docker/docker-compose.yml config` succeeds after the
   Compose rename;
+- no deprecated `frontend:*` command alias remains in the root package scripts
+  or current workflow and process documentation;
 - a dry local four-way drift comparison reports only documented topology
   differences;
-- the required `SIBLING_READ_TOKEN` secret is configured before enabling the
-  schedule.
+- Poker Hero is not yet present in a sibling list and its drift schedule remains
+  disabled.
 
 ### Wave 4: Add Installable PWA Support
 
@@ -250,7 +263,7 @@ Required changes:
 - add Poker Hero to the sibling lists in Nexcue, TableTap, and Tarmoto and add
   all three siblings to Poker Hero's list;
 - configure the same `SIBLING_READ_TOKEN` and `infra-drift` workflow posture in
-  every repository.
+  every repository, then enable Poker Hero's scheduled drift trigger;
 
 Acceptance gates:
 
