@@ -23,6 +23,7 @@
     "api:check": "pnpm api:generate && git diff --exit-code -- apps/frontend/src/shared/api/generated",
     "frontend:dev": "pnpm -C apps/frontend dev",
     "frontend:build": "pnpm -C apps/frontend build",
+    "frontend:performance": "pnpm frontend:build && node scripts/check-frontend-bundle.mjs",
     "frontend:test": "pnpm -C apps/frontend test",
     "frontend:test:watch": "pnpm -C apps/frontend test:watch",
     "monitor:test": "node --test scripts/check-deployment.test.mjs scripts/check-deployment-mcp.test.mjs",

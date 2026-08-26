@@ -88,7 +88,7 @@ queue and history persistence remains a bounded recovery projection rather
 than an authoritative server-state cache. Screenshot metadata writes use a
 screenshot-owned command: the jobs domain owns transport, the detail cache is
 updated from the response, and only processing/history query families are
-invalidated. The legacy shared API export remains an identity-preserving alias.
+invalidated. Consumers import the screenshot command owner directly.
 Permanent screenshot deletion uses a parallel screenshot service: confirmed
 success removes the detail entry and invalidates processing/history families;
 transport failure leaves Query state untouched so mutation-lease recovery can
@@ -98,14 +98,14 @@ before applying cache outcomes, preventing stale responses from restoring the
 deleted record or projection.
 Batch archive uses a history-owned command with the same stale-read boundary.
 It invalidates archived detail keys and processing/history families, then seeds
-returned job details and the authoritative default history page. The shared API
-archive export remains an identity-preserving domain alias.
+returned job details and the authoritative default history page. Consumers
+import the history command owner directly.
 Benchmark ground-truth inclusion now uses a benchmark-owned command. Its
 generated-contract transport returns the updated job detail, invalidates only
 processing, history, and benchmark-overview families, and leaves immutable
 benchmark-report caches intact. The Analyzer retains mutation-lease recovery and
-local corpus-count presentation while the shared API export remains an
-identity-preserving compatibility alias.
+local corpus-count presentation while consumers import the benchmark command
+owner directly.
 Benchmark dataset upload now uses a benchmark-owned multipart command that
 preserves the caller-generated import request ID. Confirmed imports guard and
 invalidate imported job details, processing, history, and benchmark overviews;
@@ -492,7 +492,7 @@ decision-evidence presentation, aggregate training progress, and history. It
 is organized into application, page, feature, and shared layers. `src/app`
 contains the browser-router shell, route registry, top-level error monitoring,
 and other application-wide concerns. `src/pages/analyzer/AnalyzerPage.tsx` is a
-compatibility/provider wrapper. `useAnalyzerWorkspaceController.ts` retains the
+route-scoped provider wrapper. `useAnalyzerWorkspaceController.ts` retains the
 queue/history mutation protocol because those transactions span capture,
 automation, review, benchmark labels, and recovery, while
 `AnalyzerWorkspaceComposition.tsx` owns only the grouped feature render tree.

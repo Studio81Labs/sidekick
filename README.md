@@ -59,6 +59,7 @@ poker-hero/
 | `pnpm frontend:dev`                                    | Start Vite on port 5173                                          |
 | `pnpm frontend:test`                                   | Run frontend tests                                               |
 | `pnpm frontend:build`                                  | Build the production frontend                                    |
+| `pnpm frontend:performance`                            | Build and enforce production bundle budgets                      |
 | `pnpm monitor:test`                                    | Test the deployment uptime probe                                 |
 | `pnpm test:e2e`                                        | Run browser workflow tests with isolated test providers          |
 | `pnpm docker:up`                                       | Build and start both apps with Docker Compose                    |

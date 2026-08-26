@@ -111,7 +111,7 @@ function isWaveNineMutation(value: string): boolean {
   return Object.prototype.hasOwnProperty.call(WAVE_NINE_MUTATION_OWNERS, value);
 }
 
-const LEGACY_RAW_TRANSPORT_OWNERS = new Set(["shared/api/transport.ts"]);
+const SHARED_RAW_TRANSPORT_OWNERS = new Set(["shared/api/transport.ts"]);
 const RAW_TRANSPORT_REFERENCES = new Set([
   "XMLHttpRequest",
   "fetch",
@@ -123,7 +123,7 @@ function ownsRawTransport(sourcePath: string): boolean {
   const segments = sourcePath.split("/");
   return (
     (segments[0] === "domains" && segments[2] === "api") ||
-    LEGACY_RAW_TRANSPORT_OWNERS.has(sourcePath)
+    SHARED_RAW_TRANSPORT_OWNERS.has(sourcePath)
   );
 }
 
@@ -3728,7 +3728,7 @@ function waveNineMutationBoundaryViolations(): string[] {
       sourcePath.startsWith("domains/") && sourcePath.includes("/api/");
     if (
       !moduleSymbol ||
-      (!isDomainAdapter && !LEGACY_RAW_TRANSPORT_OWNERS.has(sourcePath))
+      (!isDomainAdapter && !SHARED_RAW_TRANSPORT_OWNERS.has(sourcePath))
     ) {
       return;
     }
@@ -3942,7 +3942,7 @@ function waveNineMutationBoundaryViolations(): string[] {
     auditAdapterWriteExports(sourceFile, sourcePath);
     if (
       ((sourcePath.startsWith("domains/") && sourcePath.includes("/api/")) ||
-        LEGACY_RAW_TRANSPORT_OWNERS.has(sourcePath) ||
+        SHARED_RAW_TRANSPORT_OWNERS.has(sourcePath) ||
         WAVE_NINE_MUTATION_OWNER_PATHS.has(sourcePath)) &&
       moduleInitializerWrites(sourceFile)
     ) {

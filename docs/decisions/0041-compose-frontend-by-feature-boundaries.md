@@ -2,15 +2,16 @@
 
 ## Status
 
-Accepted, amended 2026-08-25
+Accepted, amended 2026-08-26
 
 The Wave 12 compatibility-removal program supersedes this decision where it
 designated `src/shared/types.ts` as a stable type barrel and
 `src/shared/api/client.ts` as a stable client barrel. Focused contract and API
 modules remain, but all consumers now import their owning module directly and
 the source-architecture suite prevents either facade from being recreated.
-Other compatibility surfaces named in this ADR remain in force until
-separately amended or superseded.
+All compatibility surfaces named in this ADR have now been retired. The
+remaining shared modules are implementation owners with direct imports rather
+than barrels or migration facades.
 
 ## Context
 
@@ -126,8 +127,8 @@ orchestration. New top-level experiences receive their own page and route.
   tests are grouped by workflow domain.
 - Dense dialogs remain readable composition roots; independently interactive
   sections own their calculations, local disclosure state, and direct tests.
-- The shared transport barrel remains a compatibility surface rather than an
-  implementation owner. Type definitions have no compatibility barrel and are
+- The shared credentialed JSON transport is an implementation owner used by
+  domain API adapters. Type definitions have no compatibility barrel and are
   imported from matching domain modules.
 - Workspace recovery imports focused storage-schema, lease, pagination, and
   reconciliation owners directly.

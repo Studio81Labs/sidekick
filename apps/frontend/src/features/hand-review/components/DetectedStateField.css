@@ -15,7 +15,7 @@
 
 .field-header {
   align-items: center;
-  color: #605d5d;
+  color: #575454;
   display: flex;
   font-size: 10.5px;
   font-weight: 600;
@@ -32,7 +32,7 @@
 
 .field-header small {
   background: #d7d3d3;
-  color: #605d5d;
+  color: #575454;
   flex: 0 0 auto;
   font-size: 9.5px;
   font-weight: 800;
@@ -46,7 +46,7 @@
 
 .field-missing .field-header small {
   background: #e5e2e2;
-  color: var(--muted);
+  color: #575454;
 }
 
 .field .text-input-control,

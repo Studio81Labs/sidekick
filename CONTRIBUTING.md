@@ -22,12 +22,17 @@ Run the checks relevant to the change:
 
 ```bash
 pnpm backend:test
+pnpm api:check
 pnpm frontend:test
-pnpm frontend:build
+pnpm frontend:performance
+pnpm monitor:test
+pnpm test:e2e
 docker compose -f infra/docker/compose.yaml config
 ```
 
-If deployment files changed, build the affected image from the repository root.
+Release and deployment changes must also run the locked Rust solver suite, both
+container builds, and an isolated backup export/verify/restore drill. If
+deployment files changed, build the affected image from the repository root.
 If behavior changed, update the product spec or architecture reference in the
 same PR.
 
