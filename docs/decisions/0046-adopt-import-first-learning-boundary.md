@@ -67,6 +67,15 @@ mastery/profile data. Consent is revocable, transport is encrypted, provenance
 is auditable, and local-only mode remains usable with remote-only coverage
 visibly unavailable.
 
+The supported Phase 1 player delivery is a co-located PWA, API, and file-backed
+store on the player's machine. The local backend serves the player UI/API and
+stores every V2 import and learning layer in player-controlled local storage.
+The deployed V1 Cloudflare Worker → hosted FastAPI path cannot proxy or persist
+V2 player histories or learning records; it remains available only for legacy
+read-only audit/export and the isolated administrative parser-test capability
+during migration. The optional consented remote solved lookup above is the sole
+V2 player-data egress exception.
+
 ## Security And Trust Boundaries
 
 The trusted Worker/backend boundary enforces administrative capture/upload
@@ -79,6 +88,11 @@ The provider boundary separately enforces remote-feed consent and outbound field
 allowlisting. Disabling or revoking a provider stops new requests immediately;
 network/provider failure cannot silently fall back to a different remote source
 or convert missing coverage into a solved grade.
+
+The local-runtime boundary is verified at both routing and persistence layers.
+A remote static asset host cannot receive API payloads, the local store is the
+only writable player system of record, and direct requests to the hosted V1 API
+cannot create V2 imports or learning state.
 
 Raw histories, detected state, approved revisions, conflicts, and derived
 learning artifacts are separate persistence layers. Stable identities and active
@@ -110,10 +124,12 @@ deployment details.
 ## Migration
 
 Phase 0 implements the administrative capture boundary first, before Phase 1
-player validation. It then introduces detected/approved imported-hand storage,
-stable identity/conflict handling, chronology/economic context, decision
-extraction, and benchmarked reference gates. The current V1 architecture
-reference continues to describe deployed behavior until those migrations land.
+player validation. It also delivers and verifies the co-located local player
+runtime/persistence boundary before enabling V2 imports, then introduces
+detected/approved imported-hand storage, stable identity/conflict handling,
+chronology/economic context, decision extraction, and benchmarked reference
+gates. The current V1 architecture reference continues to describe deployed
+behavior until those migrations land.
 
 Legacy screenshot jobs and V1 training analytics remain readable/auditable but
 cannot be promoted into V2 canonical hands, decisions, mastery, drills, or proof
@@ -130,9 +146,10 @@ administrative test data into player learning state.
 
 Rollout follows roadmap Phase 0: disable and authorize capture/upload, remove old
 recommendation automation, verify direct-API denials and test-data isolation,
-then enable hand-history detection/approval behind its own migration gate. Phase
-1 cannot start until both the import/reference viability gates and the safety
-prerequisite pass.
+deliver the local player runtime/store and prove the hosted path cannot receive
+V2 data, then enable hand-history detection/approval behind its own migration
+gate. Phase 1 cannot start until the import/reference viability gates and both
+safety/local-delivery prerequisites pass.
 
 Rollback disables new imports and returns the player UI to a read-only view of
 existing data; it does not restore player-accessible live capture or automatic

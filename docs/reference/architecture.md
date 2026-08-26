@@ -13,7 +13,9 @@ The V2 target player/operator boundary, import-first persistence lifecycle, and
 capture-first migration are defined by
 [ADR 0046](../decisions/0046-adopt-import-first-learning-boundary.md). This
 reference continues to describe the currently deployed V1 architecture until
-the ADR's gated migration work is implemented.
+the ADR's gated migration work is implemented. In particular, the Worker proxy
+and hosted file-backed API below are not an approved V2 player-data path: Phase 1
+requires the ADR's co-located player runtime and local writable system of record.
 
 ## System Shape
 

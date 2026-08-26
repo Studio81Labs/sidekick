@@ -198,10 +198,14 @@ personal leak, update mastery, or contribute to proof-of-learning metrics.
 - **The player predicts before the answer is revealed.** Active recall is the
   strongest lever available and is preserved even for imported hands.
 - **The app must prove it taught.** Previously flagged leaks are re-measured on
-  new sessions. "This leak is closing" is the core success signal, surfaced to
-  the user.
+  matched or opportunity-standardized evidence from genuinely later sessions,
+  with uncertainty. "This leak is closing" is surfaced only when improvement
+  cannot be explained by an easier case mix.
 - **Local-first, single-user.** No account system or multi-tenant assumptions in
-  the core. By default, player data and grading stay on the player's machine.
+  the core. The supported V2 player runtime and persistence are delivered on the
+  player's machine; raw histories, canonical state, and learning records never
+  traverse or reside in the hosted V1 Worker/backend path. By default, grading
+  also stays on that machine.
   Nothing is sent to a remote solved-data provider unless the player explicitly
   enables that provider after seeing the exact minimized outbound-data
   categories, retention/use policy, and network dependency. Local-only mode
@@ -362,6 +366,25 @@ never reinterpreted as played-hand provenance.
 This boundary preserves recognition development without exposing a workflow
 that could be used as real-time poker assistance. Authorization must be enforced
 by the backend/Worker boundary; frontend visibility alone is insufficient.
+
+### 3.5 Local player runtime and persistence boundary
+
+Before Phase 1, the V2 player PWA, API, and file-backed store are delivered as a
+co-located runtime on the player's machine. The local backend serves the player
+UI and API from a local origin and persists raw imports, detected/approved
+revisions, conflicts, decisions, grades, mastery, drills, proof metrics, and
+backups only in player-controlled local storage. The browser does not send those
+records through the deployed Cloudflare Worker or a centrally hosted FastAPI
+store. A remotely hosted static shell is not a player-data proxy.
+
+The current Worker → hosted FastAPI topology remains the deployed V1/admin
+architecture while migration is implemented. It may expose legacy data for
+read-only audit/export and the isolated administrative parser-test surface, but
+it cannot accept V2 player imports or learning state. Phase 1 is blocked until
+packaging/setup, local-origin routing, persistence/backup/restore, upgrade, and
+direct-network tests prove that no player record reaches the hosted path. The
+only permitted V2 player-data egress is the separately consented, minimized
+remote solved lookup in §5.3; revoking it returns to fully local operation.
 
 ---
 
@@ -602,6 +625,14 @@ Recency is based on preserved source play time and stable source-session order,
 not file-import time. Decisions whose play chronology is unknown remain visible
 but do not support directional regression or proof-of-learning claims.
 
+Mastery movement and regression also control for opportunity mix. Comparable
+evidence is matched or standardized on versioned, predeclared route/difficulty
+features such as position, effective-stack bucket, action sequence and sizings,
+hand/board-strength bucket, economic/utility model, and reference/taxonomy
+revisions. Raw aggregates may remain diagnostic, but an easier or materially
+different mix cannot advance mastery or create a regression claim. Insufficient
+overlap or excessive uncertainty leaves the directional state unchanged.
+
 ### 6.3 Prioritization
 
 Within one comparable economic/utility stratum, leaks are ranked by **frequency
@@ -665,10 +696,20 @@ re-faces the exact spots they got wrong, at growing intervals.
 ### 6.7 Proof of learning
 
 The app must demonstrate it taught. When new sessions import, previously flagged
-leaks are re-scored and the trend is surfaced: "Your BB-defense leak is closing
-— accuracy 61% → 78% over your last 200 hands." A concept moving Leak →
-Practicing → Mastered is the headline success event, not "hands reviewed." This
-closes the loop that V1 never had. "Later" means later by preserved source hand
+leaks are re-scored against matched opportunities or a fixed, versioned
+opportunity distribution. Matching/standardization controls at minimum for
+position, effective-stack bucket, prior action/sizing sequence, hand/board
+strength or reviewed difficulty bucket, economic/utility model, and pinned
+reference/taxonomy revisions. The method, cohort/distribution revision, overlap,
+effective sample size, estimate, and uncertainty interval are retained.
+
+"Your BB-defense leak is closing" is surfaced only when a predeclared minimum
+sample and uncertainty threshold show improvement on comparable opportunities.
+Raw before/after accuracy remains labeled diagnostic; if overlap is insufficient,
+case mix shifts materially, or the interval includes no meaningful improvement,
+the app says it cannot yet tell. A concept moving Leak → Practicing → Mastered
+is the headline success event, not "hands reviewed," but opportunity drift alone
+cannot cause that movement. "Later" means later by preserved source hand
 time/session order, never merely imported later; unknown or contradictory source
 chronology cannot prove that learning occurred after a drill.
 
@@ -715,7 +756,8 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
 
 ## 9. Phased build plan (gated)
 
-**Phase 0 — foundations and safety (two parallel spikes, one shared gate)**
+**Phase 0 — foundations and safety (two parallel spikes, two prerequisites, one
+shared gate)**
 
 - _Import spike:_ PokerStars adapter → detected hand → user-approved canonical
   hand → decision extraction. Kill criterion: ≥99% clean parse **with pot
@@ -740,10 +782,16 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
   server-authorized administrative OCR test context defined by §3.4. Kill
   criterion: player UI and direct API attempts cannot invoke capture/upload or
   transition an administrative test input into recommendation or learning state.
+- _Local-delivery prerequisite:_ package and validate the co-located player PWA,
+  API, persistence, backup/restore, and upgrade path defined by §3.5. Kill
+  criterion: V2 imports and all player/learning records stay on the player
+  machine; the deployed Worker/hosted backend cannot receive them, including by
+  direct network/API attempts. The optional minimized remote solver request is
+  tested separately under explicit consent.
 
 Neither the learning model nor player validation starts until the two viability
-spikes and the safety prerequisite clear. A failed viability gate kills or
-reshapes the product; a failed safety prerequisite blocks Phase 1.
+spikes and both prerequisites clear. A failed viability gate kills or reshapes
+the product; a failed safety or local-delivery prerequisite blocks Phase 1.
 
 **Phase 1 — minimum teaching loop (preflop-first)**
 
@@ -756,13 +804,14 @@ reshapes the product; a failed safety prerequisite blocks Phase 1.
   comprehensibility through the blinded solved-library transfer assessment.
 - Success metric (**both required**): (a) on a real session the app surfaces a
   leak the friend did not already know he had ("huh, I do that?"), and after
-  drilling a _later_ session shows that leak measurably closing; **and** (b) the
-  non-player builder can explain one taught principle in plain language and apply
-  it correctly to a fresh blinded solved-library holdout for the same concept.
-  Every retry uses a holdout they have never attempted. The builder's assessment
-  does not create a leak or mastery record. If (a) fails, grading or the mastery
-  model is unproven; if (b) fails, the teaching is unproven — and no amount of UI
-  polish fixes either.
+  drilling a _later_ session shows that leak measurably closing on a matched or
+  opportunity-standardized cohort with sufficient overlap/sample and a retained
+  uncertainty interval; **and** (b) the non-player builder can explain one taught
+  principle in plain language and apply it correctly to a fresh blinded
+  solved-library holdout for the same concept. Every retry uses a holdout they
+  have never attempted. The builder's assessment does not create a leak or
+  mastery record. If (a) fails, grading or the mastery model is unproven; if (b)
+  fails, the teaching is unproven — and no amount of UI polish fixes either.
 
 **Phase 2 — breadth**
 
@@ -806,7 +855,8 @@ Poker Hero V2 is successful when:
 - The player can **drill their own leaks** via active recall, with missed spots
   spaced-repeated.
 - The app **proves it taught**: a previously flagged leak is re-measured on later
-  sessions and shown closing (or not).
+  matched/standardized opportunities with uncertainty and shown closing, not
+  closing, or not yet measurable.
 - OCR can be validated by administrators through isolated screenshot upload and
   live capture without exposing those inputs as a player workflow.
 - The parser and recommendation benchmarks demonstrate that grading is accurate
