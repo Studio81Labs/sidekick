@@ -100,6 +100,9 @@ Required changes:
 - rename `frontend-ci.yml` and `frontend-deploy.yml` to `pwa-ci.yml` and
   `pwa-deploy.yml` and update path filters, job names, concurrency groups, and
   deployment comments;
+- update the `main` repository ruleset or branch protection in the same rollout
+  so the required `Frontend CI / Frontend Test & Build` context is replaced by
+  the exact renamed PWA workflow and job context;
 - rename the Compose service from `frontend` to `pwa` and change Dockerfile,
   bundle-budget, OpenAPI export, Playwright, labeler, Renovate, and generated
   contract paths;
@@ -110,6 +113,8 @@ Required changes:
 Acceptance gates:
 
 - no live reference to `apps/frontend` remains outside archived documentation;
+- `main` requires the renamed PWA CI context, no longer requires the obsolete
+  frontend context, and a test PR is blocked until the PWA check succeeds;
 - `pnpm pwa:test`, `pnpm pwa:performance`, and `pnpm test:e2e` pass;
 - both Docker images build from the repository root;
 - `docker compose -f infra/docker/compose.yaml config` succeeds using the
