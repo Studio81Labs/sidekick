@@ -1,3 +1,4 @@
+# ported from Studio81Labs/nexcue@094a016480bac8feb517635a015863ee45c51037
 name: Cleanup PR Caches
 
 # Deletes the Actions caches a pull request created, once it closes.
@@ -18,7 +19,10 @@ name: Cleanup PR Caches
 # the second sweep: 8 caches, 4.97 GB, all on merged pull requests.
 
 on:
-  pull_request:
+  # The target event executes this base-branch workflow with a writable token,
+  # including when the closed PR came from a fork. This job never checks out or
+  # executes PR code; it uses only GitHub's integer PR number to delete caches.
+  pull_request_target:
     types: [closed]
 
 permissions:
@@ -44,8 +48,9 @@ jobs:
           set -euo pipefail
           REF="refs/pull/${PR_NUMBER}/merge"
 
-          # `|| true` on the read: a PR that created no caches is the normal
-          # case for docs-only changes, and must not fail the job.
+          # An empty successful response is the normal docs-only case. An API
+          # failure must fail this one-shot closed-event run so it can be
+          # investigated instead of being misreported as an empty cache list.
           # --paginate: `per_page=100` alone stops at the first page, and a
           # long-lived PR can exceed that through distinct cache KEYS (a
           # repeated key is a hit, not a new entry). Safe to combine with --jq
@@ -53,7 +58,7 @@ jobs:
           # id per line — unlike a bare --paginate, whose per-page JSON
           # documents concatenate into something no single parse accepts.
           IDS=$(gh api --paginate "repos/${REPO}/actions/caches?ref=${REF}&per_page=100" \
-                  --jq '.actions_caches[].id' 2>/dev/null || true)
+                  --jq '.actions_caches[].id')
 
           if [ -z "$IDS" ]; then
             echo "No caches for ${REF}."
@@ -62,13 +67,16 @@ jobs:
 
           COUNT=0
           for ID in $IDS; do
-            if gh api -X DELETE "repos/${REPO}/actions/caches/${ID}" >/dev/null 2>&1; then
+            if DELETE_OUTPUT=$(gh api -X DELETE "repos/${REPO}/actions/caches/${ID}" 2>&1); then
               COUNT=$((COUNT + 1))
+            elif [[ "$DELETE_OUTPUT" == *"(HTTP 404)"* ]]; then
+              # Confirmed race: eviction or another cleanup already achieved
+              # the desired end state after enumeration.
+              echo "::notice::cache ${ID} was already gone"
             else
-              # Deleting is best-effort: a cache can disappear between the list
-              # and the delete (eviction, a concurrent run of this workflow).
-              # That is the desired end state anyway, so do not fail on it.
-              echo "::warning::could not delete cache ${ID} — it may already be gone"
+              echo "::error::failed to delete cache ${ID}"
+              printf '%s\n' "$DELETE_OUTPUT" >&2
+              exit 1
             fi
           done
 

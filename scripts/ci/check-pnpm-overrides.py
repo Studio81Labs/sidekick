@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ported from Studio81Labs/nexcue@2658bd07ff90dde85042ba66ba4bbd57ec340817
 """Assert the pnpm overrides in pnpm-workspace.yaml still mean what they say.
 
 An override wins silently. pnpm applies it, rewrites the lockfile's `specifier`
@@ -53,17 +54,12 @@ Usage:  check-pnpm-overrides.py [--self-test]
 
 from __future__ import annotations
 
+import ast
 import glob
 import json
 import re
 import sys
 from pathlib import Path
-
-try:
-    import yaml
-except ModuleNotFoundError:  # pragma: no cover - the workflow installs it
-    print("::error::PyYAML is required. `pip install pyyaml`.")
-    sys.exit(1)
 
 # A half-open version interval [lo, hi). Versions are (major, minor, patch).
 Version = tuple[int, int, int]
@@ -79,6 +75,80 @@ NON_VERSION_PREFIXES = ("workspace:", "catalog:", "link:", "file:", "npm:", "git
 
 class Unparseable(ValueError):
     """A form the parser does not model. Always fatal -- never skipped."""
+
+
+def _mapping_separator(line: str) -> int:
+    """Index of the first YAML mapping colon outside quotes, or -1."""
+    quote = None
+    escaped = False
+    for index, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\" and quote == '"':
+            escaped = True
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+            continue
+        if char in "\"'":
+            quote = char
+        elif char == ":":
+            return index
+    return -1
+
+
+def _yaml_string(raw: str) -> str:
+    """Parse the string scalar forms override keys and values are allowed to use."""
+    value = raw.strip()
+    if not value:
+        raise Unparseable("empty YAML scalar")
+    if value[0] in "\"'":
+        try:
+            parsed = ast.literal_eval(value)
+        except (SyntaxError, ValueError) as exc:
+            raise Unparseable(f"invalid quoted YAML scalar: {value!r}") from exc
+        if not isinstance(parsed, str):
+            raise Unparseable(f"override scalar is not a string: {value!r}")
+        return parsed
+    if " #" in value:
+        value = value.split(" #", 1)[0].rstrip()
+    return value
+
+
+def parse_overrides(raw: str) -> dict[str, str]:
+    """Read only the root ``overrides:`` mapping, without a YAML dependency.
+
+    Package-manager override keys and values are strings, so loading an entire
+    general-purpose YAML implementation for this one block adds a developer
+    prerequisite without buying useful syntax. Unsupported shapes fail loudly;
+    they never turn into an unchecked override.
+    """
+    lines = raw.splitlines()
+    try:
+        start = next(index for index, line in enumerate(lines) if line == "overrides:")
+    except StopIteration as exc:
+        raise Unparseable("pnpm-workspace.yaml has no root overrides block") from exc
+
+    overrides: dict[str, str] = {}
+    for line in lines[start + 1 :]:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith(" "):
+            break
+        if not line.startswith("  ") or line.startswith("    "):
+            raise Unparseable(f"unsupported nested overrides syntax: {line.strip()!r}")
+        entry = line[2:]
+        separator = _mapping_separator(entry)
+        if separator < 0:
+            raise Unparseable(f"cannot parse override entry: {entry!r}")
+        key = _yaml_string(entry[:separator])
+        value = _yaml_string(entry[separator + 1 :])
+        if key in overrides:
+            raise Unparseable(f"duplicate override key: {key!r}")
+        overrides[key] = value
+    return overrides
 
 
 def parse_version(text: str) -> Version:
@@ -174,10 +244,27 @@ def advisory_for(raw: str, key: str) -> str | None:
     and an unrelated comment further up is not borrowed.
     """
     lines = raw.splitlines()
-    bare = key.strip('"\'')
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not (stripped.startswith(f"{bare}:") or stripped.startswith(f'"{bare}":')):
+    try:
+        start = next(index for index, line in enumerate(lines) if line == "overrides:")
+    except StopIteration:
+        return None
+    for i in range(start + 1, len(lines)):
+        line = lines[i]
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith(" "):
+            break
+        if not line.startswith("  ") or line.startswith("    "):
+            continue
+        entry = line[2:]
+        separator = _mapping_separator(entry)
+        if separator < 0:
+            continue
+        try:
+            candidate = _yaml_string(entry[:separator])
+        except Unparseable:
+            continue
+        if candidate != key:
             continue
         for j in range(i - 1, -1, -1):
             probe = lines[j].strip()
@@ -231,8 +318,10 @@ def declared_ranges(root: Path) -> dict[str, list[tuple[str, str]]]:
 def check(root: Path) -> list[str]:
     errors: list[str] = []
     raw = (root / "pnpm-workspace.yaml").read_text()
-    ws = yaml.safe_load(raw) or {}
-    overrides = ws.get("overrides") or {}
+    try:
+        overrides = parse_overrides(raw)
+    except Unparseable as exc:
+        return [f"::error file=pnpm-workspace.yaml::{exc}"]
     declared = declared_ranges(root)
 
     for key, value in overrides.items():
@@ -463,7 +552,7 @@ SELF_TESTS = [
 def _write_workspace(path: Path, overrides: dict) -> None:
     """Emit an overrides block by hand so fixtures can carry COMMENTS.
 
-    yaml.safe_dump drops them, and the advisory rule reads exactly those — a
+    A generic YAML dumper drops them, and the advisory rule reads exactly those — a
     fixture without comments could not exercise it at all.
     """
     lines = ["overrides:"]
@@ -492,11 +581,25 @@ def self_test(tmp: Path) -> int:
             print(f"         expected failure={expect_failure}, got={got}")
             for e in errs:
                 print(f"         {e[:160]}")
+    desc = "single-quoted cross-major key retains its adjacent advisory"
+    (tmp / "pnpm-workspace.yaml").write_text(
+        "overrides:\n"
+        "  # GHSA-w5hq-g745-h8pq (7.5). Pulled by gaxios.\n"
+        "  'uuid@9.0.1': '11.1.1'\n"
+    )
+    (tmp / "package.json").write_text(json.dumps({"dependencies": {}}))
+    errs = check(tmp)
+    status = "ok " if not errs else "FAIL"
+    print(f"  [{status}] {desc}")
+    if errs:
+        failures += 1
+        for e in errs:
+            print(f"         {e[:160]}")
     print()
     if failures:
-        print(f"::error::self-test: {failures}/{len(SELF_TESTS)} cases behaved wrongly")
+        print(f"::error::self-test: {failures}/{len(SELF_TESTS) + 1} cases behaved wrongly")
         return 1
-    print(f"Self-test OK: {len(SELF_TESTS)} cases, both real regressions caught.")
+    print(f"Self-test OK: {len(SELF_TESTS) + 1} cases, both real regressions caught.")
     return 0
 
 
@@ -514,8 +617,8 @@ def main() -> int:
             print(e)
         print(f"::error::{len(errors)} pnpm override problem(s) found")
         return 1
-    ws = yaml.safe_load((root / "pnpm-workspace.yaml").read_text()) or {}
-    print(f"pnpm overrides OK: {len(ws.get('overrides') or {})} entries checked.")
+    overrides = parse_overrides((root / "pnpm-workspace.yaml").read_text())
+    print(f"pnpm overrides OK: {len(overrides)} entries checked.")
     return 0
 
 
