@@ -94,6 +94,15 @@ def validate_tree(root: Path) -> list[str]:
         "--config apps/pwa/wrangler.jsonc" not in deploy_workflow
     ):
         errors.append("root-scoped Wrangler deploy must use the repository-relative PWA config path")
+    ci_scripts = (workflow_dir / "ci-scripts.yml").read_text()
+    if len(re.findall(r'^\s+- "\.github/workflows/\*\*"$', ci_scripts, re.MULTILINE)) != 2:
+        errors.append("CI script policy checks must run for every workflow change")
+    if not re.search(
+        r"^\s+run: python3 scripts/ci/check-container-pins\.py\s*$",
+        ci_scripts,
+        re.MULTILINE,
+    ):
+        errors.append("CI must scan repository container pins after running the fixture self-test")
     listed = subprocess.check_output(
         ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard"],
         text=True,

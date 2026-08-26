@@ -7,10 +7,25 @@ PIP_TOOLS_VERSION=7.6.1
 PYTHON_IMAGE="python:3.12-slim@sha256:7a8b475003c4fe15a2cd4e55e5cfc2f3560bdc9333d624f24cdd6d4340fd7a17"
 MODE="${1:---write}"
 
+mode_uses_existing_locks() {
+  [ "$1" = "--check" ]
+}
+
 case "$MODE" in
   --write|--check) ;;
+  --self-test)
+    mode_uses_existing_locks --check
+    ! mode_uses_existing_locks --write
+    echo "compile-python-locks self-test passed"
+    exit 0
+    ;;
   *) echo "usage: $0 [--write|--check]" >&2; exit 2 ;;
 esac
+
+USE_EXISTING_LOCKS=false
+if mode_uses_existing_locks "$MODE"; then
+  USE_EXISTING_LOCKS=true
+fi
 
 command -v docker >/dev/null 2>&1 || {
   echo "docker is required to generate Python 3.12 locks reproducibly" >&2
@@ -21,6 +36,7 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 docker run --rm \
   -e PIP_TOOLS_VERSION="$PIP_TOOLS_VERSION" \
+  -e USE_EXISTING_LOCKS="$USE_EXISTING_LOCKS" \
   -v "$ROOT:/workspace:ro" \
   -v "$TMP:/out" \
   -w /workspace \
@@ -32,11 +48,11 @@ docker run --rm \
       output="$1"
       existing="$2"
       shift 2
-      if [ -f "$existing" ]; then
+      if [ "$USE_EXISTING_LOCKS" = "true" ] && [ -f "$existing" ]; then
         # A freshness check must not change merely because PyPI published a
         # newer compatible transitive dependency during review. The committed
-        # lock remains the resolver constraint; incompatible manifest changes
-        # still force pip-compile to update the affected graph.
+        # lock remains the resolver constraint. Write mode intentionally omits
+        # it so an explicit regeneration can release changed manifest pins.
         set -- --constraint "$existing" "$@"
       fi
       /tmp/lock-venv/bin/pip-compile \
