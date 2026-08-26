@@ -479,18 +479,26 @@ preflop decision can move mastery. Multiway-postflop reference sourcing is the
 additional Phase-0 question that gates whether mastery covers those spots at
 all:
 
-- **Precompute** a bounded, high-value set of postflop solutions once (owned
-  license), ship as static lookup — the same model serious tools use (preflop
-  from HRC/Monker-class tools, postflop from Pio-class). Preferred if a bounded
-  set covers enough real spots.
-- **License** a solved-data feed. Dependency on someone else's roadmap.
+- **Precompute** a bounded, high-value set of postflop solutions once and ship
+  it as a static lookup — the same model serious tools use (preflop from
+  HRC/Monker-class tools, postflop from Pio-class). This is eligible only when
+  Poker Hero owns the artifacts or the license explicitly permits embedding and
+  redistributing the solved dataset/artifacts and updates in the locally
+  distributed application. Preferred if a bounded set covers enough real spots.
+- **License** a solved-data feed served from infrastructure covered by explicit
+  commercial serving/derived-output rights. A feed license that forbids data
+  redistribution is server-side only: its dataset is never embedded in or
+  delivered with the local application. Dependency on someone else's roadmap
+  and on network availability.
 - **Do not grade** postflop multiway at all in early versions — ship
   preflop + heads-up postflop mastery only, and mark everything else
   `heuristic`. Honest, and still valuable (preflop leaks are common and
   fixable). This is the acceptable MVP floor.
 
-Kill criterion: if trustworthy postflop references cannot be obtained at
-absorbable cost under a license permitting commercial serving of the outputs,
+Kill criterion: every trustworthy reference must be usable under rights that
+match its actual delivery mode — embedding and redistribution rights for a
+shipped lookup, or server-side commercial serving/derived-output rights for a
+non-distributed feed. If neither compliant path is available at absorbable cost,
 postflop mastery is deferred and the app ships preflop-first — it is **not**
 faked with heuristics dressed as solver output.
 
@@ -691,16 +699,19 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
 - _Import spike:_ PokerStars adapter → detected hand → user-approved canonical
   hand → decision extraction. Kill criterion: ≥99% clean parse **with pot
   reconciliation passing** on ~1,000 real hands; non-pot fields are verified
-  against ground truth, source time/order is preserved, and positions are
-  verified including heads-up and sit-out cases.
+  against ground truth, voluntary/automatic action origin is verified, source
+  time/order is preserved, and positions are verified including heads-up and
+  sit-out cases.
 - _Grading spike:_ source and benchmark an independently solved preflop policy;
   the retained V1 heuristic chart is not eligible. Resolve §5.3 for postflop
   (precompute / license / defer). Kill criterion: obtain `solved` references
-  you'd stake the product on, at absorbable cost, under a license permitting
-  commercial serving of outputs, with immutable policy revisions, complete
-  mixed-strategy support, and declared table-size/position and cash/tournament
-  economic assumptions. If preflop sourcing fails, the teaching loop does not
-  have a trustworthy MVP grading floor.
+  you'd stake the product on, at absorbable cost, with rights matching the
+  actual delivery mode (embedding/redistribution for shipped lookups or
+  commercial serving/derived-output rights for server-only feeds), immutable
+  policy revisions, complete mixed-strategy support, and declared
+  table-size/position and cash/tournament economic assumptions. If preflop
+  sourcing fails, the teaching loop does not have a trustworthy MVP grading
+  floor.
 - _Safety prerequisite:_ before any Phase 1 user validation, remove screenshot
   upload, live window/screen/tab capture, and recommendation automation from the
   player workflow. Preserve capture/upload only in the disabled-by-default,
