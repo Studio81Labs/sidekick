@@ -145,6 +145,9 @@ Required changes:
   `openapi-check.yml` as the freshness gate;
 - make backend, PWA, and E2E workflows depend on the same generated contract
   artifact where appropriate;
+- add the root `tsconfig.base.json` to the internal PWA CI change detector so a
+  shared compiler configuration change runs PWA validation instead of taking
+  the intentional-skip path;
 - add `packages/openapi/**`, `packages/openapi-client/**`, and the root
   `tsconfig.base.json` to the PWA deployment push paths so contract or shared
   compiler configuration changes rebuild staging;
@@ -162,6 +165,8 @@ Acceptance gates:
 - the PWA has no relative imports into an app-owned generated contract folder;
 - `docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:wave-2 .` succeeds with
   the extracted workspace packages available inside the build;
+- a change set touching only `tsconfig.base.json` selects and passes PWA
+  validation rather than reporting an intentional skip from the required gate;
 - a change set touching only either OpenAPI package or `tsconfig.base.json`
   selects `pwa-deploy.yml` instead of leaving staging on stale generated client
   or compiler configuration;
