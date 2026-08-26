@@ -102,6 +102,8 @@ def validate_tree(root: Path) -> list[str]:
     ci_scripts = (workflow_dir / "ci-scripts.yml").read_text()
     if len(re.findall(r'^\s+- "\.github/workflows/\*\*"$', ci_scripts, re.MULTILINE)) != 2:
         errors.append("CI script policy checks must run for every workflow change")
+    if len(re.findall(r'^\s+- "apps/\*\*/Dockerfile"$', ci_scripts, re.MULTILINE)) != 2:
+        errors.append("container pin checks must run for every application Dockerfile change")
     if not re.search(
         r"^\s+run: python3 scripts/ci/check-container-pins\.py\s*$",
         ci_scripts,
