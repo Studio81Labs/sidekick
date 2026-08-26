@@ -340,11 +340,27 @@ ceiling on learning quality, so it is treated as first-class.
 
 Every graded decision carries a `grade_source`:
 
-- `solved` — solved chart or solved tree. **Moves mastery. Can generate drills.
-  Can be called a mistake.**
+- `solved` — solved chart or solved tree. **Eligible to move mastery or generate
+  drills only when the resolved policy evidence is complete.**
 - `heuristic` — range/EV fallback. **Shown to the player with an explicit
   "estimate, not solved" marker. Never moves mastery, never generates a drill,
   never labeled a mistake.**
+
+`grade_source: solved` is necessary but not sufficient for right/wrong grading.
+Each solved result also preserves the reference policy for the resolved spot:
+supported actions and sizings, their frequencies when available, candidate EVs,
+and the versioned material-frequency/EV tolerance used to decide support. The
+player's action is a supported policy match when it has meaningful reference
+frequency or is within the accepted EV-equivalence tolerance, even when it is
+not the solver's headline action. Such a mixed-strategy alternative is not a
+mistake and cannot create a leak or corrective drill.
+
+Only an action outside the complete solved policy support can be called a
+mistake and contribute an error to mastery. If the reference response omits the
+policy detail needed to distinguish a supported mix from an error, the decision
+remains visible as solved evidence but ungraded for mastery and drills. Aggregate
+frequency adherence may be shown as diagnostic detail, but it does not
+retroactively turn an individually supported action into a mistake.
 
 This directly prevents the app from teaching wrong things. A player can never
 have a leak "detected" or drilled on the basis of a guess. It also makes the
@@ -403,8 +419,9 @@ maps to no supported concept is stored but does not participate in mastery.
 
 ### 6.2 Mastery state per concept
 
-Each concept holds a mastery state derived only from that player's `solved`-graded
-decisions tagged to it:
+Each concept holds a mastery state derived only from that player's
+`solved`-graded decisions with complete mixed-strategy policy support tagged to
+it:
 
 - **Unknown** — insufficient sample.
 - **Leak** — accuracy low and EV cost material over a sufficient recent sample.
@@ -412,9 +429,10 @@ decisions tagged to it:
 - **Mastered** — high accuracy over a sufficient recent sample.
 
 Regression is allowed: a Mastered concept can fall back to Practicing/Leak if
-recent play degrades. Mastery is a function of accuracy on solved-graded
-decisions, sample size (for confidence), recency (recent play weighted higher),
-and EV-loss magnitude (a small-but-constant error can still be a Leak).
+recent play degrades. Mastery is a function of mixed-strategy-aware
+supported-policy accuracy on solved-graded decisions, sample size (for
+confidence), recency (recent play weighted higher), and EV-loss magnitude (a
+small-but-constant error can still be a Leak).
 
 A **leak is a concept where the player systematically deviates from the
 reference**; that is the object the app teaches against — not an individual
@@ -524,7 +542,7 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
 
 ## 9. Phased build plan (gated)
 
-**Phase 0 — foundations (two parallel spikes, one shared gate)**
+**Phase 0 — foundations and safety (two parallel spikes, one shared gate)**
 
 - _Import spike:_ PokerStars adapter → detected hand → user-approved canonical
   hand → decision extraction. Kill criterion: ≥99% clean parse **with pot
@@ -536,9 +554,16 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
   obtain `solved` references you'd stake the product on, at absorbable cost,
   under a license permitting commercial serving of outputs — or consciously ship
   preflop-first.
+- _Safety prerequisite:_ before any Phase 1 user validation, remove screenshot
+  upload, live window/screen/tab capture, and recommendation automation from the
+  player workflow. Preserve capture/upload only in the disabled-by-default,
+  server-authorized administrative OCR test context defined by §3.4. Kill
+  criterion: player UI and direct API attempts cannot invoke capture/upload or
+  transition an administrative test input into recommendation or learning state.
 
-Neither the learning model nor UX is built until both gates clear. Either
-failing kills or reshapes the product.
+Neither the learning model nor player validation starts until the two viability
+spikes and the safety prerequisite clear. A failed viability gate kills or
+reshapes the product; a failed safety prerequisite blocks Phase 1.
 
 **Phase 1 — minimum teaching loop (preflop-first)**
 
@@ -561,8 +586,6 @@ failing kills or reshapes the product.
 
 - More site adapters (Winamax, then 888/party/iPoker/ACR; GG last).
 - Postflop mastery if §5.3 delivered it.
-- Administrator-only OCR upload/live-capture test surface, isolated from player
-  learning data and enforced at the server boundary.
 - Study-prediction vs table-action divergence (§4) as a first-class view.
 
 **Phase 3 — hardening**
@@ -583,7 +606,9 @@ Poker Hero V2 is successful when:
   authorization and no path to recommendations, mastery, drills, or player
   learning data.
 - Grading is honest: every decision shows whether it was `solved` or
-  `heuristic`, and heuristic decisions never move mastery or generate drills.
+  `heuristic`; solved grades preserve mixed-strategy policy support; and
+  heuristic or policy-incomplete decisions never move mastery or generate
+  drills.
 - The app identifies **concept-level leaks** (recurring, EV-ranked), not just
   per-hand errors.
 - Feedback teaches a **transferable principle**, verifiable by the player
