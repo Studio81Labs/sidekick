@@ -246,6 +246,16 @@ shape includes at minimum:
   action list** (actor, action type, total committed).
 - Showdown and results.
 
+**Identity and re-import semantics:** `(site, source hand id)` is the stable hand
+identity unless a site adapter documents a stronger versioned namespace for a
+format whose hand ids are not site-unique. Overlapping files and exact reimports
+resolve to the existing hand and do not create a second canonical record,
+decision, grade, mastery sample, or drill. Import attempts and source-file
+provenance may be appended for audit without multiplying learning data. If the
+same stable identity arrives with materially different source or detected
+content, both inputs are preserved as a conflict for explicit user resolution;
+neither silently overwrites the active approved revision or counts twice.
+
 **Correctness oracle:** re-derive the pot from the action stream and reconcile
 against the file's stated pot (accounting for rake, uncalled bets, side pots).
 Independently-computed pot == stated pot is a per-hand pass/fail that validates
@@ -259,6 +269,15 @@ and reviewable. Approval may be performed per hand or explicitly across a
 reviewed batch, but decision extraction and grading accept only the player's
 approved canonical state. Unapproved or rejected hands never update mastery,
 generate drills, or receive a grade.
+
+Each approval has a monotonic canonical revision. Correcting and reapproving a
+previously approved hand atomically supersedes every downstream artifact derived
+from the old revision: decision points, grades, concept tags, mastery inputs and
+aggregates, scheduled drill entries/attempt outcomes, and proof-of-learning
+metrics. Superseded artifacts remain auditable but never active. If rebuilding
+the new revision fails, the hand is visibly pending/failed and no stale artifact
+from the prior revision may remain in learning state; unrelated hands continue
+independently.
 
 ### 3.3 Decision extraction
 
@@ -390,7 +409,12 @@ faked with heuristics dressed as solver output.
 
 Not for _choosing_ the action (that needs a solver/chart). For _explaining_ an
 already-graded action in human language — generating the transferable principle
-(§6.4). Its output is cached per concept, not called live per hand.
+(§6.4). LLM output is a draft, not publishable teaching content. A human reviewer
+must validate its range claims, causal explanation, generalization, and
+consistency with solved evidence, then approve a version before it can appear in
+reviews or drills. Draft, approved, superseded, and retired versions are retained
+with reviewer provenance; caching is keyed by concept/taxonomy/reference and
+principle version, not called live per hand.
 
 ---
 
@@ -460,8 +484,11 @@ Every reveal (in review or drill) shows, in order:
    context, EV delta) — retained from V1's evidence transparency.
 3. **The player's own action** and, if a study prediction exists, both.
 
-Principles are authored per concept, or LLM-generated and then cached (§5.4).
-The principle is what transfers; the frequency is disposable.
+Principles are authored per concept or begin as LLM-generated drafts (§5.4), but
+only a human-reviewed, approved version can be displayed or scheduled in a
+drill. Every reveal records the exact principle version so later edits do not
+rewrite what the player was taught. The principle is what transfers; policy
+frequencies remain supporting evidence rather than the lesson itself.
 
 ### 6.5 Drill engine — active recall
 
@@ -601,6 +628,9 @@ Poker Hero V2 is successful when:
 - A player can import a session, review/correct detected state, approve canonical
   hands, and get decision points with real actions, with no screenshot upload or
   live-capture capability in the player experience.
+- Exact/overlapping reimports are idempotent, conflicts require explicit
+  resolution, and reapproval atomically replaces all active derived learning
+  state from the superseded hand revision.
 - Screenshot upload and live screen/window/tab capture remain available only in
   disabled-by-default administrative test mode, with server-enforced
   authorization and no path to recommendations, mastery, drills, or player
@@ -612,7 +642,8 @@ Poker Hero V2 is successful when:
 - The app identifies **concept-level leaks** (recurring, EV-ranked), not just
   per-hand errors.
 - Feedback teaches a **transferable principle**, verifiable by the player
-  applying it to a new, unseen spot for the same concept.
+  applying it to a new, unseen spot for the same concept; every displayed
+  principle is human-reviewed, approved, and versioned.
 - The player can **drill their own leaks** via active recall, with missed spots
   spaced-repeated.
 - The app **proves it taught**: a previously flagged leak is re-measured on later
