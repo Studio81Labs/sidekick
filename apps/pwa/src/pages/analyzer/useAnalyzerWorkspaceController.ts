@@ -522,6 +522,7 @@ export function useAnalyzerWorkspaceController({
     screenshotMetadataDraft,
     screenshotMutation: screenshotMetadataSaving || screenshotDeleting,
     trainingAnswerDraft,
+    trainingReviewMutation: trainingReviewJobId !== null,
     upload: queueProgress !== null,
   });
 

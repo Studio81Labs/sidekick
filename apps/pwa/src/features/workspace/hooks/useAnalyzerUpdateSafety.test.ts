@@ -16,6 +16,7 @@ const SAFE_INPUT: AnalyzerUpdateSafetyInput = {
   screenshotMetadataDraft: false,
   screenshotMutation: false,
   trainingAnswerDraft: false,
+  trainingReviewMutation: false,
   upload: false,
 };
 
@@ -26,6 +27,7 @@ describe("analyzer update safety inventory", () => {
     ["benchmarkOperation", "benchmark operation"],
     ["screenCapture", "screen capture"],
     ["screenshotMutation", "screenshot mutation"],
+    ["trainingReviewMutation", "training review mutation"],
     ["upload", "screenshot upload"],
   ] as const)("registers busy owner %s", (owner, reason) => {
     expect(

@@ -11,6 +11,7 @@ export interface AnalyzerUpdateSafetyInput {
   screenshotMetadataDraft: boolean;
   screenshotMutation: boolean;
   trainingAnswerDraft: boolean;
+  trainingReviewMutation: boolean;
   upload: boolean;
 }
 
@@ -25,6 +26,7 @@ export function analyzerUpdateSafetyReasons({
   screenshotMetadataDraft,
   screenshotMutation,
   trainingAnswerDraft,
+  trainingReviewMutation,
   upload,
 }: AnalyzerUpdateSafetyInput) {
   return {
@@ -34,6 +36,7 @@ export function analyzerUpdateSafetyReasons({
       benchmarkOperation ? "benchmark operation" : null,
       screenCapture ? "screen capture" : null,
       screenshotMutation ? "screenshot mutation" : null,
+      trainingReviewMutation ? "training review mutation" : null,
       upload ? "screenshot upload" : null,
     ].filter((reason): reason is string => reason !== null),
     dirty: [
