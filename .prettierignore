@@ -2,3 +2,6 @@ pnpm-lock.yaml
 pnpm-workspace.yaml
 **/*.lock
 apps/pwa/dist/
+
+# Generated Semgrep rules are reviewed as vendored upstream output.
+.semgrep/

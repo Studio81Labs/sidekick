@@ -1,5 +1,9 @@
 # Architecture
 
+The repository security, release, dependency-trust, and required-check baseline
+is defined by
+[ADR 0043](../decisions/0043-adopt-studio81-security-and-ci-baseline.md).
+
 ## System Shape
 
 Poker Hero is a two-app monorepo. The browser control panel never talks to OCR

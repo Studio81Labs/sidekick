@@ -1,0 +1,16 @@
+name: Release Version Gate
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: "release: tag matches root version"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check release tag
+        run: bash scripts/ci/check-release-tag.sh

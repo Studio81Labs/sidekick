@@ -1,0 +1,63 @@
+name: CI Scripts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "scripts/ci/**"
+      - "**/Dockerfile"
+      - "apps/backend/pyproject.toml"
+      - "apps/backend/requirements-*.txt"
+      - ".github/workflows/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/ci/**"
+      - "**/Dockerfile"
+      - "apps/backend/pyproject.toml"
+      - "apps/backend/requirements-*.txt"
+      - ".github/workflows/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: "ci: release script tests"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Bash suites
+        run: |
+          bash scripts/ci/check-release-tag.test.sh
+          bash scripts/ci/compile-python-locks.sh --self-test
+      - name: Python self-tests
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
+          python3 scripts/ci/check-pnpm-overrides.py --self-test
+          python3 scripts/ci/check-semgrep-fixture.py --self-test
+          python3 scripts/ci/check-sibling-drift.py --self-test
+          python3 scripts/ci/check-container-pins.py --self-test
+          python3 scripts/ci/check-workflow-policy.py --self-test
+      - name: Every self-test is wired
+        run: |
+          set -euo pipefail
+          missing=0
+          for file in scripts/ci/*.test.sh; do
+            grep -q "$(basename "$file")" .github/workflows/ci-scripts.yml || missing=1
+          done
+          for file in scripts/ci/*.py; do
+            grep -q -- '--self-test' "$file" || continue
+            grep -q "$(basename "$file") --self-test" .github/workflows/ci-scripts.yml || missing=1
+          done
+          exit "$missing"
+      - name: Check Python lock freshness
+        run: scripts/ci/compile-python-locks.sh --check
+      - name: Check repository container pins
+        run: python3 scripts/ci/check-container-pins.py
+      - name: Check repository workflow policy
+        run: python3 scripts/ci/check-workflow-policy.py

@@ -1,12 +1,12 @@
-# syntax=docker/dockerfile:1.25
+# syntax=docker/dockerfile:1.25@sha256:0adf442eae370b6087e08edc7c50b552d80ddf261576f4ebd6421006b2461f12
 
 # Build from the repository root:
 # docker build -f apps/pwa/Dockerfile .
-FROM node:24-alpine AS build
+FROM node:24-alpine@sha256:d32cdf619f63fe0471182d08996dd516c6275bb5fd31ae06e55a570bd9e1ad43 AS build
 
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-RUN corepack enable && corepack prepare pnpm@11.9.0 --activate
+RUN corepack enable && corepack prepare pnpm@11.22.0 --activate
 
 WORKDIR /workspace
 
@@ -31,7 +31,7 @@ COPY packages/openapi packages/openapi
 COPY packages/openapi-client packages/openapi-client
 RUN pnpm pwa:build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
 
 COPY apps/pwa/nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /workspace/apps/pwa/dist /usr/share/nginx/html

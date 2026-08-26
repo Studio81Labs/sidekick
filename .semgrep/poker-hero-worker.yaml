@@ -1,0 +1,9 @@
+rules:
+  - id: poker-hero-worker-no-dynamic-code-execution
+    message: Dynamic code execution is forbidden at the PWA Worker trust boundary.
+    severity: ERROR
+    languages: [javascript, typescript]
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)

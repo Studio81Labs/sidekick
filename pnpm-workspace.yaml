@@ -4,7 +4,29 @@ packages:
 
 # Refuse newly published dependency versions for 24 hours. Frozen-lockfile
 # installs are unaffected; this only applies while resolving new versions.
+# The portfolio policy mirrors 24 hours in Renovate; seven days would delay
+# security patches and make Renovate's own frozen install disagree.
+# nosemgrep: pnpm-minimum-release-age
 minimumReleaseAge: 1440
 
+# Reject transitive git and URL packages, and refuse packages whose provenance
+# is weaker than an earlier release. Any exception must name one audited
+# version and be documented in
+# docs/decisions/0043-adopt-studio81-security-and-ci-baseline.md.
+blockExoticSubdeps: true
+trustPolicy: no-downgrade
+
+# Advisory floors for transitive packages whose parents have not yet widened
+# their ranges. OSV in security-scan.yml is the removal signal.
+overrides:
+  # GHSA-28wg-ghj8-5hjv / GHSA-2v37-7h3g-55p8
+  "nanoid@3": ">=3.3.18 <4"
+  # GHSA-fxqj-rqcc-2cmp / GHSA-r28c-9q8g-f849
+  postcss: ">=8.5.23 <9"
+  # GHSA-4cwx-7wf7-3272 and related 7.28.0 advisories
+  undici: ">=7.29.0 <8"
+
 allowBuilds:
+  "@sentry/cli": true
   esbuild: true
+  workerd: true

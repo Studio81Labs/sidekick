@@ -375,7 +375,7 @@ pnpm monitor:test
 ## Local Container Validation
 
 ```bash
-docker compose -f infra/docker/compose.yaml config
+docker compose -f infra/docker/docker-compose.yml config
 docker build -f apps/backend/Dockerfile -t poker-hero-backend:test .
 docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:test .
 ```

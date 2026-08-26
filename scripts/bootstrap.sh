@@ -42,8 +42,14 @@ if [ ! -d "$BACKEND_DIR/.venv" ]; then
   "$PYTHON_BIN" -m venv "$BACKEND_DIR/.venv"
 fi
 
-"$BACKEND_DIR/.venv/bin/python" -m pip install --upgrade pip
-"$BACKEND_DIR/.venv/bin/python" -m pip install -e "${BACKEND_DIR}[dev]"
+"$BACKEND_DIR/.venv/bin/python" -m pip install \
+  --require-hashes \
+  -r "$BACKEND_DIR/requirements-dev.txt"
+"$BACKEND_DIR/.venv/bin/python" -m pip install \
+  --no-deps \
+  --no-build-isolation \
+  "$BACKEND_DIR"
+"$BACKEND_DIR/.venv/bin/python" -m pip check
 
 cargo build --locked --release --manifest-path "$POSTFLOP_SOLVER_DIR/Cargo.toml"
 if [ ! -x "$POSTFLOP_SOLVER_BIN" ]; then

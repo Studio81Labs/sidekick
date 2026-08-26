@@ -27,7 +27,7 @@ pnpm pwa:test
 pnpm pwa:performance
 pnpm monitor:test
 pnpm test:e2e
-docker compose -f infra/docker/compose.yaml config
+docker compose -f infra/docker/docker-compose.yml config
 ```
 
 Release and deployment changes must also run the locked Rust solver suite, both
