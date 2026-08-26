@@ -379,6 +379,14 @@ Acceptance gates:
 Complete the cross-repository organization work after a stable public PWA URL
 and release status are known.
 
+Rollout record (2026-08-26): the current public release is the smoke-tested
+alpha PWA at `https://poker.studio81.workers.dev`; production remains
+intentionally unconfigured. The organization profile and repository metadata
+publish that alpha status explicitly. The marketing site does not yet have an
+individual-product showcase, so that follow-up is tracked separately in
+[Studio81Labs/studio81labs#15](https://github.com/Studio81Labs/studio81labs/issues/15)
+instead of placing portfolio copy in unrelated journal content.
+
 Required changes:
 
 - add a numbered ADR before granting cross-repository workflow access. It must

@@ -36,8 +36,20 @@ jobs:
           bash scripts/ci/check-release-tag.test.sh
           bash scripts/ci/compile-python-locks.sh --self-test
       - name: Python self-tests
+        # The drift checker parses workflow YAML. Load its exact, wheel-only,
+        # hash-checked dependency instead of trusting the mutable runner image.
         run: |
-          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
+          set -euo pipefail
+          python_deps="$RUNNER_TEMP/sibling-drift-python-deps"
+          python3 -m pip install \
+            --quiet \
+            --disable-pip-version-check \
+            --no-deps \
+            --only-binary=:all: \
+            --require-hashes \
+            --target "$python_deps" \
+            --requirement scripts/ci/sibling-drift-requirements.txt
+          export PYTHONPATH="$python_deps"
           python3 scripts/ci/check-pnpm-overrides.py --self-test
           python3 scripts/ci/check-semgrep-fixture.py --self-test
           python3 scripts/ci/check-sibling-drift.py --self-test
