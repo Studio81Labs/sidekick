@@ -252,7 +252,7 @@ TOPOLOGY_GATED = {
     ".github/workflows/_release-version-gate.yml": "capability:mobile",
     ".github/workflows/admin-ci.yml": "apps/admin/package.json",
     ".github/workflows/admin-deploy.yml": "apps/marketing/package.json",
-    ".github/workflows/backend-deploy.yml": "apps/marketing/package.json",
+    ".github/workflows/backend-deploy.yml": "capability:backend",
     ".github/workflows/marketing-ci.yml": "apps/marketing/package.json",
     ".github/workflows/marketing-deploy.yml": "apps/marketing/package.json",
     ".github/workflows/openapi-check.yml": "capability:openapi",
@@ -286,6 +286,10 @@ CROSS_STACK_REQUIRED = {
 # has either the shared/core package used by Tarmoto or the core package used by
 # Taven and TableTap. Nexcue's generated clients have neither.
 CAPABILITY_MARKER_PATHS = {
+    "capability:backend": (
+        "apps/backend/package.json",
+        "apps/backend/pyproject.toml",
+    ),
     "capability:independent-packages": (
         "packages/core/package.json",
         "packages/shared/package.json",
@@ -310,7 +314,7 @@ ACTION_TOPOLOGY_GATED = {
     ".github/workflows/_release-version-gate.yml": "capability:mobile",
     ".github/workflows/admin-ci.yml": "apps/admin/package.json",
     ".github/workflows/admin-deploy.yml": "apps/marketing/package.json",
-    ".github/workflows/backend-deploy.yml": "apps/marketing/package.json",
+    ".github/workflows/backend-deploy.yml": "capability:backend",
     ".github/workflows/marketing-ci.yml": "apps/marketing/package.json",
     ".github/workflows/marketing-deploy.yml": "apps/marketing/package.json",
     ".github/workflows/flutter-pin-check.yml": "apps/mobile/pubspec.yaml",
@@ -3361,6 +3365,57 @@ def self_test() -> int:
     assert len(found) == len(IDENTICAL), found
 
     # --- topology gating ---------------------------------------------------
+    BACKEND_WORKFLOW = ".github/workflows/backend-deploy.yml"
+    node_backend = {
+        "apps/backend/package.json": "{}\n",
+        "apps/backend/pyproject.toml": None,
+        BACKEND_WORKFLOW: (
+            "jobs:\n"
+            "  deploy:\n"
+            "    name: \"backend: deploy\"\n"
+            "    steps: []\n"
+        ),
+    }
+    python_backend_missing_deploy = {
+        "apps/backend/package.json": None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+        BACKEND_WORKFLOW: None,
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**node_backend).get,
+            repo(**python_backend_missing_deploy).get,
+        )
+        if f["name"] == BACKEND_WORKFLOW
+    ]
+    assert found and any(
+        "present here, absent there" in f["detail"] for f in found
+    ), f"a backend owner may not lose its deploy workflow: {found}"
+
+    node_backend_action = {
+        **node_backend,
+        BACKEND_WORKFLOW: wf("actions/checkout@1111111 # v1"),
+    }
+    python_backend_without_action = {
+        "apps/backend/package.json": None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+        BACKEND_WORKFLOW: wf("actions/setup-python@2222222 # v2"),
+    }
+    backend_action_findings = compare(
+        repo(**node_backend_action).get,
+        repo(**python_backend_without_action).get,
+    )
+    found = [
+        f
+        for f in backend_action_findings
+        if f["kind"] == "action" and "actions/checkout" in f["name"]
+    ]
+    assert found and "backend-deploy.yml" in found[0]["name"], (
+        "backend topology must not hide a one-sided deploy action: "
+        f"{backend_action_findings}"
+    )
+
     MARKER = "apps/mobile/pubspec.yaml"
     MOBILE_MARKER = "apps/mobile/package.json"
     GATED_FILE = "scripts/lib/resolve-flutter.sh"
