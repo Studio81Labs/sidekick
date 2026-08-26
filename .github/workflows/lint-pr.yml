@@ -29,6 +29,7 @@ jobs:
             revert
           scopes: |
             backend
+            pwa
             frontend
             solver
             ci

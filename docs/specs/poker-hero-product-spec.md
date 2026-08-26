@@ -49,9 +49,9 @@ The key architectural rule is that parsers and recommendation providers are chos
 
 ## Components
 
-### Frontend
+### PWA
 
-The frontend is a browser control panel for:
+The PWA is a browser control panel for:
 
 - Uploading one or more screenshots.
 - Capturing frames from a user-selected browser tab, window, or screen when the browser supports that choice.
@@ -523,7 +523,7 @@ identify the limper, isolation raiser, total and ratio, size policy, adjusted
 continue/reraise boundaries, named response policy, and cap. Another active
 player, action pending behind hero, contradictory structured actions, or
 contradictory money state must retain fallback behavior. Stale legacy opener
-metadata must not override call-first structured history: the frontend clears
+metadata must not override call-first structured history: the PWA clears
 it from approval payloads and the backend ignores it for this route so saved
 states and API clients receive the same precedence behavior.
 
@@ -558,7 +558,7 @@ frequencies.
 ## Data Flow
 
 1. User uploads screenshots or captures a frame in the web app.
-2. The frontend creates one queue item and backend job per image.
+2. The PWA creates one queue item and backend job per image.
 3. The backend runs the configured parser independently for each job.
 4. Each parser result includes structured detected state and field confidence.
    Confidence values must be finite numbers between zero and one; boolean or
@@ -661,7 +661,7 @@ frequencies.
     compressed upload limit, the backend atomically journals the archive before
     parsing or corpus changes, persists validation and archive-decoding failures,
     marks successful receipts complete afterward, and can resume validation or
-    partial request-owned cases after an interruption. The frontend recovers
+    partial request-owned cases after an interruption. The PWA recovers
     that exact pending, failed, or completed receipt after a lost response or reload,
     including when every imported hand is benchmark-only and absent from
     processing and history. Observed pending receipts keep recovery alive beyond
@@ -898,7 +898,7 @@ and representable by the benchmark matcher.
 ## Deployment Monitoring
 
 The private staging deployment must have a scheduled end-to-end probe that
-checks the frontend application marker, proxied backend health, and one bounded
+checks the PWA application marker, proxied backend health, and one bounded
 protected API read. Checks use bounded responses, timeouts, and retries. When
 Cloudflare Access service credentials are configured, they must never be sent
 across an origin boundary. Repeated failures reuse one open incident rather than
@@ -1006,7 +1006,7 @@ Example configuration concepts:
 - Provider capability settings such as required canonical fields and whether partial-state advice is allowed.
 - Independent optional bearer tokens for external vision, solver, and LLM
   providers plus a configurable positive request timeout. Authenticated
-  provider URLs must use HTTPS, and credentials must never enter frontend state.
+  provider URLs must use HTTPS, and credentials must never enter PWA state.
 - An optional deployment-only Worker-to-backend shared secret. The browser must
   never receive or forward this credential itself.
 - A required deployment environment identity (`local`, `staging`, or
@@ -1018,7 +1018,7 @@ Example configuration concepts:
 - A per-environment Worker MCP administration secret, distinct from agent
   credentials and the Worker-to-backend proxy secret.
 
-Configuration must allow local/private testing with local services and later public testing with external services without changing the frontend flow.
+Configuration must allow local/private testing with local services and later public testing with external services without changing the PWA flow.
 
 ## Testing Strategy
 
@@ -1197,7 +1197,7 @@ accuracy while remaining an exact-line review outside those action patterns.
 Sizing drift below 0.01 BB remains an exact persisted match and does not create
 review work.
 Sizing differences at that boundary remain reviewable after decimal values are
-serialized through the frontend and backend.
+serialized through the PWA and backend.
 
 ## Success Criteria
 
@@ -1317,7 +1317,7 @@ Poker Hero is successful when:
   idempotent and conflicting records are not overwritten.
 - The system can swap parsers and recommendation providers without changing the core UI workflow.
 - A deployed backend can reject application API traffic that does not pass
-  through the configured frontend Worker while retaining a platform health
+  through the configured PWA Worker while retaining a platform health
   endpoint.
 - An agent can inspect either environment through a fixed-target local process
   or authenticated hosted endpoint, while production remains read-only and

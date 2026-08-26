@@ -21,7 +21,7 @@ body:
     attributes:
       label: Area
       options:
-        - Frontend
+        - PWA
         - Backend API
         - Recognition / OCR
         - Recommendation / Solver

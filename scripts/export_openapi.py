@@ -12,7 +12,7 @@ BACKEND_ROOT = REPOSITORY_ROOT / "apps" / "backend"
 DEFAULT_OUTPUT = (
     REPOSITORY_ROOT
     / "apps"
-    / "frontend"
+    / "pwa"
     / "src"
     / "shared"
     / "api"

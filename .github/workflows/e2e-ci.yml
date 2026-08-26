@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "apps/backend/**"
-      - "apps/frontend/**"
+      - "apps/pwa/**"
       - "scripts/e2e_provider_stub.py"
       - "scripts/start-e2e-backend.sh"
       - "package.json"
@@ -16,7 +16,7 @@ on:
     branches: [main]
     paths:
       - "apps/backend/**"
-      - "apps/frontend/**"
+      - "apps/pwa/**"
       - "scripts/e2e_provider_stub.py"
       - "scripts/start-e2e-backend.sh"
       - "package.json"
@@ -56,7 +56,7 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           python -m pip install -e apps/backend
-          pnpm -C apps/frontend exec playwright install --with-deps chromium
+          pnpm -C apps/pwa exec playwright install --with-deps chromium
 
       - name: Run browser workflow tests
         env:

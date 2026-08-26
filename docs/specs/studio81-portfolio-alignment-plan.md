@@ -1,6 +1,6 @@
 # Studio81 Labs Portfolio Alignment Plan
 
-Status: proposed
+Status: active
 
 Date: 2026-08-26
 
@@ -18,7 +18,7 @@ This plan is based on the local default branches at these revisions:
 
 ## Narrowing Decisions
 
-1. Rename `apps/frontend` to `apps/pwa`.
+1. Name the product application `apps/pwa`.
    `pwa` is already the portfolio convention for an installable web product in
    TableTap. `app` would introduce a new ambiguous name beside existing
    `admin`, `marketing`, `mobile`, and other product-specific app names.
@@ -86,23 +86,23 @@ changes have different failure modes and rollback paths.
 
 ### Wave 1: Rename The Product App
 
-Rename `apps/frontend` to `apps/pwa` without changing runtime behavior.
+Establish `apps/pwa` as the product application's canonical location without
+changing runtime behavior.
 
 Required changes:
 
-- move the directory with Git history preserved;
+- preserve Git history through the directory move;
 - rename the workspace package to `@poker-hero/pwa`;
 - introduce `pwa:dev`, `pwa:test`, `pwa:test:watch`, `pwa:build`,
   `pwa:performance`, and PWA E2E root scripts;
 - keep deprecated `frontend:*` aliases, including `frontend:test:watch`, for one
   migration cycle only, then remove them in Wave 3 after local scripts and
   deployment configuration are updated;
-- rename `frontend-ci.yml` and `frontend-deploy.yml` to `pwa-ci.yml` and
-  `pwa-deploy.yml` and update path filters, job names, concurrency groups, and
-  deployment comments;
-- update the `main` repository ruleset or branch protection in the same rollout
-  so the required `Frontend CI / Frontend Test & Build` context is replaced by
-  the exact renamed PWA workflow and job context;
+- establish `pwa-ci.yml` and `pwa-deploy.yml` as the canonical workflow names
+  and update path filters, job names, concurrency groups, and deployment
+  comments;
+- update `main` branch protection in the same rollout so the exact renamed PWA
+  workflow gate is required alongside the existing PR-title check;
 - make `pwa-ci.yml` trigger on every pull request, move path selection inside
   the workflow, and expose one always-emitted required gate that succeeds only
   when PWA validation passed or was intentionally skipped;
@@ -118,9 +118,10 @@ Required changes:
 
 Acceptance gates:
 
-- no live reference to `apps/frontend` remains outside archived documentation;
-- `main` requires the renamed PWA CI context, no longer requires the obsolete
-  frontend context, and a test PR is blocked until the PWA check succeeds;
+- no live reference to the legacy product-app path remains outside archived
+  documentation;
+- `main` requires `PWA CI / PWA Gate` alongside `Validate PR title`, and a test
+  PR is blocked until the PWA check succeeds;
 - a documentation-only or backend-only test PR emits and completes the required
   PWA gate instead of waiting forever on a path-filtered workflow;
 - representative `fix(pwa): ...` commit and pull-request titles pass their

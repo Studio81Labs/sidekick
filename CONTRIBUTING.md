@@ -7,14 +7,14 @@ requirements live in [docs/specs/poker-hero-product-spec.md](./docs/specs/poker-
 
 1. Install Node 24, pnpm 11+, Python 3.11+, Rust 1.85+, and Docker.
 2. Run `pnpm bootstrap`.
-3. Start the API with `pnpm backend:dev` and the UI with `pnpm frontend:dev`.
+3. Start the API with `pnpm backend:dev` and the UI with `pnpm pwa:dev`.
 
 ## Branches And Commits
 
 - Branch from `main`.
 - Name branches `<type>/<short-slug>`.
 - Use conventional commits: `<type>(<scope>): <description>`.
-- Preferred scopes are `backend`, `frontend`, `ci`, `infra`, and `docs`.
+- Preferred scopes are `backend`, `pwa`, `ci`, `infra`, and `docs`.
 
 ## Before Opening A PR
 
@@ -23,8 +23,8 @@ Run the checks relevant to the change:
 ```bash
 pnpm backend:test
 pnpm api:check
-pnpm frontend:test
-pnpm frontend:performance
+pnpm pwa:test
+pnpm pwa:performance
 pnpm monitor:test
 pnpm test:e2e
 docker compose -f infra/docker/compose.yaml config

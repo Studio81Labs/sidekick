@@ -26,43 +26,46 @@ async function withServer(handler, exercise) {
 
 test("checks the app, proxy, and MCP security boundaries", async () => {
   const requestedPaths = [];
-  await withServer((request, response) => {
-    requestedPaths.push(request.url);
-    assert.equal(request.headers["cf-access-client-id"], "client-id");
-    assert.equal(request.headers["cf-access-client-secret"], "client-secret");
-    if (request.url === "/") {
-      response.writeHead(302, { Location: "/app" }).end();
-      return;
-    }
-    if (request.url === "/app") {
-      response.writeHead(200, { "Content-Type": "text/html" });
-      response.end("<title>Poker Training Analyzer</title>");
-      return;
-    }
-    if (request.url === "/api/mcp/principals" || request.url === "/mcp") {
-      response.writeHead(401, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ detail: "Authentication required" }));
-      return;
-    }
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      request.url === "/api/health"
-        ? JSON.stringify({ status: "ok" })
-        : request.url === "/api/mcp/config"
-          ? JSON.stringify({ enabled: true })
-          : JSON.stringify({ jobs: [], total: 0 }),
-    );
-  }, async (baseUrl) => {
-    const result = await checkDeployment(baseUrl, {
-      accessClientId: "client-id",
-      accessClientSecret: "client-secret",
-      allowHttp: true,
-      attempts: 1,
-      timeoutMs: 1_000,
-    });
-    assert.equal(result.attempts, 1);
-    assert.equal(result.url, baseUrl);
-  });
+  await withServer(
+    (request, response) => {
+      requestedPaths.push(request.url);
+      assert.equal(request.headers["cf-access-client-id"], "client-id");
+      assert.equal(request.headers["cf-access-client-secret"], "client-secret");
+      if (request.url === "/") {
+        response.writeHead(302, { Location: "/app" }).end();
+        return;
+      }
+      if (request.url === "/app") {
+        response.writeHead(200, { "Content-Type": "text/html" });
+        response.end("<title>Poker Training Analyzer</title>");
+        return;
+      }
+      if (request.url === "/api/mcp/principals" || request.url === "/mcp") {
+        response.writeHead(401, { "Content-Type": "application/json" });
+        response.end(JSON.stringify({ detail: "Authentication required" }));
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        request.url === "/api/health"
+          ? JSON.stringify({ status: "ok" })
+          : request.url === "/api/mcp/config"
+            ? JSON.stringify({ enabled: true })
+            : JSON.stringify({ jobs: [], total: 0 }),
+      );
+    },
+    async (baseUrl) => {
+      const result = await checkDeployment(baseUrl, {
+        accessClientId: "client-id",
+        accessClientSecret: "client-secret",
+        allowHttp: true,
+        attempts: 1,
+        timeoutMs: 1_000,
+      });
+      assert.equal(result.attempts, 1);
+      assert.equal(result.url, baseUrl);
+    },
+  );
   assert.deepEqual(requestedPaths, [
     "/",
     "/app",
@@ -75,118 +78,130 @@ test("checks the app, proxy, and MCP security boundaries", async () => {
 });
 
 test("rejects a publicly exposed MCP administration route", async () => {
-  await withServer((request, response) => {
-    if (request.url === "/") {
-      response.writeHead(200).end("Poker Training Analyzer");
-      return;
-    }
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      request.url === "/api/health"
-        ? JSON.stringify({ status: "ok" })
-        : request.url === "/api/mcp/config"
-          ? JSON.stringify({ enabled: true })
-          : request.url === "/api/jobs?limit=1"
-            ? JSON.stringify({ jobs: [] })
-            : JSON.stringify({ principals: [] }),
-    );
-  }, async (baseUrl) => {
-    await assert.rejects(
-      checkDeployment(baseUrl, {
-        allowHttp: true,
-        attempts: 1,
-        timeoutMs: 1_000,
-      }),
-      /MCP administration boundary returned HTTP 200; expected 401/,
-    );
-  });
+  await withServer(
+    (request, response) => {
+      if (request.url === "/") {
+        response.writeHead(200).end("Poker Training Analyzer");
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        request.url === "/api/health"
+          ? JSON.stringify({ status: "ok" })
+          : request.url === "/api/mcp/config"
+            ? JSON.stringify({ enabled: true })
+            : request.url === "/api/jobs?limit=1"
+              ? JSON.stringify({ jobs: [] })
+              : JSON.stringify({ principals: [] }),
+      );
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        checkDeployment(baseUrl, {
+          allowHttp: true,
+          attempts: 1,
+          timeoutMs: 1_000,
+        }),
+        /MCP administration boundary returned HTTP 200; expected 401/,
+      );
+    },
+  );
 });
 
 test("accepts an absent MCP endpoint when hosted access is disabled", async () => {
-  await withServer((request, response) => {
-    if (request.url === "/") {
-      response.writeHead(200).end("Poker Training Analyzer");
-      return;
-    }
-    if (request.url === "/api/mcp/principals") {
-      response.writeHead(503).end();
-      return;
-    }
-    if (request.url === "/mcp") {
-      response.writeHead(404).end();
-      return;
-    }
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      request.url === "/api/health"
-        ? JSON.stringify({ status: "ok" })
-        : request.url === "/api/mcp/config"
-          ? JSON.stringify({ enabled: false })
-          : JSON.stringify({ jobs: [] }),
-    );
-  }, async (baseUrl) => {
-    await checkDeployment(baseUrl, {
-      allowHttp: true,
-      attempts: 1,
-      timeoutMs: 1_000,
-    });
-  });
-});
-
-test("rejects an absent admin binding when hosted MCP is enabled", async () => {
-  await withServer((request, response) => {
-    if (request.url === "/") {
-      response.writeHead(200).end("Poker Training Analyzer");
-      return;
-    }
-    if (request.url === "/api/mcp/principals") {
-      response.writeHead(503).end();
-      return;
-    }
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(
-      request.url === "/api/health"
-        ? JSON.stringify({ status: "ok" })
-        : request.url === "/api/mcp/config"
-          ? JSON.stringify({ enabled: true })
-          : JSON.stringify({ jobs: [] }),
-    );
-  }, async (baseUrl) => {
-    await assert.rejects(
-      checkDeployment(baseUrl, {
+  await withServer(
+    (request, response) => {
+      if (request.url === "/") {
+        response.writeHead(200).end("Poker Training Analyzer");
+        return;
+      }
+      if (request.url === "/api/mcp/principals") {
+        response.writeHead(503).end();
+        return;
+      }
+      if (request.url === "/mcp") {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        request.url === "/api/health"
+          ? JSON.stringify({ status: "ok" })
+          : request.url === "/api/mcp/config"
+            ? JSON.stringify({ enabled: false })
+            : JSON.stringify({ jobs: [] }),
+      );
+    },
+    async (baseUrl) => {
+      await checkDeployment(baseUrl, {
         allowHttp: true,
         attempts: 1,
         timeoutMs: 1_000,
-      }),
-      /MCP administration boundary returned HTTP 503; expected 401/,
-    );
-  });
+      });
+    },
+  );
+});
+
+test("rejects an absent admin binding when hosted MCP is enabled", async () => {
+  await withServer(
+    (request, response) => {
+      if (request.url === "/") {
+        response.writeHead(200).end("Poker Training Analyzer");
+        return;
+      }
+      if (request.url === "/api/mcp/principals") {
+        response.writeHead(503).end();
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        request.url === "/api/health"
+          ? JSON.stringify({ status: "ok" })
+          : request.url === "/api/mcp/config"
+            ? JSON.stringify({ enabled: true })
+            : JSON.stringify({ jobs: [] }),
+      );
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        checkDeployment(baseUrl, {
+          allowHttp: true,
+          attempts: 1,
+          timeoutMs: 1_000,
+        }),
+        /MCP administration boundary returned HTTP 503; expected 401/,
+      );
+    },
+  );
 });
 
 test("retries transient failures and reports only the failed check", async () => {
   let healthRequests = 0;
-  await withServer((request, response) => {
-    if (request.url === "/") {
-      response.writeHead(200).end("Poker Training Analyzer");
-      return;
-    }
-    if (request.url === "/api/health") {
-      healthRequests += 1;
-      response.writeHead(503).end("provider details must stay private");
-      return;
-    }
-    response.writeHead(200).end(JSON.stringify({ jobs: [] }));
-  }, async (baseUrl) => {
-    await assert.rejects(
-      checkDeployment(baseUrl, {
-        allowHttp: true,
-        attempts: 2,
-        retryDelayMs: 0,
-        timeoutMs: 1_000,
-      }),
-      /failed after 2 attempt\(s\): API health returned HTTP 503/,
-    );
-  });
+  await withServer(
+    (request, response) => {
+      if (request.url === "/") {
+        response.writeHead(200).end("Poker Training Analyzer");
+        return;
+      }
+      if (request.url === "/api/health") {
+        healthRequests += 1;
+        response.writeHead(503).end("provider details must stay private");
+        return;
+      }
+      response.writeHead(200).end(JSON.stringify({ jobs: [] }));
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        checkDeployment(baseUrl, {
+          allowHttp: true,
+          attempts: 2,
+          retryDelayMs: 0,
+          timeoutMs: 1_000,
+        }),
+        /failed after 2 attempt\(s\): API health returned HTTP 503/,
+      );
+    },
+  );
   assert.equal(healthRequests, 2);
 });
 
@@ -202,41 +217,50 @@ test("requires both Cloudflare Access service-token values", async () => {
 
 test("does not forward Access credentials across redirects", async () => {
   let redirectedRequests = 0;
-  await withServer((request, response) => {
-    redirectedRequests += 1;
-    response.writeHead(200).end("Poker Training Analyzer");
-  }, async (redirectTarget) => {
-    await withServer((_request, response) => {
-      response.writeHead(302, { Location: redirectTarget }).end();
-    }, async (baseUrl) => {
-      await assert.rejects(
-        checkDeployment(baseUrl, {
-          accessClientId: "client-id",
-          accessClientSecret: "client-secret",
-          allowHttp: true,
-          attempts: 1,
-          timeoutMs: 1_000,
-        }),
-        /Frontend redirected outside the deployment origin/,
+  await withServer(
+    (request, response) => {
+      redirectedRequests += 1;
+      response.writeHead(200).end("Poker Training Analyzer");
+    },
+    async (redirectTarget) => {
+      await withServer(
+        (_request, response) => {
+          response.writeHead(302, { Location: redirectTarget }).end();
+        },
+        async (baseUrl) => {
+          await assert.rejects(
+            checkDeployment(baseUrl, {
+              accessClientId: "client-id",
+              accessClientSecret: "client-secret",
+              allowHttp: true,
+              attempts: 1,
+              timeoutMs: 1_000,
+            }),
+            /PWA redirected outside the deployment origin/,
+          );
+        },
       );
-    });
-  });
+    },
+  );
   assert.equal(redirectedRequests, 0);
 });
 
 test("rejects oversized deployment responses", async () => {
-  await withServer((_request, response) => {
-    response.writeHead(200).end("x".repeat((1024 * 1024) + 1));
-  }, async (baseUrl) => {
-    await assert.rejects(
-      checkDeployment(baseUrl, {
-        allowHttp: true,
-        attempts: 1,
-        timeoutMs: 1_000,
-      }),
-      /Frontend response exceeded 1 MiB/,
-    );
-  });
+  await withServer(
+    (_request, response) => {
+      response.writeHead(200).end("x".repeat(1024 * 1024 + 1));
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        checkDeployment(baseUrl, {
+          allowHttp: true,
+          attempts: 1,
+          timeoutMs: 1_000,
+        }),
+        /PWA response exceeded 1 MiB/,
+      );
+    },
+  );
 });
 
 test("rejects insecure production targets", async () => {

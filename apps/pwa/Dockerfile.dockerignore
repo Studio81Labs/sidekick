@@ -1,0 +1,15 @@
+.git
+.worktrees
+.env
+.env.local
+apps/pwa/.env*
+apps/pwa/.dev.vars*
+apps/pwa/.wrangler/
+apps/backend
+apps/pwa/coverage
+apps/pwa/dist
+apps/pwa/node_modules
+docs
+infra
+node_modules
+*.log
