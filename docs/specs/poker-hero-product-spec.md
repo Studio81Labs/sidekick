@@ -371,11 +371,18 @@ by the backend/Worker boundary; frontend visibility alone is insufficient.
 
 Before Phase 1, the V2 player PWA, API, and file-backed store are delivered as a
 co-located runtime on the player's machine. The local backend serves the player
-UI and API from a local origin and persists raw imports, detected/approved
-revisions, conflicts, decisions, grades, mastery, drills, proof metrics, and
-backups only in player-controlled local storage. The browser does not send those
-records through the deployed Cloudflare Worker or a centrally hosted FastAPI
-store. A remotely hosted static shell is not a player-data proxy.
+UI and API from a local origin, binds only to loopback (`127.0.0.1`/`::1`), and
+persists raw imports, detected/approved revisions, conflicts, decisions, grades,
+mastery, drills, proof metrics, and backups only in player-controlled local
+storage. It requires a high-entropy per-install local API credential/session and
+enforces local Host/Origin allowlists plus state-changing request/CSRF protection;
+loopback binding is not treated as authentication. Non-loopback/LAN access is
+denied. Any explicit operator-only non-loopback development mode is outside the
+player runtime and requires TLS plus server-enforced authorization.
+
+The browser does not send player records through the deployed Cloudflare Worker
+or a centrally hosted FastAPI store. A remotely hosted static shell is not a
+player-data proxy.
 
 The current Worker → hosted FastAPI topology remains the deployed V1/admin
 architecture while migration is implemented. It may expose legacy data for
@@ -786,8 +793,10 @@ shared gate)**
   API, persistence, backup/restore, and upgrade path defined by §3.5. Kill
   criterion: V2 imports and all player/learning records stay on the player
   machine; the deployed Worker/hosted backend cannot receive them, including by
-  direct network/API attempts. The optional minimized remote solver request is
-  tested separately under explicit consent.
+  direct network/API attempts. The local service is loopback-only and authenticated;
+  LAN/non-loopback, disallowed Host/Origin, unauthenticated, and forged
+  state-changing requests are denied. The optional minimized remote solver
+  request is tested separately under explicit consent.
 
 Neither the learning model nor player validation starts until the two viability
 spikes and both prerequisites clear. A failed viability gate kills or reshapes

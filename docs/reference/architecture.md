@@ -15,7 +15,8 @@ capture-first migration are defined by
 reference continues to describe the currently deployed V1 architecture until
 the ADR's gated migration work is implemented. In particular, the Worker proxy
 and hosted file-backed API below are not an approved V2 player-data path: Phase 1
-requires the ADR's co-located player runtime and local writable system of record.
+requires the ADR's loopback-only, authenticated co-located player runtime and
+local writable system of record.
 
 ## System Shape
 

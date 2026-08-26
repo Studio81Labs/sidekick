@@ -70,6 +70,11 @@ visibly unavailable.
 The supported Phase 1 player delivery is a co-located PWA, API, and file-backed
 store on the player's machine. The local backend serves the player UI/API and
 stores every V2 import and learning layer in player-controlled local storage.
+It binds only to loopback, requires a high-entropy per-install API
+credential/session, restricts Host/Origin to the local application, and protects
+state-changing requests against cross-site forgery. Non-loopback/LAN access is
+denied; an operator-only development override requires TLS and explicit
+server-enforced authorization and is not the player runtime.
 The deployed V1 Cloudflare Worker → hosted FastAPI path cannot proxy or persist
 V2 player histories or learning records; it remains available only for legacy
 read-only audit/export and the isolated administrative parser-test capability
@@ -92,7 +97,9 @@ or convert missing coverage into a solved grade.
 The local-runtime boundary is verified at both routing and persistence layers.
 A remote static asset host cannot receive API payloads, the local store is the
 only writable player system of record, and direct requests to the hosted V1 API
-cannot create V2 imports or learning state.
+cannot create V2 imports or learning state. Network tests also prove that a LAN
+peer, disallowed Host/Origin, unauthenticated caller, or forged state-changing
+request cannot read or mutate the local store.
 
 Raw histories, detected state, approved revisions, conflicts, and derived
 learning artifacts are separate persistence layers. Stable identities and active
