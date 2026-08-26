@@ -206,6 +206,24 @@ test("opens the cached shell offline without caching private routes", async ({
   }
 });
 
+test("announces an origin outage while the browser link remains online", async ({
+  page,
+}) => {
+  await openControlledApp(page);
+  await expect(page.getByText(/Offline — the shell/i)).toHaveCount(0);
+  expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+
+  await page.route("**/manifest.webmanifest", (route) => route.abort("failed"));
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+
+  await expect(page.getByText(/Offline — the shell/i)).toBeVisible();
+  expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+
+  await page.unroute("**/manifest.webmanifest");
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.getByText(/Offline — the shell/i)).toHaveCount(0);
+});
+
 test("keeps uploads and recommendations network-only and retryable", async ({
   context,
   page,

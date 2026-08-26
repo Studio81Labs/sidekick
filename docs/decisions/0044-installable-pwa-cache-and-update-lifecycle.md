@@ -99,7 +99,11 @@ requests; limiting the cache prevents the worker from increasing that exposure.
 
 The offline shell can render bounded browser projections that already exist for
 recovery, but the offline notice makes their disconnected status explicit and
-no service-worker response claims that analysis is current.
+no service-worker response claims that analysis is current. The runtime probes
+the stable manifest with cache bypass and a bounded timeout on launch, browser
+focus, restored link status, and a 30-second interval. This detects an
+unreachable origin even when `navigator.onLine` remains true and clears the
+notice after reachability returns.
 
 ## Consequences
 

@@ -149,9 +149,11 @@ The PWA is a browser control panel for:
 - Installing Poker Hero from a supported desktop or mobile browser as a
   standalone, root-scoped application.
 - Reopening the application shell after one successful online load when the
-  network is unavailable. Offline mode is a visibly disconnected recovery
-  surface; uploads, analysis, history synchronization, recommendations,
-  benchmarks, backups, and agent access remain network-only and fail visibly.
+  network or Poker Hero origin is unavailable. The shell verifies origin
+  reachability instead of trusting the browser's link-status flag alone.
+  Disconnected mode is a visibly marked recovery surface; uploads, analysis,
+  history synchronization, recommendations, benchmarks, backups, and agent
+  access remain network-only and fail visibly.
 - Receiving application updates through an explicit prompt. Updates wait while
   a mutation is active, and an unsaved correction, screenshot metadata edit,
   training answer, lesson note, selected file, or agent-access credential draft

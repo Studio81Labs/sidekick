@@ -7,8 +7,12 @@ import {
 } from "react";
 
 import "./PwaRuntime.css";
+import { isPwaOriginReachable } from "./serviceWorkerRuntime";
 import { useServiceWorkerLifecycle } from "./useServiceWorkerLifecycle";
 import { useUpdateSafetySnapshot } from "../../shared/pwa/updateSafety";
+
+const ORIGIN_PROBE_INTERVAL_MS = 30_000;
+const ORIGIN_PROBE_TIMEOUT_MS = 5_000;
 
 export function PwaRuntime() {
   const safety = useUpdateSafetySnapshot();
@@ -20,16 +24,61 @@ export function PwaRuntime() {
     }, 0);
   }, []);
   const update = useServiceWorkerLifecycle(safety, prepareForUpdateReload);
-  const [online, setOnline] = useState(() => navigator.onLine);
+  const [originReachable, setOriginReachable] = useState(
+    () => navigator.onLine,
+  );
 
   useEffect(() => {
-    const onOnline = () => setOnline(true);
-    const onOffline = () => setOnline(false);
+    let active = true;
+    let controller: AbortController | null = null;
+    let timeoutId: number | null = null;
+
+    const cancelProbe = () => {
+      controller?.abort();
+      controller = null;
+      if (timeoutId !== null) window.clearTimeout(timeoutId);
+      timeoutId = null;
+    };
+    const verifyOrigin = async () => {
+      cancelProbe();
+      const currentController = new AbortController();
+      controller = currentController;
+      timeoutId = window.setTimeout(
+        () => currentController.abort(),
+        ORIGIN_PROBE_TIMEOUT_MS,
+      );
+      const reachable = await isPwaOriginReachable(currentController.signal);
+      if (active && controller === currentController) {
+        setOriginReachable(reachable);
+        cancelProbe();
+      }
+    };
+    const onOnline = () => void verifyOrigin();
+    const onOffline = () => {
+      cancelProbe();
+      setOriginReachable(false);
+    };
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void verifyOrigin();
+    };
+
+    void verifyOrigin();
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
+    window.addEventListener("focus", onOnline);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    const intervalId = window.setInterval(
+      () => void verifyOrigin(),
+      ORIGIN_PROBE_INTERVAL_MS,
+    );
     return () => {
+      active = false;
+      cancelProbe();
+      window.clearInterval(intervalId);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
+      window.removeEventListener("focus", onOnline);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
 
@@ -68,7 +117,7 @@ export function PwaRuntime() {
 
   return (
     <div className="pwa-status-stack">
-      {!online ? (
+      {!originReachable ? (
         <div className="pwa-status offline" role="status" aria-live="polite">
           Offline — the shell and local recovery view remain available, but
           uploads, analysis, history, benchmarks, backups, and agent access need

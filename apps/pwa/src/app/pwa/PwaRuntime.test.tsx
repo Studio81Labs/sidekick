@@ -54,10 +54,19 @@ beforeEach(() => {
   lifecycle.available = true;
   lifecycle.prepareForReload = null;
   vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(null, {
+        headers: { "content-type": "application/manifest+json" },
+      }),
+    ),
+  );
 });
 
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -113,5 +122,19 @@ describe("PWA runtime status and update handoff", () => {
     renderRuntime();
 
     expect(screen.getByText(/Offline — the shell/i)).toBeVisible();
+  });
+
+  it("announces cached-shell mode when the origin is unreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new TypeError("origin unavailable")),
+    );
+    renderRuntime();
+
+    expect(await screen.findByText(/Offline — the shell/i)).toBeVisible();
+    expect(fetch).toHaveBeenCalledWith(
+      "/manifest.webmanifest",
+      expect.objectContaining({ cache: "no-store", method: "HEAD" }),
+    );
   });
 });

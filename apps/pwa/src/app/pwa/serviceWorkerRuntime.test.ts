@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   isExpectedPrecacheResponse,
   isHtmlResponse,
+  isPwaOriginReachable,
   networkFirstNavigation,
   precacheVersion,
 } from "./serviceWorkerRuntime";
@@ -11,6 +12,7 @@ const REQUEST = new Request("https://poker.example/analyzer");
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("service-worker precache response policy", () => {
@@ -104,6 +106,36 @@ describe("service-worker precache response policy", () => {
 
     expect(cacheStorage.open).not.toHaveBeenCalled();
     expect(cacheStorage.delete).toHaveBeenCalledWith("poker-hero-shell-failed");
+  });
+
+  it("verifies origin reachability instead of trusting link status", async () => {
+    vi.spyOn(navigator, "onLine", "get").mockReturnValue(true);
+    const fetchRequest = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("origin unavailable"))
+      .mockResolvedValueOnce(
+        new Response("<main>fallback</main>", {
+          headers: { "content-type": "text/html" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          headers: { "content-type": "application/manifest+json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchRequest);
+
+    await expect(isPwaOriginReachable()).resolves.toBe(false);
+    await expect(isPwaOriginReachable()).resolves.toBe(false);
+    await expect(isPwaOriginReachable()).resolves.toBe(true);
+    expect(fetchRequest).toHaveBeenLastCalledWith(
+      "/manifest.webmanifest",
+      expect.objectContaining({
+        cache: "no-store",
+        credentials: "same-origin",
+        method: "HEAD",
+      }),
+    );
   });
 });
 

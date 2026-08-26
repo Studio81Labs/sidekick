@@ -566,12 +566,15 @@ deployment path.
 independent feature owners. The analyzer registers all correction, screenshot,
 training, lesson, capture, mutation, restore, and benchmark state; Agent access
 registers administrator and credential drafts, unacknowledged one-time tokens,
-and mutations. `PwaRuntime` uses the aggregate for unload protection, offline
-status, and worker updates. A newly installed worker waits until the user asks
-to activate it, never exposes the activation action while work is busy, and
-requires confirmation before discarding dirty state. The coordinator rechecks
-safety on `controllerchange` before reloading. New forms and non-replayable
-operations must register with this owner before shipping.
+and mutations. `PwaRuntime` uses the aggregate for unload protection and worker
+updates. Its disconnected status probes the stable manifest with cache bypass
+and a bounded timeout rather than trusting `navigator.onLine`; it retries on
+launch, browser focus, restored link status, and a 30-second interval. A newly
+installed worker waits until the user asks to activate it, never exposes the
+activation action while work is busy, and requires confirmation before
+discarding dirty state. The coordinator rechecks safety on `controllerchange`
+before reloading. New forms and non-replayable operations must register with
+this owner before shipping.
 The shared API layer keeps base URL selection, response decoding, retry
 metadata, and readable error conversion in one transport core. Product
 endpoints live in focused domain adapters with colocated tests. MCP

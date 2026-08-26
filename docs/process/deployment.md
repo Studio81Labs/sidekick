@@ -350,6 +350,9 @@ Chromium DevTools, confirm the worker scope is the complete origin, launch once
 online, then disable the network and open another application route. The shell
 and offline notice must render, while an upload and recommendation fail visibly
 and can be retried after reconnecting.
+Also simulate an unreachable PWA origin while retaining another working network
+connection; the manifest reachability probe must show the same notice even when
+the browser still reports that its link is online.
 Cache Storage may contain only `/` and hashed `/assets/` requests—never `/api`,
 `/mcp`, screenshots, poker records, or credentials.
 

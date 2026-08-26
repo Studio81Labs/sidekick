@@ -44,6 +44,23 @@ export async function precacheVersion(
   }
 }
 
+export async function isPwaOriginReachable(
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!navigator.onLine) return false;
+  try {
+    const response = await fetch("/manifest.webmanifest", {
+      cache: "no-store",
+      credentials: "same-origin",
+      method: "HEAD",
+      signal,
+    });
+    return response.ok && !isHtmlResponse(response);
+  } catch {
+    return false;
+  }
+}
+
 export async function networkFirstNavigation(
   request: Request,
   cacheName: string,
