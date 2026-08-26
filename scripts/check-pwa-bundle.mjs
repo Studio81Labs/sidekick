@@ -13,7 +13,7 @@ const BUDGETS = {
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const assetsDirectory = process.argv[2]
   ? resolve(process.cwd(), process.argv[2])
-  : join(repositoryRoot, "apps/frontend/dist/assets");
+  : join(repositoryRoot, "apps/pwa/dist/assets");
 
 function kib(bytes) {
   return `${(bytes / KIB).toFixed(2)} KiB`;
@@ -48,7 +48,7 @@ const largestJavaScript = javascriptAssets.reduce(
 const totalJavaScriptGzip = total(javascriptAssets);
 const totalCssGzip = total(cssAssets);
 
-console.log("Frontend production bundle audit:");
+console.log("PWA production bundle audit:");
 for (const asset of assets) {
   console.log(
     `- ${asset.name}: ${kib(asset.bytes)} raw, ${kib(asset.gzipBytes)} gzip`,
@@ -83,5 +83,5 @@ if (violations.length > 0) {
   }
   process.exitCode = 1;
 } else {
-  console.log("Frontend bundle budgets pass.");
+  console.log("PWA bundle budgets pass.");
 }

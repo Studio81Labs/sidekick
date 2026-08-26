@@ -21,7 +21,7 @@ Then start the two apps in separate terminals:
 
 ```bash
 pnpm backend:dev
-pnpm frontend:dev
+pnpm pwa:dev
 ```
 
 Open `http://localhost:5173`. The API runs at `http://localhost:8000`.
@@ -32,7 +32,7 @@ Open `http://localhost:5173`. The API runs at `http://localhost:8000`.
 poker-hero/
 ├── apps/
 │   ├── backend/             FastAPI API, OCR parsers, solvers, storage, tests
-│   └── frontend/            React/Vite UI and Cloudflare Worker proxy
+│   └── pwa/                 React/Vite product app and Cloudflare Worker proxy
 ├── infra/
 │   └── docker/              Local Compose and deployment env example
 ├── solver-plugins/
@@ -56,10 +56,10 @@ poker-hero/
 | `pnpm backend:recommendation-benchmark <dataset.json>` | Benchmark a recommendation provider against trusted references   |
 | `pnpm backend:backup <command>`                        | Initialize, export, verify, or restore-drill application backups |
 | `pnpm backend:test`                                    | Run the backend pytest suite                                     |
-| `pnpm frontend:dev`                                    | Start Vite on port 5173                                          |
-| `pnpm frontend:test`                                   | Run frontend tests                                               |
-| `pnpm frontend:build`                                  | Build the production frontend                                    |
-| `pnpm frontend:performance`                            | Build and enforce production bundle budgets                      |
+| `pnpm pwa:dev`                                         | Start Vite on port 5173                                          |
+| `pnpm pwa:test`                                        | Run PWA tests                                                    |
+| `pnpm pwa:build`                                       | Build the production PWA                                         |
+| `pnpm pwa:performance`                                 | Build and enforce production bundle budgets                      |
 | `pnpm monitor:test`                                    | Test the deployment uptime probe                                 |
 | `pnpm test:e2e`                                        | Run browser workflow tests with isolated test providers          |
 | `pnpm docker:up`                                       | Build and start both apps with Docker Compose                    |
@@ -67,7 +67,7 @@ poker-hero/
 
 The browser workflow command starts temporary FastAPI, HTTP provider stub, and
 Vite servers on ports 8010, 8011, and 4174. Install Chromium once with
-`pnpm -C apps/frontend exec playwright install chromium` before the first local
+`pnpm -C apps/pwa exec playwright install chromium` before the first local
 run. Its backend job store is removed when the test server exits.
 
 ## Configuration
@@ -624,7 +624,7 @@ Run the full local stack:
 pnpm docker:up
 ```
 
-The frontend is available at `http://localhost:8080`, the backend at
+The PWA is available at `http://localhost:8080`, the backend at
 `http://localhost:8000`, and job data is kept in the `poker-data` volume.
 The backend image compiles and includes the pinned Rust postflop solver plugin.
 
@@ -632,14 +632,14 @@ Build either image directly from the repository root:
 
 ```bash
 docker build -f apps/backend/Dockerfile -t poker-hero-backend .
-docker build -f apps/frontend/Dockerfile -t poker-hero-frontend .
+docker build -f apps/pwa/Dockerfile -t poker-hero-pwa .
 ```
 
 ## Deployment
 
 Each `staging` and `production` deployment uses two services:
 
-- `apps/frontend` deploys to Cloudflare Workers Static Assets. Its Worker
+- `apps/pwa` deploys to Cloudflare Workers Static Assets. Its Worker
   proxies same-origin `/api/*` requests to the configured backend.
 - `apps/backend` deploys as a Docker service in Coolify with persistent storage
   mounted at `/app/data`.
@@ -678,7 +678,7 @@ container access logs for tracing requests through the Worker and Coolify.
 
 Runtime error monitoring is disabled by default. Set `POKER_SENTRY_DSN` in
 Coolify for backend failures and the public `VITE_SENTRY_DSN` environment
-variable for browser failures. The frontend deployment
+variable for browser failures. The PWA deployment
 uses its commit SHA as the release. Both adapters remove poker state, request
 bodies and metadata, user context, breadcrumbs, local variables, and free-form
 exception text before sending an event. Browser tracing and replay are off.

@@ -45,13 +45,13 @@ approved, configure its own URL and enable the route while keeping
 `POKER_MCP_ALLOW_WRITES=false`.
 
 In the GitHub `staging` environment, configure a separate high-entropy
-`MCP_ADMIN_TOKEN` secret. The frontend deployment publishes it only as an
+`MCP_ADMIN_TOKEN` secret. The PWA deployment publishes it only as an
 encrypted Worker binding. Never reuse `API_PROXY_SECRET` or an agent principal
 token. The Worker rejects administration when this binding is absent and strips
 the operator bearer header before proxying an authorized request to FastAPI.
 
 Set the `MCP_SMOKE_URL` environment variable to the same exact public HTTPS
-`/mcp` URL. After each frontend deployment, the workflow uses the admin
+`/mcp` URL. After each PWA deployment, the workflow uses the admin
 boundary to issue an ephemeral read-only principal, initializes the MCP server,
 calls `get_environment_status`, and revokes the principal. The smoke principal
 also expires after one hour so a failed cleanup cannot leave durable access.

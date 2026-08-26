@@ -21,7 +21,7 @@ state from screenshots, asks the user to verify uncertain fields, and returns
 an educational recommendation from a configurable provider.
 
 - Backend: Python, FastAPI, Pydantic, file-backed job storage
-- Frontend: React, TypeScript, Vite, Cloudflare Worker Static Assets
+- PWA: React, TypeScript, Vite, Cloudflare Worker Static Assets
 - Recognition: configurable parser registry, currently OCR/CV focused
 - Recommendations: configurable local, external, and rule-based providers
 - Infra: pnpm workspace, Docker Compose, Coolify, GitHub Actions
@@ -30,7 +30,7 @@ an educational recommendation from a configurable provider.
 
 ```text
 apps/backend/       FastAPI API, parsers, providers, storage, tests
-apps/frontend/      React control panel and Cloudflare Worker
+apps/pwa/           React control panel and Cloudflare Worker
 infra/docker/       Local Compose and backend deployment env example
 docs/specs/         Canonical product spec and historical plans
 docs/reference/     Architecture and system reference
@@ -64,17 +64,17 @@ scripts/            Development automation
 pnpm bootstrap
 pnpm backend:dev
 pnpm backend:test
-pnpm frontend:dev
-pnpm frontend:test
-pnpm frontend:build
+pnpm pwa:dev
+pnpm pwa:test
+pnpm pwa:build
 pnpm docker:up
 pnpm docker:down
 ```
 
 ## Validation
 
-- Run relevant backend and frontend tests for touched behavior.
-- Run the frontend production build for frontend or Worker changes.
+- Run relevant backend and PWA tests for touched behavior.
+- Run the PWA production build for PWA or Worker changes.
 - Validate Docker/Compose configuration for deployment changes.
 - Inspect the final diff for stale paths, debug code, and missing documentation.
 - State clearly when a check could not be run.
@@ -83,6 +83,6 @@ pnpm docker:down
 
 - Use conventional commit titles: `<type>(<scope>): <description>`.
 - Types: `feat`, `fix`, `chore`, `refactor`, `docs`, `test`, `style`.
-- Preferred scopes: `backend`, `frontend`, `ci`, `infra`, `docs`.
+- Preferred scopes: `backend`, `pwa`, `ci`, `infra`, `docs`.
 - Keep PRs focused and include summary, risks, and test evidence.
 - Merge only when required checks pass and review threads are resolved.

@@ -139,7 +139,7 @@ Create a separate high-entropy `MCP_ADMIN_TOKEN` in the staging GitHub
 deployment environment and in any other environment before enabling its MCP
 endpoint. The Worker requires it on `/api/mcp/principals` and descendant routes,
 compares it without forwarding it, and fails closed when the secret is missing.
-Enter it only into the **Agent access** unlock field; the frontend keeps it in
+Enter it only into the **Agent access** unlock field; the PWA keeps it in
 memory until the dialog is closed, reloaded, or locked. Do not reuse an agent
 credential or `API_PROXY_SECRET` for this purpose. The value must contain at
 least 32 printable ASCII characters without spaces; deployment rejects weak,
@@ -156,7 +156,7 @@ backend reporting, configure these Coolify values:
 - optional `POKER_SENTRY_ERROR_SAMPLE_RATE`, from zero through one (default one).
 
 Set the public `VITE_SENTRY_DSN` variable in each GitHub environment to enable
-browser reporting. The frontend workflow supplies the selected environment and
+browser reporting. The PWA workflow supplies the selected environment and
 the deployed commit SHA as the release. A browser DSN is a public client key by
 design; do not place a Sentry API/auth token in any `VITE_*` value.
 
@@ -264,9 +264,9 @@ dialog to restore the tested archive, verify queue/history/benchmark counts,
 and only then switch traffic. Never test a recovery by restoring into the live
 data directory.
 
-## Frontend On Cloudflare Workers
+## PWA On Cloudflare Workers
 
-The `Frontend Deploy` workflow builds `apps/frontend` and deploys the Worker.
+The `PWA Deploy` workflow builds `apps/pwa` and deploys the Worker.
 It uses the same promotion model as the backend: `main` deploys `staging`, a
 `v*` tag deploys `production`, and manual dispatch selects either environment.
 
@@ -310,7 +310,7 @@ MCP enabled:
 
 The workflow smoke-tests both the SPA and `/api/health`. It reads the deployed
 MCP configuration and fails when hosted MCP is enabled without a matching
-`MCP_SMOKE_URL`, including in production. A frontend success with
+`MCP_SMOKE_URL`, including in production. A PWA success with
 an API `502` means the Worker deployed but its configured backend origin is not
 healthy or reachable. It also reads one bounded processing-queue page so a
 mismatched proxy credential fails deployment validation. The workflow also
@@ -377,5 +377,5 @@ pnpm monitor:test
 ```bash
 docker compose -f infra/docker/compose.yaml config
 docker build -f apps/backend/Dockerfile -t poker-hero-backend:test .
-docker build -f apps/frontend/Dockerfile -t poker-hero-frontend:test .
+docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:test .
 ```

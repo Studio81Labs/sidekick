@@ -9,7 +9,7 @@
 ## Areas affected
 
 - [ ] Backend API
-- [ ] Frontend
+- [ ] PWA
 - [ ] Solver
 - [ ] CI / Infrastructure
 - [ ] Documentation

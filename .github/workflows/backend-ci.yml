@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths:
       - "apps/backend/**"
-      - "apps/frontend/src/shared/api/generated/**"
+      - "apps/pwa/src/shared/api/generated/**"
       - "solver-plugins/postflop/**"
       - "scripts/bootstrap.sh"
       - "scripts/export_openapi.py"
@@ -17,7 +17,7 @@ on:
     branches: [main]
     paths:
       - "apps/backend/**"
-      - "apps/frontend/src/shared/api/generated/**"
+      - "apps/pwa/src/shared/api/generated/**"
       - "solver-plugins/postflop/**"
       - "scripts/bootstrap.sh"
       - "scripts/export_openapi.py"
@@ -53,7 +53,7 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      - name: Install frontend contract tool
+      - name: Install PWA contract tool
         run: pnpm install --frozen-lockfile
 
       - name: Install backend

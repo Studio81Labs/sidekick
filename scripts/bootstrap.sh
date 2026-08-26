@@ -56,4 +56,4 @@ if [ ! -f "$BACKEND_DIR/.env" ]; then
 fi
 
 echo "Poker Hero is ready."
-echo "Run 'pnpm backend:dev' and 'pnpm frontend:dev' in separate terminals."
+echo "Run 'pnpm backend:dev' and 'pnpm pwa:dev' in separate terminals."

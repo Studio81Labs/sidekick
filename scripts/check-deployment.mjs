@@ -198,9 +198,9 @@ function parseJson(body, label) {
 }
 
 async function checkOnce(baseUrl, headers, timeoutMs) {
-  const spa = await fetchText(baseUrl, "/", "Frontend", headers, timeoutMs);
+  const spa = await fetchText(baseUrl, "/", "PWA", headers, timeoutMs);
   if (!spa.toLowerCase().includes("poker training analyzer")) {
-    throw new Error("Frontend response did not contain the application marker");
+    throw new Error("PWA response did not contain the application marker");
   }
 
   const health = parseJson(

@@ -2,9 +2,9 @@ backend:
   - changed-files:
       - any-glob-to-any-file: "apps/backend/**"
 
-frontend:
+pwa:
   - changed-files:
-      - any-glob-to-any-file: "apps/frontend/**"
+      - any-glob-to-any-file: "apps/pwa/**"
 
 solver:
   - changed-files:

@@ -1,4 +1,4 @@
 pnpm-lock.yaml
 pnpm-workspace.yaml
 **/*.lock
-apps/frontend/dist/
+apps/pwa/dist/

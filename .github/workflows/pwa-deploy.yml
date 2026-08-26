@@ -1,6 +1,6 @@
-name: Frontend Deploy
+name: PWA Deploy
 
-# Builds the Vite SPA in apps/frontend and deploys it to Cloudflare Workers
+# Builds the Vite SPA in apps/pwa and deploys it to Cloudflare Workers
 # Static Assets.
 #
 # Deploy model:
@@ -41,13 +41,13 @@ on:
     branches: [main]
     tags: ["v*"]
     paths:
-      - "apps/frontend/**"
+      - "apps/pwa/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
       - "scripts/check-deployment.mjs"
       - "scripts/check-mcp-deployment.mjs"
-      - ".github/workflows/frontend-deploy.yml"
+      - ".github/workflows/pwa-deploy.yml"
   workflow_dispatch:
     inputs:
       environment:
@@ -61,12 +61,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: frontend-deploy-${{ inputs.environment || (startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging') }}
+  group: pwa-deploy-${{ inputs.environment || (startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging') }}
   cancel-in-progress: false
 
 jobs:
   deploy:
-    name: Build & deploy frontend (Cloudflare Workers)
+    name: Build & deploy PWA (Cloudflare Workers)
     runs-on: ubuntu-latest
     environment:
       name: ${{ inputs.environment || (startsWith(github.ref, 'refs/tags/v') && 'production' || 'staging') }}
@@ -99,17 +99,17 @@ jobs:
           fi
           echo "name=${ENV_NAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Build frontend
+      - name: Build PWA
         env:
           VITE_API_BASE_URL: ${{ vars.VITE_API_BASE_URL }}
           VITE_SENTRY_DSN: ${{ vars.VITE_SENTRY_DSN }}
           VITE_SENTRY_ENVIRONMENT: ${{ steps.env.outputs.name }}
           VITE_SENTRY_RELEASE: ${{ github.sha }}
-        run: pnpm frontend:build
+        run: pnpm pwa:build
 
       - name: Deploy to Cloudflare Workers
         id: deploy
-        working-directory: apps/frontend
+        working-directory: apps/pwa
         env:
           ENV_NAME: ${{ steps.env.outputs.name }}
           WORKER_NAME: ${{ vars.APP_WORKER_NAME }}
@@ -161,7 +161,7 @@ jobs:
 
           DEPLOY_URL="https://${WORKER_NAME}.${WORKERS_SUBDOMAIN}.workers.dev"
           echo "url=${DEPLOY_URL}" >> "$GITHUB_OUTPUT"
-          echo "::notice::Frontend deployed to ${DEPLOY_URL}"
+          echo "::notice::PWA deployed to ${DEPLOY_URL}"
 
       - name: Smoke test
         env:
@@ -202,6 +202,8 @@ jobs:
             )
           fi
           MCP_SMOKE_PRINCIPAL_ID=""
+          # The EXIT trap below invokes this function indirectly.
+          # shellcheck disable=SC2329
           cleanup_mcp_smoke_principal() {
             if [ -z "$MCP_SMOKE_PRINCIPAL_ID" ]; then
               return

@@ -15,19 +15,19 @@ being smaller is useful evidence, but it is not the goal by itself.
 
 ## Current Baseline
 
-The existing refactor established useful frontend feature boundaries and stable
+The existing refactor established useful PWA feature boundaries and stable
 compatibility barrels. The remaining concentration is now visible:
 
-| Area                  | Current concentration                                                 | Main risk                                                                       |
-| --------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| Frontend controller   | `pages/analyzer/useAnalyzerWorkspaceController.ts`, about 4,400 lines | Queue, history, recovery, automation, and mutation protocols remain coordinated |
-| Frontend server state | Handwritten fetch modules plus page and hook state                    | Repeated loading, cancellation, cache, and stale-response behavior              |
-| Frontend contracts    | Handwritten TypeScript interfaces mirror Pydantic models              | Backend and frontend can drift silently                                         |
-| Backend API           | `app/api.py`, about 2,300 lines                                       | Bootstrap, middleware, routes, locks, stores, and use cases are coupled         |
-| Backend contracts     | `app/models.py`, about 1,500 lines                                    | Poker rules, persistence records, and wire schemas share one module             |
-| Backend persistence   | `app/storage.py`, about 900 lines                                     | Repository behavior, blobs, serialization, and import journals are coupled      |
-| Training backend      | `app/training.py`, about 1,200 lines                                  | Filtering, summaries, grading, and Markdown export share one module             |
-| Tests                 | Several frontend and backend integration files exceed 2,000 lines     | Fixtures and assertions are expensive to reuse or diagnose                      |
+| Area                | Current concentration                                                 | Main risk                                                                       |
+| ------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| PWA controller      | `pages/analyzer/useAnalyzerWorkspaceController.ts`, about 4,400 lines | Queue, history, recovery, automation, and mutation protocols remain coordinated |
+| PWA server state    | Handwritten fetch modules plus page and hook state                    | Repeated loading, cancellation, cache, and stale-response behavior              |
+| PWA contracts       | Handwritten TypeScript interfaces mirror Pydantic models              | Backend and PWA can drift silently                                              |
+| Backend API         | `app/api.py`, about 2,300 lines                                       | Bootstrap, middleware, routes, locks, stores, and use cases are coupled         |
+| Backend contracts   | `app/models.py`, about 1,500 lines                                    | Poker rules, persistence records, and wire schemas share one module             |
+| Backend persistence | `app/storage.py`, about 900 lines                                     | Repository behavior, blobs, serialization, and import journals are coupled      |
+| Training backend    | `app/training.py`, about 1,200 lines                                  | Filtering, summaries, grading, and Markdown export share one module             |
+| Tests               | Several PWA and backend integration files exceed 2,000 lines          | Fixtures and assertions are expensive to reuse or diagnose                      |
 
 Large static poker policy tables and solver data are not split solely to meet a
 line-count target. They are split only when ownership, generation, or testing
@@ -57,10 +57,10 @@ becomes clearer.
    owner, removal wave, and test proving it can be deleted.
 10. Each pull request is deployable and independently reversible.
 
-## Target Frontend
+## Target PWA
 
 ```text
-apps/frontend/src/
+apps/pwa/src/
   app/
     providers/
       AppProviders.tsx
@@ -99,14 +99,14 @@ apps/frontend/src/
       compatibility/
     components/
     lib/
-    types/          # frontend-only domain types, not duplicated wire DTOs
+    types/          # PWA-only domain types, not duplicated wire DTOs
   test/
     apiServer.ts
     factories/
     renderApp.tsx
 ```
 
-### Frontend State Ownership
+### PWA State Ownership
 
 | State                                                                                | Owner                                | Persistence                                                           |
 | ------------------------------------------------------------------------------------ | ------------------------------------ | --------------------------------------------------------------------- |
@@ -124,7 +124,7 @@ general-purpose cache would obscure lease and recovery transitions. Zod is not
 introduced during contract migration; existing runtime validators already own
 legacy browser data and imported archive validation.
 
-### Frontend Dependency Rules
+### PWA Dependency Rules
 
 - Dependency direction is `bootstrap -> app -> pages -> workflows`, then
   `features -> domains -> shared`.
@@ -232,12 +232,12 @@ Dependencies: none
 
 - Merge the in-flight training-progress controller extraction.
 - Check in this plan and record baseline file/module metrics.
-- Add architecture tests for the target frontend areas and backend dependency
+- Add architecture tests for the target PWA areas and backend dependency
   direction before new packages appear. Snapshot current peer-feature imports
   as a shrinking legacy allowlist so new coupling fails immediately.
 - Record current OpenAPI and representative JSON fixtures.
 
-Gate: current frontend, backend, browser E2E, Docker build, and contract fixtures
+Gate: current PWA, backend, browser E2E, Docker build, and contract fixtures
 pass without product changes.
 
 ### Wave 1: Generated API Contracts
@@ -414,7 +414,7 @@ Dependencies: Wave 6
 Gate: routers contain transport code only; service tests run with in-memory
 ports; all file-backed integration tests pass.
 
-### Wave 9: Frontend Mutation Commands
+### Wave 9: PWA Mutation Commands
 
 Dependencies: Waves 4 and 7
 
@@ -516,7 +516,7 @@ Dependencies: may proceed incrementally; completes after Wave 10
 
 Wave 11 is complete. Analyzer workflow suites share one render harness and are
 split by behavior domain, production components have colocated focused tests,
-and frontend CI reports architecture, app-shell/edge-worker, workflow, and
+and PWA CI reports architecture, app-shell/edge-worker, workflow, and
 feature/domain failures in named steps. Backend suites are separated by router, service,
 domain, repository, provider policy, and persistence/archive compatibility.
 Deterministic OpenAPI and archive round-trip fixtures remain explicit gates.
@@ -524,7 +524,7 @@ Deterministic OpenAPI and archive round-trip fixtures remain explicit gates.
 - Replace monolithic fixtures with domain factories and a shared render helper.
 - Introduce MSW only when the first Query adapter needs request-level tests.
 - Split backend tests by router, service, domain, and repository contract.
-- Add frontend and backend dependency-architecture checks.
+- Add PWA and backend dependency-architecture checks.
 - Add OpenAPI, persistence-format, and archive compatibility fixtures.
 
 Gate: no production component lacks a colocated focused test; integration tests
@@ -535,7 +535,7 @@ domain.
 
 Dependencies: Waves 1-11
 
-Wave 12 is complete. The frontend shared-type barrel and shared API client,
+Wave 12 is complete. The PWA shared-type barrel and shared API client,
 jobs/history, benchmark, training, and system facades have been retired, and
 architecture checks prevent production code from recreating or importing those
 compatibility surfaces. MCP transport now belongs to its domain adapter and
@@ -564,7 +564,7 @@ solver suite.
 
 - Removed obsolete handwritten wire types, API client facade, temporary barrels,
   dead page helpers, and duplicated fixtures.
-- Verified frontend and backend package dependency direction.
+- Verified PWA and backend package dependency direction.
 - Ran security, privacy, accessibility, performance, Docker, backup/restore,
   E2E, and deployment smoke checks.
 - Updated architecture, contributor, and operational documentation.
@@ -577,10 +577,10 @@ documented external consumer and removal policy.
 | Track               | Work           | Dependencies                | Safe parallelism                                                       |
 | ------------------- | -------------- | --------------------------- | ---------------------------------------------------------------------- |
 | Contracts           | Waves 0-2      | Critical path               | One owner for OpenAPI and package lock                                 |
-| Backend transport   | Wave 3         | Generated contract baseline | Parallel with frontend Query foundation                                |
+| Backend transport   | Wave 3         | Generated contract baseline | Parallel with PWA Query foundation                                     |
 | Backend core        | Waves 5, 6, 8  | Router characterization     | Separate model, repository, and service owners after interfaces freeze |
-| Frontend reads      | Wave 4         | Query foundation            | One feature domain per agent                                           |
-| Frontend workflow   | Waves 7, 9, 10 | Read migration              | Analyzer workflow owner coordinates command and route owners           |
+| PWA reads           | Wave 4         | Query foundation            | One feature domain per agent                                           |
+| PWA workflow        | Waves 7, 9, 10 | Read migration              | Analyzer workflow owner coordinates command and route owners           |
 | Tests/documentation | Wave 11        | Continuous                  | Parallel when file ownership is disjoint                               |
 
 Agents work in isolated branches/worktrees. A coordinator integrates in
@@ -607,25 +607,25 @@ row may run in parallel only when their path ownership is disjoint. The
 coordinator owns integration, generated artifacts, shared manifests, lockfiles,
 compatibility barrels, and the authoritative full-suite run.
 
-| Package | Scope                                                             | Model and effort                                                                                | Exclusive ownership                                             | Depends on |
-| ------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ---------- |
-| A0      | Architecture baselines, metrics, and fixture inventory            | `gpt-5.6-luna`, medium                                                                          | Architecture tests and baseline fixtures                        | None       |
-| A1      | OpenAPI IDs, response contracts, generation, and CI drift gate    | `gpt-5.6-terra`, high                                                                           | Backend wire annotations and generated contracts                | A0         |
-| A2F     | Shared transport, Query provider, system/pipeline adapters        | `gpt-5.6-terra`, high                                                                           | Frontend manifest/lock, providers, transport, first domain APIs | A1         |
-| A2B     | Runtime dependency container and first read-only routers          | `gpt-5.6-terra`, high                                                                           | Backend bootstrap and API package                               | A1         |
-| A3R     | Remaining routers, one route domain per branch                    | `gpt-5.6-terra`, medium                                                                         | One router and its focused tests                                | A2B        |
-| A4J     | Job, queue, and history read models                               | `gpt-5.6-terra`, high                                                                           | Job/history domain APIs and Query adapters                      | A2F        |
-| A4T     | Training and benchmark read models                                | `gpt-5.6-terra`, medium                                                                         | Training/benchmark domain APIs and Query adapters               | A2F        |
-| A5      | Domain model split with compatibility exports                     | `gpt-5.6-terra`, high                                                                           | One backend domain plus its model tests per branch              | A3R        |
-| A6R     | Repository protocols and file-adapter conformance                 | `gpt-5.6-terra`, high                                                                           | Ports, one repository adapter, and contract tests               | A5         |
-| A6C     | Lock ordering, recovery, import, backup, and restore coordinator  | `gpt-5.6-sol`, high                                                                             | Workspace coordinator and concurrency tests                     | A6R        |
-| A7      | Analyzer reducer, events, leases, and runtime services            | `gpt-5.6-sol`, high                                                                             | Analyzer workflow store and transition tests                    | A4J, A4T   |
-| A8      | Application services, one use-case domain per branch              | `gpt-5.6-terra`, high                                                                           | One service and its in-memory-port tests                        | A6C        |
-| A9      | Mutation commands and cache outcomes                              | `gpt-5.6-sol`, high for recovery-sensitive core; `gpt-5.6-terra`, medium for ordinary mutations | One command domain per branch                                   | A7, A8     |
-| A10C    | Mechanical pane and dialog composition extraction                 | `gpt-5.6-luna`, medium                                                                          | One component subtree and colocated tests                       | A9         |
-| A10R    | Route provider integration, deep links, and navigation guards     | `gpt-5.6-sol`, high                                                                             | Analyzer route, workflow composition, router                    | A10C       |
-| A11     | Fixture/test splits and compatibility matrices                    | `gpt-5.6-luna`, medium; escalate failing behavioral gaps to `gpt-5.6-terra`                     | One test domain per branch                                      | Continuous |
-| A12     | Compatibility removal, security/performance audit, and final docs | `gpt-5.6-sol`, high for audit; `gpt-5.6-luna`, medium for approved removals/docs                | Coordinator-selected final surfaces                             | A1-A11     |
+| Package | Scope                                                             | Model and effort                                                                                | Exclusive ownership                                        | Depends on |
+| ------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ---------- |
+| A0      | Architecture baselines, metrics, and fixture inventory            | `gpt-5.6-luna`, medium                                                                          | Architecture tests and baseline fixtures                   | None       |
+| A1      | OpenAPI IDs, response contracts, generation, and CI drift gate    | `gpt-5.6-terra`, high                                                                           | Backend wire annotations and generated contracts           | A0         |
+| A2F     | Shared transport, Query provider, system/pipeline adapters        | `gpt-5.6-terra`, high                                                                           | PWA manifest/lock, providers, transport, first domain APIs | A1         |
+| A2B     | Runtime dependency container and first read-only routers          | `gpt-5.6-terra`, high                                                                           | Backend bootstrap and API package                          | A1         |
+| A3R     | Remaining routers, one route domain per branch                    | `gpt-5.6-terra`, medium                                                                         | One router and its focused tests                           | A2B        |
+| A4J     | Job, queue, and history read models                               | `gpt-5.6-terra`, high                                                                           | Job/history domain APIs and Query adapters                 | A2F        |
+| A4T     | Training and benchmark read models                                | `gpt-5.6-terra`, medium                                                                         | Training/benchmark domain APIs and Query adapters          | A2F        |
+| A5      | Domain model split with compatibility exports                     | `gpt-5.6-terra`, high                                                                           | One backend domain plus its model tests per branch         | A3R        |
+| A6R     | Repository protocols and file-adapter conformance                 | `gpt-5.6-terra`, high                                                                           | Ports, one repository adapter, and contract tests          | A5         |
+| A6C     | Lock ordering, recovery, import, backup, and restore coordinator  | `gpt-5.6-sol`, high                                                                             | Workspace coordinator and concurrency tests                | A6R        |
+| A7      | Analyzer reducer, events, leases, and runtime services            | `gpt-5.6-sol`, high                                                                             | Analyzer workflow store and transition tests               | A4J, A4T   |
+| A8      | Application services, one use-case domain per branch              | `gpt-5.6-terra`, high                                                                           | One service and its in-memory-port tests                   | A6C        |
+| A9      | Mutation commands and cache outcomes                              | `gpt-5.6-sol`, high for recovery-sensitive core; `gpt-5.6-terra`, medium for ordinary mutations | One command domain per branch                              | A7, A8     |
+| A10C    | Mechanical pane and dialog composition extraction                 | `gpt-5.6-luna`, medium                                                                          | One component subtree and colocated tests                  | A9         |
+| A10R    | Route provider integration, deep links, and navigation guards     | `gpt-5.6-sol`, high                                                                             | Analyzer route, workflow composition, router               | A10C       |
+| A11     | Fixture/test splits and compatibility matrices                    | `gpt-5.6-luna`, medium; escalate failing behavioral gaps to `gpt-5.6-terra`                     | One test domain per branch                                 | Continuous |
+| A12     | Compatibility removal, security/performance audit, and final docs | `gpt-5.6-sol`, high for audit; `gpt-5.6-luna`, medium for approved removals/docs                | Coordinator-selected final surfaces                        | A1-A11     |
 
 Agent prompts must name the exact write set, compatibility behavior, required
 checks, and prohibited neighboring files. Agents commit only their owned paths.
@@ -659,9 +659,9 @@ Every implementation PR must include:
 | 6    | Complete | Repository protocols and split file adapters live under `app/storage`; `WorkspaceCoordinator` owns repository composition, startup recovery, and lock ordering for imports, backups, and restore    |
 | 7    | Complete | Route-scoped typed workflow state, focused commands, injected browser projections, and recovery/request runtime-service refs are in place; the broad store hook is private                          |
 | 8    | Complete | Backend application services own the documented jobs, training, benchmark, backup, system, and MCP administration use cases; HTTP and MCP share those boundaries                                    |
-| 9    | Complete | Every documented frontend mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                        |
+| 9    | Complete | Every documented PWA mutation uses an owned command service with explicit Query cache outcomes, request identity, and recovery behavior                                                             |
 | 10   | Complete | Durable routes restore typed state bidirectionally; thin route/page/composition roots are architecture-tested, while orchestration remains in a non-rendering controller and owned feature commands |
-| 11   | Complete | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and frontend CI reports failures by owned test domain              |
+| 11   | Complete | Shared analyzer factories and domain workflow suites are in place; component colocation and dependency architecture are checked, and PWA CI reports failures by owned test domain                   |
 | 12   | Complete | Compatibility exports and peer-feature baselines are removed; transport/persistence ownership and automated accessibility, performance, security, and release audits are enforced                   |
 
 ## Exit Criteria
@@ -670,19 +670,19 @@ The refactoring program is finished when all of the following are true:
 
 - `AnalyzerRoute.tsx` is no more than 300 lines and is a composition root.
 - No peer feature imports or legacy feature-dependency allowlist entries remain.
-- No frontend component or hook owns both HTTP transport and browser persistence.
+- No PWA component or hook owns both HTTP transport and browser persistence.
 - Authoritative server data is accessed through domain Query adapters.
 - Cross-feature workflow changes are represented as typed reducer events and
   commands with transition tests.
-- Frontend wire contracts are generated from deterministic OpenAPI output.
+- PWA wire contracts are generated from deterministic OpenAPI output.
 - `api.py` is replaced by bootstrap/router composition and contains no use case.
 - FastAPI routers do not access file stores, plugin registries, or locks directly.
 - Backend application services run against protocol-based test doubles.
 - File persistence formats and backup/dataset archives remain backward compatible.
 - HTTP and MCP invoke the same application services and authorization context.
-- Frontend and backend dependency architecture is enforced in CI.
+- PWA and backend dependency architecture is enforced in CI.
 - Monolithic tests are split into domain fixtures and focused suites.
-- Full frontend, backend, solver, browser E2E, Docker, backup/restore, and
+- Full PWA, backend, solver, browser E2E, Docker, backup/restore, and
   deployment smoke validation passes.
 - Architecture and contributor documentation describe the actual final tree.
 
@@ -691,4 +691,4 @@ The refactoring program is finished when all of the following are true:
 The program prepares, but does not itself add, user registration, account pages,
 multi-tenant ownership, a database, or public deployment. Those changes begin
 after repository ports, actor context, generated contracts, and route-level
-frontend providers are stable.
+PWA providers are stable.

@@ -8,7 +8,7 @@ and normalizes all results into stable API models.
 
 ```text
 Browser
-  -> React/Vite frontend
+  -> React/Vite PWA
   -> same-origin /api proxy (environment-specific Cloudflare Worker)
   -> FastAPI backend
      -> parser registry -> OCR/CV or external vision service
@@ -32,7 +32,7 @@ state validation, automation-compatible job transitions, recommendation calls,
 persisted job/image data, and read-only parser benchmark runs. Environment-driven
 registries define installed defaults and runtime allowlists. New uploads and live
 captures may select an advertised parser, layout profile, recommendation provider,
-and local engine; that selection is persisted on the job so the frontend flow does
+and local engine; that selection is persisted on the job so the PWA flow does
 not depend on a concrete engine.
 Each installed parser is represented by one immutable catalog descriptor that
 owns its factory, label, readiness check, and supported-layout policy. Runtime
@@ -77,7 +77,7 @@ concrete dependencies. Backup transport owns multipart limits and streaming
 responses, while archive creation, restore coordination, and interprocess lock
 timing remain behind application-owned callbacks.
 
-Frontend job-detail and processing-page reads are owned by
+PWA job-detail and processing-page reads are owned by
 `domains/jobs/api/jobsApi.ts`, with stable TanStack Query keys and options in
 `domains/jobs/api/jobsQueries.ts`. The legacy `shared/api/jobs.ts` and
 `shared/api/history.ts` compatibility aliases have been removed; consumers use
@@ -401,7 +401,7 @@ External vision, solver, and LLM adapters use independent optional bearer
 tokens held as masked settings and a shared configurable request timeout. The
 tokens are attached only as `Authorization` headers, and authenticated external
 URLs must use HTTPS. This keeps external provider credentials behind the
-backend integration boundary without changing the frontend workflow.
+backend integration boundary without changing the PWA workflow.
 
 The offline recommendation benchmark calls the same provider registry with
 canonical states from a strict, versioned JSON corpus. It does not create jobs
@@ -463,7 +463,7 @@ Token-issuance and MCP responses are non-cacheable. Credential state is a
 deployment concern and is excluded from portable application backups.
 
 The Worker protects `/api/mcp/principals` and all descendants with a dedicated
-per-environment `MCP_ADMIN_TOKEN`. The frontend asks an operator to unlock the
+per-environment `MCP_ADMIN_TOKEN`. The PWA asks an operator to unlock the
 credential-management controls and retains that secret only in component
 memory. Those calls always use the same-origin Worker rather than the general
 API base URL override. After minimum-length and character validation plus a
@@ -484,9 +484,9 @@ Cloudflare Access service headers remain available to cross the protected edge.
 API failures retain bounded status, request-ID, and retry metadata for agent
 recovery without logging request bodies or poker evidence.
 
-### Frontend
+### PWA
 
-`apps/frontend` owns screenshot upload and capture, queue navigation, review and
+`apps/pwa` owns screenshot upload and capture, queue navigation, review and
 correction, automation controls, pre-reveal training decisions, recommendations,
 decision-evidence presentation, aggregate training progress, and history. It
 is organized into application, page, feature, and shared layers. `src/app`
@@ -584,7 +584,7 @@ one visible coordinator. Component tests are colocated with their components;
 the analyzer coordinator's end-to-end state transitions are split into
 domain-named integration suites under `src/pages/analyzer/__tests__`.
 `src/test/analyzerHarness.tsx` supplies the shared workflow render boundary and
-domain API defaults instead of duplicating monolithic fixtures. Frontend CI
+domain API defaults instead of duplicating monolithic fixtures. PWA CI
 reports architecture, application-shell/edge-worker, analyzer-workflow, and
 feature/domain failures in separate named steps. Non-cancelled slices continue
 after an earlier domain failure so one run reports every independent result.
@@ -639,7 +639,7 @@ hook. Media stream ownership remains inside `useCaptureSource`.
 The raw analyzer workflow context accessor is module-private. Production code
 can consume only the focused selection, queue, mutation-lease, recovery, and
 projection hooks, preventing page composition from bypassing command APIs.
-Frontend writes follow the same ownership rule. Upload/capture,
+PWA writes follow the same ownership rule. Upload/capture,
 approve/recommend, training review, screenshot metadata and deletion, history
 archive, benchmark inclusion/import, and backup restore calls are confined to
 their domain API adapters and focused feature command services. Commands return
@@ -710,7 +710,7 @@ rejected so they cannot bypass the typed source graph. Static Vite glob,
 `import.meta.url`, and triple-slash path dependencies are resolved and checked
 against the same layer rules.
 
-The frontend
+The PWA
 defensively normalizes optional provider metadata such as equity, candidate
 EVs/frequencies, exploitability, preflop stack/range/sizing policy, and fallback
 context. Supported postflop results also expose bounded tree/history metadata,
@@ -747,7 +747,7 @@ parser and scoped report history in place; unavailable plugins remain read-only.
 The preceding-run lookup scans persisted summary metadata beyond the bounded
 history response and streams any unindexed legacy metadata without loading case
 payloads or expanding the bounded sidecar backfill, so an older valid baseline
-is not hidden by intervening runs. The frontend uses that pipeline baseline for
+is not hidden by intervening runs. The PWA uses that pipeline baseline for
 the selected latest report's overall and field-level detail trends while keeping
 the report selector itself bounded. It retrieves the immutable prior report
 through the existing detail endpoint, validates the parser, layout, and corpus
@@ -933,7 +933,7 @@ Before releasing the lock, recommendation work persists an in-progress marker;
 re-approval is rejected while that marker remains, and provider setup or
 execution clears it on every terminal success or failure. Backend startup
 converts an orphaned marker into a visible retryable error because no provider
-operation survives a process restart. A reloaded frontend keeps the processing
+operation survives a process restart. A reloaded PWA keeps the processing
 cache unsynchronized and polls the projection while that marker remains,
 retrying transient projection failures so a solver result committed after the
 first reload read is not hidden by the browser cache.
@@ -986,7 +986,7 @@ EV loss can be calibrated without excluding legacy or unrated hands from
 overall progress. Each rated group with at least two hands derives the same
 equal recent and previous performance windows used by the global, street,
 position, and solver summaries. Each rated summary also exposes its global
-pending-review count so the frontend can open that certainty queue without
+pending-review count so the PWA can open that certainty queue without
 deriving counts from the bounded response. Separate unrated total and pending
 counts keep legacy decisions discoverable without treating missing self-ratings
 as a calibration category or assigning them a trend. The progress endpoint also
@@ -1026,7 +1026,7 @@ recommended line and at least one distinct valid alternative, preventing a
 partial candidate payload from claiming zero loss. Hands processed only by
 automation are excluded because they have no player answer to evaluate. A
 separate bounded queue returns unsupported actions and sizing differences so the
-frontend can review them without hiding older differences behind supported
+PWA can review them without hiding older differences behind supported
 lines. It defaults to newest-first order. An explicit EV-loss order ranks
 graded hands by descending loss, breaks ties by recency, and keeps ungraded
 hands afterward in recent-first order. Ordering happens before the queue limit
@@ -1037,13 +1037,13 @@ and complete action-pair filters compose before ordering and limiting. The
 response keeps the global pending-review count separate from the number of hands
 matching the active filter, so a focused queue does not misrepresent overall
 progress.
-Pending counts are also returned per street. The frontend uses only streets
+Pending counts are also returned per street. The PWA uses only streets
 with pending work when suggesting a focus: highest average EV loss wins when
 comparable EV grades exist, otherwise the lowest action accuracy wins. Pending
 volume and canonical street order provide deterministic tie-breakers. Each
 street summary also exposes its pending count as a direct shortcut into the
 same composed review queue.
-The frontend applies the same EV-loss, action-accuracy, pending-volume order to
+The PWA applies the same EV-loss, action-accuracy, pending-volume order to
 rated certainty summaries with pending work, using high-to-low certainty as the
 final deterministic tie-breaker. The Unrated backlog is suggested only when no
 rated certainty group has pending reviews, because it has no calibration
@@ -1072,7 +1072,7 @@ pending queue while retaining the note for editing.
 Both the workspace and training-progress dialog reconcile the affected
 processing or history record when a review mutation response is lost, so a
 same-tab reload cannot preserve stale review metadata from browser storage.
-The frontend treats a hand opened from that queue as a review session. After
+The PWA treats a hand opened from that queue as a review session. After
 persisting its review marker, it reloads the progress endpoint with the current
 action-pair, position, street, certainty, and order parameters and opens the
 first remaining hand.
@@ -1085,17 +1085,17 @@ only and leaves other queue items free to continue.
 ## Persistence
 
 The backend stores jobs, images, and benchmark reports under `POKER_DATA_DIR`.
-The frontend retains automation preferences in versioned browser-local storage;
+The PWA retains automation preferences in versioned browser-local storage;
 invalid or unavailable storage falls back to the established application defaults.
 Unarchived upload and capture jobs are exposed through a stable oldest-first,
-offset-paged processing projection with a snapshot hash. The frontend caches at
+offset-paged processing projection with a snapshot hash. The PWA caches at
 most 100 of those records for immediate reload display, retains the complete
 persisted count, and reconciles all backend pages once per browser session or
 after queue membership changes. Snapshot changes restart the bounded page walk.
 Once that authoritative backend projection completes, its matching processing
 records replace in-memory and cached records regardless of `updated_at`; dirty
 active form values remain separate until a persisted revision confirms the
-user's uncertain mutation committed. The frontend records bounded,
+user's uncertain mutation committed. The PWA records bounded,
 browser-session mutation leases before persisted operations begin. Single-job
 writes carry the job ID and an operation-specific expected effect for approval,
 training decisions, review state, or benchmark inclusion. An unrelated
@@ -1106,7 +1106,7 @@ failures and correctable solver responses retain that exact-ID lease, while a
 deterministic conflict releases it and immediately refreshes the authoritative
 queue so the competing attempt becomes visible. If a leased job is missing from
 processing, including when its expected mutation removes it from that
-projection, the frontend revalidates it by ID before settling or removing it
+projection, the PWA revalidates it by ID before settling or removing it
 from the workspace. Legacy single-job leases without operation-specific
 evidence remain conservative until their bounded expiry.
 Upload and capture leases carry the baseline queue plus client-generated upload
@@ -1170,8 +1170,8 @@ the same job later enters the processing projection, its authoritative record
 replaces that workspace-only copy without creating a duplicate.
 Archiving sets `archived_at` on the existing job rather than copying its data;
 the history projection orders those jobs by archive time and returns a bounded
-latest list plus the complete count. Offset-based reads let the frontend append
-older pages inside the fixed history rail. The frontend restores the newest
+latest list plus the complete count. Offset-based reads let the PWA append
+older pages inside the fixed history rail. The PWA restores the newest
 projection once per browser session and retains only that bounded first page in
 its local cache for immediate display and compatibility with history saved
 before the backend archive contract. Server-confirmed changes to a reopened
@@ -1182,7 +1182,7 @@ in-flight response cannot overwrite a newer saved correction.
 Optional all-term history search filters the complete persisted archive before
 offset paging. A history-specific lock gives each archive scan and snapshot hash
 a consistent view without blocking unrelated active-job updates. Search pages
-carry that snapshot version so the frontend appends the next page directly while
+carry that snapshot version so the PWA appends the next page directly while
 the archive is unchanged, and rebuilds the loaded extent in bounded larger
 requests only after a version change. Search results and their match count remain
 separate from the global archive count and newest-page browser cache.
@@ -1195,7 +1195,7 @@ user.
 
 - Environments: pushes to `main` promote to `staging`; `v*` tags promote to
   `production`; manual deployment workflows select either target explicitly.
-- Frontend: one Cloudflare Worker Static Assets deployment plus `/api/*` and
+- PWA: one Cloudflare Worker Static Assets deployment plus `/api/*` and
   `/mcp` proxy routes per environment.
 - Backend: one Coolify Docker application per environment, built from the
   repository root with `apps/backend/Dockerfile`.
@@ -1204,7 +1204,7 @@ user.
   environment-bound bearer principals and remain dark unless explicitly
   configured.
 - Access control: Cloudflare Access can allowlist users at the public
-  frontend boundary. A shared Worker-to-backend secret protects the public
+  PWA boundary. A shared Worker-to-backend secret protects the public
   Coolify application API from direct access.
 - Resource protection: authenticated expensive operations use bounded in-memory
   token buckets keyed by full opaque identity digests. Inactive buckets expire
@@ -1230,6 +1230,6 @@ user.
   shape removes poker/request/user data before transmission. The backend adds
   only route, method, and opaque UUIDv4 request-ID correlation tags.
 
-The frontend Worker proxy removes mixed-content and browser CORS issues from the
+The PWA Worker proxy removes mixed-content and browser CORS issues from the
 normal deployed path. Backend CORS remains configurable for local and direct API
 testing.

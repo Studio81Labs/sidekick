@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.25
 
 # Build from the repository root:
-# docker build -f apps/frontend/Dockerfile .
+# docker build -f apps/pwa/Dockerfile .
 FROM node:24-alpine AS build
 
 ENV PNPM_HOME=/pnpm
@@ -20,17 +20,17 @@ ENV VITE_SENTRY_ENVIRONMENT=${VITE_SENTRY_ENVIRONMENT}
 ENV VITE_SENTRY_RELEASE=${VITE_SENTRY_RELEASE}
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/frontend/package.json apps/frontend/package.json
+COPY apps/pwa/package.json apps/pwa/package.json
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile --filter @poker-hero/frontend...
+    pnpm install --frozen-lockfile --filter @poker-hero/pwa...
 
-COPY apps/frontend apps/frontend
-RUN pnpm frontend:build
+COPY apps/pwa apps/pwa
+RUN pnpm pwa:build
 
 FROM nginx:1.27-alpine
 
-COPY apps/frontend/nginx.conf /etc/nginx/conf.d/default.conf
-COPY --from=build /workspace/apps/frontend/dist /usr/share/nginx/html
+COPY apps/pwa/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /workspace/apps/pwa/dist /usr/share/nginx/html
 
 EXPOSE 80
 

@@ -27,7 +27,7 @@ importers:
         specifier: ~3.8.1
         version: 3.8.5
 
-  apps/frontend:
+  apps/pwa:
     dependencies:
       '@sentry/react':
         specifier: ^10.69.0

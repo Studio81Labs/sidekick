@@ -24,10 +24,10 @@
       "addLabels": ["backend"]
     },
     {
-      "description": "Scope frontend dependency updates",
-      "matchFileNames": ["apps/frontend/**"],
-      "semanticCommitScope": "frontend",
-      "addLabels": ["frontend"]
+      "description": "Scope PWA dependency updates",
+      "matchFileNames": ["apps/pwa/**"],
+      "semanticCommitScope": "pwa",
+      "addLabels": ["pwa"]
     },
     {
       "description": "Scope solver dependency updates",

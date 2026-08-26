@@ -1,5 +1,5 @@
 {
-  "name": "@poker-hero/frontend",
+  "name": "@poker-hero/pwa",
   "version": "0.1.0",
   "private": true,
   "type": "module",
