@@ -11,5 +11,8 @@ The canonical product source is
 The structural migration is tracked in the
 [app refactoring program](./specs/app-refactoring-program.md).
 
+The proposed Studio81 Labs repository, CI, and PWA convergence is tracked in
+the [portfolio alignment plan](./specs/studio81-portfolio-alignment-plan.md).
+
 Reference formats include the
 [recommendation benchmark corpus](./reference/recommendation-benchmark.md).
