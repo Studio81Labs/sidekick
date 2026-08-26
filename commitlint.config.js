@@ -22,7 +22,7 @@ module.exports = {
     "scope-enum": [
       2,
       "always",
-      ["backend", "pwa", "frontend", "solver", "ci", "infra", "docs", "deps"],
+      ["backend", "pwa", "solver", "ci", "infra", "docs", "deps"],
     ],
     "scope-empty": [0, "never"],
     "subject-case": [2, "always", "lower-case"],

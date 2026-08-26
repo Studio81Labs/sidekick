@@ -1,7 +1,7 @@
 {
   "name": "poker-hero",
   "version": "0.1.0",
-  "packageManager": "pnpm@11.9.0",
+  "packageManager": "pnpm@11.22.0",
   "private": true,
   "description": "Post-hand Texas Hold'em screenshot training analyzer",
   "author": {
@@ -30,15 +30,10 @@
     "pwa:test": "pnpm -C apps/pwa test",
     "pwa:test:watch": "pnpm -C apps/pwa test:watch",
     "pwa:test:e2e": "pnpm -C apps/pwa test:e2e",
-    "frontend:dev": "pnpm pwa:dev",
-    "frontend:build": "pnpm pwa:build",
-    "frontend:performance": "pnpm pwa:performance",
-    "frontend:test": "pnpm pwa:test",
-    "frontend:test:watch": "pnpm pwa:test:watch",
     "monitor:test": "node --test scripts/check-deployment.test.mjs scripts/check-deployment-mcp.test.mjs",
     "test:e2e": "pnpm pwa:test:e2e",
-    "docker:up": "docker compose -f infra/docker/compose.yaml up --build",
-    "docker:down": "docker compose -f infra/docker/compose.yaml down"
+    "docker:up": "docker compose -f infra/docker/docker-compose.yml up --build",
+    "docker:down": "docker compose -f infra/docker/docker-compose.yml down"
   },
   "engines": {
     "node": ">=24",
@@ -47,9 +42,11 @@
   "devDependencies": {
     "@commitlint/cli": "^21.1.0",
     "@commitlint/config-conventional": "^21.1.0",
+    "@sentry/cli": "3.6.2",
     "husky": "^9.1.7",
     "lint-staged": "^17.0.8",
-    "prettier": "~3.8.1"
+    "prettier": "~3.8.1",
+    "wrangler": "4.125.0"
   },
   "lint-staged": {
     "*.{ts,tsx,js,jsx,json,md,yml,yaml}": "prettier --write --ignore-unknown"

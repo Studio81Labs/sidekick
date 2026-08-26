@@ -1,0 +1,36 @@
+name: Sibling Drift
+
+# Poker Hero remains unenrolled until Wave 5: manual comparison only, with no
+# persistent SIBLING_REPOS list and no schedule.
+on:
+  workflow_dispatch:
+    inputs:
+      sibling_repo:
+        description: "Studio81Labs repository to compare (owner/name)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sibling-drift-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: "ci: sibling drift"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Ensure parser dependency
+        run: python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
+      - name: Verify comparison logic
+        run: python3 scripts/ci/check-sibling-drift.py --self-test
+      - name: Compare selected sibling
+        env:
+          SIBLING_REPO: ${{ inputs.sibling_repo }}
+          SIBLING_TOKEN: ${{ secrets.SIBLING_READ_TOKEN }}
+        run: python3 scripts/ci/check-sibling-drift.py --out drift-report.md
+      - name: Publish report
+        run: cat drift-report.md >> "$GITHUB_STEP_SUMMARY"

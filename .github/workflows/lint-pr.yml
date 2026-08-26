@@ -30,7 +30,6 @@ jobs:
           scopes: |
             backend
             pwa
-            frontend
             solver
             ci
             infra

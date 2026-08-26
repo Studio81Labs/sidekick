@@ -10,6 +10,7 @@ on:
       - "packages/openapi-client/**"
       - "scripts/e2e_provider_stub.py"
       - "scripts/start-e2e-backend.sh"
+      - "scripts/ci/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -25,6 +26,7 @@ on:
       - "packages/openapi-client/**"
       - "scripts/e2e_provider_stub.py"
       - "scripts/start-e2e-backend.sh"
+      - "scripts/ci/**"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -41,20 +43,20 @@ concurrency:
 
 jobs:
   prepare-openapi:
-    name: Contract Artifact
+    name: "contract: openapi spec"
     uses: ./.github/workflows/_build-openapi.yml
 
   test:
-    name: Chromium workflow
+    name: "e2e: browser workflow"
     needs: prepare-openapi
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
@@ -63,16 +65,18 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: apps/backend/pyproject.toml
+          cache-dependency-path: apps/backend/requirements-prod.txt
 
       - name: Install dependencies
         run: |
           pnpm install --frozen-lockfile
-          python -m pip install -e apps/backend
+          python -m pip install --require-hashes -r apps/backend/requirements-prod.txt
+          python -m pip install --no-deps --no-build-isolation apps/backend
+          python -m pip check
           pnpm -C apps/pwa exec playwright install --with-deps chromium
 
       - name: Download generated OpenAPI document
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: openapi-spec
           path: ${{ runner.temp }}/openapi-artifact

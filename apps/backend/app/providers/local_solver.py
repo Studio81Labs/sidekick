@@ -158,6 +158,9 @@ class LocalSolverProvider:
         request: RecommendationRequest,
     ) -> RecommendationResult:
         try:
+            # Commands come only from deployment-fixed engine descriptors; the
+            # reviewed user state is JSON on stdin and never enters argv.
+            # nosemgrep: semgrep.python.django.security.injection.command.subprocess-injection.subprocess-injection
             completed = subprocess.run(
                 command,
                 input=request.model_dump_json(),

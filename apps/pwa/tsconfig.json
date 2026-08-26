@@ -7,6 +7,9 @@
     "module": "ESNext",
     "moduleResolution": "Node",
     "types": ["vite/client"],
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": false,
+    "exactOptionalPropertyTypes": false,
     "noEmit": true,
     "tsBuildInfoFile": "./node_modules/.cache/tsconfig.tsbuildinfo",
     "jsx": "react-jsx"

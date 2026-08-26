@@ -51,6 +51,7 @@
 ## Task 1: Backend Domain Models And Configuration
 
 **Files:**
+
 - Create: `backend/pyproject.toml`
 - Create: `backend/tests/test_config_and_models.py`
 - Create: `backend/app/__init__.py`
@@ -389,6 +390,7 @@ Expected: commit succeeds.
 ## Task 2: Configurable Screenshot Parsers
 
 **Files:**
+
 - Create: `backend/app/parsers/__init__.py`
 - Create: `backend/app/parsers/base.py`
 - Create: `backend/app/parsers/mock.py`
@@ -647,6 +649,7 @@ Expected: commit succeeds.
 ## Task 3: Configurable Recommendation Providers
 
 **Files:**
+
 - Create: `backend/app/providers/__init__.py`
 - Create: `backend/app/providers/base.py`
 - Create: `backend/app/providers/mock.py`
@@ -974,6 +977,7 @@ Expected: commit succeeds.
 ## Task 4: Backend Job Store And REST API
 
 **Files:**
+
 - Create: `backend/app/storage.py`
 - Create: `backend/app/api.py`
 - Create: `backend/app/main.py`
@@ -1310,6 +1314,7 @@ Expected: commit succeeds.
 ## Task 5: Frontend Control Panel
 
 **Files:**
+
 - Create: `frontend/package.json`
 - Create: `frontend/index.html`
 - Create: `frontend/tsconfig.json`
@@ -1449,8 +1454,12 @@ describe("App", () => {
   it("renders the upload control panel", () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Poker Training Analyzer" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Upload and parse" })).toBeDisabled();
+    expect(
+      screen.getByRole("heading", { name: "Poker Training Analyzer" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Upload and parse" }),
+    ).toBeDisabled();
   });
 });
 ```
@@ -1534,7 +1543,8 @@ Create `frontend/src/api.ts`:
 import type { CanonicalState, JobRecord } from "./types";
 
 const API_BASE_URL =
-  typeof import.meta.env.VITE_API_BASE_URL === "string" && import.meta.env.VITE_API_BASE_URL.length > 0
+  typeof import.meta.env.VITE_API_BASE_URL === "string" &&
+  import.meta.env.VITE_API_BASE_URL.length > 0
     ? import.meta.env.VITE_API_BASE_URL
     : "http://localhost:8000";
 
@@ -1543,7 +1553,10 @@ async function readJson<T>(response: Response): Promise<T> {
     let detail = response.statusText;
     try {
       const payload = await response.json();
-      detail = typeof payload.detail === "string" ? payload.detail : JSON.stringify(payload.detail);
+      detail =
+        typeof payload.detail === "string"
+          ? payload.detail
+          : JSON.stringify(payload.detail);
     } catch {
       detail = response.statusText;
     }
@@ -1566,7 +1579,10 @@ export async function uploadScreenshot(file: File): Promise<JobRecord> {
   return readJson<JobRecord>(response);
 }
 
-export async function approveState(jobId: string, state: CanonicalState): Promise<JobRecord> {
+export async function approveState(
+  jobId: string,
+  state: CanonicalState,
+): Promise<JobRecord> {
   const response = await fetch(`${API_BASE_URL}/api/jobs/${jobId}/approve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1591,7 +1607,12 @@ import type { ChangeEvent, ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import "./App.css";
-import { approveState, imageUrl, requestRecommendation, uploadScreenshot } from "./api";
+import {
+  approveState,
+  imageUrl,
+  requestRecommendation,
+  uploadScreenshot,
+} from "./api";
 import type { CanonicalState, Card, JobRecord, Street, Suit } from "./types";
 
 const SUIT_BY_CODE: Record<string, Suit> = {
@@ -1670,12 +1691,18 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
 
   const confidences = job?.parser_result?.confidences || {};
-  const canApprove = Boolean(job?.parser_result && draft.hero_cards.length > 0 && draft.street);
+  const canApprove = Boolean(
+    job?.parser_result && draft.hero_cards.length > 0 && draft.street,
+  );
   const canRecommend = Boolean(job?.approved_state);
   const screenshotUrl = useMemo(() => (job ? imageUrl(job.id) : null), [job]);
 
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
-    setFile(event.target.files && event.target.files[0] ? event.target.files[0] : null);
+    setFile(
+      event.target.files && event.target.files[0]
+        ? event.target.files[0]
+        : null,
+    );
   }
 
   async function onUpload() {
@@ -1687,9 +1714,13 @@ export default function App() {
     try {
       const created = await uploadScreenshot(file);
       setJob(created);
-      setDraft(created.approved_state || created.parser_result?.state || EMPTY_STATE);
+      setDraft(
+        created.approved_state || created.parser_result?.state || EMPTY_STATE,
+      );
     } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "Upload failed");
+      setError(
+        uploadError instanceof Error ? uploadError.message : "Upload failed",
+      );
     } finally {
       setBusy(false);
     }
@@ -1706,7 +1737,11 @@ export default function App() {
       setJob(approved);
       setDraft(approved.approved_state || draft);
     } catch (approveError) {
-      setError(approveError instanceof Error ? approveError.message : "Approval failed");
+      setError(
+        approveError instanceof Error
+          ? approveError.message
+          : "Approval failed",
+      );
     } finally {
       setBusy(false);
     }
@@ -1721,7 +1756,11 @@ export default function App() {
     try {
       setJob(await requestRecommendation(job.id));
     } catch (recommendError) {
-      setError(recommendError instanceof Error ? recommendError.message : "Recommendation failed");
+      setError(
+        recommendError instanceof Error
+          ? recommendError.message
+          : "Recommendation failed",
+      );
     } finally {
       setBusy(false);
     }
@@ -1731,16 +1770,31 @@ export default function App() {
     setDraft((current) => ({ ...current, [field]: parseCards(value) }));
   }
 
-  function updateNumber(field: "pot_size" | "current_bet" | "effective_stack" | "players_in_hand", value: string) {
-    setDraft((current) => ({ ...current, [field]: parseOptionalNumber(value) }));
+  function updateNumber(
+    field: "pot_size" | "current_bet" | "effective_stack" | "players_in_hand",
+    value: string,
+  ) {
+    setDraft((current) => ({
+      ...current,
+      [field]: parseOptionalNumber(value),
+    }));
   }
 
-  function updateText(field: "hero_position" | "action_context", value: string) {
-    setDraft((current) => ({ ...current, [field]: value.trim() === "" ? null : value }));
+  function updateText(
+    field: "hero_position" | "action_context",
+    value: string,
+  ) {
+    setDraft((current) => ({
+      ...current,
+      [field]: value.trim() === "" ? null : value,
+    }));
   }
 
   function updateStreet(value: string) {
-    setDraft((current) => ({ ...current, street: value === "" ? null : (value as Street) }));
+    setDraft((current) => ({
+      ...current,
+      street: value === "" ? null : (value as Street),
+    }));
   }
 
   return (
@@ -1783,20 +1837,44 @@ export default function App() {
           <div className="panel-header">
             <div>
               <h2>Detected State</h2>
-              <span>{job ? `${job.parser_provider} parser` : "Waiting for upload"}</span>
+              <span>
+                {job ? `${job.parser_provider} parser` : "Waiting for upload"}
+              </span>
             </div>
             {job ? <StatusPill status={job.status} /> : null}
           </div>
 
           <div className="field-grid">
-            <Field label="Hero cards" confidence={confidenceLabel(confidences.hero_cards)}>
-              <input value={formatCards(draft.hero_cards)} onChange={(event) => updateCards("hero_cards", event.target.value)} />
+            <Field
+              label="Hero cards"
+              confidence={confidenceLabel(confidences.hero_cards)}
+            >
+              <input
+                value={formatCards(draft.hero_cards)}
+                onChange={(event) =>
+                  updateCards("hero_cards", event.target.value)
+                }
+              />
             </Field>
-            <Field label="Board cards" confidence={confidenceLabel(confidences.board_cards)}>
-              <input value={formatCards(draft.board_cards)} onChange={(event) => updateCards("board_cards", event.target.value)} />
+            <Field
+              label="Board cards"
+              confidence={confidenceLabel(confidences.board_cards)}
+            >
+              <input
+                value={formatCards(draft.board_cards)}
+                onChange={(event) =>
+                  updateCards("board_cards", event.target.value)
+                }
+              />
             </Field>
-            <Field label="Street" confidence={confidenceLabel(confidences.street)}>
-              <select value={draft.street || ""} onChange={(event) => updateStreet(event.target.value)}>
+            <Field
+              label="Street"
+              confidence={confidenceLabel(confidences.street)}
+            >
+              <select
+                value={draft.street || ""}
+                onChange={(event) => updateStreet(event.target.value)}
+              >
                 <option value="">Select street</option>
                 <option value="preflop">Preflop</option>
                 <option value="flop">Flop</option>
@@ -1804,36 +1882,99 @@ export default function App() {
                 <option value="river">River</option>
               </select>
             </Field>
-            <Field label="Pot" confidence={confidenceLabel(confidences.pot_size)}>
-              <input value={draft.pot_size === null ? "" : draft.pot_size} onChange={(event) => updateNumber("pot_size", event.target.value)} />
+            <Field
+              label="Pot"
+              confidence={confidenceLabel(confidences.pot_size)}
+            >
+              <input
+                value={draft.pot_size === null ? "" : draft.pot_size}
+                onChange={(event) =>
+                  updateNumber("pot_size", event.target.value)
+                }
+              />
             </Field>
-            <Field label="Current bet" confidence={confidenceLabel(confidences.current_bet)}>
-              <input value={draft.current_bet === null ? "" : draft.current_bet} onChange={(event) => updateNumber("current_bet", event.target.value)} />
+            <Field
+              label="Current bet"
+              confidence={confidenceLabel(confidences.current_bet)}
+            >
+              <input
+                value={draft.current_bet === null ? "" : draft.current_bet}
+                onChange={(event) =>
+                  updateNumber("current_bet", event.target.value)
+                }
+              />
             </Field>
-            <Field label="Effective stack" confidence={confidenceLabel(confidences.effective_stack)}>
-              <input value={draft.effective_stack === null ? "" : draft.effective_stack} onChange={(event) => updateNumber("effective_stack", event.target.value)} />
+            <Field
+              label="Effective stack"
+              confidence={confidenceLabel(confidences.effective_stack)}
+            >
+              <input
+                value={
+                  draft.effective_stack === null ? "" : draft.effective_stack
+                }
+                onChange={(event) =>
+                  updateNumber("effective_stack", event.target.value)
+                }
+              />
             </Field>
-            <Field label="Players in hand" confidence={confidenceLabel(confidences.players_in_hand)}>
-              <input value={draft.players_in_hand === null ? "" : draft.players_in_hand} onChange={(event) => updateNumber("players_in_hand", event.target.value)} />
+            <Field
+              label="Players in hand"
+              confidence={confidenceLabel(confidences.players_in_hand)}
+            >
+              <input
+                value={
+                  draft.players_in_hand === null ? "" : draft.players_in_hand
+                }
+                onChange={(event) =>
+                  updateNumber("players_in_hand", event.target.value)
+                }
+              />
             </Field>
-            <Field label="Hero position" confidence={confidenceLabel(confidences.hero_position)}>
-              <input value={draft.hero_position || ""} onChange={(event) => updateText("hero_position", event.target.value)} />
+            <Field
+              label="Hero position"
+              confidence={confidenceLabel(confidences.hero_position)}
+            >
+              <input
+                value={draft.hero_position || ""}
+                onChange={(event) =>
+                  updateText("hero_position", event.target.value)
+                }
+              />
             </Field>
             <Field label="Action context" confidence="manual review">
-              <textarea value={draft.action_context || ""} onChange={(event) => updateText("action_context", event.target.value)} />
+              <textarea
+                value={draft.action_context || ""}
+                onChange={(event) =>
+                  updateText("action_context", event.target.value)
+                }
+              />
             </Field>
           </div>
 
           <div className="review-actions">
-            <button type="button" onClick={onApprove} disabled={!canApprove || busy}>
+            <button
+              type="button"
+              onClick={onApprove}
+              disabled={!canApprove || busy}
+            >
               <Check size={18} aria-hidden="true" />
               Approve state
             </button>
-            <button type="button" onClick={onRecommend} disabled={!canRecommend || busy}>
+            <button
+              type="button"
+              onClick={onRecommend}
+              disabled={!canRecommend || busy}
+            >
               <Play size={18} aria-hidden="true" />
               Request recommendation
             </button>
-            <button type="button" onClick={() => job?.parser_result && setDraft(job.parser_result.state)} disabled={!job?.parser_result || busy}>
+            <button
+              type="button"
+              onClick={() =>
+                job?.parser_result && setDraft(job.parser_result.state)
+              }
+              disabled={!job?.parser_result || busy}
+            >
               <RefreshCcw size={18} aria-hidden="true" />
               Reset to parser
             </button>
@@ -1842,10 +1983,16 @@ export default function App() {
           {job?.recommendation ? (
             <section className="recommendation" aria-label="Recommendation">
               <div>
-                <span className="recommendation-action">{job.recommendation.action}</span>
-                <span className="recommendation-confidence">{Math.round(job.recommendation.confidence * 100)}% confidence</span>
+                <span className="recommendation-action">
+                  {job.recommendation.action}
+                </span>
+                <span className="recommendation-confidence">
+                  {Math.round(job.recommendation.confidence * 100)}% confidence
+                </span>
               </div>
-              {job.recommendation.sizing !== null ? <p>Suggested sizing: {job.recommendation.sizing}</p> : null}
+              {job.recommendation.sizing !== null ? (
+                <p>Suggested sizing: {job.recommendation.sizing}</p>
+              ) : null}
               <p>{job.recommendation.explanation}</p>
             </section>
           ) : null}
@@ -1855,7 +2002,15 @@ export default function App() {
   );
 }
 
-function Field({ label, confidence, children }: { label: string; confidence: string; children: ReactNode }) {
+function Field({
+  label,
+  confidence,
+  children,
+}: {
+  label: string;
+  confidence: string;
+  children: ReactNode;
+}) {
   return (
     <label className="field">
       <span>
@@ -1879,7 +2034,13 @@ Create `frontend/src/App.css`:
   color: #17201d;
   background: #f5f7f4;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
 }
@@ -2257,6 +2418,7 @@ Expected: commit succeeds.
 ## Task 6: Developer Documentation And Local Run Config
 
 **Files:**
+
 - Create: `.gitignore`
 - Create: `.env.example`
 - Create: `README.md`
@@ -2306,7 +2468,7 @@ POKER_LOCAL_SOLVER_TIMEOUT_SECONDS=30
 
 Create `README.md`:
 
-```markdown
+````markdown
 # Poker Training Analyzer
 
 Local-first training app for reviewing Texas Hold'em screenshots. The app uploads one screenshot at a time, parses table state through a configurable backend parser, lets the user verify or correct the extracted state, then requests a configurable training recommendation.
@@ -2329,6 +2491,7 @@ source .venv/bin/activate
 python -m pip install -e ".[dev]"
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
+````
 
 Health check:
 
@@ -2379,7 +2542,8 @@ cd frontend
 npm test
 npm run build
 ```
-```
+
+````
 
 - [ ] **Step 3: Verify documentation files**
 
@@ -2390,7 +2554,7 @@ test -f README.md
 test -f .env.example
 test -f .gitignore
 rg -n "live-play automation|post-hand study|POKER_RECOMMENDATION_PROVIDER" README.md .env.example
-```
+````
 
 Expected: all commands exit `0`, and `rg` prints matching lines from `README.md` and `.env.example`.
 
@@ -2408,6 +2572,7 @@ Expected: commit succeeds.
 ## Task 7: Full Verification
 
 **Files:**
+
 - Modify only files needed to fix failures revealed by this task.
 
 - [ ] **Step 1: Run backend verification**
@@ -2451,7 +2616,7 @@ curl -s http://127.0.0.1:8000/api/health
 Expected JSON:
 
 ```json
-{"status":"ok","parser_provider":"mock","recommendation_provider":"mock"}
+{ "status": "ok", "parser_provider": "mock", "recommendation_provider": "mock" }
 ```
 
 - [ ] **Step 4: Check git status**

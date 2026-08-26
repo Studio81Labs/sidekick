@@ -1,0 +1,105 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 20 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-scan-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: false
+
+env:
+  TRUFFLEHOG_IMAGE: ghcr.io/trufflesecurity/trufflehog:3.96.0@sha256:aa821cf4ace8861c7d096d83818cdf7bb9719028a52d37a52eaad44086a52577
+  OSV_IMAGE: ghcr.io/google/osv-scanner:v2.5.0@sha256:5b8b38e45bb2c5c4976f0f1f07860551ea6e1f235f642cf215f74d266fec2c1b
+  SEMGREP_IMAGE: semgrep/semgrep:1.173.0@sha256:67319956da3dcb58baf5b322899c15458e3963e7018a86aeeb5cd224e69cb77a
+
+jobs:
+  secrets:
+    name: "security: secrets"
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Select history scan mode
+        id: mode
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -qx '.github/workflows/security-scan.yml'; then
+            echo "scanner-changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scanner-changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Scan pull request range
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: >-
+          docker run --rm -v "${GITHUB_WORKSPACE}:/repo" -w /repo
+          "$TRUFFLEHOG_IMAGE" git file:///repo
+          --results=verified,unknown --since-commit "$BASE_SHA" --branch "$HEAD_SHA"
+          --exclude-detectors=Lob --fail --no-update --github-actions
+      - name: Scan full history after scanner changes
+        if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || steps.mode.outputs.scanner-changed == 'true') }}
+        run: >-
+          docker run --rm -v "${GITHUB_WORKSPACE}:/repo" -w /repo
+          "$TRUFFLEHOG_IMAGE" git file:///repo
+          --results=verified --exclude-detectors=Lob
+          --fail --no-update --github-actions
+
+  dependencies:
+    name: "security: dependencies"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Scan committed dependency graphs
+        run: >-
+          docker run --rm -v "${GITHUB_WORKSPACE}:/src" -w /src
+          "$OSV_IMAGE" scan source --recursive ./
+      - name: Check pnpm overrides
+        run: |
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
+          python3 scripts/ci/check-pnpm-overrides.py
+
+  code:
+    name: "security: code (semgrep)"
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify custom Worker rules
+        run: |
+          set -euo pipefail
+          OUT="$(mktemp)"
+          ERR="$(mktemp)"
+          docker run --rm -v "${GITHUB_WORKSPACE}:/src" -w /src \
+            "$SEMGREP_IMAGE" semgrep scan \
+            --config=.semgrep/poker-hero-worker.yaml --metrics=off --json --quiet \
+            .semgrep/poker-hero-worker.js > "$OUT" 2> "$ERR" || true
+          if grep -qiE 'invalid|error' "$ERR"; then
+            cat "$ERR"
+            exit 1
+          fi
+          python3 -c "import yaml" 2>/dev/null || python3 -m pip install --quiet --disable-pip-version-check pyyaml==6.0.3
+          python3 scripts/ci/check-semgrep-fixture.py \
+            "$OUT" .semgrep/poker-hero-worker.js .semgrep/poker-hero-worker.yaml
+      - name: Scan JavaScript, TypeScript, and Python
+        run: |
+          set -euo pipefail
+          test "$(find .semgrep -name '*.yaml' | wc -l | tr -d ' ')" -gt 0
+          docker run --rm -v "${GITHUB_WORKSPACE}:/src" -w /src \
+            "$SEMGREP_IMAGE" semgrep scan \
+            --config=.semgrep --exclude=.semgrep --error --metrics=off .
