@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { networkFirstNavigation } from "./serviceWorkerRuntime";
 
 const REQUEST = new Request("https://poker.example/analyzer");
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("service-worker navigation runtime", () => {
   it("returns online HTML without replacing the install-time shell", async () => {
@@ -11,14 +15,11 @@ describe("service-worker navigation runtime", () => {
     const cacheStorage = {
       open: vi.fn(),
     } as unknown as CacheStorage;
+    vi.stubGlobal("fetch", fetchRequest);
+    vi.stubGlobal("caches", cacheStorage);
 
     await expect(
-      networkFirstNavigation(
-        REQUEST,
-        "poker-hero-shell-current",
-        fetchRequest,
-        cacheStorage,
-      ),
+      networkFirstNavigation(REQUEST, "poker-hero-shell-current"),
     ).resolves.toBe(deployedHtml);
     expect(cacheStorage.open).not.toHaveBeenCalled();
   });
@@ -30,14 +31,11 @@ describe("service-worker navigation runtime", () => {
       open: vi.fn().mockResolvedValue(cache),
     } as unknown as CacheStorage;
     const fetchRequest = vi.fn().mockRejectedValue(new TypeError("offline"));
+    vi.stubGlobal("fetch", fetchRequest);
+    vi.stubGlobal("caches", cacheStorage);
 
     await expect(
-      networkFirstNavigation(
-        REQUEST,
-        "poker-hero-shell-current",
-        fetchRequest,
-        cacheStorage,
-      ),
+      networkFirstNavigation(REQUEST, "poker-hero-shell-current"),
     ).resolves.toBe(installedHtml);
     expect(cacheStorage.open).toHaveBeenCalledWith("poker-hero-shell-current");
     expect(cache.match).toHaveBeenCalledWith("/");
@@ -50,14 +48,11 @@ describe("service-worker navigation runtime", () => {
         .fn()
         .mockResolvedValue({ match: vi.fn().mockResolvedValue(null) }),
     } as unknown as CacheStorage;
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(networkError));
+    vi.stubGlobal("caches", cacheStorage);
 
     await expect(
-      networkFirstNavigation(
-        REQUEST,
-        "poker-hero-shell-current",
-        vi.fn().mockRejectedValue(networkError),
-        cacheStorage,
-      ),
+      networkFirstNavigation(REQUEST, "poker-hero-shell-current"),
     ).rejects.toBe(networkError);
   });
 });

@@ -112,7 +112,10 @@ function isWaveNineMutation(value: string): boolean {
 }
 
 const SHARED_RAW_TRANSPORT_OWNERS = new Set(["shared/api/transport.ts"]);
-const SHELL_RAW_TRANSPORT_OWNERS = new Set(["app/pwa/service-worker.ts"]);
+const SHELL_RAW_TRANSPORT_OWNERS = new Set([
+  "app/pwa/service-worker.ts",
+  "app/pwa/serviceWorkerRuntime.ts",
+]);
 const RAW_TRANSPORT_REFERENCES = new Set([
   "XMLHttpRequest",
   "fetch",
