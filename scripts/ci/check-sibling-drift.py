@@ -245,8 +245,8 @@ IDENTICAL = [
 TOPOLOGY_GATED = {
     "scripts/lib/resolve-flutter.sh": "capability:mobile",
     "scripts/ci/check-podfile-lock.py": "capability:mobile",
-    "scripts/ci/check-release-tag.sh": "capability:mobile",
-    "scripts/ci/check-semgrep-fixture.py": "capability:mobile",
+    "scripts/ci/check-release-tag.sh": "capability:versioned-release",
+    "scripts/ci/check-semgrep-fixture.py": "capability:semgrep-fixture",
     "scripts/ci/compare-marketing-version.py": "capability:mobile",
     ".github/workflows/flutter-pin-check.yml": "capability:mobile",
     ".github/workflows/mobile-ci.yml": "capability:mobile",
@@ -270,7 +270,6 @@ TOPOLOGY_GATED = {
 STACK_TOPOLOGY_GATED = {
     "scripts/lib/resolve-flutter.sh": "apps/mobile/pubspec.yaml",
     "scripts/ci/check-podfile-lock.py": "apps/mobile/pubspec.yaml",
-    "scripts/ci/check-release-tag.sh": "apps/mobile/pubspec.yaml",
     ".github/workflows/flutter-pin-check.yml": "apps/mobile/pubspec.yaml",
     ".github/workflows/mobile-ci.yml": "apps/mobile/pubspec.yaml",
     ".github/workflows/mobile-release.yml": "apps/mobile/pubspec.yaml",
@@ -280,9 +279,20 @@ STACK_TOPOLOGY_GATED = {
 # with any mobile app must retain one. Across Flutter and React Native their
 # contents and job layouts are not comparable; their presence still is.
 CROSS_STACK_REQUIRED = {
-    "scripts/ci/check-release-tag.sh",
     ".github/workflows/mobile-ci.yml",
     ".github/workflows/mobile-release.yml",
+}
+
+# Some shared helpers implement the same guard against different source files.
+# Require every capability owner to retain a copy, compare equal variants
+# byte-for-byte, and skip only the expected implementation delta between
+# distinct variants.
+CONTENT_VARIANT_TOPOLOGY = {
+    "scripts/ci/check-release-tag.sh": (
+        "apps/backend/pyproject.toml",
+        "apps/mobile/pubspec.yaml",
+        "apps/mobile/package.json",
+    ),
 }
 
 # Some capabilities have equivalent markers because sibling implementations
@@ -311,6 +321,12 @@ CAPABILITY_MARKER_PATHS = {
         "apps/mobile/package.json",
         "apps/mobile/pubspec.yaml",
         "apps/backend/pyproject.toml",
+    ),
+    "capability:semgrep-fixture": (
+        ".semgrep/poker-hero-worker.js",
+        ".semgrep/nexcue-dart.dart",
+        ".semgrep/tabletap-dart.dart",
+        ".semgrep/tarmoto-rn.ts",
     ),
 }
 
@@ -445,8 +461,16 @@ POKER_JOB_LAYOUTS = {
 # action must remain on its owning stack only, while any other one-sided action
 # (including a removed shared checkout) is ordinary drift.
 POKER_ACTION_LAYOUTS = {
+    ".github/workflows/_build-openapi.yml": {
+        "python": frozenset({"actions/setup-python"}),
+        "node": frozenset(),
+    },
     ".github/workflows/backend-ci.yml": {
         "python": frozenset({"actions/setup-python", "actions/download-artifact"}),
+        "node": frozenset(),
+    },
+    ".github/workflows/backend-deploy.yml": {
+        "python": frozenset({"actions/setup-node", "pnpm/action-setup"}),
         "node": frozenset(),
     },
     ".github/workflows/openapi-check.yml": {
@@ -1474,6 +1498,25 @@ def compare(local_read, sibling_read) -> list[dict]:
         not implement the Flutter-owned artifact whose whole-file contents or
         job layout is being compared.
         """
+        variant_markers = CONTENT_VARIANT_TOPOLOGY.get(path)
+        if variant_markers is not None:
+            variants = tuple(
+                next(
+                    (
+                        marker
+                        for marker in variant_markers
+                        if marker_sides(marker)[side_index]
+                    ),
+                    None,
+                )
+                for side_index in (0, 1)
+            )
+            if None not in variants and variants[0] != variants[1]:
+                # Presence remains an ownership invariant. Only two existing
+                # implementations with different version sources may skip
+                # their expected content delta.
+                return ours is not None and theirs is not None
+
         stack_marker = stack_gates.get(path)
         if stack_marker is not None:
             stack_sides = marker_sides(stack_marker)
@@ -2327,9 +2370,10 @@ def self_test() -> int:
         # Established siblings declare both broad capabilities compared by the
         # action-pin manifest. Individual tests can remove a marker explicitly
         # to model a deliberately smaller sibling.
-        broad_markers = set(ACTION_TOPOLOGY_GATED.values()) - set(
-            STACK_TOPOLOGY_GATED.values()
-        )
+        broad_markers = (
+            set(ACTION_TOPOLOGY_GATED.values())
+            | set(TOPOLOGY_GATED.values())
+        ) - set(STACK_TOPOLOGY_GATED.values())
         for marker in broad_markers:
             paths = CAPABILITY_MARKER_PATHS.get(marker, (marker,))
             files.setdefault(paths[0], "marker\n")
@@ -3656,9 +3700,9 @@ def self_test() -> int:
     found = [f for f in compare(repo(**both_flutter).get, repo(**marker_one_side).get) if f["name"] == GATED_FILE]
     assert len(found) == 1 and "expects no artifact there" in found[0]["detail"], found
 
-    # Release guards exist in both mobile stacks even though their contents
-    # differ. A React Native owner deleting its copy must not be hidden by the
-    # Flutter stack gate.
+    # Release guards exist in every versioned-release topology even though they
+    # read different source files. An owner deleting its copy must not be hidden
+    # by the expected implementation difference.
     RELEASE_HELPER = "scripts/ci/check-release-tag.sh"
     flutter_release = {
         MARKER: "name: app\n",
@@ -3679,7 +3723,7 @@ def self_test() -> int:
         if f["name"] == RELEASE_HELPER
     ]
     assert found and found[0]["detail"] == (
-        "mobile topology expects an artifact there, but it is absent"
+        "topology expects an artifact there, but it is absent"
     ), found
     react_native_release = {
         **react_native_missing_release,
@@ -3694,6 +3738,34 @@ def self_test() -> int:
         if f["name"] == RELEASE_HELPER
     ]
     assert found == [], f"cross-stack release guard contents are topology: {found}"
+    poker_release = {
+        MARKER: None,
+        MOBILE_MARKER: None,
+        "apps/backend/pyproject.toml": "[project]\nname = \"backend\"\n",
+        RELEASE_HELPER: "python guard\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**react_native_release).get,
+            repo(**poker_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert found == [], f"React Native/Python release helpers are source topology: {found}"
+    changed_poker_release = {
+        **poker_release,
+        RELEASE_HELPER: "changed python guard\n",
+    }
+    found = [
+        f
+        for f in compare(
+            repo(**poker_release).get,
+            repo(**changed_poker_release).get,
+        )
+        if f["name"] == RELEASE_HELPER
+    ]
+    assert len(found) == 1, f"same-source Python release helper drift must report: {found}"
     non_mobile_with_release = {
         MARKER: None,
         MOBILE_MARKER: None,
@@ -3896,17 +3968,19 @@ def self_test() -> int:
     ]
     assert len(found) == 1, f"shared package workflows must compare pins: {found}"
 
-    # The Semgrep fixture verifier is shared across Flutter and React Native.
-    # Its gate must use the broad mobile capability, not Flutter's pubspec, or
-    # every Tarmoto comparison silently stops checking the helper.
+    # The Semgrep fixture verifier is shared by every repository that validates
+    # an explicit fixture, independent of mobile ownership. Taven scans its
+    # sources without a fixture and remains a legitimate non-owner.
     SEMGREP_HELPER = "scripts/ci/check-semgrep-fixture.py"
     flutter_helper = {
         SEMGREP_HELPER: "flutter copy\n",
         "apps/mobile/pubspec.yaml": "name: app\n",
+        ".semgrep/nexcue-dart.dart": "// fixture\n",
     }
     react_native_helper = {
         SEMGREP_HELPER: "react native copy\n",
         "apps/mobile/pubspec.yaml": None,
+        ".semgrep/tarmoto-rn.ts": "// fixture\n",
     }
     found = [
         f for f in compare(repo(**flutter_helper).get, repo(**react_native_helper).get)
@@ -3926,12 +4000,39 @@ def self_test() -> int:
         if f["name"] == SEMGREP_HELPER
     ]
     assert len(found) == 1, f"an incidental marker deletion must not hide drift: {found}"
-    no_mobile_helper = {MOBILE_MARKER: None, SEMGREP_HELPER: None}
+    poker_helper = {
+        SEMGREP_HELPER: "poker copy\n",
+        MOBILE_MARKER: None,
+        MARKER: None,
+        ".semgrep/poker-hero-worker.js": "// fixture\n",
+    }
+    found = [
+        f
+        for f in compare(repo(**flutter_helper).get, repo(**poker_helper).get)
+        if f["name"] == SEMGREP_HELPER
+    ]
+    assert len(found) == 1, f"Poker's non-mobile verifier must remain comparable: {found}"
+    no_semgrep_markers = {
+        marker: None
+        for marker in CAPABILITY_MARKER_PATHS["capability:semgrep-fixture"]
+    }
+    no_mobile_helper = {
+        **no_semgrep_markers,
+        MOBILE_MARKER: None,
+        SEMGREP_HELPER: None,
+    }
+    poker_missing_helper = {**poker_helper, SEMGREP_HELPER: None}
+    found = [
+        f
+        for f in compare(repo(**poker_missing_helper).get, repo(**no_mobile_helper).get)
+        if f["name"] == SEMGREP_HELPER
+    ]
+    assert len(found) == 1 and "expects an artifact here" in found[0]["detail"], found
     found = [
         f for f in compare(repo().get, repo(**no_mobile_helper).get)
         if f["name"] == SEMGREP_HELPER
     ]
-    assert found == [], f"a sibling without mobile has no fixture helper: {found}"
+    assert found == [], f"a sibling without a Semgrep fixture has no verifier: {found}"
 
     # --- job names -------------------------------------------------------
     JOB_WF = ".github/workflows/backend-ci.yml"
@@ -4171,6 +4272,53 @@ def self_test() -> int:
         if f["kind"] == "action" and f["name"].startswith("actions/setup-python")
     ]
     assert len(found) == 1 and "expects the action here only" in found[0]["detail"], found
+
+    for workflow, python_only_action in (
+        (".github/workflows/_build-openapi.yml", "actions/setup-python"),
+        (".github/workflows/backend-deploy.yml", "pnpm/action-setup"),
+    ):
+        python_owner = {
+            workflow: wf(
+                "actions/checkout@1111111 # v1",
+                *(
+                    f"{action}@2222222 # v2"
+                    for action in sorted(POKER_ACTION_LAYOUTS[workflow]["python"])
+                ),
+            ),
+            "apps/backend/pyproject.toml": "[project]\nname = 'fixture'\n",
+            "apps/marketing/package.json": None,
+        }
+        node_owner = {
+            workflow: wf("actions/checkout@1111111 # v1"),
+            "apps/backend/pyproject.toml": None,
+            "apps/marketing/package.json": "{}\n",
+        }
+        found = [
+            f
+            for f in compare(repo(**python_owner).get, repo(**node_owner).get)
+            if f["kind"] == "action" and f["name"].startswith(python_only_action)
+        ]
+        assert found == [], f"{workflow} Python setup is stack topology: {found}"
+        python_owner_missing_setup = {
+            **python_owner,
+            workflow: wf(
+                "actions/checkout@1111111 # v1",
+                *(
+                    f"{action}@2222222 # v2"
+                    for action in sorted(POKER_ACTION_LAYOUTS[workflow]["python"])
+                    if action != python_only_action
+                ),
+            ),
+        }
+        found = [
+            f
+            for f in compare(
+                repo(**python_owner_missing_setup).get,
+                repo(**node_owner).get,
+            )
+            if f["kind"] == "action" and f["name"].startswith(python_only_action)
+        ]
+        assert len(found) == 1 and "expects the action here only" in found[0]["detail"], found
 
     # Poker-only layout exemptions must activate for Python-vs-Node, but the
     # same job IDs remain strict between two Node siblings.
