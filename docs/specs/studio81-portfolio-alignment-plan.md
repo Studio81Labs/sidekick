@@ -193,8 +193,8 @@ Shared workflows and guards to add or converge:
 
 - `_release-version-gate.yml` using the root Poker Hero version as the source;
 - `format-check.yml`;
-- `security-scan.yml` with secret, dependency, and TypeScript/Python Semgrep
-  coverage;
+- `security-scan.yml` with secret, dependency, and JavaScript/TypeScript/Python
+  Semgrep coverage, including the PWA edge Worker proxy boundary;
 - `ci-scripts.yml` with self-tests for every added CI helper;
 - `cleanup-pr-caches.yml` and `prune-stale-caches.yml`;
 - `sibling-drift.yml` and its checked script;
@@ -261,6 +261,7 @@ Acceptance gates:
   before those checks succeed;
 - a test PR with a controlled secret, vulnerable dependency fixture, or Semgrep
   violation fails the corresponding required security context and cannot merge;
+  the Semgrep cases include a JavaScript violation in the PWA edge Worker;
 - documentation-only and backend-only test PRs emit every required gate and do
   not remain pending because a workflow-level path filter skipped the context;
 - the PWA deployment reports the declared lockfile-pinned Wrangler version and
