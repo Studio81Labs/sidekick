@@ -30,11 +30,20 @@ docker run --rm \
     /tmp/lock-venv/bin/python -m pip install --quiet --disable-pip-version-check "pip-tools==$PIP_TOOLS_VERSION"
     compile() {
       output="$1"
-      shift
+      existing="$2"
+      shift 2
+      if [ -f "$existing" ]; then
+        # A freshness check must not change merely because PyPI published a
+        # newer compatible transitive dependency during review. The committed
+        # lock remains the resolver constraint; incompatible manifest changes
+        # still force pip-compile to update the affected graph.
+        set -- --constraint "$existing" "$@"
+      fi
       /tmp/lock-venv/bin/pip-compile \
         --quiet \
         --allow-unsafe \
         --generate-hashes \
+        --no-annotate \
         --no-header \
         --resolver=backtracking \
         --strip-extras \
@@ -42,8 +51,10 @@ docker run --rm \
         "$@" \
         apps/backend/pyproject.toml
     }
-    compile /out/requirements-prod.txt --extra lock
-    compile /out/requirements-dev.txt --extra lock --extra dev
+    compile /out/requirements-prod.txt \
+      /workspace/apps/backend/requirements-prod.txt --extra lock
+    compile /out/requirements-dev.txt \
+      /workspace/apps/backend/requirements-dev.txt --extra lock --extra dev
   '
 
 if [ "$MODE" = "--write" ]; then
