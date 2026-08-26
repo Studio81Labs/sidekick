@@ -510,21 +510,39 @@ export function useAnalyzerWorkspaceController({
     trainingReviewNoteEditing &&
     trainingReviewNote.trim() !== (job?.training_review_note ?? ""),
   );
-  useAnalyzerUpdateSafety({
-    analyzerMutation: busy,
-    backupRestore: backupRestoring,
-    benchmarkOperation:
-      benchmarkImporting || benchmarkRunning || benchmarkUpdating,
-    detectedStateDraft: formDirtyRef.current,
-    lessonNoteDraft,
-    pendingScreenshotFiles: files.length > 0,
-    screenCapture: screenSharing,
-    screenshotMetadataDraft,
-    screenshotMutation: screenshotMetadataSaving || screenshotDeleting,
-    trainingAnswerDraft,
-    trainingReviewMutation: trainingReviewJobId !== null,
-    upload: queueProgress !== null,
-  });
+  const analyzerDirtyVersion = useMemo(
+    () => ({}),
+    [
+      files,
+      form,
+      screenshotNotes,
+      screenshotTagInput,
+      screenshotTitle,
+      trainingAction,
+      trainingCertainty,
+      trainingReviewNote,
+      trainingReviewNoteEditing,
+      trainingSizing,
+    ],
+  );
+  useAnalyzerUpdateSafety(
+    {
+      analyzerMutation: busy,
+      backupRestore: backupRestoring,
+      benchmarkOperation:
+        benchmarkImporting || benchmarkRunning || benchmarkUpdating,
+      detectedStateDraft: formDirtyRef.current,
+      lessonNoteDraft,
+      pendingScreenshotFiles: files.length > 0,
+      screenCapture: screenSharing,
+      screenshotMetadataDraft,
+      screenshotMutation: screenshotMetadataSaving || screenshotDeleting,
+      trainingAnswerDraft,
+      trainingReviewMutation: trainingReviewJobId !== null,
+      upload: queueProgress !== null,
+    },
+    analyzerDirtyVersion,
+  );
 
   useAnalyzerRouteRestore({
     activateJob: (nextJob) => upsertAndActivateJob(nextJob, false),

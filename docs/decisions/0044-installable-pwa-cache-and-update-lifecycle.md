@@ -69,8 +69,10 @@ The same aggregate state guards browser unloads. When a worker is waiting, the
 UI announces the update but never activates it while an operation is active.
 With dirty state, activation requires an explicit discard confirmation. With no
 dirty or busy reason, the user may explicitly activate and reload. The
-coordinator rechecks safety on `controllerchange`; if state became unsafe after
-activation began, the new worker may take control but reload remains deferred.
+confirmation is bound to the registered dirty revision, so an edit made while
+activation is pending requires fresh confirmation. The coordinator rechecks
+safety on `controllerchange`; if state became unsafe after activation began, the
+new worker may take control but reload remains deferred.
 
 The deployed edge Worker runs before static assets so it can apply response
 headers consistently. `/sw.js` is revalidated on every load and receives

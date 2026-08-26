@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./McpAccessPanel.css";
 
 import {
@@ -42,12 +42,19 @@ export function McpAccessPanel({
   const [tokenRequestPending, setTokenRequestPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tokenPending = issued !== null || tokenRequestPending;
-  useMcpUpdateSafety({
-    administratorSession: adminToken !== "",
-    credentialDraft: name !== "" || access !== "read" || expiry !== "",
-    operation: busyId !== null || tokenRequestPending,
-    unacknowledgedCredential: issued !== null,
-  });
+  const mcpDirtyVersion = useMemo(
+    () => ({}),
+    [access, adminToken, expiry, issued, name],
+  );
+  useMcpUpdateSafety(
+    {
+      administratorSession: adminToken !== "",
+      credentialDraft: name !== "" || access !== "read" || expiry !== "",
+      operation: busyId !== null || tokenRequestPending,
+      unacknowledgedCredential: issued !== null,
+    },
+    mcpDirtyVersion,
+  );
 
   useEffect(() => {
     onPendingTokenChange?.(tokenPending);

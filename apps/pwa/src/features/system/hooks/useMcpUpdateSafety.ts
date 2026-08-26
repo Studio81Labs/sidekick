@@ -25,6 +25,13 @@ export function mcpUpdateSafetyReasons({
   };
 }
 
-export function useMcpUpdateSafety(input: McpUpdateSafetyInput) {
-  useUpdateSafetyRegistration("mcp-access", mcpUpdateSafetyReasons(input));
+export function useMcpUpdateSafety(
+  input: McpUpdateSafetyInput,
+  dirtyVersion: unknown,
+) {
+  useUpdateSafetyRegistration(
+    "mcp-access",
+    mcpUpdateSafetyReasons(input),
+    dirtyVersion,
+  );
 }

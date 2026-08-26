@@ -331,7 +331,7 @@ test("keeps a waiting update blocked while an upload is active", async ({
   ).toBeVisible();
 });
 
-test("preserves a dirty draft until discard is confirmed, then reloads once", async ({
+test("requires fresh confirmation when a draft changes during activation", async ({
   page,
 }) => {
   await openControlledApp(page);
@@ -358,8 +358,20 @@ test("preserves a dirty draft until discard is confirmed, then reloads once", as
   });
   await page.getByRole("button", { name: "Discard and reload" }).click();
 
+  const newerFilename = "new-dirty-update.png";
+  await fileInput.setInputFiles({
+    name: newerFilename,
+    mimeType: "image/png",
+    buffer: VALID_PNG,
+  });
+  await expect(page.getByText(/Poker Hero has updated/i)).toBeVisible();
+  await expect(fileInput).toHaveValue(new RegExp(`${newerFilename}$`));
+  expect(dialogs).toEqual(["confirm"]);
+
+  await page.getByRole("button", { name: "Discard and reload" }).click();
+
   await expect(page).toHaveURL(/\/analyzer$/);
   await page.getByRole("button", { name: "Upload", exact: true }).click();
   await expect(page.getByLabel("Choose screenshots")).toHaveValue("");
-  expect(dialogs).toEqual(["confirm"]);
+  expect(dialogs).toEqual(["confirm", "confirm"]);
 });

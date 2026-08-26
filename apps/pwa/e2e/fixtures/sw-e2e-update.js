@@ -4,6 +4,10 @@ self.addEventListener("activate", (event) => {
 });
 self.addEventListener("message", (event) => {
   if (event.data?.type === "POKER_HERO_ACTIVATE_UPDATE") {
-    event.waitUntil(self.skipWaiting());
+    event.waitUntil(
+      new Promise((resolve) => setTimeout(resolve, 1_000)).then(() =>
+        self.skipWaiting(),
+      ),
+    );
   }
 });

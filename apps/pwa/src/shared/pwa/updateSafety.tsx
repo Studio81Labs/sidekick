@@ -5,6 +5,7 @@ import {
   useContext,
   useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -14,8 +15,13 @@ export interface UpdateSafetyReasons {
 }
 
 export interface UpdateSafetySnapshot extends UpdateSafetyReasons {
+  dirtyRevision: number;
   isBusy: boolean;
   isDirty: boolean;
+}
+
+interface UpdateSafetySource extends UpdateSafetyReasons {
+  revision: number;
 }
 
 interface UpdateSafetyContextValue {
@@ -27,6 +33,7 @@ interface UpdateSafetyContextValue {
 const EMPTY_SNAPSHOT: UpdateSafetySnapshot = {
   busy: [],
   dirty: [],
+  dirtyRevision: 0,
   isBusy: false,
   isDirty: false,
 };
@@ -43,15 +50,18 @@ function normalizedReasons(reasons: readonly string[]): string[] {
 
 export function UpdateSafetyProvider({ children }: { children: ReactNode }) {
   const [sources, setSources] = useState(
-    () => new Map<string, UpdateSafetyReasons>(),
+    () => new Map<string, UpdateSafetySource>(),
   );
+  const revisionRef = useRef(0);
   const updateSource = useCallback(
     (source: string, reasons: UpdateSafetyReasons) => {
       setSources((current) => {
         const next = new Map(current);
+        revisionRef.current += 1;
         next.set(source, {
           busy: normalizedReasons(reasons.busy),
           dirty: normalizedReasons(reasons.dirty),
+          revision: revisionRef.current,
         });
         return next;
       });
@@ -73,9 +83,16 @@ export function UpdateSafetyProvider({ children }: { children: ReactNode }) {
     const dirty = normalizedReasons(
       [...sources.values()].flatMap((source) => source.dirty),
     );
+    const dirtyRevision = Math.max(
+      0,
+      ...[...sources.values()]
+        .filter((source) => source.dirty.length > 0)
+        .map((source) => source.revision),
+    );
     return {
       busy,
       dirty,
+      dirtyRevision,
       isBusy: busy.length > 0,
       isDirty: dirty.length > 0,
     };
@@ -95,6 +112,7 @@ export function UpdateSafetyProvider({ children }: { children: ReactNode }) {
 export function useUpdateSafetyRegistration(
   source: string,
   reasons: UpdateSafetyReasons,
+  dirtyVersion: unknown = undefined,
 ) {
   const { removeSource, updateSource } = useContext(UpdateSafetyContext);
   const busyKey = JSON.stringify(normalizedReasons(reasons.busy));
@@ -105,7 +123,7 @@ export function useUpdateSafetyRegistration(
       busy: JSON.parse(busyKey) as string[],
       dirty: JSON.parse(dirtyKey) as string[],
     });
-  }, [busyKey, dirtyKey, source, updateSource]);
+  }, [busyKey, dirtyKey, dirtyVersion, source, updateSource]);
 
   useLayoutEffect(
     () => () => {

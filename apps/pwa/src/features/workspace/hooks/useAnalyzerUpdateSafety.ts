@@ -49,9 +49,13 @@ export function analyzerUpdateSafetyReasons({
   };
 }
 
-export function useAnalyzerUpdateSafety(input: AnalyzerUpdateSafetyInput) {
+export function useAnalyzerUpdateSafety(
+  input: AnalyzerUpdateSafetyInput,
+  dirtyVersion: unknown,
+) {
   useUpdateSafetyRegistration(
     "analyzer-workspace",
     analyzerUpdateSafetyReasons(input),
+    dirtyVersion,
   );
 }

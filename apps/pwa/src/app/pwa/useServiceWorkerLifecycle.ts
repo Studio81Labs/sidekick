@@ -17,12 +17,12 @@ const INITIAL_STATE: ServiceWorkerUpdateState = {
 export function shouldReloadForControllerChange(
   activationRequestedHere: boolean,
   safety: UpdateSafetySnapshot,
-  discardConfirmed: boolean,
+  confirmedDirtyRevision: number | null,
 ): boolean {
   return (
     activationRequestedHere &&
     !safety.isBusy &&
-    (!safety.isDirty || discardConfirmed)
+    (!safety.isDirty || confirmedDirtyRevision === safety.dirtyRevision)
   );
 }
 
@@ -33,7 +33,7 @@ export function useServiceWorkerLifecycle(
   const [state, setState] = useState(INITIAL_STATE);
   const waitingRef = useRef<ServiceWorker | null>(null);
   const activationRequestedRef = useRef(false);
-  const discardConfirmedRef = useRef(false);
+  const confirmedDirtyRevisionRef = useRef<number | null>(null);
   const safetyRef = useRef(safety);
   const prepareForReloadRef = useRef(prepareForReload);
   safetyRef.current = safety;
@@ -100,14 +100,14 @@ export function useServiceWorkerLifecycle(
         shouldReloadForControllerChange(
           activationRequestedHere,
           current,
-          discardConfirmedRef.current,
+          confirmedDirtyRevisionRef.current,
         )
       ) {
         prepareForReloadRef.current();
         window.location.reload();
         return;
       }
-      discardConfirmedRef.current = false;
+      confirmedDirtyRevisionRef.current = null;
       setState({ activated: true, activating: false, available: true });
     };
 
@@ -154,7 +154,8 @@ export function useServiceWorkerLifecycle(
       const waiting = waitingRef.current;
       if (!waiting) return false;
       activationRequestedRef.current = true;
-      discardConfirmedRef.current = discardDirty;
+      confirmedDirtyRevisionRef.current =
+        safety.isDirty && discardDirty ? safety.dirtyRevision : null;
       setState((current) => ({ ...current, activating: true }));
       waiting.postMessage({ type: "POKER_HERO_ACTIVATE_UPDATE" });
       return true;
