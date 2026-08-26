@@ -162,6 +162,37 @@ test("opens the cached shell offline without caching private routes", async ({
   // the cached document shell stored under `/`.
   await page.goto("/manifest.webmanifest");
 
+  // Put a foreign root response ahead of the recreated Poker Hero cache. The
+  // service worker must match only within its own versioned cache.
+  await page.evaluate(async () => {
+    const ownedCacheName = (await caches.keys()).find((name) =>
+      name.startsWith("poker-hero-shell-"),
+    );
+    if (!ownedCacheName) throw new Error("Poker Hero cache was not installed");
+    const ownedCache = await caches.open(ownedCacheName);
+    const ownedEntries = await Promise.all(
+      (await ownedCache.keys()).map(async (request) => {
+        const response = await ownedCache.match(request);
+        if (!response) throw new Error(`Missing ${request.url} cache entry`);
+        return [request, response] as const;
+      }),
+    );
+    await caches.delete(ownedCacheName);
+    const foreignCache = await caches.open("foreign-origin-cache");
+    await foreignCache.put(
+      "/",
+      new Response("foreign cache response", {
+        headers: { "content-type": "text/html" },
+      }),
+    );
+    const recreatedOwnedCache = await caches.open(ownedCacheName);
+    await Promise.all(
+      ownedEntries.map(([request, response]) =>
+        recreatedOwnedCache.put(request, response),
+      ),
+    );
+  });
+
   await context.setOffline(true);
   try {
     await page.goto("/offline-shell-proof");

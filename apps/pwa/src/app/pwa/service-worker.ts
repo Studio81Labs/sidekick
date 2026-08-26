@@ -76,7 +76,8 @@ async function networkFirstNavigation(request: Request): Promise<Response> {
     }
     return response;
   } catch (error) {
-    const shell = await caches.match("/");
+    const cache = await caches.open(CACHE_NAME);
+    const shell = await cache.match("/");
     if (shell) return shell;
     throw error;
   }
@@ -86,12 +87,12 @@ async function contentAddressedAsset(
   request: Request,
   pathname: string,
 ): Promise<Response> {
-  const cached = await caches.match(pathname);
+  const cache = await caches.open(CACHE_NAME);
+  const cached = await cache.match(pathname);
   if (cached) return cached;
 
   const response = await fetch(request);
   if (response.ok && response.type === "basic") {
-    const cache = await caches.open(CACHE_NAME);
     await cache.put(pathname, response.clone());
   }
   return response;
