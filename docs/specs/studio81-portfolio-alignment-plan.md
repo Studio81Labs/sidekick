@@ -103,6 +103,9 @@ Required changes:
 - update the `main` repository ruleset or branch protection in the same rollout
   so the required `Frontend CI / Frontend Test & Build` context is replaced by
   the exact renamed PWA workflow and job context;
+- make `pwa-ci.yml` trigger on every pull request, move path selection inside
+  the workflow, and expose one always-emitted required gate that succeeds only
+  when PWA validation passed or was intentionally skipped;
 - rename the Compose service from `frontend` to `pwa` and change Dockerfile,
   bundle-budget, OpenAPI export, Playwright, labeler, Renovate, and generated
   contract paths;
@@ -115,6 +118,8 @@ Acceptance gates:
 - no live reference to `apps/frontend` remains outside archived documentation;
 - `main` requires the renamed PWA CI context, no longer requires the obsolete
   frontend context, and a test PR is blocked until the PWA check succeeds;
+- a documentation-only or backend-only test PR emits and completes the required
+  PWA gate instead of waiting forever on a path-filtered workflow;
 - `pnpm pwa:test`, `pnpm pwa:performance`, and `pnpm test:e2e` pass;
 - both Docker images build from the repository root;
 - `docker compose -f infra/docker/compose.yaml config` succeeds using the
@@ -182,10 +187,17 @@ Concrete convergence rules:
 - whenever that naming change affects a required check, atomically replace the
   old context in the `main` ruleset or branch protection with the exact emitted
   context before relying on the renamed workflow;
+- keep every required context observable on every pull request. Path-scoped
+  workflows must move change detection inside the workflow and finish through
+  an always-emitted gate rather than filtering out the complete workflow;
 - keep deployment promotion as `main` to staging, `v*` to production, and
   explicit manual environment selection;
 - require the release-version gate before every production-capable deploy;
 - include every Docker/workspace/CI script input in deployment path filters;
+- install deployment CLIs, including Wrangler and the Sentry CLI, as exact
+  workspace development dependencies and invoke their lockfile-resolved
+  binaries through `pnpm exec`; deployment workflows must not resolve
+  `wrangler@latest` or an unversioned CLI from the network;
 - rename `infra/docker/compose.yaml` to the portfolio-standard
   `infra/docker/docker-compose.yml` and update every script and current
   documentation reference atomically;
@@ -212,6 +224,11 @@ Acceptance gates:
 - every final required-check context matches a check emitted by the converged
   workflows, no superseded context remains required, and a test PR cannot merge
   before those checks succeed;
+- documentation-only and backend-only test PRs emit every required gate and do
+  not remain pending because a workflow-level path filter skipped the context;
+- the PWA deployment reports the declared lockfile-pinned Wrangler version and
+  no deployment workflow contains `pnpm dlx wrangler@latest` or another
+  floating CLI invocation;
 - CI helper self-tests pass locally;
 - formatting and security scans pass on the migration branch;
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
