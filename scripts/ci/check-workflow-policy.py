@@ -49,10 +49,15 @@ def validate_workflow(path: Path, root: Path) -> list[str]:
             errors.append(f"{path}:{job_id}: job name must use '<area>: <proof>'")
 
         reusable = job.get("uses")
-        if isinstance(reusable, str) and reusable.startswith("./"):
-            target = root / reusable.removeprefix("./")
-            if not target.is_file():
-                errors.append(f"{path}:{job_id}: missing reusable workflow {reusable}")
+        if isinstance(reusable, str):
+            if reusable.startswith("./"):
+                target = root / reusable.removeprefix("./")
+                if not target.is_file():
+                    errors.append(f"{path}:{job_id}: missing reusable workflow {reusable}")
+            elif not ACTION.fullmatch(reusable):
+                errors.append(
+                    f"{path}:{job_id}: reusable workflow is not pinned to a full SHA: {reusable}"
+                )
 
         for step in job.get("steps") or []:
             if not isinstance(step, dict) or "uses" not in step:
@@ -139,6 +144,16 @@ def self_test() -> int:
         direct = workflow.with_name("direct.yml")
         direct.write_text("jobs:\n  export:\n    runs-on: ubuntu-latest\n")
         assert len(validate_workflow(direct, root)) == 1
+        direct.write_text(
+            "jobs:\n  remote:\n    name: 'ci: remote'\n"
+            "    uses: owner/repo/.github/workflows/test.yml@main\n"
+        )
+        assert len(validate_workflow(direct, root)) == 1
+        direct.write_text(
+            "jobs:\n  remote:\n    name: 'ci: remote'\n"
+            "    uses: owner/repo/.github/workflows/test.yml@" + "b" * 40 + "\n"
+        )
+        assert validate_workflow(direct, root) == []
     print("check-workflow-policy self-test passed")
     return 0
 

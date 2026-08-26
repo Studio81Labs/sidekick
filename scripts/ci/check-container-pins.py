@@ -7,6 +7,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 
 PINNED = re.compile(
     r"^[a-z0-9][a-z0-9._/-]*:[a-zA-Z0-9._+-]+@sha256:[a-f0-9]{64}$"
@@ -16,6 +18,33 @@ IMAGE_TOKEN = re.compile(
 )
 SNAPSHOT = "https://snapshot.debian.org/archive/debian/20260825T000000Z"
 GOSU = "gosu=1.17-3+b4"
+
+
+def workflow_images(text: str) -> list[tuple[str, str]]:
+    document = yaml.safe_load(text) or {}
+    jobs = document.get("jobs") or {}
+    if not isinstance(jobs, dict):
+        return []
+
+    images: list[tuple[str, str]] = []
+    for job_id, job in jobs.items():
+        if not isinstance(job, dict):
+            continue
+        container = job.get("container")
+        if isinstance(container, str):
+            images.append((f"job {job_id!r} container", container))
+        elif isinstance(container, dict) and isinstance(container.get("image"), str):
+            images.append((f"job {job_id!r} container", container["image"]))
+
+        services = job.get("services") or {}
+        if not isinstance(services, dict):
+            continue
+        for service_id, service in services.items():
+            if isinstance(service, dict) and isinstance(service.get("image"), str):
+                images.append(
+                    (f"job {job_id!r} service {service_id!r}", service["image"])
+                )
+    return images
 
 
 def validate(path: str, text: str) -> list[str]:
@@ -33,6 +62,16 @@ def validate(path: str, text: str) -> list[str]:
                 image = stripped.split()[1]
                 if not PINNED.fullmatch(image):
                     errors.append(f"{path}:{number}: mutable base image {image!r}")
+
+    if path.startswith(".github/workflows/") and path.endswith(".yml"):
+        try:
+            images = workflow_images(text)
+        except yaml.YAMLError as error:
+            errors.append(f"{path}: invalid workflow YAML: {error}")
+        else:
+            for location, image in images:
+                if not PINNED.fullmatch(image):
+                    errors.append(f"{path}: mutable workflow {location} image {image!r}")
 
     # Explicit image declarations and static docker-run references. Variable
     # references are covered by their *_IMAGE declaration.
@@ -78,6 +117,20 @@ def self_test() -> int:
         ".github/workflows/x.yml",
         f"  TOOL_IMAGE: python:3.12@sha256:{digest}\n",
     ) == []
+    workflow = (
+        "jobs:\n"
+        "  test:\n"
+        f"    container: node:24@sha256:{digest}\n"
+        "    services:\n"
+        "      database:\n"
+        f"        image: postgres:17@sha256:{digest}\n"
+        "  object-container:\n"
+        "    container:\n"
+        f"      image: python:3.12@sha256:{digest}\n"
+    )
+    assert validate(".github/workflows/x.yml", workflow) == []
+    mutable_workflow = workflow.replace(f"@sha256:{digest}", "")
+    assert len(validate(".github/workflows/x.yml", mutable_workflow)) == 3
     backend = (
         good
         + f"RUN echo {SNAPSHOT} && apt-get install -y {GOSU}\n"
