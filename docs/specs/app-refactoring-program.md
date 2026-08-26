@@ -557,9 +557,10 @@ retiring three presentation barrels removed four more. Moving canonical poker
 state plus job identity/metadata to domain and shared owners removed five more,
 and lifting hand-review decision rendering to page composition removed the final
 two. The peer-feature baseline is now empty. Automated release gates cover
-dependency vulnerabilities, deployment monitoring, WCAG accessibility in both
-browser profiles, production bundle budgets, browser workflows, container
-builds, persistence/backup compatibility, and the pinned solver suite.
+production JavaScript dependency vulnerabilities, deployment monitoring, WCAG
+accessibility in both browser profiles, production bundle budgets, browser
+workflows, container builds, persistence/backup compatibility, and the pinned
+solver suite.
 
 - Removed obsolete handwritten wire types, API client facade, temporary barrels,
   dead page helpers, and duplicated fixtures.
