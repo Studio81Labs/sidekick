@@ -198,6 +198,9 @@ Concrete convergence rules:
 - whenever that naming change affects a required check, atomically replace the
   old context in the `main` ruleset or branch protection with the exact emitted
   context before relying on the renamed workflow;
+- add the final secret, dependency, and Semgrep policy contexts emitted by
+  `security-scan.yml` to the `main` ruleset as required checks in the same
+  rollout;
 - keep every required context observable on every pull request. Path-scoped
   workflows must move change detection inside the workflow and finish through
   an always-emitted gate rather than filtering out the complete workflow;
@@ -235,6 +238,8 @@ Acceptance gates:
 - every final required-check context matches a check emitted by the converged
   workflows, no superseded context remains required, and a test PR cannot merge
   before those checks succeed;
+- a test PR with a controlled secret, vulnerable dependency fixture, or Semgrep
+  violation fails the corresponding required security context and cannot merge;
 - documentation-only and backend-only test PRs emit every required gate and do
   not remain pending because a workflow-level path filter skipped the context;
 - the PWA deployment reports the declared lockfile-pinned Wrangler version and
@@ -299,6 +304,10 @@ and release status are known.
 
 Required changes:
 
+- add a numbered ADR before granting cross-repository workflow access. It must
+  define token ownership, credential type, least-privilege scopes and repository
+  access, secret storage, rotation and revocation, blast radius, incident
+  response, and rollout and rollback behavior;
 - add Poker Hero to `Studio81Labs/.github/profile/README.md` with its approved
   public URL, status badge, and post-hand training description;
 - add the product to the Studio81 Labs marketing site's product surface when
@@ -312,6 +321,9 @@ Required changes:
 
 Acceptance gates:
 
+- the numbered sibling-token ADR is linked from the architecture reference, and
+  each repository's configured access matches its ownership, scope, rotation,
+  revocation, and rollback requirements;
 - the organization profile links to the correct deployed environment;
 - no portfolio copy presents the tool as live-play assistance;
 - every sibling drift workflow can read and compare all other private repos;
