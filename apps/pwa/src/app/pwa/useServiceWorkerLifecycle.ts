@@ -160,7 +160,7 @@ export function useServiceWorkerLifecycle(
       waiting.postMessage({ type: "POKER_HERO_ACTIVATE_UPDATE" });
       return true;
     },
-    [safety.isBusy, safety.isDirty, state.activated],
+    [safety.dirtyRevision, safety.isBusy, safety.isDirty, state.activated],
   );
 
   return { ...state, activate };
