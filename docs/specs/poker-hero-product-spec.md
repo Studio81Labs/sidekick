@@ -364,8 +364,14 @@ ceiling on learning quality, so it is treated as first-class.
   position, stack-depth, sizing, economic, and mixed-policy boundaries. V1's
   routing/context extraction may be reused only where independently validated;
   its threshold policy must not be relabeled `solved`.
-- **Heads-up postflop** — solved trees, where reviewed history resolves an exact
-  supported line. Trustworthy.
+- **Heads-up postflop** — potentially mastery-gradeable only when the reviewed
+  hand resolves an exact supported line against a benchmarked solved-tree
+  revision **and** all required root inputs are verified: effective stack,
+  players/relative position, pot and action history, board, and ranges derived
+  and conditioned from complete prior-street evidence. Any 100-BB stack
+  assumption, configured/default range, ambiguous player mapping, incomplete
+  prior street, or approximate/skipped conditioning makes the current result
+  `heuristic`, even if the current-street line exists.
 - **Multiway postflop** — _not_ solved. Currently a range/EV heuristic. This is
   the largest gap and covers a large share of real hands.
 
@@ -405,6 +411,11 @@ policy detail needed to distinguish a supported mix from an error, the decision
 remains visible as solved evidence but ungraded for mastery and drills. Aggregate
 frequency adherence may be shown as diagnostic detail, but it does not
 retroactively turn an individually supported action into a mistake.
+
+Solved eligibility also requires evidence that every route-critical canonical
+input matches the reference. A provider fallback or default for effective stack,
+range, position, action history, board conditioning, or economic context is an
+assumption, not verification, and forces the result to `heuristic`/ungraded.
 
 Active mastery for one concept/coverage band uses one pinned reference-policy
 revision. A new chart, solved tree, economic model, or support tolerance is
@@ -480,6 +491,18 @@ Illustrative (not exhaustive):
 The taxonomy is data, not code — it is versioned and can grow. A decision that
 maps to no supported concept is stored with an absent tag and does not
 participate in mastery; implementations must not fabricate a catch-all concept.
+Every present tag records the immutable taxonomy/mapping revision and concept
+definition revision that produced it.
+
+Active mastery for one concept series uses one pinned taxonomy revision. A
+taxonomy change that alters definitions or mapping (including splits and merges)
+is staged and validated, then must atomically retag all affected active decisions
+and rebuild mastery, drills, principles, and proof metrics, or start clearly
+separate concept series. Old and new concept semantics are never combined. Until
+migration succeeds, the prior taxonomy remains active or affected decisions are
+visibly excluded; historical tags and derived artifacts retain their original
+revision for audit. An approved principle is usable only with the compatible
+taxonomy and reference revisions against which it was reviewed.
 
 ### 6.2 Mastery state per concept
 
@@ -638,8 +661,9 @@ reshapes the product; a failed safety prerequisite blocks Phase 1.
 **Phase 1 — minimum teaching loop (preflop-first)**
 
 - Import → review/correction → approved canonical hand → decision points →
-  `solved` grading (preflop + HU postflop) → concept tagging → leak detection →
-  principle feedback → active-recall drill → spaced repetition.
+  input-verified `solved` grading (independently sourced preflop and eligible HU
+  postflop only) → versioned concept tagging → leak detection → principle
+  feedback → active-recall drill → spaced repetition.
 - Tested on the two-person dogfooding pair (Target user & boundaries §): the
   poker-player friend for grading correctness, the non-player builder for
   comprehensibility through the fixed solved-library transfer assessment.
@@ -682,7 +706,7 @@ Poker Hero V2 is successful when:
   `heuristic`; solved grades preserve mixed-strategy policy support; and
   economic-context mismatches, heuristic results, or policy-incomplete decisions
   never move mastery or generate drills. Active mastery never mixes reference
-  revisions.
+  or taxonomy revisions, and assumed solver inputs never qualify as verified.
 - The app identifies **concept-level leaks** (recurring, EV-ranked), not just
   per-hand errors.
 - Feedback teaches a **transferable principle**, verifiable by the player
