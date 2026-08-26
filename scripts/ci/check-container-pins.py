@@ -147,7 +147,7 @@ def main(argv: list[str]) -> int:
 
     root = Path(__file__).resolve().parents[2]
     candidates = [
-        *root.glob("apps/**/Dockerfile"),
+        *root.glob("**/Dockerfile"),
         *root.glob(".github/workflows/*.yml"),
         *root.glob(".github/workflows/*.yaml"),
         *root.glob("scripts/**/*"),
