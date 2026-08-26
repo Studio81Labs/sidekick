@@ -103,13 +103,17 @@ ideal two-person test pair that is otherwise hard to assemble.
 - The **poker-player friend** validates that grading is _correct_ — that what the
   app calls a leak is genuinely a leak.
 - The **non-player builder** validates that the teaching is _comprehensible_ —
-  whether the app can carry someone from "I don't understand these benchmarks" to
-  "this is my mistake, and here's the principle."
+  using a fixed assessment of reviewed, solved library spots. The builder first
+  receives the principle-first explanation for one concept, then predicts the
+  action in a new, unseen spot for that concept and explains the principle back
+  in plain language.
 
 If the app can teach the non-player builder, that is the strongest possible proof
 it teaches. Phase 1 success (§9) therefore requires **both**: the friend finds a
-real leak he didn't know he had, _and_ the non-player builder understands his own
-leaks and can apply one taught principle to a new, unseen hand.
+real leak he didn't know he had, _and_ the non-player builder passes the fixed
+library-based transfer assessment. Because the builder has no imported playing
+history, this assessment does not claim to detect a personal leak, update mastery,
+or contribute to proof-of-learning metrics.
 
 ---
 
@@ -223,9 +227,12 @@ system never sees site-specific text. Minimum shape:
 
 - Hand id, site, game type, stakes, table size, blinds/antes.
 - Button seat.
-- Seats: for each, seat number, starting stack, and **derived position**
-  (UTG/MP/CO/BTN/SB/BB), computed from seat count + button. Heads-up special
-  case (button = SB) is handled explicitly.
+- Seats: for each, seat number, starting stack, and participation status
+  (including dealt-in and sitting-out/not-dealt states). **Derived position**
+  (UTG/MP/CO/BTN/SB/BB) is assigned only to dealt-in players and is computed from
+  their action ring around the button; seated players who were not dealt in never
+  shift another player's position. The heads-up special case (button = SB) is
+  handled explicitly.
 - Hero identity and hero hole cards (from the "dealt to" line).
 - Streets: for each of preflop/flop/turn/river, the board cards and an **ordered
   action list** (actor, action type, total committed).
@@ -428,6 +435,11 @@ Drills draw from the player's _own_ hands first (their real leaks), which is the
 wedge incumbents are weak at, and can be topped up with library spots for the
 same concept when the player's own sample is thin.
 
+The dogfooding comprehension check uses a fixed pair of reviewed, solved library
+spots for one concept: one teaching example and one unseen transfer question.
+This assessment is not a personal drill, does not assert that the non-player has
+a leak, and does not update mastery or proof-of-learning metrics.
+
 ### 6.6 Spaced repetition
 
 Missed drills re-enter a scheduler (Leitner-style boxes: correct → longer
@@ -508,14 +520,15 @@ failing kills or reshapes the product.
   spaced repetition.
 - Tested on the two-person dogfooding pair (Target user & boundaries §): the
   poker-player friend for grading correctness, the non-player builder for
-  comprehensibility.
+  comprehensibility through the fixed solved-library transfer assessment.
 - Success metric (**both required**): (a) on a real session the app surfaces a
   leak the friend did not already know he had ("huh, I do that?"), and after
   drilling a _later_ session shows that leak measurably closing; **and** (b) the
-  non-player builder can understand his own flagged leaks and apply one taught
-  principle to a new, unseen hand for the same concept. If (a) fails, grading or
-  the mastery model is unproven; if (b) fails, the teaching is unproven — and no
-  amount of UI polish fixes either.
+  non-player builder can explain one taught principle in plain language and apply
+  it correctly to the fixed new, unseen solved-library spot for the same concept.
+  The builder's assessment does not create a leak or mastery record. If (a)
+  fails, grading or the mastery model is unproven; if (b) fails, the teaching is
+  unproven — and no amount of UI polish fixes either.
 
 **Phase 2 — breadth**
 
