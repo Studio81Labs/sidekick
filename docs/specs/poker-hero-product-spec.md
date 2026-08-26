@@ -234,6 +234,11 @@ shape includes at minimum:
   provenance, game type, stakes, table size, blinds/antes. Missing source time
   remains explicitly unknown; ingestion time must not stand in for play time in
   recency, session, or proof-of-learning calculations.
+- Economic context when supplied: for cash games, currency and the applicable
+  rake/drop schedule and cap; for tournaments, tournament identity/type and
+  stage, payout/paid-place structure, players remaining, relevant remaining
+  stacks, bounty format/values, and any other ICM inputs. Missing economic fields
+  remain explicitly unknown rather than inferred.
 - Button seat.
 - Seats: for each, seat number, starting stack, and participation status
   (including dealt-in and sitting-out/not-dealt states). **Derived position**
@@ -287,7 +292,8 @@ From a user-approved canonical hand, extract each hero decision as:
 - The canonical decision state (everything the recommendation provider needs).
 - The **actual action taken** (from the history — this is the key gift of
   import: the real decision is already known).
-- The **concept tag** (§6.1), derivable from the state.
+- The optional **primary concept tag** (§6.1), derivable from the state and
+  absent when the taxonomy does not support the decision.
 
 One approved imported hand yields zero or more decision points (preflop, flop,
 turn, river). A valid no-decision hand, such as a big-blind walk, is retained with
@@ -355,6 +361,13 @@ ceiling on learning quality, so it is treated as first-class.
 - **Multiway postflop** — _not_ solved. Currently a range/EV heuristic. This is
   the largest gap and covers a large share of real hands.
 
+Coverage also includes game economics. A solved route declares the cash rake
+model or tournament chip-EV/ICM/bounty context it assumes and the canonical
+fields required to match it. Cash hands with an unknown or different material
+rake structure and tournament hands lacking the payout, field, stack, or bounty
+state required by the reference are heuristic/ungraded for mastery. A generic
+chip-EV chart must never be presented as solved ICM or bounty-aware policy.
+
 ### 5.2 The trustworthiness gate (non-negotiable)
 
 Every graded decision carries a `grade_source`:
@@ -368,11 +381,12 @@ Every graded decision carries a `grade_source`:
 `grade_source: solved` is necessary but not sufficient for right/wrong grading.
 Each solved result also preserves the reference policy for the resolved spot:
 supported actions and sizings, their frequencies when available, candidate EVs,
-and the versioned material-frequency/EV tolerance used to decide support. The
-player's action is a supported policy match when it has meaningful reference
-frequency or is within the accepted EV-equivalence tolerance, even when it is
-not the solver's headline action. Such a mixed-strategy alternative is not a
-mistake and cannot create a leak or corrective drill.
+the matched economic assumptions, and the immutable reference/policy/tolerance
+revision used to decide support. The player's action is a supported policy match
+when it has meaningful reference frequency or is within the accepted
+EV-equivalence tolerance, even when it is not the solver's headline action. Such
+a mixed-strategy alternative is not a mistake and cannot create a leak or
+corrective drill.
 
 Only an action outside the complete solved policy support can be called a
 mistake and contribute an error to mastery. If the reference response omits the
@@ -380,6 +394,15 @@ policy detail needed to distinguish a supported mix from an error, the decision
 remains visible as solved evidence but ungraded for mastery and drills. Aggregate
 frequency adherence may be shown as diagnostic detail, but it does not
 retroactively turn an individually supported action into a mistake.
+
+Active mastery for one concept/coverage band uses one pinned reference-policy
+revision. A new chart, solved tree, economic model, or support tolerance is
+staged and benchmarked before activation. It must then either atomically regrade
+all affected active decisions and rebuild mastery, drills, and proof metrics, or
+start a clearly separate mastery series; old and new policy classifications are
+never combined. Until migration succeeds, the prior revision stays active or
+the affected decisions are visibly excluded. Historical grades retain their
+original reference revision for audit.
 
 This directly prevents the app from teaching wrong things. A player can never
 have a leak "detected" or drilled on the basis of a guess. It also makes the
@@ -427,7 +450,9 @@ mastery model over a poker skill tree.
 
 A hierarchical, versioned set of poker concepts. Each concept has an id, a
 context (street + situation), and a testable definition. Every decision point
-maps to exactly one **primary concept**, derivable from its canonical state.
+maps to zero or one **primary concept**, derivable from its canonical state. A
+decision must map to exactly one supported primary concept before it is eligible
+for mastery or drills.
 
 Illustrative (not exhaustive):
 
@@ -439,7 +464,8 @@ Illustrative (not exhaustive):
 - **River:** thin value; bluff selection; bluff-catching; overbet.
 
 The taxonomy is data, not code — it is versioned and can grow. A decision that
-maps to no supported concept is stored but does not participate in mastery.
+maps to no supported concept is stored with an absent tag and does not
+participate in mastery; implementations must not fabricate a catch-all concept.
 
 ### 6.2 Mastery state per concept
 
@@ -579,8 +605,9 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
 - _Grading spike:_ confirm trustworthy references. Preflop charts in hand.
   Resolve §5.3 for postflop (precompute / license / defer). Kill criterion:
   obtain `solved` references you'd stake the product on, at absorbable cost,
-  under a license permitting commercial serving of outputs — or consciously ship
-  preflop-first.
+  under a license permitting commercial serving of outputs, with immutable
+  policy revisions, complete mixed-strategy support, and declared cash/tournament
+  economic assumptions — or consciously ship preflop-first.
 - _Safety prerequisite:_ before any Phase 1 user validation, remove screenshot
   upload, live window/screen/tab capture, and recommendation automation from the
   player workflow. Preserve capture/upload only in the disabled-by-default,
@@ -637,8 +664,9 @@ Poker Hero V2 is successful when:
   learning data.
 - Grading is honest: every decision shows whether it was `solved` or
   `heuristic`; solved grades preserve mixed-strategy policy support; and
-  heuristic or policy-incomplete decisions never move mastery or generate
-  drills.
+  economic-context mismatches, heuristic results, or policy-incomplete decisions
+  never move mastery or generate drills. Active mastery never mixes reference
+  revisions.
 - The app identifies **concept-level leaks** (recurring, EV-ranked), not just
   per-hand errors.
 - Feedback teaches a **transferable principle**, verifiable by the player
