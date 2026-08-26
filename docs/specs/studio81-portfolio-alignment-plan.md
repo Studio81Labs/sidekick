@@ -130,6 +130,9 @@ Required changes:
   `openapi-check.yml` as the freshness gate;
 - make backend, PWA, and E2E workflows depend on the same generated contract
   artifact where appropriate;
+- update the PWA Dockerfile and its build context so workspace package manifests
+  are available before `pnpm install` and the OpenAPI package sources are
+  available before the production build;
 - preserve deterministic generation and the existing backend contract tests.
 
 Acceptance gates:
@@ -137,6 +140,8 @@ Acceptance gates:
 - `pnpm api:generate` produces no uncommitted diff on a clean tree;
 - `pnpm api:check` passes;
 - the PWA has no relative imports into an app-owned generated contract folder;
+- `docker build -f apps/pwa/Dockerfile -t poker-hero-pwa:wave-2 .` succeeds with
+  the extracted workspace packages available inside the build;
 - backend tests, PWA tests/build, and browser E2E remain green.
 
 ### Wave 3: Align Repository And CI Infrastructure
