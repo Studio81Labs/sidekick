@@ -1,0 +1,48 @@
+.pwa-status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  left: 50%;
+  max-width: min(620px, calc(100vw - 24px));
+  position: fixed;
+  top: 12px;
+  transform: translateX(-50%);
+  width: max-content;
+  z-index: 1000;
+}
+
+.pwa-status {
+  align-items: center;
+  background: var(--dark);
+  border: 2px solid var(--bg);
+  box-shadow: 0 4px 18px rgba(32, 30, 29, 0.28);
+  color: var(--bg);
+  display: flex;
+  font-size: 12px;
+  font-weight: 700;
+  gap: 12px;
+  justify-content: space-between;
+  padding: 9px 12px;
+}
+
+.pwa-status.offline {
+  background: #6a341e;
+}
+
+.pwa-status button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 8px;
+}
+
+@media (max-width: 640px) {
+  .pwa-status-stack {
+    top: 8px;
+  }
+
+  .pwa-status {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+}

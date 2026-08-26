@@ -535,6 +535,36 @@ styles, hooks, and non-React presentation or domain support. Route-level styles
 are limited to page composition; feature selectors must stay with their owning
 component or feature. Reusable form and dialog controls, API access, primitive
 types, and generic formatting helpers live under `src/shared`.
+
+The production Vite build has separate document and
+`src/app/pwa/service-worker.ts` entries. The build plugin emits the worker at the
+stable `/sw.js` URL, derives a `poker-hero-shell-<build digest>` cache name, and
+injects an exact allowlist containing `/` plus every emitted content-addressed
+file below `/assets/`. It rejects a mutable asset in that list, and the
+post-build verifier checks the generated worker, manifest, icon dimensions,
+and install metadata. The worker owns the application-shell network boundary,
+so the source-architecture inventory grants only that exact module direct
+`fetch` access outside a domain API adapter.
+
+Navigations are network-first and may fall back to the cached `/` shell.
+Content-addressed bundles are cache-first. Cross-origin requests, `/api`, every
+path below `/api/`, and the exact `/mcp` path receive no service-worker
+response; encoded private equivalents fail closed. No runtime response outside
+the generated allowlist enters Cache Storage. The Cloudflare edge Worker runs
+before Static Assets to revalidate `/sw.js` and stable metadata while marking
+hashed bundles immutable. `apps/pwa/nginx.conf` applies the same header contract
+for the container deployment path.
+
+`shared/pwa/updateSafety.tsx` aggregates named dirty and busy reasons from
+independent feature owners. The analyzer registers all correction, screenshot,
+training, lesson, capture, mutation, restore, and benchmark state; Agent access
+registers administrator and credential drafts, unacknowledged one-time tokens,
+and mutations. `PwaRuntime` uses the aggregate for unload protection, offline
+status, and worker updates. A newly installed worker waits until the user asks
+to activate it, never exposes the activation action while work is busy, and
+requires confirmation before discarding dirty state. The coordinator rechecks
+safety on `controllerchange` before reloading. New forms and non-replayable
+operations must register with this owner before shipping.
 The shared API layer keeps base URL selection, response decoding, retry
 metadata, and readable error conversion in one transport core. Product
 endpoints live in focused domain adapters with colocated tests. MCP

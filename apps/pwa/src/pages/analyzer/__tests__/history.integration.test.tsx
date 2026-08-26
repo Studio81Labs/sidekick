@@ -631,13 +631,15 @@ describe("Analyzer history", () => {
         }),
       ).toBeDisabled(),
     );
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/history?query=older+target",
-      `http://localhost:8000/api/jobs/${targetJob.id}/approve`,
-      `http://localhost:8000/api/jobs/${targetJob.id}`,
-      `http://localhost:8000/api/jobs/${targetJob.id}`,
-      "http://localhost:8000/api/history",
-    ]);
+    await waitFor(() =>
+      expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
+        "http://localhost:8000/api/history?query=older+target",
+        `http://localhost:8000/api/jobs/${targetJob.id}/approve`,
+        `http://localhost:8000/api/jobs/${targetJob.id}`,
+        `http://localhost:8000/api/jobs/${targetJob.id}`,
+        "http://localhost:8000/api/history",
+      ]),
+    );
     expect(
       JSON.parse(
         String(window.localStorage.getItem("poker-training-history-v1")),

@@ -40,7 +40,7 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command: `VITE_API_BASE_URL=${backendUrl} pnpm exec vite --host 127.0.0.1 --port 4174 --strictPort`,
+      command: `VITE_API_BASE_URL=${backendUrl} pnpm build && cp e2e/fixtures/sw-e2e-update.js dist/sw-e2e-update.js && pnpm exec vite preview --host 127.0.0.1 --port 4174 --strictPort`,
       url: frontendUrl,
       timeout: 120_000,
       reuseExistingServer: false,

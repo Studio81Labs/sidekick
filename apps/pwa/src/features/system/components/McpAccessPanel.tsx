@@ -22,6 +22,7 @@ import type {
   McpPrincipal,
   McpScope,
 } from "../../../shared/types/mcp";
+import { useMcpUpdateSafety } from "../hooks/useMcpUpdateSafety";
 
 export function McpAccessPanel({
   onPendingTokenChange,
@@ -41,6 +42,12 @@ export function McpAccessPanel({
   const [tokenRequestPending, setTokenRequestPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tokenPending = issued !== null || tokenRequestPending;
+  useMcpUpdateSafety({
+    administratorSession: adminToken !== "",
+    credentialDraft: name !== "" || access !== "read" || expiry !== "",
+    operation: busyId !== null || tokenRequestPending,
+    unacknowledgedCredential: issued !== null,
+  });
 
   useEffect(() => {
     onPendingTokenChange?.(tokenPending);

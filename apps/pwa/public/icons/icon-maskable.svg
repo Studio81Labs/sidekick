@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Poker Hero maskable icon</title>
+  <rect width="512" height="512" fill="#c52a12" />
+  <rect x="94" y="94" width="324" height="324" fill="#201e1d" />
+  <rect x="106" y="106" width="300" height="300" fill="#c52a12" />
+  <path fill="#f3f2f2" d="M256 146 366 366h-58l-22-50h-60l-22 50h-58l110-220Z" />
+  <path fill="#c52a12" d="m256 222-17 48h34l-17-48Z" />
+</svg>

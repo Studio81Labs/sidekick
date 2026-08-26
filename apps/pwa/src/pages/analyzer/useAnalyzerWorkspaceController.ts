@@ -50,6 +50,7 @@ import {
 } from "../../features/workspace/hooks/useAnalyzerWorkflow";
 import { useAnalyzerRecoveryRuntimeServices } from "../../features/workspace/hooks/useAnalyzerRecoveryRuntimeServices";
 import { useAnalyzerRequestRuntimeServices } from "../../features/workspace/hooks/useAnalyzerRequestRuntimeServices";
+import { useAnalyzerUpdateSafety } from "../../features/workspace/hooks/useAnalyzerUpdateSafety";
 import { archiveJobsCommand } from "../../features/history/services/archiveJobsCommand";
 import {
   fetchBenchmarkImportReceiptQuery,
@@ -476,6 +477,52 @@ export function useAnalyzerWorkspaceController({
     pipelineSelection,
     loadPipelineCapabilities,
     setPipelineSelection,
+  });
+
+  let screenshotTagsDraftInvalid = false;
+  let parsedScreenshotTags: string[] = [];
+  try {
+    parsedScreenshotTags = parseScreenshotTags(screenshotTagInput);
+  } catch {
+    screenshotTagsDraftInvalid = true;
+  }
+  const screenshotMetadataDraft = Boolean(
+    managedJob &&
+    (screenshotTitle.trim() !== (managedJob.title ?? "") ||
+      screenshotNotes.trim() !== (managedJob.notes ?? "") ||
+      screenshotTagsDraftInvalid ||
+      JSON.stringify(parsedScreenshotTags) !==
+        JSON.stringify(screenshotTags(managedJob))),
+  );
+  const savedTrainingSizing =
+    activeTrainingDecision?.sizing === null ||
+    activeTrainingDecision?.sizing === undefined
+      ? ""
+      : String(activeTrainingDecision.sizing);
+  const trainingAnswerDraft = Boolean(
+    currentStateApproved &&
+    !activeRecommendation &&
+    (trainingAction !== (activeTrainingDecision?.action ?? "") ||
+      trainingSizing.trim() !== savedTrainingSizing ||
+      trainingCertainty !== (activeTrainingDecision?.certainty ?? "")),
+  );
+  const lessonNoteDraft = Boolean(
+    trainingReviewNoteEditing &&
+    trainingReviewNote.trim() !== (job?.training_review_note ?? ""),
+  );
+  useAnalyzerUpdateSafety({
+    analyzerMutation: busy,
+    backupRestore: backupRestoring,
+    benchmarkOperation:
+      benchmarkImporting || benchmarkRunning || benchmarkUpdating,
+    detectedStateDraft: formDirtyRef.current,
+    lessonNoteDraft,
+    pendingScreenshotFiles: files.length > 0,
+    screenCapture: screenSharing,
+    screenshotMetadataDraft,
+    screenshotMutation: screenshotMetadataSaving || screenshotDeleting,
+    trainingAnswerDraft,
+    upload: queueProgress !== null,
   });
 
   useAnalyzerRouteRestore({

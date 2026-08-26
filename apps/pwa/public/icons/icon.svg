@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">Poker Hero</title>
+  <rect width="512" height="512" fill="#f3f2f2" />
+  <rect x="36" y="36" width="440" height="440" fill="#201e1d" />
+  <rect x="50" y="50" width="412" height="412" fill="#c52a12" />
+  <path fill="#f3f2f2" d="M256 104 410 408h-82l-30-68h-84l-30 68h-82L256 104Z" />
+  <path fill="#c52a12" d="m256 210-23 68h46l-23-68Z" />
+</svg>
