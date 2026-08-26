@@ -53,6 +53,7 @@ jobs:
           python3 scripts/ci/check-pnpm-overrides.py --self-test
           python3 scripts/ci/check-semgrep-fixture.py --self-test
           python3 scripts/ci/check-sibling-drift.py --self-test
+          python3 scripts/ci/prune-stale-caches.test.py
           python3 scripts/ci/check-container-pins.py --self-test
           python3 scripts/ci/check-workflow-policy.py --self-test
       - name: Every self-test is wired
@@ -60,6 +61,9 @@ jobs:
           set -euo pipefail
           missing=0
           for file in scripts/ci/*.test.sh; do
+            grep -q "$(basename "$file")" .github/workflows/ci-scripts.yml || missing=1
+          done
+          for file in scripts/ci/*.test.py; do
             grep -q "$(basename "$file")" .github/workflows/ci-scripts.yml || missing=1
           done
           for file in scripts/ci/*.py; do

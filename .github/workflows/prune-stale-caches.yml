@@ -1,3 +1,4 @@
+# ported from Studio81Labs/tabletap@a36cebcd
 name: Prune Stale Caches
 
 # Deletes superseded Actions caches on refs/heads/main.
@@ -18,13 +19,19 @@ name: Prune Stale Caches
 # run restores. Evicting those to store a Gradle cache is a straight loss, and
 # it presents as "the new cache didn't help" rather than as an error.
 #
-# The rule: keep the newest entry per key family, drop the rest. A family is
-# the key with its trailing content hashes stripped, so
+# The rule: keep the exact key AND internal cache version current main can
+# request per family, drop the rest. A family is the key with its trailing
+# content hashes stripped, so
 # `node-cache-Linux-x64-pnpm-<hash>` collapses to `node-cache-Linux-x64-pnpm`
-# and only the most recently used survives. Deleting a superseded content-hash
-# key costs nothing measurable: it is a key nothing requests any more.
+# and only the key carrying current main's lockfile hash survives. Neither
+# creation nor access time proves that: rerunning an old revision can recreate
+# or restore its obsolete key later. Deleting a superseded content-hash key
+# costs nothing measurable because it is a key current main cannot request.
 #
-# NOT handled here, deliberately: a whole family going obsolete. The Flutter
+# NOT handled here, deliberately: action-managed families whose exact current
+# key cannot be derived from repository inputs (setup-java and ruby/setup-ruby)
+# are left untouched rather than guessed at. A whole family going obsolete is
+# also out of scope. The Flutter
 # version is part of its family name (`flutter-linux-stable-3.41.9-x64`), so
 # bumping the pin starts a new family and leaves the old one intact as its own
 # single entry — around 1.7 GB per superseded SDK. Both repos are on one
@@ -58,105 +65,47 @@ jobs:
     name: "ci: prune superseded caches"
     runs-on: ubuntu-latest
     permissions:
-      # The only permission this needs, scoped to this job.
+      # Scoped to this job: checkout reads current main, then the pruner writes
+      # only Actions cache state.
+      contents: read
       actions: write
     steps:
+      - name: Checkout current main cache inputs
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve current pnpm cache path
+        run: echo "CURRENT_PNPM_CACHE_PATH=$(pnpm store path --silent)" >> "$GITHUB_ENV"
+
+      - name: Resolve current Flutter cache inputs
+        if: hashFiles('apps/mobile/pubspec.yaml') != ''
+        env:
+          CURRENT_GRADLE_HASH: ${{ hashFiles('apps/mobile/android/**/*.gradle*', 'apps/mobile/android/gradle/wrapper/gradle-wrapper.properties') }}
+          CURRENT_COCOAPODS_HASH: ${{ hashFiles('apps/mobile/ios/Podfile.lock') }}
+          CURRENT_SPM_HASH: ${{ hashFiles('apps/mobile/ios/Runner.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+        run: |
+          {
+            echo "CURRENT_GRADLE_HASH=$CURRENT_GRADLE_HASH"
+            echo "CURRENT_COCOAPODS_HASH=$CURRENT_COCOAPODS_HASH"
+            echo "CURRENT_SPM_HASH=$CURRENT_SPM_HASH"
+          } >> "$GITHUB_ENV"
+
       - name: Delete superseded main-branch caches
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
-        run: |
-          set -euo pipefail
-          python3 <<'PY'
-          import json, os, re, subprocess, collections
-
-          repo = os.environ["REPO"]
-          dry = os.environ.get("DRY_RUN") == "true"
-
-          def api(*args):
-              return subprocess.run(["gh", "api", *args], capture_output=True, text=True)
-
-          # --paginate, because `per_page=100` alone caps this sweep at the
-          # first 100 entries and the store this job protects is exactly what
-          # grows past that. The under-collection is silent: the job succeeds
-          # and prints what it deleted, which reads as proof the store is clean.
-          #
-          # --jq rather than a bare --paginate, because `gh` CONCATENATES the
-          # JSON document from each page instead of merging them, so a
-          # `json.loads` over the whole stdout dies with "Extra data" on the
-          # second page. Applying jq per page emits one cache object per line,
-          # which parses cleanly and drops the page envelope this script never
-          # wanted. (`--slurp` would also work and `gh` refuses it alongside
-          # `--jq`.)
-          out = api(
-              "--paginate",
-              f"repos/{repo}/actions/caches?per_page=100",
-              "--jq", ".actions_caches[]",
-          )
-          if out.returncode != 0:
-              # Fail loudly. A silent skip here looks exactly like "nothing to
-              # prune", which is the state this job exists to prevent.
-              print(f"::error::could not list caches: {out.stderr.strip()}")
-              raise SystemExit(1)
-          caches = [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
-
-          # A trailing hash is 16+ hex characters. The threshold matters: the
-          # keys here also carry short non-hash segments (`x64`, `arm64`,
-          # `pnpm`, `3.41.9`), and a looser rule would eat those and merge
-          # families that must stay distinct — collapsing linux and macos SDK
-          # caches into one family would delete a platform's only entry.
-          HASH = re.compile(r"-[0-9a-f]{16,}$")
-
-          def family(key):
-              while HASH.search(key):
-                  key = HASH.sub("", key)
-              return key
-
-          groups = collections.defaultdict(list)
-          for c in caches:
-              # main only. PR refs belong to cleanup-pr-caches.yml, and taking
-              # them here would delete a cache out from under a running job.
-              if c["ref"] == "refs/heads/main":
-                  groups[family(c["key"])].append(c)
-
-          doomed, freed = [], 0
-          for fam, items in sorted(groups.items()):
-              if len(items) < 2:
-                  continue
-              items.sort(key=lambda c: c["last_accessed_at"], reverse=True)
-              keep, rest = items[0], items[1:]
-              print(f"{fam}: {len(items)} entries, keeping {keep['last_accessed_at'][:16]}")
-              for c in rest:
-                  doomed.append(c)
-                  freed += c["size_in_bytes"]
-
-          if not doomed:
-              print("Nothing superseded. Store is clean.")
-          for c in doomed:
-              gb = c["size_in_bytes"] / 2**30
-              if dry:
-                  print(f"  would delete {gb:.2f} GB  {c['key'][:56]}")
-                  continue
-              r = api("-X", "DELETE", f"repos/{repo}/actions/caches/{c['id']}")
-              if r.returncode == 0:
-                  print(f"  deleted {gb:.2f} GB  {c['key'][:56]}")
-              else:
-                  # Best-effort: a cache can vanish between the list and the
-                  # delete, via eviction or a concurrent sweep. That is the
-                  # desired end state, so do not fail the job for it.
-                  print(f"::warning::could not delete {c['id']} — it may already be gone")
-
-          verb = "would reclaim" if dry else "reclaimed"
-          print(f"::notice::{verb} {freed / 2**30:.2f} GB across {len(doomed)} superseded cache(s)")
-
-          usage = api(f"repos/{repo}/actions/cache/usage")
-          if usage.returncode == 0:
-              size = json.loads(usage.stdout)["active_caches_size_in_bytes"] / 2**30
-              # The usage endpoint is eventually consistent and lags a sweep by
-              # minutes, so this is the PRE-prune figure on a run that deleted
-              # anything. Still worth printing: it is the number that matters,
-              # and a run reporting 8 GB+ after a clean sweep means the live
-              # caches alone no longer fit comfortably.
-              print(f"::notice::store reported at {size:.2f} GB of 10 GB (lags this sweep)")
-          PY
+          # Evaluated after the explicit main checkout. This is the same
+          # hashFiles input used by setup-node; an old rerun cannot change it.
+          # Flutter-specific hashes enter through GITHUB_ENV only when the
+          # checked-out tree proves that capability exists.
+          CURRENT_PNPM_HASH: ${{ hashFiles('pnpm-lock.yaml') }}
+        run: python3 scripts/ci/prune-stale-caches.py
