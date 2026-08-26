@@ -75,7 +75,8 @@ def validate_tree(root: Path) -> list[str]:
     workflow_dir = root / ".github/workflows"
     errors: list[str] = []
     documents: dict[str, dict] = {}
-    for path in sorted(workflow_dir.glob("*.yml")):
+    workflow_paths = sorted([*workflow_dir.glob("*.yml"), *workflow_dir.glob("*.yaml")])
+    for path in workflow_paths:
         errors.extend(validate_workflow(path, root))
         documents[path.name] = yaml.safe_load(path.read_text()) or {}
 
@@ -91,7 +92,7 @@ def validate_tree(root: Path) -> list[str]:
         if re.search(r"^\s+paths:", pull_request_block, re.MULTILINE):
             errors.append(f"{filename}: required workflow must not use pull-request path filters")
 
-    combined = "\n".join(path.read_text() for path in workflow_dir.glob("*.yml"))
+    combined = "\n".join(path.read_text() for path in workflow_paths)
     if "pnpm dlx" in combined or "wrangler@latest" in combined or "npx --yes @sentry/cli" in combined:
         errors.append("deployment workflows contain a floating CLI invocation")
     deploy_workflow = (workflow_dir / "pwa-deploy.yml").read_text()

@@ -63,7 +63,7 @@ def validate(path: str, text: str) -> list[str]:
                 if not PINNED.fullmatch(image):
                     errors.append(f"{path}:{number}: mutable base image {image!r}")
 
-    if path.startswith(".github/workflows/") and path.endswith(".yml"):
+    if path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml")):
         try:
             images = workflow_images(text)
         except yaml.YAMLError as error:
@@ -149,6 +149,7 @@ def main(argv: list[str]) -> int:
     candidates = [
         *root.glob("apps/**/Dockerfile"),
         *root.glob(".github/workflows/*.yml"),
+        *root.glob(".github/workflows/*.yaml"),
         *root.glob("scripts/**/*"),
     ]
     errors: list[str] = []
