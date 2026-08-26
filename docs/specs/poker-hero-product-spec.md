@@ -220,12 +220,20 @@ Sites without player export (WPT Global as of mid-2026, X-Poker, many
 mobile/Asian apps) are not supported by the V2 player workflow. Their layouts
 may still be exercised through the administrator-only OCR test surface.
 
-### 3.2 Normalized hand model
+### 3.2 Detected and user-approved hand model
 
-All adapters parse into one **site-agnostic canonical hand**, so the rest of the
-system never sees site-specific text. Minimum shape:
+All adapters emit one site-agnostic **detected hand** with field confidence,
+warnings, and source evidence; they do not write directly into learning state.
+The player reviews and corrects that output before explicitly approving the
+**canonical hand** consumed downstream. User corrections always win, and the
+rest of the system never sees site-specific text. The shared detected/approved
+shape includes at minimum:
 
-- Hand id, site, game type, stakes, table size, blinds/antes.
+- Hand id, site, source hand timestamp (with source timezone/offset when
+  available), stable source-session/file identity and ordering, import
+  provenance, game type, stakes, table size, blinds/antes. Missing source time
+  remains explicitly unknown; ingestion time must not stand in for play time in
+  recency, session, or proof-of-learning calculations.
 - Button seat.
 - Seats: for each, seat number, starting stack, and participation status
   (including dealt-in and sitting-out/not-dealt states). **Derived position**
@@ -241,20 +249,32 @@ system never sees site-specific text. Minimum shape:
 **Correctness oracle:** re-derive the pot from the action stream and reconcile
 against the file's stated pot (accounting for rake, uncalled bets, side pots).
 Independently-computed pot == stated pot is a per-hand pass/fail that validates
-the parse without manual eyeballing.
+the action/amount parse without manual eyeballing. It is necessary but not
+sufficient: a wrong button, hero identity, card, timestamp, or participation
+status can reconcile the pot and still corrupt grading.
+
+**Approval boundary:** raw history, detected output, confidences, warnings,
+reconciliation evidence, corrections, and final approved state remain separate
+and reviewable. Approval may be performed per hand or explicitly across a
+reviewed batch, but decision extraction and grading accept only the player's
+approved canonical state. Unapproved or rejected hands never update mastery,
+generate drills, or receive a grade.
 
 ### 3.3 Decision extraction
 
 The learning system does not consume hands — it consumes **decision points**.
-From a canonical hand, extract each hero decision as:
+From a user-approved canonical hand, extract each hero decision as:
 
 - The canonical decision state (everything the recommendation provider needs).
 - The **actual action taken** (from the history — this is the key gift of
   import: the real decision is already known).
 - The **concept tag** (§6.1), derivable from the state.
 
-One imported hand yields one or more decision points (preflop, flop, turn,
-river). This is the atomic unit for grading, mastery, and drilling.
+One approved imported hand yields zero or more decision points (preflop, flop,
+turn, river). A valid no-decision hand, such as a big-blind walk, is retained with
+its provenance and an explicit no-decision outcome; it is not failed, graded, or
+given a fabricated action. A real decision point is the atomic unit for grading,
+mastery, and drilling.
 
 ### 3.4 Administrative OCR test path — screenshot upload and live capture
 
@@ -400,6 +420,10 @@ A **leak is a concept where the player systematically deviates from the
 reference**; that is the object the app teaches against — not an individual
 misplayed hand.
 
+Recency is based on preserved source play time and stable source-session order,
+not file-import time. Decisions whose play chronology is unknown remain visible
+but do not support directional regression or proof-of-learning claims.
+
 ### 6.3 Prioritization
 
 Leaks are ranked by **frequency × EV cost**, so a recurring, fixable, expensive
@@ -453,7 +477,9 @@ The app must demonstrate it taught. When new sessions import, previously flagged
 leaks are re-scored and the trend is surfaced: "Your BB-defense leak is closing
 — accuracy 61% → 78% over your last 200 hands." A concept moving Leak →
 Practicing → Mastered is the headline success event, not "hands reviewed." This
-closes the loop that V1 never had.
+closes the loop that V1 never had. "Later" means later by preserved source hand
+time/session order, never merely imported later; unknown or contradictory source
+chronology cannot prove that learning occurred after a drill.
 
 ### 6.8 What V1 analytics become
 
@@ -500,10 +526,11 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
 
 **Phase 0 — foundations (two parallel spikes, one shared gate)**
 
-- _Import spike:_ PokerStars adapter → normalized hand model → decision
-  extraction. Kill criterion: ≥99% clean parse **with pot reconciliation
-  passing** on ~1,000 real hands; positions verified including heads-up and
-  sit-out cases.
+- _Import spike:_ PokerStars adapter → detected hand → user-approved canonical
+  hand → decision extraction. Kill criterion: ≥99% clean parse **with pot
+  reconciliation passing** on ~1,000 real hands; non-pot fields are verified
+  against ground truth, source time/order is preserved, and positions are
+  verified including heads-up and sit-out cases.
 - _Grading spike:_ confirm trustworthy references. Preflop charts in hand.
   Resolve §5.3 for postflop (precompute / license / defer). Kill criterion:
   obtain `solved` references you'd stake the product on, at absorbable cost,
@@ -515,9 +542,9 @@ failing kills or reshapes the product.
 
 **Phase 1 — minimum teaching loop (preflop-first)**
 
-- Import → decision points → `solved` grading (preflop + HU postflop) →
-  concept tagging → leak detection → principle feedback → active-recall drill →
-  spaced repetition.
+- Import → review/correction → approved canonical hand → decision points →
+  `solved` grading (preflop + HU postflop) → concept tagging → leak detection →
+  principle feedback → active-recall drill → spaced repetition.
 - Tested on the two-person dogfooding pair (Target user & boundaries §): the
   poker-player friend for grading correctness, the non-player builder for
   comprehensibility through the fixed solved-library transfer assessment.
@@ -548,8 +575,9 @@ failing kills or reshapes the product.
 
 Poker Hero V2 is successful when:
 
-- A player can import a session and get decision points with real actions, with
-  no screenshot upload or live-capture capability in the player experience.
+- A player can import a session, review/correct detected state, approve canonical
+  hands, and get decision points with real actions, with no screenshot upload or
+  live-capture capability in the player experience.
 - Screenshot upload and live screen/window/tab capture remain available only in
   disabled-by-default administrative test mode, with server-enforced
   authorization and no path to recommendations, mastery, drills, or player
