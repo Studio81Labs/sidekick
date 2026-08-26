@@ -68,6 +68,11 @@ env:
 jobs:
   drift:
     name: "ci: sibling drift"
+    # The read token spans selected private sibling repositories, so never pass
+    # it to code checked out from a feature branch. A manual dispatch targeting
+    # any non-default ref is intentionally skipped; validate checker changes in
+    # CI with the token-free self-test, then exercise the credential after merge.
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -149,8 +154,6 @@ jobs:
           echo "count=$total" >> "$GITHUB_OUTPUT"
 
       - name: Publish the report to the run summary
-        # Always, including branch dispatches, which do not touch the issue.
-        # Without this a dispatch from a branch would appear to do nothing.
         run: |
           set -euo pipefail
           {
@@ -166,14 +169,9 @@ jobs:
           COUNT: ${{ steps.compare.outputs.count }}
 
       - name: File or update the drift issue
-        # DEFAULT BRANCH ONLY. `workflow_dispatch` accepts any ref and
-        # `actions/checkout` honours it, so a run from a feature branch
-        # compares that branch's files -- and would then edit or close the one
-        # repository-wide issue on their evidence, describing unmerged
-        # infrastructure or closing a valid issue because an experimental
-        # branch happened to match the sibling. Branch dispatches still run the
-        # comparison and print it to the summary above; they just do not
-        # rewrite shared state.
+        # Defense in depth: the job-level condition already restricts execution
+        # to the default branch, and this step independently protects the one
+        # repository-wide issue from evidence produced by any other ref.
         # The FULL ref, not `ref_name`. `ref_name` strips both `refs/heads/`
         # and `refs/tags/`, so a tag named after the default branch would
         # satisfy a short-name test and let tag evidence rewrite shared state.

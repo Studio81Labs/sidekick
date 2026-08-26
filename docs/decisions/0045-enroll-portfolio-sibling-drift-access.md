@@ -46,9 +46,12 @@ remain outside this four-project portfolio-alignment decision.
 Issue ownership stays local. Each workflow receives `issues: write` only for
 its own repository through the ephemeral repository-scoped GitHub Actions
 token. It creates, updates, or closes only the local issue identified by the
-`infra-drift` label. A feature-branch dispatch may publish a run summary but
-cannot change that default-branch issue. The cross-repository read token is not
-used for issue operations.
+`infra-drift` label. The entire secret-bearing job is restricted to the default
+branch, so a feature-branch dispatch cannot execute modified repository code
+with the cross-repository read token. Checker changes are validated by the
+token-free CI self-test before merge and exercised with the credential only
+after landing on the default branch. The cross-repository read token is not used
+for issue operations.
 
 The credential expires within 90 days and is rotated before expiry. Rotation
 creates the replacement with the same repository allowlist and Contents-only
