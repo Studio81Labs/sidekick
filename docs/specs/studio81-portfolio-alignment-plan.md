@@ -111,7 +111,10 @@ Required changes:
   contract paths;
 - update current README, contributor, product-spec, architecture, deployment,
   and agent documentation. Do not rewrite archived specifications;
-- change the preferred conventional-commit scope from `frontend` to `pwa`.
+- change the preferred conventional-commit scope from `frontend` to `pwa`, add
+  `pwa` to the scope allowlists in `commitlint.config.js` and
+  `.github/workflows/lint-pr.yml`, and retain `frontend` in both allowlists only
+  through the one-cycle migration window.
 
 Acceptance gates:
 
@@ -120,6 +123,8 @@ Acceptance gates:
   frontend context, and a test PR is blocked until the PWA check succeeds;
 - a documentation-only or backend-only test PR emits and completes the required
   PWA gate instead of waiting forever on a path-filtered workflow;
+- representative `fix(pwa): ...` commit and pull-request titles pass their
+  respective commitlint and `lint-pr.yml` enforcement paths;
 - `pnpm pwa:test`, `pnpm pwa:performance`, and `pnpm test:e2e` pass;
 - both Docker images build from the repository root;
 - `docker compose -f infra/docker/compose.yaml config` succeeds using the
@@ -195,7 +200,7 @@ Shared workflows and guards to add or converge:
 - `format-check.yml`, running on every pull request with an always-emitted final
   context that is required by the `main` ruleset;
 - `security-scan.yml` with secret scanning; Node, Python, and Rust dependency
-  scanning over `pnpm-lock.yaml`, `apps/backend/pyproject.toml`, and
+  scanning over `pnpm-lock.yaml`, committed Python lockfiles, and
   `solver-plugins/postflop/Cargo.lock`; and JavaScript/TypeScript/Python Semgrep
   coverage, including the PWA edge Worker proxy boundary;
 - `ci-scripts.yml` with self-tests for every added CI helper;
@@ -215,6 +220,11 @@ Concrete convergence rules:
   the backend and PWA build/runtime images, to an immutable SHA-256 digest while
   retaining its readable version tag, and configure Renovate to update those
   pins;
+- generate committed production and development Python lockfiles with complete
+  transitive pins and hashes from `apps/backend/pyproject.toml` using a pinned
+  compiler; require a no-diff freshness check; install the development lock in
+  backend CI and the production lock in the backend image with hash checking,
+  then install the local project with `--no-deps` instead of resolving ranges;
 - use job names in `<area>: <what it proves>` form;
 - whenever that naming change affects a required check, atomically replace the
   old context in the `main` ruleset or branch protection with the exact emitted
@@ -240,8 +250,9 @@ Concrete convergence rules:
   `minimumReleaseAge`, `blockExoticSubdeps`, and `trustPolicy` posture;
 - extend `github>Studio81Labs/.github:renovate-base`, retaining only Poker
   Hero-specific scopes, Python/Rust managers, and exclusions locally;
-- remove the deprecated `frontend:*` root-script aliases after every live
-  consumer uses the `pwa:*` commands;
+- remove the deprecated `frontend:*` root-script aliases and the `frontend`
+  commit/PR-title scope after every live consumer uses the `pwa:*` commands and
+  scope;
 - preserve `uptime-monitor.yml` as a Poker Hero-specific additional workflow.
 
 The sibling drift checker must be generalized in this wave before Poker Hero is
@@ -268,6 +279,9 @@ Acceptance gates:
   fixtures, or a Semgrep violation fail the corresponding required security
   context and cannot merge; the Semgrep cases include a JavaScript violation in
   the PWA edge Worker;
+- regenerating both Python locks from the backend manifest produces no diff;
+  backend CI and Docker use hash-checked frozen inputs, `pip check` passes, and
+  no backend build path performs unconstrained dependency resolution;
 - documentation-only and backend-only test PRs emit every required gate and do
   not remain pending because a workflow-level path filter skipped the context;
 - the PWA deployment reports the declared lockfile-pinned Wrangler version and
@@ -282,8 +296,9 @@ Acceptance gates:
 - backend, PWA, E2E, Docker, deployment-probe, and OpenAPI checks pass;
 - `docker compose -f infra/docker/docker-compose.yml config` succeeds after the
   Compose rename;
-- no deprecated `frontend:*` command alias remains in the root package scripts
-  or current workflow and process documentation;
+- no deprecated `frontend:*` command alias or enforced `frontend` commit scope
+  remains in root scripts, current workflow, lint configuration, or current
+  process documentation;
 - a dry local four-way drift comparison reports only documented topology
   differences;
 - Poker Hero is not yet present in a sibling list and its drift schedule remains
