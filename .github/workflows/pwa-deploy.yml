@@ -182,7 +182,7 @@ jobs:
 
           pnpm --workspace-root exec wrangler --version
           pnpm --workspace-root exec wrangler deploy \
-            --config wrangler.jsonc \
+            --config apps/pwa/wrangler.jsonc \
             --name "$WORKER_NAME" \
             --var "BACKEND_URL:$BACKEND_URL" \
             --secrets-file "$SECRETS_FILE"

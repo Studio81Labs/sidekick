@@ -89,6 +89,11 @@ def validate_tree(root: Path) -> list[str]:
     combined = "\n".join(path.read_text() for path in workflow_dir.glob("*.yml"))
     if "pnpm dlx" in combined or "wrangler@latest" in combined or "npx --yes @sentry/cli" in combined:
         errors.append("deployment workflows contain a floating CLI invocation")
+    deploy_workflow = (workflow_dir / "pwa-deploy.yml").read_text()
+    if "pnpm --workspace-root exec wrangler deploy" in deploy_workflow and (
+        "--config apps/pwa/wrangler.jsonc" not in deploy_workflow
+    ):
+        errors.append("root-scoped Wrangler deploy must use the repository-relative PWA config path")
     listed = subprocess.check_output(
         ["git", "-C", str(root), "ls-files", "-co", "--exclude-standard"],
         text=True,
