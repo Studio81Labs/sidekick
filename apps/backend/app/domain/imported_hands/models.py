@@ -705,6 +705,14 @@ class DetectedImportedHand(ImportedHandModel):
             raise ValueError(
                 "detected evidence must reference only the detected raw source"
             )
+        state_document = json.loads(self.state.model_dump_json())
+        for pointer in self.field_evidence:
+            try:
+                _pointer_get(state_document, pointer)
+            except ValueError as exc:
+                raise ValueError(
+                    f"field_evidence path does not exist in detected state: {pointer}"
+                ) from exc
         return self
 
     @field_validator("field_evidence")
@@ -877,6 +885,14 @@ class ImportedHandRecord(ImportedHandModel):
                 raise ValueError("conflict must reference retained raw sources")
             if not set(conflict.detected_ids).issubset(detection_by_id):
                 raise ValueError("conflict must reference retained detections")
+            if any(
+                detection_by_id[detection_id].raw_source_id
+                not in conflict.raw_source_ids
+                for detection_id in conflict.detected_ids
+            ):
+                raise ValueError(
+                    "conflict detections must belong to the conflict raw sources"
+                )
 
         revisions = [revision.revision for revision in self.canonical_revisions]
         if revisions != list(range(1, len(revisions) + 1)):

@@ -144,6 +144,7 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                 "indexed pot awards cannot be validated with incomplete contributions"
             )
         elif not contributions_incomplete:
+            awards_by_pot: dict[int, Decimal] = {}
             for award in awards:
                 if award.pot_index is None:
                     continue
@@ -157,6 +158,35 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                         f"pot award recipient {award.player_id} is not eligible for"
                         f" pot index {award.pot_index}"
                     )
+                if award.amount is not None:
+                    awards_by_pot[award.pot_index] = (
+                        awards_by_pot.get(award.pot_index, Decimal(0))
+                        + award.amount
+                    )
+            for pot_index, indexed_total in awards_by_pot.items():
+                if pot_index < len(pots) and indexed_total > pots[pot_index].amount:
+                    errors.append(
+                        f"indexed awards {indexed_total} exceed gross pot"
+                        f" {pots[pot_index].amount} at index {pot_index}"
+                    )
+
+            all_awards_indexed = bool(awards) and all(
+                award.pot_index is not None and award.amount is not None
+                for award in awards
+            )
+            zero_rake = rake == 0 or (
+                stated_gross is not None
+                and stated_net is not None
+                and stated_gross == stated_net
+            )
+            if all_awards_indexed and zero_rake:
+                for pot in pots:
+                    indexed_total = awards_by_pot.get(pot.pot_index, Decimal(0))
+                    if indexed_total != pot.amount:
+                        errors.append(
+                            f"indexed awards {indexed_total} do not match pot"
+                            f" {pot.amount} at index {pot.pot_index}"
+                        )
 
     discrepancy: Decimal | None = None
     if stated is None:

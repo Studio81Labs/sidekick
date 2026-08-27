@@ -650,6 +650,26 @@ def test_detected_evidence_must_reference_its_single_raw_source() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "pointer",
+    ["/nonexistent", "/seats/9/player_id", "/seats/01/player_id"],
+)
+def test_detected_field_evidence_must_resolve_to_a_state_path(pointer: str) -> None:
+    state = hand_state()
+
+    with pytest.raises(ValidationError, match="path does not exist in detected state"):
+        DetectedImportedHand(
+            detection_id="detection-invalid-field-path",
+            raw_source_id="file-1",
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            field_evidence={pointer: {"evidence": [evidence()]}},
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+
 def test_canonical_evidence_must_reference_a_retained_raw_source() -> None:
     payload = hand_state(hero_player_id="hero").model_dump()
     payload["streets"] = [
@@ -690,6 +710,44 @@ def test_canonical_evidence_must_reference_a_retained_raw_source() -> None:
                 "active_canonical_revision": 1,
                 "changed_at": NOW,
             },
+        )
+
+
+def test_conflict_detections_must_belong_to_the_conflict_sources() -> None:
+    def source_detection(raw_source_id: str) -> DetectedImportedHand:
+        payload = hand_state().model_dump()
+        payload["chronology"] = chronology(raw_source_id).model_dump()
+        state = ImportedHandState.model_validate(payload)
+        return DetectedImportedHand(
+            detection_id=f"detection-{raw_source_id}",
+            raw_source_id=raw_source_id,
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+    with pytest.raises(ValidationError, match="belong to the conflict raw sources"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[
+                raw_source(raw_source_id="file-1", raw_text="source one\n"),
+                raw_source(raw_source_id="file-2", raw_text="source two\n"),
+                raw_source(raw_source_id="file-3", raw_text="source three\n"),
+            ],
+            detections=[
+                source_detection("file-1"),
+                source_detection("file-3"),
+            ],
+            conflicts=[
+                {
+                    "conflict_id": "conflict-1",
+                    "raw_source_ids": ["file-1", "file-2"],
+                    "detected_ids": ["detection-file-1", "detection-file-3"],
+                }
+            ],
+            lifecycle={"status": "pending_review", "changed_at": NOW},
         )
 
 

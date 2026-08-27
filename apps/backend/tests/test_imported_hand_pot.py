@@ -421,3 +421,35 @@ def test_indexed_award_recipient_must_be_eligible_for_the_pot_layer() -> None:
 
     assert result.status == "fail"
     assert any("p1 is not eligible for pot index 1" in error for error in result.errors)
+
+
+def test_zero_rake_indexed_awards_must_reconcile_each_pot_layer() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="20", total="20", all_in=True),
+                    action(1, "p2", "call", amount="20", total="20"),
+                    action(2, "p3", "call", amount="20", total="20"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p2", "bet", amount="30", total="30", all_in=True),
+                    action(1, "p3", "call", amount="30", total="30"),
+                ],
+            },
+        ],
+        stated_gross="120",
+        stated_net="120",
+        gross_pots=["60", "60"],
+        awards=[("p3", "70", 0), ("p3", "50", 1)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any("indexed awards 70 exceed gross pot 60" in error for error in result.errors)
+    assert any("indexed awards 50 do not match pot 60" in error for error in result.errors)
