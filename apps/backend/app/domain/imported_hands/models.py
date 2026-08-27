@@ -670,8 +670,14 @@ class ImportedHandState(ImportedHandModel):
             "no_limit",
             "pot_limit",
         }
+        cumulative_commitments: dict[str, Decimal | None] = {
+            player_id: Decimal(0) for player_id in player_ids
+        }
+        inferred_stack_exhausted_players: set[str] = set()
         committed_pot_before_street: Decimal | None = Decimal(0)
-        for street in self.streets:
+        for street_index, street in enumerate(self.streets):
+            if fold_end is not None:
+                raise ValueError("a later street is not allowed after folds end the hand")
             street_commitments: dict[str, Decimal | None] = {
                 player_id: Decimal(0) for player_id in player_ids
             }
@@ -683,7 +689,12 @@ class ImportedHandState(ImportedHandModel):
             current_wager: Decimal | None = Decimal(0)
             nominal_bring_in = Decimal(0)
             last_full_wager_increment = self.game.blinds.big_blind
+            round_closed_by_return = False
             for action in street.actions:
+                if round_closed_by_return:
+                    raise ValueError(
+                        "an action cannot follow an uncalled return on the same street"
+                    )
                 pot_before_action = (
                     committed_pot_before_street
                     + sum(
@@ -703,11 +714,12 @@ class ImportedHandState(ImportedHandModel):
                 )
                 if action.actor_id not in player_ids:
                     raise ValueError("every action actor must identify a known seat")
-                participation = next(
-                    seat.participation
+                actor_seat = next(
+                    seat
                     for seat in self.seats
                     if seat.player_id == action.actor_id
                 )
+                participation = actor_seat.participation
                 if participation in {"sitting_out", "not_dealt"}:
                     raise ValueError(
                         "an action actor cannot be explicitly sitting out or not dealt"
@@ -748,6 +760,18 @@ class ImportedHandState(ImportedHandModel):
                     resolved_commitment,
                     actor_live_commitment,
                 )
+                prior_cumulative_commitment = cumulative_commitments[
+                    action.actor_id
+                ]
+                resolved_cumulative_commitment = (
+                    prior_cumulative_commitment
+                    + resolved_commitment
+                    - actor_commitment
+                    if prior_cumulative_commitment is not None
+                    and resolved_commitment is not None
+                    and actor_commitment is not None
+                    else None
+                )
                 posted_amount: Decimal | None = None
                 configured_post_amount: Decimal | None = None
                 short_forced_post = False
@@ -773,11 +797,7 @@ class ImportedHandState(ImportedHandModel):
                         and posted_amount is not None
                         and posted_amount != configured_post_amount
                     ):
-                        starting_stack = next(
-                            seat.starting_stack
-                            for seat in self.seats
-                            if seat.player_id == action.actor_id
-                        )
+                        starting_stack = actor_seat.starting_stack
                         short_stack_exhausted = (
                             Decimal(0) < posted_amount < configured_post_amount
                             and (
@@ -911,13 +931,30 @@ class ImportedHandState(ImportedHandModel):
                             f" legal maximum {maximum_wager_addition} from pot"
                             f" {pot_before_action} and call {call_amount}"
                         )
+                known_stack_exhausted = (
+                    actor_seat.starting_stack is not None
+                    and resolved_cumulative_commitment is not None
+                    and resolved_cumulative_commitment
+                    == actor_seat.starting_stack
+                )
                 if action.action_type == "fold":
                     terminal_actors[action.actor_id] = ("folded", street.street)
+                    inferred_stack_exhausted_players.discard(action.actor_id)
                     live_players.discard(action.actor_id)
                     if len(live_players) == 1:
                         fold_end = (street.street, next(iter(live_players)))
                 elif action.all_in:
                     terminal_actors[action.actor_id] = ("all_in", street.street)
+                    inferred_stack_exhausted_players.discard(action.actor_id)
+                elif known_stack_exhausted:
+                    terminal_actors[action.actor_id] = ("all_in", street.street)
+                    inferred_stack_exhausted_players.add(action.actor_id)
+                elif action.actor_id in inferred_stack_exhausted_players:
+                    terminal_actors.pop(action.actor_id, None)
+                    inferred_stack_exhausted_players.discard(action.actor_id)
+                cumulative_commitments[action.actor_id] = (
+                    resolved_cumulative_commitment
+                )
                 street_commitments[action.actor_id] = resolved_commitment
                 live_commitments[action.actor_id] = resolved_live_commitment
                 if action.action_type in {"post_big_blind", "post_straddle"}:
@@ -992,24 +1029,86 @@ class ImportedHandState(ImportedHandModel):
                             nominal_bring_in,
                         )
                 elif action.action_type == "uncalled_return":
-                    if any(
+                    if resolved_live_commitment is None:
+                        # An unresolved return cannot erase a previously known
+                        # wager target and thereby legalize later action.
+                        pass
+                    elif any(
                         commitment is None
                         for commitment in live_commitments.values()
                     ):
                         current_wager = None
                     else:
                         current_wager = max(
-                            nominal_bring_in,
                             *(
                                 commitment
                                 for commitment in live_commitments.values()
                                 if commitment is not None
                             ),
                         )
+                    round_closed_by_return = True
                 if action.action_type in {"check", "bet", "call", "raise"}:
                     acted_wager_by_player[action.actor_id] = current_wager
                     reopen_increment_by_player[action.actor_id] = (
                         last_full_wager_increment
+                    )
+            closes_known_round = (
+                street_index < len(self.streets) - 1
+                or (
+                    street_index == len(self.streets) - 1
+                    and self.results is not None
+                )
+            )
+            if closes_known_round and current_wager is not None:
+                for seat in self.seats:
+                    if (
+                        seat.participation != "dealt_in"
+                        or seat.player_id in terminal_actors
+                    ):
+                        continue
+                    live_commitment = live_commitments[seat.player_id]
+                    if (
+                        live_commitment is not None
+                        and live_commitment < current_wager
+                    ):
+                        raise ValueError(
+                            "a street cannot end while a non-folded, non-all-in"
+                            " player has not matched the known wager"
+                        )
+                possible_contenders = [
+                    seat.player_id
+                    for seat in self.seats
+                    if seat.participation in {"dealt_in", "unknown"}
+                ]
+                contender_commitments = [
+                    live_commitments[player_id]
+                    for player_id in possible_contenders
+                ]
+                highest_actual_commitment = (
+                    max(
+                        commitment
+                        for commitment in contender_commitments
+                        if commitment is not None
+                    )
+                    if contender_commitments
+                    and all(
+                        commitment is not None
+                        for commitment in contender_commitments
+                    )
+                    else None
+                )
+                if (
+                    highest_actual_commitment is not None
+                    and highest_actual_commitment > 0
+                    and sum(
+                        commitment == highest_actual_commitment
+                        for commitment in contender_commitments
+                    )
+                    < 2
+                ):
+                    raise ValueError(
+                        "a street cannot end with a unique unmatched top wager;"
+                        " an uncalled return is required"
                     )
             if committed_pot_before_street is not None and all(
                 commitment is not None for commitment in street_commitments.values()

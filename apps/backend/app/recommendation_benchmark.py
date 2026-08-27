@@ -643,6 +643,35 @@ def _validate_case_within_grading_coverage(
             f"Case {case.id} effective stack {state.effective_stack:g} BB is outside"
             " declared grading-reference coverage"
         )
+    effective_stack = Decimal(str(state.effective_stack))
+    visible_stacks = {
+        "hero_stack": state.hero_stack,
+        "opponent_stack": state.opponent_stack,
+    }
+    for field_name, visible_stack in visible_stacks.items():
+        if (
+            visible_stack is not None
+            and Decimal(str(visible_stack)) < effective_stack
+        ):
+            raise ValueError(
+                f"Case {case.id} {field_name} {visible_stack:g} BB is below"
+                f" effective stack {state.effective_stack:g} BB"
+            )
+    if (
+        state.players_in_hand == 2
+        and state.hero_stack is not None
+        and state.opponent_stack is not None
+    ):
+        visible_effective_stack = min(
+            Decimal(str(state.hero_stack)),
+            Decimal(str(state.opponent_stack)),
+        )
+        if effective_stack != visible_effective_stack:
+            raise ValueError(
+                f"Case {case.id} heads-up effective stack"
+                f" {state.effective_stack:g} BB does not equal the visible-stack"
+                f" minimum {visible_effective_stack:g} BB"
+            )
 
     structural_position = state.hero_structural_position
     if structural_position is None:

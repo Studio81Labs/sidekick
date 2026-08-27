@@ -262,10 +262,15 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   version-5 case supplies its exact `hero_structural_position`; its street,
   decision-time `effective_stack`, dealt-in count, and position must fall inside
   the declared envelope. `players_in_hand` is the number of current survivors,
-  so it may be lower than the dealt-in count but cannot exceed it. The
-  listed table configurations, stacks, and streets define the declared Cartesian
-  coverage boundary. Until recommendation providers consume structural position
-  directly, the legacy `hero_position` route must agree exactly: `BTN/SB` and
+  so it may be lower than the dealt-in count but cannot exceed it. A populated
+  `hero_stack` or `opponent_stack` cannot be below `effective_stack`. When
+  `players_in_hand` is exactly 2 and both visible stacks are populated,
+  `effective_stack` must equal their exact minimum. Missing visible stacks and
+  multiway cases remain valid without an equality inference because the exact
+  opponent minimum is not then determined by these two fields. The listed table
+  configurations, stacks, and streets define the declared Cartesian coverage
+  boundary. Until recommendation providers consume structural position directly,
+  the legacy `hero_position` route must agree exactly: `BTN/SB` and
   `BTN` route as `button`, `SB` as `small_blind`, `BB` as `big_blind`, `UTG` as
   `utg`, `HJ` as `hijack`, and `CO` as `cutoff`. Table-specific full-ring labels
   such as `UTG+1`, `LJ`, and combined `*/LJ` labels have no exact legacy route;

@@ -1543,6 +1543,678 @@ def three_player_wager_payload(
     return payload
 
 
+def incomplete_three_way_preflop_payload() -> dict[str, object]:
+    payload = three_player_wager_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+    return payload
+
+
+def test_preflop_cannot_advance_with_an_unmatched_small_blind() -> None:
+    payload = incomplete_three_way_preflop_payload()
+    payload["streets"].append({"street": "flop", "actions": []})
+
+    with pytest.raises(ValidationError, match="has not matched the known wager"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_preflop_can_advance_when_every_active_player_matches() -> None:
+    payload = incomplete_three_way_preflop_payload()
+    payload["streets"][0]["actions"].append(
+        wager_action(
+            3,
+            "hero",
+            "call",
+            amount=Decimal("0.5"),
+            total=Decimal("1"),
+        )
+    )
+    payload["streets"].append({"street": "flop", "actions": []})
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert len(state.streets) == 2
+
+
+def test_postflop_cannot_advance_with_an_unmatched_wager() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {"street": "preflop", "actions": []},
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                )
+            ],
+        },
+        {"street": "turn", "actions": []},
+    ]
+
+    with pytest.raises(ValidationError, match="has not matched the known wager"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_results_require_the_final_street_wager_to_be_matched() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                )
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    with pytest.raises(ValidationError, match="has not matched the known wager"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_partial_final_street_without_results_remains_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                )
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is None
+
+
+@pytest.mark.parametrize("terminal_kind", ["fold", "all_in"])
+def test_folded_and_all_in_players_need_not_match_at_a_street_boundary(
+    terminal_kind: str,
+) -> None:
+    payload = incomplete_three_way_preflop_payload()
+    if terminal_kind == "fold":
+        payload["streets"][0]["actions"].append(
+            wager_action(3, "hero", "fold", total=Decimal("0.5"))
+        )
+    else:
+        payload["seats"][0]["starting_stack"] = Decimal("0.5")
+        payload["streets"][0]["actions"][0]["all_in"] = True
+    payload["streets"].append({"street": "flop", "actions": []})
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert len(state.streets) == 2
+
+
+def test_stack_exhausted_short_forced_blind_is_exempt_without_all_in_flag() -> None:
+    payload = short_big_blind_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "third-player",
+                    "post_ante",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1.5"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        },
+        {"street": "flop", "actions": []},
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[1].all_in is False
+
+
+def test_tied_actual_short_blinds_do_not_require_an_uncalled_return() -> None:
+    payload = three_player_wager_payload(third_stack=Decimal("0.5"))
+    payload["seats"][0]["starting_stack"] = Decimal("0.5")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(2, "villain", "fold", total=Decimal("0")),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is not None
+
+
+def test_uncalled_return_settles_a_nominal_short_big_blind_bring_in() -> None:
+    payload = three_player_wager_payload(third_stack=Decimal("0.5"))
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(2, "villain", "fold", total=Decimal("0")),
+                forced_post(
+                    3,
+                    "uncalled_return",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("0.5")
+
+
+def test_same_street_action_cannot_follow_a_concrete_uncalled_return() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                forced_post(
+                    1,
+                    "uncalled_return",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    with pytest.raises(ValidationError, match="cannot follow an uncalled return"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_concrete_uncalled_return_allows_the_next_street_and_results() -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][1]["starting_stack"] = Decimal("1")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                    all_in=True,
+                ),
+                forced_post(
+                    2,
+                    "uncalled_return",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        },
+        {"street": "flop", "actions": []},
+    ]
+    payload["results"] = {}
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is not None
+
+
+def test_action_cannot_follow_an_unknown_uncalled_return() -> None:
+    payload = hand_state().model_dump()
+    unresolved_return = forced_post(1, "uncalled_return")
+    unresolved_return["actor_id"] = "villain"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                unresolved_return,
+                wager_action(2, "hero", "check", total=Decimal("0")),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="cannot follow an uncalled return"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unknown_uncalled_return_does_not_erase_a_known_wager_target() -> None:
+    payload = hand_state().model_dump()
+    unresolved_return = forced_post(1, "uncalled_return")
+    unresolved_return["actor_id"] = "villain"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                unresolved_return,
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    with pytest.raises(ValidationError, match="has not matched the known wager"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unknown_participation_is_not_assumed_to_owe_a_call() -> None:
+    payload = incomplete_three_way_preflop_payload()
+    payload["seats"][0]["participation"] = "unknown"
+    payload["streets"].append({"street": "flop", "actions": []})
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.seats[0].participation == "unknown"
+
+
+def test_concrete_unknown_participant_cannot_hide_a_unique_top_wager() -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][1]["participation"] = "unknown"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(1, "villain", "fold", total=Decimal("0")),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    with pytest.raises(ValidationError, match="unique unmatched top wager"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unknown_participant_commitment_keeps_unique_top_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][1]["participation"] = "unknown"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(1, "villain", "call"),
+                wager_action(2, "villain", "fold"),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed is None
+
+
+def test_unknown_live_commitment_remains_reviewable_at_a_street_boundary() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(2, "hero", "call"),
+            ],
+        },
+        {"street": "flop", "actions": []},
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed is None
+
+
+def test_unknown_current_wager_remains_reviewable_at_a_street_boundary() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "villain", "bet"),
+                wager_action(1, "hero", "check"),
+            ],
+        },
+        {"street": "flop", "actions": []},
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert len(state.streets) == 2
+
+
+@pytest.mark.parametrize("include_return", [False, True])
+def test_unique_top_wager_requires_an_uncalled_return_before_advancing(
+    include_return: bool,
+) -> None:
+    payload = three_player_wager_payload()
+    actions = [
+        wager_action(
+            0,
+            "hero",
+            "bet",
+            amount=Decimal("2"),
+            total=Decimal("2"),
+        ),
+        wager_action(
+            1,
+            "villain",
+            "call",
+            amount=Decimal("2"),
+            total=Decimal("2"),
+        ),
+        wager_action(
+            2,
+            "third-player",
+            "raise",
+            amount=Decimal("4"),
+            total=Decimal("4"),
+        ),
+    ]
+    if include_return:
+        returned = forced_post(
+            3,
+            "uncalled_return",
+            amount=Decimal("2"),
+            total=Decimal("2"),
+        )
+        returned["actor_id"] = "third-player"
+        actions.append(returned)
+    payload["streets"] = [
+        {"street": "preflop", "actions": actions},
+        {"street": "flop", "actions": []},
+    ]
+
+    if include_return:
+        state = ImportedHandState.model_validate(payload)
+        assert state.streets[0].actions[-1].action_type == "uncalled_return"
+    else:
+        with pytest.raises(ValidationError, match="has not matched the known wager"):
+            ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("include_return", [False, True])
+def test_short_all_in_does_not_make_a_unique_top_wager_called(
+    include_return: bool,
+) -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][1]["starting_stack"] = Decimal("1")
+    actions = [
+        wager_action(
+            0,
+            "hero",
+            "bet",
+            amount=Decimal("2"),
+            total=Decimal("2"),
+        ),
+        wager_action(
+            1,
+            "villain",
+            "call",
+            amount=Decimal("1"),
+            total=Decimal("1"),
+            all_in=True,
+        ),
+    ]
+    if include_return:
+        actions.append(
+            forced_post(
+                2,
+                "uncalled_return",
+                amount=Decimal("1"),
+                total=Decimal("1"),
+            )
+        )
+    payload["streets"] = [
+        {"street": "preflop", "actions": actions},
+        {"street": "flop", "actions": []},
+    ]
+
+    if include_return:
+        state = ImportedHandState.model_validate(payload)
+        assert state.streets[0].actions[-1].action_type == "uncalled_return"
+    else:
+        with pytest.raises(ValidationError, match="unique unmatched top wager"):
+            ImportedHandState.model_validate(payload)
+
+
+def test_fold_ended_hand_with_uncalled_return_can_accept_results() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(1, "villain", "fold", total=Decimal("0")),
+                forced_post(
+                    2,
+                    "uncalled_return",
+                    amount=Decimal("2"),
+                    total=Decimal("0"),
+                ),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is not None
+
+
+def test_fold_ended_hand_requires_an_uncalled_return_for_a_unique_top_wager() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(1, "villain", "fold", total=Decimal("0")),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    with pytest.raises(ValidationError, match="unique unmatched top wager"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_fold_ended_hand_without_an_unmatched_wager_can_accept_results() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "villain", "fold", total=Decimal("0")),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is not None
+
+
+def test_empty_later_street_is_rejected_after_folds_end_the_hand() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "villain", "fold", total=Decimal("0")),
+            ],
+        },
+        {"street": "flop", "actions": []},
+    ]
+
+    with pytest.raises(ValidationError, match="after folds end the hand"):
+        ImportedHandState.model_validate(payload)
+
+
 def test_non_all_in_raise_must_match_the_big_blind_minimum_increment() -> None:
     payload = hand_state().model_dump()
     payload["streets"] = [
@@ -2834,7 +3506,23 @@ def test_actions_after_a_player_becomes_terminal_are_rejected(
     payload["streets"] = [
         {
             "street": "preflop",
-            "actions": [first_action, *([later_action] if same_street else [])],
+            "actions": [
+                first_action,
+                *(
+                    [
+                        wager_action(
+                            1,
+                            "villain",
+                            "call",
+                            amount=Decimal("10"),
+                            total=Decimal("10"),
+                        )
+                    ]
+                    if terminal_action == "all_in" and not same_street
+                    else []
+                ),
+                *([later_action] if same_street else []),
+            ],
         },
         *(
             [{"street": "flop", "actions": [later_action]}]

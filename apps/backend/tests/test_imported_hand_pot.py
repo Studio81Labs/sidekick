@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.domain.imported_hands import ImportedHandState, reconcile_pot
+from app.domain.imported_hands import HandResults, ImportedHandState, reconcile_pot
 
 
 NOW = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
@@ -57,8 +57,19 @@ def hand(
     player_results: list[tuple[str, str | None, str | None]] | None = None,
     starting_stack: str = "200",
     starting_stacks: dict[str, str | None] | None = None,
+    participations: dict[str, str] | None = None,
+    include_results: bool = True,
 ) -> ImportedHandState:
     player_ids = ["p1", "p2", "p3"]
+    represented_player_ids = {
+        action_payload["actor_id"]
+        for street in streets
+        for action_payload in street["actions"]
+    } | {
+        player_id for player_id, _, _ in (awards or [])
+    } | {
+        player_id for player_id, _, _ in (player_results or [])
+    }
     stated = None
     if stated_gross is not None or stated_net is not None or gross_pots:
         stated = {
@@ -98,37 +109,52 @@ def hand(
                     is not None
                     else None
                 ),
-                "participation": "dealt_in",
+                "participation": (
+                    (participations or {}).get(
+                        player_id,
+                        (
+                            "dealt_in"
+                            if player_id in represented_player_ids
+                            else "not_dealt"
+                        ),
+                    )
+                ),
             }
             for index, player_id in enumerate(player_ids, start=1)
         ],
         streets=streets,
-        results={
-            "stated_pot": stated,
-            "awards": [
-                {
-                    "player_id": player_id,
-                    "amount": Decimal(amount) if amount is not None else None,
-                    "pot_index": pot_index,
-                    "evidence": [evidence()],
-                }
-                for player_id, amount, pot_index in (awards or [])
-            ],
-            "players": [
-                {
-                    "player_id": player_id,
-                    "total_collected": (
-                        Decimal(total_collected)
-                        if total_collected is not None
-                        else None
-                    ),
-                    "net_result": (
-                        Decimal(net_result) if net_result is not None else None
-                    ),
-                }
-                for player_id, total_collected, net_result in (player_results or [])
-            ],
-        },
+        results=(
+            {
+                "stated_pot": stated,
+                "awards": [
+                    {
+                        "player_id": player_id,
+                        "amount": Decimal(amount) if amount is not None else None,
+                        "pot_index": pot_index,
+                        "evidence": [evidence()],
+                    }
+                    for player_id, amount, pot_index in (awards or [])
+                ],
+                "players": [
+                    {
+                        "player_id": player_id,
+                        "total_collected": (
+                            Decimal(total_collected)
+                            if total_collected is not None
+                            else None
+                        ),
+                        "net_result": (
+                            Decimal(net_result)
+                            if net_result is not None
+                            else None
+                        ),
+                    }
+                    for player_id, total_collected, net_result in (player_results or [])
+                ],
+            }
+            if include_results
+            else None
+        ),
     )
 
 
@@ -233,6 +259,43 @@ def test_reconciles_uncalled_return_before_comparing_the_pot() -> None:
     assert result.pots[0].eligible_players == ["p1"]
 
 
+def test_short_big_blind_nominal_call_return_reconciles_without_missing_return() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(
+                        0,
+                        "p3",
+                        "post_big_blind",
+                        amount="0.5",
+                        total="0.5",
+                    ),
+                    action(1, "p1", "call", amount="1", total="1"),
+                    action(2, "p2", "fold", total="0"),
+                    action(
+                        3,
+                        "p1",
+                        "uncalled_return",
+                        amount="0.5",
+                        total="0.5",
+                    ),
+                ],
+            }
+        ],
+        stated_gross="1",
+        stated_net="1",
+        awards=[("p1", "1", 0)],
+        starting_stacks={"p3": "0.5"},
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "pass"
+    assert not any("uncalled return is missing" in error for error in result.errors)
+
+
 @pytest.mark.parametrize(
     ("return_total", "stated_total", "expected_status"),
     [("4", "5", "fail"), ("1", "2", "pass")],
@@ -255,7 +318,29 @@ def test_total_only_uncalled_return_cannot_increase_commitment(
         stated_net=stated_total,
         awards=[("p1", stated_total, None)],
         starting_stacks={"p2": "1"},
+        include_results=expected_status == "pass",
     )
+    if expected_status == "fail":
+        state = state.model_copy(
+            update={
+                "results": HandResults.model_validate(
+                    {
+                        "stated_pot": {
+                            "gross_total": Decimal(stated_total),
+                            "rake": Decimal("0"),
+                            "net_total": Decimal(stated_total),
+                        },
+                        "awards": [
+                            {
+                                "player_id": "p1",
+                                "amount": Decimal(stated_total),
+                                "evidence": [evidence()],
+                            }
+                        ],
+                    }
+                )
+            }
+        )
 
     result = reconcile_pot(state)
 
@@ -270,7 +355,7 @@ def test_total_only_uncalled_return_cannot_increase_commitment(
 
 
 def test_missing_uncalled_return_fails_even_if_a_bad_source_total_matches() -> None:
-    state = hand(
+    partial_state = hand(
         [
             {
                 "street": "preflop",
@@ -285,6 +370,28 @@ def test_missing_uncalled_return_fails_even_if_a_bad_source_total_matches() -> N
         stated_gross="4",
         stated_net="4",
         awards=[("p1", "4", 0)],
+        include_results=False,
+    )
+    state = partial_state.model_copy(
+        update={
+            "results": HandResults.model_validate(
+                {
+                    "stated_pot": {
+                        "gross_total": Decimal("4"),
+                        "rake": Decimal("0"),
+                        "net_total": Decimal("4"),
+                    },
+                    "awards": [
+                        {
+                            "player_id": "p1",
+                            "amount": Decimal("4"),
+                            "pot_index": 0,
+                            "evidence": [evidence()],
+                        }
+                    ],
+                }
+            )
+        }
     )
 
     result = reconcile_pot(state)

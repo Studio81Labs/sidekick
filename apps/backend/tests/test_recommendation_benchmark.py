@@ -424,6 +424,152 @@ def test_schema_five_cases_must_fit_declared_grading_coverage(
 
 
 @pytest.mark.parametrize(
+    ("hero_stack", "opponent_stack"),
+    [
+        (100.0, 100.0),
+        (100.0, 150.0),
+        (150.0, 100.0),
+        (100.0, None),
+        (None, 100.0),
+        (None, None),
+    ],
+)
+def test_schema_five_accepts_consistent_heads_up_and_partial_visible_stacks(
+    hero_stack: float | None,
+    opponent_stack: float | None,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state.hero_stack = hero_stack
+    case.state.opponent_stack = opponent_stack
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+
+    assert dataset.cases[0].state.effective_stack == 100.0
+
+
+@pytest.mark.parametrize(
+    ("field_name", "hero_stack", "opponent_stack"),
+    [
+        ("hero_stack", 99.999, None),
+        ("opponent_stack", None, 99.999),
+        ("hero_stack", 0.0, 100.0),
+        ("opponent_stack", 100.0, 0.0),
+    ],
+)
+def test_schema_five_rejects_a_visible_stack_below_the_effective_depth(
+    field_name: str,
+    hero_stack: float | None,
+    opponent_stack: float | None,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state.hero_stack = hero_stack
+    case.state.opponent_stack = opponent_stack
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"{field_name} .* BB is below effective stack 100 BB",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+
+
+def test_schema_five_requires_the_exact_visible_minimum_for_heads_up_stacks() -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state.hero_stack = 150.0
+    case.state.opponent_stack = 120.0
+
+    with pytest.raises(
+        ValidationError,
+        match="heads-up effective stack 100 BB does not equal.*minimum 120",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("opponent_stack", "valid"),
+    [(120.0, True), (None, True), (99.0, False)],
+)
+def test_schema_five_multiway_stacks_require_only_visible_lower_bounds(
+    opponent_stack: float | None,
+    valid: bool,
+) -> None:
+    table = reference_table_configuration(3)
+    structural = table["structural_positions"][0]
+    case = benchmark_case(
+        "multiway-partial-stacks",
+        [reference_line("check")],
+        street="preflop",
+        board_cards=[],
+        effective_stack=100.0,
+        hero_stack=150.0,
+        opponent_stack=opponent_stack,
+        players_in_hand=3,
+        hero_position="button",
+        hero_structural_position={
+            "dealt_in_player_count": 3,
+            **structural,
+        },
+    )
+
+    if valid:
+        dataset = benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_for_table_counts(3),
+        )
+
+        assert dataset.cases[0].state.players_in_hand == 3
+    else:
+        with pytest.raises(ValidationError, match="opponent_stack .* is below"):
+            benchmark_dataset(
+                [case],
+                schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+                reference_source={"name": "Independent solver export"},
+                grading_reference=grading_reference_for_table_counts(3),
+            )
+
+
+def test_schema_five_stack_mismatch_fails_before_provider_execution(
+    tmp_path: Path,
+) -> None:
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    payload = dataset.model_dump(mode="json", by_alias=True)
+    payload["cases"][0]["state"]["hero_stack"] = 99.0
+    path = tmp_path / "mismatched-stack.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    provider = SequenceProvider([recommendation("check")])
+
+    with pytest.raises(RecommendationBenchmarkError, match="hero_stack"):
+        benchmark_recommendation_file(
+            path,
+            Settings(data_dir=tmp_path / "unused"),
+            provider,
+        )
+
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize(
     ("dealt_in_count", "button_distance", "hero_position"),
     [
         (2, 0, "dealer"),
@@ -653,6 +799,20 @@ def test_legacy_schema_versions_do_not_enforce_structural_position_routing(
 
     assert dataset.schema_version == schema_version
     assert dataset.cases[0].state.hero_position == "big_blind"
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schema_versions_do_not_enforce_visible_stack_consistency(
+    schema_version: int,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state.hero_stack = 99.0
+    case.state.opponent_stack = 98.0
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+
+    assert dataset.schema_version == schema_version
+    assert dataset.cases[0].state.hero_stack == 99.0
 
 
 def test_recommendation_benchmark_scores_policy_ev_fallback_and_failures() -> None:
