@@ -1,0 +1,1050 @@
+"""Site-agnostic contracts for detected and player-approved imported hands.
+
+These models deliberately do not reuse the V1 screenshot ``CanonicalState``.
+An imported hand carries a lossless ordered action stream and has its own
+revision/deletion lifecycle before it can become learning evidence.
+"""
+
+from __future__ import annotations
+
+import json
+from hashlib import sha256
+from datetime import datetime
+from decimal import Decimal
+from typing import Annotated, Any, Literal, Self
+
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+from app.domain.poker import Card
+
+
+NonEmptyText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=256, strict=True),
+]
+Identifier = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/+\-]*$",
+        strict=True,
+    ),
+]
+Sha256 = Annotated[str, StringConstraints(pattern=r"^[a-f0-9]{64}$", strict=True)]
+NonNegativeDecimal = Annotated[Decimal, Field(ge=0, allow_inf_nan=False, strict=True)]
+PositiveDecimal = Annotated[Decimal, Field(gt=0, allow_inf_nan=False, strict=True)]
+UnitIntervalDecimal = Annotated[
+    Decimal,
+    Field(ge=0, le=1, allow_inf_nan=False, strict=True),
+]
+PositiveInteger = Annotated[int, Field(ge=1, strict=True)]
+NonNegativeInteger = Annotated[int, Field(ge=0, strict=True)]
+
+ParticipationStatus = Literal["dealt_in", "sitting_out", "not_dealt", "unknown"]
+StreetName = Literal["preflop", "flop", "turn", "river"]
+ActionType = Literal[
+    "post_ante",
+    "post_small_blind",
+    "post_big_blind",
+    "post_straddle",
+    "fold",
+    "check",
+    "bet",
+    "call",
+    "raise",
+    "uncalled_return",
+]
+OriginKind = Literal[
+    "player_selected",
+    "forced_system",
+    "client_automatic",
+    "unknown",
+]
+OriginBasis = Literal[
+    "explicit_marker",
+    "versioned_absence_semantics",
+    "user_confirmed",
+    "unresolved",
+]
+LifecycleStatus = Literal[
+    "pending_review",
+    "active",
+    "withdrawn",
+    "rejected",
+    "deletion_pending",
+    "deleted",
+]
+
+_STREET_ORDER: dict[StreetName, int] = {
+    "preflop": 0,
+    "flop": 1,
+    "turn": 2,
+    "river": 3,
+}
+_FORCED_ACTIONS = {
+    "post_ante",
+    "post_small_blind",
+    "post_big_blind",
+    "post_straddle",
+    "uncalled_return",
+}
+_CHIP_ACTIONS = _FORCED_ACTIONS | {"bet", "call", "raise"}
+
+
+class ImportedHandModel(BaseModel):
+    """Strict persisted-contract base used only by the V2 import boundary."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        validate_assignment=True,
+    )
+
+
+class StableHandIdentity(ImportedHandModel):
+    """Adapter-defined stable identity; PokerStars uses site plus hand id."""
+
+    site: Identifier
+    source_hand_id: Identifier
+    namespace: Identifier = "site-hand-id/v1"
+
+
+class SourceEvidence(ImportedHandModel):
+    """A reviewable location in one immutable raw source."""
+
+    raw_source_id: Identifier
+    line_start: PositiveInteger | None = None
+    line_end: PositiveInteger | None = None
+    excerpt: str | None = Field(default=None, max_length=1000, strict=True)
+    marker: str | None = Field(default=None, max_length=160, strict=True)
+
+    @model_validator(mode="after")
+    def validate_line_range(self) -> Self:
+        if self.line_end is not None and self.line_start is None:
+            raise ValueError("line_end requires line_start")
+        if (
+            self.line_start is not None
+            and self.line_end is not None
+            and self.line_end < self.line_start
+        ):
+            raise ValueError("line_end cannot precede line_start")
+        if self.line_start is None and self.excerpt is None and self.marker is None:
+            raise ValueError("source evidence requires a line, excerpt, or marker")
+        return self
+
+
+class SourceChronology(ImportedHandModel):
+    """Source time and ordering, kept distinct from ingestion time."""
+
+    played_at: AwareDatetime | None = None
+    source_timezone: str | None = Field(default=None, min_length=1, max_length=80, strict=True)
+    source_session_id: Identifier | None = None
+    source_file_id: Identifier
+    hand_ordinal: PositiveInteger | None = None
+
+    @model_validator(mode="after")
+    def validate_timezone_provenance(self) -> Self:
+        if self.source_timezone is not None and self.played_at is None:
+            raise ValueError("source_timezone requires played_at")
+        return self
+
+
+class ImportProvenance(ImportedHandModel):
+    """How an immutable raw hand entered the local import boundary."""
+
+    source_kind: Literal["hand_history"] = "hand_history"
+    import_id: Identifier
+    imported_at: AwareDatetime
+    adapter_id: Identifier
+    adapter_version: Identifier
+    format_revision: Identifier
+    source_filename: str | None = Field(default=None, max_length=255, strict=True)
+
+
+class RawHandHistory(ImportedHandModel):
+    schema_version: Literal["raw-hand-history/v1"] = "raw-hand-history/v1"
+    raw_source_id: Identifier
+    identity: StableHandIdentity
+    chronology: SourceChronology
+    provenance: ImportProvenance
+    content_sha256: Sha256
+    raw_text: Annotated[str, StringConstraints(min_length=1, strict=True)]
+
+    @model_validator(mode="after")
+    def validate_file_identity(self) -> Self:
+        if self.chronology.source_file_id != self.raw_source_id:
+            raise ValueError("chronology source_file_id must equal raw_source_id")
+        actual_checksum = sha256(self.raw_text.encode("utf-8")).hexdigest()
+        if self.content_sha256 != actual_checksum:
+            raise ValueError("content_sha256 must match the UTF-8 raw history")
+        return self
+
+
+class BlindStructure(ImportedHandModel):
+    small_blind: PositiveDecimal | None = None
+    big_blind: PositiveDecimal | None = None
+    ante: NonNegativeDecimal | None = None
+    straddle: PositiveDecimal | None = None
+
+    @model_validator(mode="after")
+    def validate_blind_order(self) -> Self:
+        if (
+            self.small_blind is not None
+            and self.big_blind is not None
+            and self.small_blind > self.big_blind
+        ):
+            raise ValueError("small_blind cannot exceed big_blind")
+        return self
+
+
+class RakeSchedule(ImportedHandModel):
+    percentage: UnitIntervalDecimal | None = None
+    cap: NonNegativeDecimal | None = None
+    fixed_drop: NonNegativeDecimal | None = None
+    description: str | None = Field(default=None, max_length=500, strict=True)
+
+
+class CashEconomics(ImportedHandModel):
+    kind: Literal["cash"] = "cash"
+    currency: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Z]{3}$",
+        strict=True,
+    )
+    rake: RakeSchedule | None = None
+
+
+class TournamentPayout(ImportedHandModel):
+    place_from: PositiveInteger
+    place_to: PositiveInteger
+    amount: NonNegativeDecimal | None = None
+    share: UnitIntervalDecimal | None = None
+
+    @model_validator(mode="after")
+    def validate_place_range(self) -> Self:
+        if self.place_to < self.place_from:
+            raise ValueError("place_to cannot precede place_from")
+        return self
+
+
+class TournamentStack(ImportedHandModel):
+    player_id: Identifier
+    stack: NonNegativeDecimal | None = None
+
+
+class TournamentBounty(ImportedHandModel):
+    player_id: Identifier
+    value: NonNegativeDecimal | None = None
+
+
+class TournamentEconomics(ImportedHandModel):
+    kind: Literal["tournament"] = "tournament"
+    tournament_id: Identifier | None = None
+    tournament_type: NonEmptyText | None = None
+    stage: NonEmptyText | None = None
+    currency: str | None = Field(
+        default=None,
+        min_length=3,
+        max_length=3,
+        pattern=r"^[A-Z]{3}$",
+        strict=True,
+    )
+    paid_places: PositiveInteger | None = None
+    players_remaining: PositiveInteger | None = None
+    payouts: list[TournamentPayout] = Field(default_factory=list)
+    remaining_stacks: list[TournamentStack] = Field(default_factory=list)
+    bounty_format: NonEmptyText | None = None
+    bounties: list[TournamentBounty] = Field(default_factory=list)
+    icm_inputs_complete: bool = Field(default=False, strict=True)
+
+    @model_validator(mode="after")
+    def validate_tournament_context(self) -> Self:
+        if (
+            self.paid_places is not None
+            and self.players_remaining is not None
+            and self.paid_places > self.players_remaining
+        ):
+            raise ValueError("paid_places cannot exceed players_remaining")
+        _validate_unique(self.remaining_stacks, "player_id", "remaining stack player")
+        _validate_unique(self.bounties, "player_id", "bounty player")
+        if self.icm_inputs_complete:
+            required = (
+                self.paid_places,
+                self.players_remaining,
+                self.payouts,
+                self.remaining_stacks,
+            )
+            if any(value is None or value == [] for value in required):
+                raise ValueError("complete ICM inputs require places, players, payouts, and stacks")
+        return self
+
+
+class UnknownEconomics(ImportedHandModel):
+    kind: Literal["unknown"] = "unknown"
+    reason: NonEmptyText | None = None
+
+
+Economics = Annotated[
+    CashEconomics | TournamentEconomics | UnknownEconomics,
+    Field(discriminator="kind"),
+]
+
+
+class GameContext(ImportedHandModel):
+    variant: Literal["texas_holdem"] = "texas_holdem"
+    betting_limit: Literal["no_limit", "pot_limit", "fixed_limit", "unknown"]
+    table_size: Annotated[int, Field(ge=2, le=10, strict=True)]
+    blinds: BlindStructure
+    economics: Economics
+
+
+class StructuralPosition(ImportedHandModel):
+    dealt_in_player_count: Annotated[int, Field(ge=2, le=10, strict=True)]
+    action_index: NonNegativeInteger
+    button_distance: NonNegativeInteger
+    display_label: Literal[
+        "BTN/SB",
+        "BTN",
+        "SB",
+        "BB",
+        "UTG",
+        "UTG+1",
+        "UTG+2",
+        "UTG+3/LJ",
+        "UTG+2/LJ",
+        "UTG+1/LJ",
+        "LJ",
+        "HJ",
+        "CO",
+    ]
+
+    @model_validator(mode="after")
+    def validate_indexes(self) -> Self:
+        if self.action_index >= self.dealt_in_player_count:
+            raise ValueError("action_index must be within the dealt-in action ring")
+        if self.button_distance >= self.dealt_in_player_count:
+            raise ValueError("button_distance must be within the dealt-in action ring")
+        return self
+
+
+class ImportedSeat(ImportedHandModel):
+    seat_number: PositiveInteger
+    player_id: Identifier
+    display_name: str | None = Field(default=None, min_length=1, max_length=80, strict=True)
+    starting_stack: NonNegativeDecimal | None = None
+    participation: ParticipationStatus
+    position: StructuralPosition | None = None
+
+    @model_validator(mode="after")
+    def validate_position_participation(self) -> Self:
+        if self.participation != "dealt_in" and self.position is not None:
+            raise ValueError("only a dealt-in seat can have a structural position")
+        return self
+
+
+class ActionOrigin(ImportedHandModel):
+    kind: OriginKind
+    basis: OriginBasis
+    confidence: UnitIntervalDecimal | None = None
+    evidence: list[SourceEvidence] = Field(min_length=1)
+    semantics_revision: Identifier | None = None
+    automatic_reason: Literal[
+        "timeout",
+        "disconnect",
+        "automation",
+        "other",
+        "unknown",
+    ] | None = None
+    review_reference: Identifier | None = None
+
+    @model_validator(mode="after")
+    def validate_origin_basis(self) -> Self:
+        if self.basis == "versioned_absence_semantics" and self.semantics_revision is None:
+            raise ValueError("absence semantics require a versioned semantics revision")
+        if self.kind == "player_selected" and self.basis not in {
+            "explicit_marker",
+            "versioned_absence_semantics",
+            "user_confirmed",
+        }:
+            raise ValueError("player-selected origin requires affirmative evidence")
+        if self.basis == "user_confirmed" and self.review_reference is None:
+            raise ValueError("user-confirmed origin requires a review reference")
+        if self.kind == "unknown" and self.basis != "unresolved":
+            raise ValueError("unknown origin must remain unresolved")
+        if self.basis == "unresolved" and self.kind != "unknown":
+            raise ValueError("unresolved basis must use unknown origin")
+        if self.kind == "client_automatic" and self.automatic_reason is None:
+            raise ValueError("client-automatic origin requires an automatic reason")
+        if self.kind != "client_automatic" and self.automatic_reason is not None:
+            raise ValueError("automatic_reason is only valid for client-automatic actions")
+        return self
+
+
+class ImportedAction(ImportedHandModel):
+    sequence: NonNegativeInteger
+    actor_id: Identifier
+    action_type: ActionType
+    amount: PositiveDecimal | None = Field(
+        default=None,
+        description=(
+            "Incremental chips added by this action, or chips returned for an "
+            "uncalled_return"
+        ),
+    )
+    total_committed: NonNegativeDecimal | None = Field(
+        default=None,
+        description="Actor's cumulative commitment on this street after the action",
+    )
+    all_in: bool = Field(default=False, strict=True)
+    origin: ActionOrigin
+    evidence: list[SourceEvidence] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_action_shape(self) -> Self:
+        if self.action_type not in _CHIP_ACTIONS and self.amount is not None:
+            raise ValueError("fold and check actions cannot carry an amount")
+        if self.action_type in _FORCED_ACTIONS and self.origin.kind != "forced_system":
+            raise ValueError("posts and uncalled returns must be forced/system actions")
+        if self.action_type in {"fold", "check", "bet", "call", "raise"}:
+            if self.origin.kind == "forced_system":
+                raise ValueError("table decisions cannot be classified as forced/system")
+        if self.all_in and self.action_type in {"fold", "check", "uncalled_return"}:
+            raise ValueError("fold, check, and return actions cannot be all-in")
+        return self
+
+    @property
+    def is_player_decision(self) -> bool:
+        return (
+            self.action_type in {"fold", "check", "bet", "call", "raise"}
+            and self.origin.kind == "player_selected"
+        )
+
+
+class ImportedStreet(ImportedHandModel):
+    street: StreetName
+    board_cards: list[Card] = Field(default_factory=list)
+    actions: list[ImportedAction] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_street(self) -> Self:
+        expected = list(range(len(self.actions)))
+        actual = [action.sequence for action in self.actions]
+        if actual != expected:
+            raise ValueError("street action sequence must be contiguous and ordered from zero")
+        maximum_cards = {"preflop": 0, "flop": 3, "turn": 4, "river": 5}[self.street]
+        if len(self.board_cards) > maximum_cards:
+            raise ValueError(f"{self.street} cannot contain more than {maximum_cards} board cards")
+        return self
+
+
+class ShowdownEntry(ImportedHandModel):
+    player_id: Identifier
+    cards: list[Card] = Field(default_factory=list, max_length=2)
+    disposition: Literal["shown", "mucked", "not_shown", "unknown"]
+    evidence: list[SourceEvidence] = Field(min_length=1)
+
+
+class PotAward(ImportedHandModel):
+    player_id: Identifier
+    amount: PositiveDecimal | None = None
+    pot_index: NonNegativeInteger | None = None
+    evidence: list[SourceEvidence] = Field(min_length=1)
+
+
+class PlayerResult(ImportedHandModel):
+    player_id: Identifier
+    net_result: Decimal | None = Field(default=None, allow_inf_nan=False, strict=True)
+    total_collected: NonNegativeDecimal | None = None
+
+
+class StatedPotSummary(ImportedHandModel):
+    """Normalized source totals: components and gross are before rake."""
+
+    gross_total: NonNegativeDecimal | None = None
+    rake: NonNegativeDecimal | None = None
+    net_total: NonNegativeDecimal | None = None
+    gross_pots: list[NonNegativeDecimal] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_totals(self) -> Self:
+        if self.gross_total is None and self.net_total is None and not self.gross_pots:
+            raise ValueError("a stated pot summary requires at least one stated total")
+        if self.gross_pots and self.gross_total is not None:
+            if sum(self.gross_pots, Decimal(0)) != self.gross_total:
+                raise ValueError("stated gross pot components must sum to gross_total")
+        if self.gross_total is not None and self.rake is not None and self.net_total is not None:
+            if self.gross_total - self.rake != self.net_total:
+                raise ValueError("net_total must equal gross_total minus rake")
+        if self.rake is not None and self.gross_total is not None and self.rake > self.gross_total:
+            raise ValueError("rake cannot exceed the gross pot")
+        return self
+
+
+class HandResults(ImportedHandModel):
+    stated_pot: StatedPotSummary | None = None
+    showdown: list[ShowdownEntry] = Field(default_factory=list)
+    awards: list[PotAward] = Field(default_factory=list)
+    players: list[PlayerResult] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_results(self) -> Self:
+        _validate_unique(self.showdown, "player_id", "showdown player")
+        _validate_unique(self.players, "player_id", "result player")
+        return self
+
+
+class ImportedHandState(ImportedHandModel):
+    """Shared detected/approved, adapter-neutral hand state."""
+
+    identity: StableHandIdentity
+    chronology: SourceChronology
+    game: GameContext
+    button_seat: PositiveInteger | None = None
+    seats: list[ImportedSeat] = Field(min_length=2, max_length=10)
+    hero_player_id: Identifier | None = None
+    hero_cards: list[Card] = Field(default_factory=list, max_length=2)
+    streets: list[ImportedStreet] = Field(min_length=1, max_length=4)
+    results: HandResults | None = None
+
+    @model_validator(mode="after")
+    def validate_hand(self) -> Self:
+        _validate_unique(self.seats, "seat_number", "seat number")
+        _validate_unique(self.seats, "player_id", "player")
+        seat_numbers = {seat.seat_number for seat in self.seats}
+        player_ids = {seat.player_id for seat in self.seats}
+        if len(self.seats) > self.game.table_size:
+            raise ValueError("seat count cannot exceed table_size")
+        if self.button_seat is not None and self.button_seat not in seat_numbers:
+            raise ValueError("button_seat must identify a known seat")
+        if self.hero_player_id is not None and self.hero_player_id not in player_ids:
+            raise ValueError("hero_player_id must identify a known seat")
+
+        street_indexes = [_STREET_ORDER[street.street] for street in self.streets]
+        if street_indexes != list(range(len(self.streets))):
+            raise ValueError("streets must be unique and ordered from preflop")
+        for street in self.streets:
+            for action in street.actions:
+                if action.actor_id not in player_ids:
+                    raise ValueError("every action actor must identify a known seat")
+        if self.results is not None:
+            referenced_result_players = {
+                *(entry.player_id for entry in self.results.showdown),
+                *(award.player_id for award in self.results.awards),
+                *(result.player_id for result in self.results.players),
+            }
+            if not referenced_result_players.issubset(player_ids):
+                raise ValueError("showdown, award, and result players must identify known seats")
+
+        boards = [street.board_cards for street in self.streets]
+        for previous, current in zip(boards, boards[1:]):
+            if previous and current and current[: len(previous)] != previous:
+                raise ValueError("street boards must preserve the earlier board prefix")
+        all_cards = [*self.hero_cards]
+        if boards:
+            all_cards.extend(boards[-1])
+        if len({card.code for card in all_cards}) != len(all_cards):
+            raise ValueError("hero and board cards must be unique")
+
+        if self.button_seat is not None:
+            dealt = [seat for seat in self.seats if seat.participation == "dealt_in"]
+            button = next(seat for seat in self.seats if seat.seat_number == self.button_seat)
+            if button.participation == "dealt_in" and len(dealt) >= 2:
+                expected = derive_structural_positions(self.seats, self.button_seat)
+                for seat in self.seats:
+                    if seat.position is not None and seat.position != expected.get(seat.seat_number):
+                        raise ValueError(
+                            f"seat {seat.seat_number} structural position does not match the dealt-in ring"
+                        )
+        return self
+
+
+class DetectedFieldEvidence(ImportedHandModel):
+    confidence: UnitIntervalDecimal | None = None
+    evidence: list[SourceEvidence] = Field(default_factory=list)
+    warnings: list[NonEmptyText] = Field(default_factory=list)
+
+
+class DetectedImportedHand(ImportedHandModel):
+    schema_version: Literal["detected-imported-hand/v1"] = "detected-imported-hand/v1"
+    detection_id: Identifier
+    raw_source_id: Identifier
+    detector_id: Identifier
+    detector_version: Identifier
+    detected_at: AwareDatetime
+    state: ImportedHandState
+    field_evidence: dict[str, DetectedFieldEvidence] = Field(default_factory=dict)
+    warnings: list[NonEmptyText] = Field(default_factory=list)
+    content_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_detected_provenance(self) -> Self:
+        if self.state.chronology.source_file_id != self.raw_source_id:
+            raise ValueError(
+                "detected state source_file_id must equal the detected raw_source_id"
+            )
+        if self.content_sha256 != imported_hand_state_sha256(self.state):
+            raise ValueError("content_sha256 must match the normalized detected state")
+        return self
+
+    @field_validator("field_evidence")
+    @classmethod
+    def validate_field_evidence_paths(
+        cls, value: dict[str, DetectedFieldEvidence]
+    ) -> dict[str, DetectedFieldEvidence]:
+        for pointer in value:
+            _validate_json_pointer(pointer)
+        return value
+
+
+class UserCorrection(ImportedHandModel):
+    field_pointer: NonEmptyText
+    detected_value: JsonValue
+    approved_value: JsonValue
+    corrected_at: AwareDatetime
+    reason: str | None = Field(default=None, max_length=500, strict=True)
+
+    @field_validator("field_pointer")
+    @classmethod
+    def validate_pointer(cls, value: str) -> str:
+        _validate_json_pointer(value)
+        return value
+
+
+class CanonicalHandRevision(ImportedHandModel):
+    schema_version: Literal["canonical-imported-hand/v1"] = "canonical-imported-hand/v1"
+    revision: PositiveInteger
+    detection_id: Identifier
+    approved_at: AwareDatetime
+    state: ImportedHandState
+    corrections: list[UserCorrection] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_unique_corrections(self) -> Self:
+        pointers = [correction.field_pointer for correction in self.corrections]
+        if len(pointers) != len(set(pointers)):
+            raise ValueError("one canonical revision cannot correct the same field twice")
+        return self
+
+
+class ImportConflict(ImportedHandModel):
+    conflict_id: Identifier
+    raw_source_ids: list[Identifier] = Field(min_length=2)
+    detected_ids: list[Identifier] = Field(default_factory=list)
+    status: Literal["unresolved", "resolved_keep_active", "resolved_use_source"] = "unresolved"
+    selected_raw_source_id: Identifier | None = None
+    resolved_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def validate_resolution(self) -> Self:
+        if len(self.raw_source_ids) != len(set(self.raw_source_ids)):
+            raise ValueError("conflict raw_source_ids must be unique")
+        if self.status == "resolved_use_source":
+            if self.selected_raw_source_id not in self.raw_source_ids:
+                raise ValueError("resolved source must belong to the conflict")
+            if self.resolved_at is None:
+                raise ValueError("resolved conflict requires resolved_at")
+        elif self.selected_raw_source_id is not None:
+            raise ValueError("only a source-resolution can select a raw source")
+        if self.status != "unresolved" and self.resolved_at is None:
+            raise ValueError("resolved conflict requires resolved_at")
+        return self
+
+
+class DeletionRequest(ImportedHandModel):
+    generation: PositiveInteger
+    requested_at: AwareDatetime
+    cleanup_status: Literal["pending", "failed"] = "pending"
+    last_error: str | None = Field(default=None, max_length=1000, strict=True)
+
+    @model_validator(mode="after")
+    def validate_cleanup_failure(self) -> Self:
+        if self.cleanup_status == "failed" and not self.last_error:
+            raise ValueError("failed cleanup must expose its error")
+        if self.cleanup_status == "pending" and self.last_error is not None:
+            raise ValueError("pending cleanup cannot have a failure error")
+        return self
+
+
+class DeletionReceipt(ImportedHandModel):
+    receipt_id: Identifier
+    generation: PositiveInteger
+    deleted_at: AwareDatetime
+    tombstone_sha256: Sha256
+
+
+class ImportedHandLifecycle(ImportedHandModel):
+    status: LifecycleStatus
+    active_canonical_revision: PositiveInteger | None = None
+    deletion_generation: NonNegativeInteger = 0
+    changed_at: AwareDatetime
+    reason: NonEmptyText | None = None
+    deletion_request: DeletionRequest | None = None
+
+    @model_validator(mode="after")
+    def validate_lifecycle(self) -> Self:
+        if self.status == "active":
+            if self.active_canonical_revision is None:
+                raise ValueError("active lifecycle requires an active canonical revision")
+        elif self.active_canonical_revision is not None:
+            raise ValueError("inactive lifecycle cannot retain an active canonical pointer")
+        if self.status == "deletion_pending":
+            if self.deletion_request is None:
+                raise ValueError("deletion_pending requires a deletion request")
+            if self.deletion_request.generation != self.deletion_generation:
+                raise ValueError("deletion request generation must match lifecycle generation")
+        elif self.deletion_request is not None:
+            raise ValueError("only deletion_pending can retain a deletion request")
+        return self
+
+    @property
+    def learning_eligible(self) -> bool:
+        return self.status == "active" and self.active_canonical_revision is not None
+
+
+class ImportedHandRecord(ImportedHandModel):
+    """Aggregate shape; persistence must transition it atomically."""
+
+    schema_version: Literal["imported-hand-record/v1"] = "imported-hand-record/v1"
+    identity: StableHandIdentity | None
+    raw_sources: list[RawHandHistory] = Field(default_factory=list)
+    detections: list[DetectedImportedHand] = Field(default_factory=list)
+    conflicts: list[ImportConflict] = Field(default_factory=list)
+    canonical_revisions: list[CanonicalHandRevision] = Field(default_factory=list)
+    lifecycle: ImportedHandLifecycle
+    deletion_receipt: DeletionReceipt | None = None
+
+    @model_validator(mode="after")
+    def validate_aggregate(self) -> Self:
+        if self.lifecycle.status == "deleted":
+            if self.identity is not None:
+                raise ValueError("a deletion tombstone cannot retain the stable hand identity")
+            if any(
+                (
+                    self.raw_sources,
+                    self.detections,
+                    self.conflicts,
+                    self.canonical_revisions,
+                )
+            ):
+                raise ValueError("permanently deleted records cannot retain hand-linked audit data")
+            if self.deletion_receipt is None:
+                raise ValueError("permanently deleted record requires a deletion receipt")
+            if self.deletion_receipt.generation != self.lifecycle.deletion_generation:
+                raise ValueError("deletion receipt generation must match lifecycle generation")
+            return self
+        elif self.identity is None:
+            raise ValueError("a retained imported hand requires its stable identity")
+        if self.deletion_receipt is not None:
+            raise ValueError("only permanently deleted records can retain a deletion receipt")
+        for raw in self.raw_sources:
+            if raw.identity != self.identity:
+                raise ValueError("all raw sources must share the stable hand identity")
+        _validate_unique(self.raw_sources, "raw_source_id", "raw source")
+        _validate_unique(self.raw_sources, "content_sha256", "raw source content")
+        _validate_unique(self.detections, "detection_id", "detection")
+        _validate_unique(self.conflicts, "conflict_id", "conflict")
+
+        raw_ids = {raw.raw_source_id for raw in self.raw_sources}
+        detection_by_id = {detected.detection_id: detected for detected in self.detections}
+        for detected in self.detections:
+            if detected.raw_source_id not in raw_ids:
+                raise ValueError("detected hand must reference a retained raw source")
+            if detected.state.identity != self.identity:
+                raise ValueError("detected hand must share the stable hand identity")
+        for conflict in self.conflicts:
+            if not set(conflict.raw_source_ids).issubset(raw_ids):
+                raise ValueError("conflict must reference retained raw sources")
+            if not set(conflict.detected_ids).issubset(detection_by_id):
+                raise ValueError("conflict must reference retained detections")
+
+        revisions = [revision.revision for revision in self.canonical_revisions]
+        if revisions != list(range(1, len(revisions) + 1)):
+            raise ValueError("canonical revisions must be monotonic and contiguous from one")
+        for revision in self.canonical_revisions:
+            detected = detection_by_id.get(revision.detection_id)
+            if detected is None:
+                raise ValueError("canonical revision must reference a retained detection")
+            if revision.state.identity != self.identity:
+                raise ValueError("canonical revision must share the stable hand identity")
+            if revision.state.chronology.source_file_id != detected.raw_source_id:
+                raise ValueError(
+                    "canonical revision source_file_id must match its detected raw source"
+                )
+            _validate_corrections_win(detected, revision)
+
+        active = self.lifecycle.active_canonical_revision
+        if active is not None:
+            if not revisions or active != revisions[-1]:
+                raise ValueError("the active pointer must select the latest canonical revision")
+
+        if self.lifecycle.status in {"withdrawn", "rejected"} and not revisions:
+            raise ValueError("withdrawal/rejection audit requires a canonical revision")
+        return self
+
+    @property
+    def active_state_for_extraction(self) -> ImportedHandState | None:
+        if not self.lifecycle.learning_eligible:
+            return None
+        revision = self.lifecycle.active_canonical_revision
+        if revision is None:
+            return None
+        return self.canonical_revisions[revision - 1].state
+
+    @property
+    def active_hero_actions_for_extraction(self) -> list[ImportedAction]:
+        """Return only voluntary hero actions from the active approved revision.
+
+        Forced, client-automatic, and unresolved actions remain in the canonical
+        audit stream but cannot become learning decision points.
+        """
+
+        state = self.active_state_for_extraction
+        if state is None or state.hero_player_id is None:
+            return []
+        return [
+            action
+            for street in state.streets
+            for action in street.actions
+            if action.actor_id == state.hero_player_id and action.is_player_decision
+        ]
+
+
+class ReimportDisposition(ImportedHandModel):
+    kind: Literal["new_identity", "exact_reimport", "identity_conflict"]
+    existing_raw_source_id: Identifier | None = None
+
+
+class RestoreDisposition(ImportedHandModel):
+    kind: Literal[
+        "allow",
+        "stale_deletion_generation",
+        "explicit_reimport_required",
+    ]
+
+
+def classify_reimport(
+    existing_sources: list[RawHandHistory],
+    candidate: RawHandHistory,
+    *,
+    existing_detections: list[DetectedImportedHand] | None = None,
+    candidate_detection: DetectedImportedHand | None = None,
+) -> ReimportDisposition:
+    """Classify a candidate without silently mutating an existing identity."""
+
+    same_identity = [source for source in existing_sources if source.identity == candidate.identity]
+    if not same_identity:
+        return ReimportDisposition(kind="new_identity")
+    exact = next(
+        (source for source in same_identity if source.content_sha256 == candidate.content_sha256),
+        None,
+    )
+    if exact is not None:
+        if candidate_detection is not None and existing_detections:
+            matching_detections = [
+                detection
+                for detection in existing_detections
+                if detection.raw_source_id == exact.raw_source_id
+            ]
+            if matching_detections and all(
+                detection.content_sha256 != candidate_detection.content_sha256
+                for detection in matching_detections
+            ):
+                return ReimportDisposition(kind="identity_conflict")
+        return ReimportDisposition(
+            kind="exact_reimport",
+            existing_raw_source_id=exact.raw_source_id,
+        )
+    return ReimportDisposition(kind="identity_conflict")
+
+
+def classify_restore(
+    current: ImportedHandRecord,
+    candidate: ImportedHandRecord,
+    *,
+    user_authorized_reimport: bool = False,
+) -> RestoreDisposition:
+    """Guard one persisted record slot against resurrection by an old backup."""
+
+    if candidate.lifecycle.deletion_generation < current.lifecycle.deletion_generation:
+        return RestoreDisposition(kind="stale_deletion_generation")
+    if (
+        current.lifecycle.status == "deleted"
+        and candidate.lifecycle.status != "deleted"
+        and not user_authorized_reimport
+    ):
+        return RestoreDisposition(kind="explicit_reimport_required")
+    return RestoreDisposition(kind="allow")
+
+
+def imported_hand_state_sha256(state: ImportedHandState) -> str:
+    """Return the canonical checksum used to identify detected-state content."""
+
+    payload = json.dumps(
+        state.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def derive_structural_positions(
+    seats: list[ImportedSeat],
+    button_seat: int,
+) -> dict[int, StructuralPosition]:
+    """Derive positions from only the dealt-in clockwise ring.
+
+    Seat numbers are treated as their clockwise table order. A sitting-out seat
+    is skipped and therefore never changes another player's position.
+    """
+
+    _validate_unique(seats, "seat_number", "seat number")
+    button = next((seat for seat in seats if seat.seat_number == button_seat), None)
+    if button is None:
+        raise ValueError("button_seat must identify a known seat")
+    if button.participation != "dealt_in":
+        raise ValueError("dead-button position derivation is unresolved")
+    dealt = sorted(
+        (seat for seat in seats if seat.participation == "dealt_in"),
+        key=lambda seat: seat.seat_number,
+    )
+    count = len(dealt)
+    if count < 2 or count > 10:
+        raise ValueError("position derivation requires two to ten dealt-in seats")
+
+    button_index = next(
+        index for index, seat in enumerate(dealt) if seat.seat_number == button_seat
+    )
+    ring = dealt[button_index:] + dealt[:button_index]
+    labels = structural_position_labels(count)
+    if count == 2:
+        action_order_distances = [0, 1]
+    else:
+        action_order_distances = [*range(3, count), 0, 1, 2]
+    action_index_by_distance = {
+        distance: index for index, distance in enumerate(action_order_distances)
+    }
+    return {
+        seat.seat_number: StructuralPosition(
+            dealt_in_player_count=count,
+            action_index=action_index_by_distance[distance],
+            button_distance=distance,
+            display_label=labels[distance],
+        )
+        for distance, seat in enumerate(ring)
+    }
+
+
+def structural_position_labels(count: int) -> list[str]:
+    """Return the table-size-specific label at each button distance."""
+
+    if count < 2 or count > 10:
+        raise ValueError("position labels require two to ten dealt-in seats")
+    early: dict[int, list[str]] = {
+        3: [],
+        4: ["UTG"],
+        5: ["HJ", "CO"],
+        6: ["UTG", "HJ", "CO"],
+        7: ["UTG", "UTG+1/LJ", "HJ", "CO"],
+        8: ["UTG", "UTG+1", "LJ", "HJ", "CO"],
+        9: ["UTG", "UTG+1", "UTG+2/LJ", "HJ", "CO"],
+        10: ["UTG", "UTG+1", "UTG+2", "UTG+3/LJ", "HJ", "CO"],
+    }
+    if count == 2:
+        return ["BTN/SB", "BB"]
+    return ["BTN", "SB", "BB", *early[count]]
+
+
+def _validate_unique(items: list[Any], attribute: str, label: str) -> None:
+    values = [getattr(item, attribute) for item in items]
+    if len(values) != len(set(values)):
+        raise ValueError(f"{label} values must be unique")
+
+
+def _validate_json_pointer(pointer: str) -> None:
+    if not pointer.startswith("/") or pointer == "/":
+        raise ValueError("field path must be a non-root RFC 6901 JSON pointer")
+    for segment in pointer[1:].split("/"):
+        index = 0
+        while index < len(segment):
+            if segment[index] == "~":
+                if index + 1 >= len(segment) or segment[index + 1] not in {"0", "1"}:
+                    raise ValueError("JSON pointer contains an invalid escape")
+                index += 2
+            else:
+                index += 1
+
+
+def _pointer_tokens(pointer: str) -> list[str]:
+    _validate_json_pointer(pointer)
+    return [segment.replace("~1", "/").replace("~0", "~") for segment in pointer[1:].split("/")]
+
+
+def _pointer_get(document: JsonValue, pointer: str) -> JsonValue:
+    current: Any = document
+    for token in _pointer_tokens(pointer):
+        if isinstance(current, list):
+            try:
+                current = current[int(token)]
+            except (ValueError, IndexError) as exc:
+                raise ValueError(f"correction path does not exist: {pointer}") from exc
+        elif isinstance(current, dict) and token in current:
+            current = current[token]
+        else:
+            raise ValueError(f"correction path does not exist: {pointer}")
+    return current
+
+
+def _pointer_set(document: JsonValue, pointer: str, value: JsonValue) -> None:
+    tokens = _pointer_tokens(pointer)
+    current: Any = document
+    for token in tokens[:-1]:
+        if isinstance(current, list):
+            try:
+                current = current[int(token)]
+            except (ValueError, IndexError) as exc:
+                raise ValueError(f"correction path does not exist: {pointer}") from exc
+        elif isinstance(current, dict) and token in current:
+            current = current[token]
+        else:
+            raise ValueError(f"correction path does not exist: {pointer}")
+    final = tokens[-1]
+    if isinstance(current, list):
+        try:
+            current[int(final)] = value
+        except (ValueError, IndexError) as exc:
+            raise ValueError(f"correction path does not exist: {pointer}") from exc
+    elif isinstance(current, dict) and final in current:
+        current[final] = value
+    else:
+        raise ValueError(f"correction path does not exist: {pointer}")
+
+
+def _validate_corrections_win(
+    detected: DetectedImportedHand,
+    revision: CanonicalHandRevision,
+) -> None:
+    expected = json.loads(detected.state.model_dump_json())
+    for correction in revision.corrections:
+        detected_value = _pointer_get(expected, correction.field_pointer)
+        if detected_value != correction.detected_value:
+            raise ValueError(
+                f"correction detected_value does not match {correction.field_pointer}"
+            )
+        _pointer_set(expected, correction.field_pointer, correction.approved_value)
+    approved = json.loads(revision.state.model_dump_json())
+    if expected != approved:
+        raise ValueError("canonical state may differ from detection only through corrections")

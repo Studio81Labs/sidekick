@@ -11,6 +11,7 @@ generate the reference with the same provider being evaluated.
 pnpm backend:recommendation-benchmark ./recommendation-benchmark.json \
   --provider local_solver \
   --require-reference-source \
+  --require-grading-reference \
   --minimum-action-accuracy 0.90 \
   --minimum-line-accuracy 0.80 \
   --minimum-line-coverage 0.90 \
@@ -89,12 +90,72 @@ was evaluated and disappears from the current run, the case fails explicitly.
 ```json
 {
   "schema": "poker-hero-recommendation-benchmark",
-  "schema_version": 4,
+  "schema_version": 5,
   "name": "Reviewed heads-up turn sample",
   "reference_source": {
     "name": "Independent solver export",
     "version": "2026.08",
     "configuration": "Heads-up cash, 100 BB, no rake"
+  },
+  "grading_reference": {
+    "reference_revision": "reference-example-2026.08",
+    "policy_revision": "policy-example-2026.08.1",
+    "tolerance_revision": "tolerance-example-1",
+    "source_artifact_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "source_configuration_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "policy_artifact_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "coverage": {
+      "table_configurations": [
+        {
+          "dealt_in_count": 2,
+          "structural_positions": [
+            {
+              "action_index": 0,
+              "button_distance": 0,
+              "display_label": "BTN/SB"
+            },
+            {
+              "action_index": 1,
+              "button_distance": 1,
+              "display_label": "BB"
+            }
+          ]
+        }
+      ],
+      "effective_stack_depths_bb": [100.0],
+      "streets": ["turn"]
+    },
+    "economic_model": {
+      "kind": "cash",
+      "name": "heads-up-no-rake-example",
+      "revision": "economics-example-1",
+      "configuration_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+    },
+    "utility_model": {
+      "name": "cash-expected-value-example",
+      "revision": "utility-example-1",
+      "configuration_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "ev_unit": "bb",
+    "rights_evidence": {
+      "basis": "licensed",
+      "delivery_mode": "shipped_static_lookup",
+      "grants": ["commercial_use", "embedding", "redistribution", "updates"],
+      "evidence_pointer": "example-only:not-license-evidence",
+      "evidence_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    "convergence_evidence": [
+      {
+        "metric": "exploitability",
+        "unit": "bb_per_100",
+        "comparison": "at_most",
+        "threshold": 0.02,
+        "observed": 0.01,
+        "iterations": 250000,
+        "evidence_pointer": "example-only:not-convergence-evidence",
+        "evidence_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+      }
+    ]
   },
   "sizing_tolerance_bb": 0.01,
   "minimum_policy_frequency": 0.05,
@@ -168,7 +229,9 @@ was evaluated and disappears from the current run, the case fails explicitly.
 }
 ```
 
-The values above illustrate the file shape and are not strategy claims.
+All values above illustrate the file shape only. The repeated digests, evidence
+pointers, rights grants, convergence measurements, and policy values are not
+real evidence, license conclusions, benchmark results, or strategy claims.
 
 ## Evaluation Rules
 
@@ -176,8 +239,37 @@ The values above illustrate the file shape and are not strategy claims.
 - `reference_source` records the independent solver or reviewed strategy source.
   Version-1 corpora without provenance or tags and version-2 corpora without
   range-conditioning expectations remain readable. Version-3 corpora without
-  range-source expectations also remain readable; new corpora use version 4.
-  Use `--require-reference-source` for trusted regression runs.
+  range-source expectations and version-4 corpora without grading-reference
+  evidence also remain readable; new Phase-0 corpora use version 5. Use
+  `--require-reference-source` and `--require-grading-reference` for trusted
+  grading-reference runs.
+- Schema version 5 requires `grading_reference`. Its reference, policy, and
+  tolerance revisions are immutable identities. The SHA-256 fields pin the raw
+  source export, the complete source configuration, the normalized policy, the
+  economic and utility configurations, the rights evidence, and each
+  convergence artifact. All hashes and evidence pointers must refer to retained,
+  reviewable artifacts; recording a claim in this file does not establish it.
+- Coverage declares every supported dealt-in count and structural position,
+  exact effective-stack depth, and street. Each table configuration covers every
+  action index and button distance exactly once and enforces its table-size
+  display label, including the heads-up button/small-blind special case. The
+  listed table configurations, stacks, and streets define the declared Cartesian
+  coverage boundary. The economic and utility models are separately named,
+  revisioned, and configuration-digested. `ev_unit` is one of `bb`, `chips`,
+  `currency`, or `utility`.
+- The current EV scorer consumes only `ev_bb`. A version-5 corpus with a non-BB
+  `ev_unit` must omit all `ev_bb` labels; the loader rejects the corpus instead
+  of implying a chip, currency, or utility conversion. Extending the scorer to
+  generic EV units is separate work.
+- Rights evidence selects `shipped_static_lookup` or `server_side_feed`. A
+  shipped lookup requires explicit commercial-use, embedding, redistribution,
+  and update grants. A server-side feed requires commercial-use, commercial-
+  serving, and derived-output grants. Evidence has a retained pointer and
+  digest. These declarations cover reference delivery rights only; they do not
+  implement remote-provider consent or privacy controls.
+- Every convergence entry records a metric, unit, pass direction, threshold,
+  observed value, iteration count, and retained evidence pointer/digest. A
+  measurement that misses its declared threshold is rejected.
 - Lowercase case tags classify scenarios such as `single-raised-pot` and
   `facing-bet`. Reports include deterministic street and tag breakdowns; a case
   may contribute to more than one tag.

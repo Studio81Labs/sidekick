@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from app.config import Settings, get_settings
+from app.domain.imported_hands import structural_position_labels
 from app.domain.poker import CanonicalState, Street
 from app.domain.recommendations import (
     RecommendationAction,
@@ -35,7 +36,8 @@ from app.solvers.postflop_ranges import RangeSource
 
 
 RECOMMENDATION_BENCHMARK_SCHEMA = "poker-hero-recommendation-benchmark"
-RECOMMENDATION_BENCHMARK_SCHEMA_VERSION = 4
+RECOMMENDATION_BENCHMARK_SCHEMA_VERSION = 5
+RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION = 4
 RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION = 3
 RECOMMENDATION_BENCHMARK_TAGGED_SCHEMA_VERSION = 2
 RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION = 1
@@ -74,6 +76,44 @@ BenchmarkTag = Annotated[
         pattern=r"^[a-z0-9][a-z0-9-]*$",
     ),
 ]
+Sha256Digest = Annotated[
+    str,
+    Field(pattern=r"^[0-9a-f]{64}$"),
+]
+EvidenceRevision = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    ),
+]
+StructuralPositionLabel = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Z][A-Z0-9+/]*$",
+    ),
+]
+DealtInCount = Annotated[int, Field(ge=2, le=10, strict=True)]
+PositiveInteger = Annotated[int, Field(ge=1, strict=True)]
+NonNegativeFiniteNumber = Annotated[
+    float,
+    Field(ge=0, allow_inf_nan=False, strict=True),
+]
+
+
+GradingDeliveryMode = Literal["shipped_static_lookup", "server_side_feed"]
+GradingRight = Literal[
+    "commercial_use",
+    "embedding",
+    "redistribution",
+    "updates",
+    "commercial_serving",
+    "derived_outputs",
+]
+GradingEvUnit = Literal["bb", "chips", "currency", "utility"]
 
 
 @dataclass(frozen=True)
@@ -175,6 +215,207 @@ class RecommendationReferenceSource(BaseModel):
     configuration: str | None = Field(default=None, min_length=1, max_length=1_000)
 
 
+class RecommendationReferenceStructuralPosition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_index: Annotated[int, Field(ge=0, le=9, strict=True)]
+    button_distance: Annotated[int, Field(ge=0, le=9, strict=True)]
+    display_label: StructuralPositionLabel
+
+
+class RecommendationReferenceTableConfiguration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dealt_in_count: DealtInCount
+    structural_positions: list[RecommendationReferenceStructuralPosition] = Field(
+        min_length=2,
+        max_length=10,
+    )
+
+    @model_validator(mode="after")
+    def validate_positions(self) -> Self:
+        if len(self.structural_positions) != self.dealt_in_count:
+            raise ValueError(
+                "Structural positions must cover every dealt-in seat exactly"
+            )
+        indexes = [position.action_index for position in self.structural_positions]
+        distances = [
+            position.button_distance for position in self.structural_positions
+        ]
+        labels = [position.display_label for position in self.structural_positions]
+        expected_values = list(range(self.dealt_in_count))
+        if sorted(indexes) != expected_values:
+            raise ValueError(
+                "Structural positions must cover every action index exactly"
+            )
+        if sorted(distances) != expected_values:
+            raise ValueError(
+                "Structural positions must cover every button distance exactly"
+            )
+        if len(labels) != len(set(labels)):
+            raise ValueError("Structural position display labels must be unique")
+
+        action_order_distances = (
+            [0, 1]
+            if self.dealt_in_count == 2
+            else [*range(3, self.dealt_in_count), 0, 1, 2]
+        )
+        action_index_by_distance = {
+            distance: index
+            for index, distance in enumerate(action_order_distances)
+        }
+        expected_labels = structural_position_labels(self.dealt_in_count)
+        for position in self.structural_positions:
+            if (
+                position.action_index
+                != action_index_by_distance[position.button_distance]
+            ):
+                raise ValueError(
+                    "Structural action index must match its button distance"
+                )
+            if position.display_label != expected_labels[position.button_distance]:
+                raise ValueError(
+                    "Structural display label must match its dealt-in table position"
+                )
+        return self
+
+
+class RecommendationReferenceCoverage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    table_configurations: list[RecommendationReferenceTableConfiguration] = Field(
+        min_length=1,
+        max_length=9,
+    )
+    effective_stack_depths_bb: list[PositiveFiniteNumber] = Field(
+        min_length=1,
+        max_length=100,
+    )
+    streets: list[Street] = Field(min_length=1, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_coverage(self) -> Self:
+        table_keys = [table.dealt_in_count for table in self.table_configurations]
+        if len(table_keys) != len(set(table_keys)):
+            raise ValueError("Reference table configurations must be unique")
+        if len(self.effective_stack_depths_bb) != len(
+            set(self.effective_stack_depths_bb)
+        ):
+            raise ValueError("Effective stack depths must be unique")
+        if len(self.streets) != len(set(self.streets)):
+            raise ValueError("Reference streets must be unique")
+        return self
+
+
+class RecommendationEconomicModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal["cash", "tournament"]
+    name: str = Field(min_length=1, max_length=200)
+    revision: EvidenceRevision
+    configuration_sha256: Sha256Digest
+
+
+class RecommendationUtilityModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=200)
+    revision: EvidenceRevision
+    configuration_sha256: Sha256Digest
+
+
+class RecommendationRightsEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    basis: Literal["owned", "licensed"]
+    delivery_mode: GradingDeliveryMode
+    grants: list[GradingRight] = Field(min_length=1, max_length=6)
+    evidence_pointer: str = Field(min_length=1, max_length=1_000)
+    evidence_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_rights_for_delivery_mode(self) -> Self:
+        if len(self.grants) != len(set(self.grants)):
+            raise ValueError("Reference rights grants must be unique")
+        required_rights = {
+            "shipped_static_lookup": {
+                "commercial_use",
+                "embedding",
+                "redistribution",
+                "updates",
+            },
+            "server_side_feed": {
+                "commercial_use",
+                "commercial_serving",
+                "derived_outputs",
+            },
+        }[self.delivery_mode]
+        missing = required_rights.difference(self.grants)
+        if missing:
+            raise ValueError(
+                f"{self.delivery_mode} rights evidence is missing grants:"
+                f" {', '.join(sorted(missing))}"
+            )
+        return self
+
+
+class RecommendationConvergenceEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    metric: str = Field(min_length=1, max_length=100)
+    unit: str = Field(min_length=1, max_length=100)
+    comparison: Literal["at_most", "at_least"]
+    threshold: NonNegativeFiniteNumber
+    observed: NonNegativeFiniteNumber
+    iterations: PositiveInteger
+    evidence_pointer: str = Field(min_length=1, max_length=1_000)
+    evidence_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_threshold(self) -> Self:
+        passed = (
+            self.observed <= self.threshold
+            if self.comparison == "at_most"
+            else self.observed >= self.threshold
+        )
+        if not passed:
+            relation = "at most" if self.comparison == "at_most" else "at least"
+            raise ValueError(
+                f"Observed convergence metric must be {relation} its threshold"
+            )
+        return self
+
+
+class RecommendationGradingReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reference_revision: EvidenceRevision
+    policy_revision: EvidenceRevision
+    tolerance_revision: EvidenceRevision
+    source_artifact_sha256: Sha256Digest
+    source_configuration_sha256: Sha256Digest
+    policy_artifact_sha256: Sha256Digest
+    coverage: RecommendationReferenceCoverage
+    economic_model: RecommendationEconomicModel
+    utility_model: RecommendationUtilityModel
+    ev_unit: GradingEvUnit
+    rights_evidence: RecommendationRightsEvidence
+    convergence_evidence: list[RecommendationConvergenceEvidence] = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    @model_validator(mode="after")
+    def validate_convergence_evidence(self) -> Self:
+        convergence_keys = [
+            (evidence.metric, evidence.unit, evidence.evidence_sha256)
+            for evidence in self.convergence_evidence
+        ]
+        if len(convergence_keys) != len(set(convergence_keys)):
+            raise ValueError("Convergence evidence entries must be unique")
+        return self
+
+
 class RecommendationReferenceLine(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -246,10 +487,12 @@ class RecommendationBenchmarkDataset(BaseModel):
         RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION,
         RECOMMENDATION_BENCHMARK_TAGGED_SCHEMA_VERSION,
         RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION,
         RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
     ]
     name: str = Field(min_length=1, max_length=200)
     reference_source: RecommendationReferenceSource | None = None
+    grading_reference: RecommendationGradingReference | None = None
     sizing_tolerance_bb: PositiveFiniteNumber = 0.01
     minimum_policy_frequency: PositiveProbability = 0.05
     cases: list[RecommendationBenchmarkCase] = Field(
@@ -284,10 +527,28 @@ class RecommendationBenchmarkDataset(BaseModel):
                 "Range conditioning expectations require schema version 3"
             )
         if (
-            self.schema_version < RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+            self.schema_version < RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION
             and any(case.expected_range_source is not None for case in self.cases)
         ):
             raise ValueError("Range source expectations require schema version 4")
+        if self.schema_version < RECOMMENDATION_BENCHMARK_SCHEMA_VERSION:
+            if self.grading_reference is not None:
+                raise ValueError("Grading reference evidence requires schema version 5")
+        elif self.grading_reference is None:
+            raise ValueError("Schema version 5 requires grading reference evidence")
+        if self.grading_reference is not None:
+            if self.reference_source is None:
+                raise ValueError(
+                    "Grading reference evidence requires a reference source"
+                )
+            if self.grading_reference.ev_unit != "bb" and any(
+                line.ev_bb is not None
+                for case in self.cases
+                for line in case.reference_lines
+            ):
+                raise ValueError(
+                    "ev_bb reference labels require a BB grading-reference EV unit"
+                )
         case_ids = [case.id for case in self.cases]
         if len(case_ids) != len(set(case_ids)):
             raise ValueError("Recommendation benchmark case IDs must be unique")
@@ -397,6 +658,7 @@ class RecommendationBenchmarkReport(RecommendationBenchmarkMetrics):
     )
     provider: str
     reference_source: RecommendationReferenceSource | None = None
+    grading_reference: RecommendationGradingReference | None = None
     street_metrics: list[RecommendationBenchmarkBreakdown] = Field(
         default_factory=list
     )
@@ -454,6 +716,33 @@ def recommendation_dataset_fingerprint(
         normalized["cases"],
         key=lambda case: case["id"],
     )
+    grading_reference = normalized.get("grading_reference")
+    if isinstance(grading_reference, dict):
+        coverage = grading_reference["coverage"]
+        coverage["table_configurations"] = sorted(
+            coverage["table_configurations"],
+            key=lambda table: table["dealt_in_count"],
+        )
+        for table in coverage["table_configurations"]:
+            table["structural_positions"] = sorted(
+                table["structural_positions"],
+                key=lambda position: position["action_index"],
+            )
+        coverage["effective_stack_depths_bb"] = sorted(
+            coverage["effective_stack_depths_bb"]
+        )
+        coverage["streets"] = sorted(coverage["streets"])
+        rights_evidence = grading_reference["rights_evidence"]
+        rights_evidence["grants"] = sorted(rights_evidence["grants"])
+        grading_reference["convergence_evidence"] = sorted(
+            grading_reference["convergence_evidence"],
+            key=lambda evidence: json.dumps(
+                evidence,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
     payload = json.dumps(
         normalized,
         ensure_ascii=True,
@@ -548,6 +837,7 @@ def run_recommendation_benchmark(
         dataset_fingerprint=recommendation_dataset_fingerprint(dataset),
         provider=provider.name,
         reference_source=dataset.reference_source,
+        grading_reference=dataset.grading_reference,
         street_metrics=street_metrics,
         tag_metrics=tag_metrics,
         cases=results,
@@ -733,51 +1023,57 @@ def format_recommendation_benchmark_report(
         "Recommendation benchmark",
         f"Dataset: {report.dataset_name}",
         f"Reference: {_reference_source_label(report.reference_source)}",
-        f"Provider: {report.provider}",
-        (
-            f"Cases: {report.completed_cases}/{report.total_cases} completed"
-            f" ({report.failed_cases} failed)"
-        ),
-        (
-            f"Action agreement: {report.action_correct}/{report.action_evaluated}"
-            f" ({report.action_accuracy:.1%})"
-        ),
-        _optional_ratio(
-            "Line agreement",
-            report.line_correct,
-            report.line_evaluated,
-            report.line_accuracy,
-        ),
-        _coverage_metric(
-            "Line evaluation coverage",
-            report.line_evaluated,
-            report.completed_cases,
-            report.line_coverage,
-        ),
-        _optional_metric(
-            "Average policy distance",
-            report.average_policy_distance,
-            report.policy_evaluated_cases,
-        ),
-        _coverage_metric(
-            "Policy evaluation coverage",
-            report.policy_evaluated_cases,
-            report.completed_cases,
-            report.policy_coverage,
-        ),
-        _optional_metric(
-            "Average reference EV loss",
-            report.average_reference_ev_loss_bb,
-            report.ev_evaluated_cases,
-            suffix=" BB",
-        ),
-        _coverage_metric(
-            "EV evaluation coverage",
-            report.ev_evaluated_cases,
-            report.completed_cases,
-            report.ev_coverage,
-        ),
     ]
+    if report.grading_reference is not None:
+        _append_grading_reference(lines, report.grading_reference)
+    lines.extend(
+        [
+            f"Provider: {report.provider}",
+            (
+                f"Cases: {report.completed_cases}/{report.total_cases} completed"
+                f" ({report.failed_cases} failed)"
+            ),
+            (
+                f"Action agreement: {report.action_correct}/{report.action_evaluated}"
+                f" ({report.action_accuracy:.1%})"
+            ),
+            _optional_ratio(
+                "Line agreement",
+                report.line_correct,
+                report.line_evaluated,
+                report.line_accuracy,
+            ),
+            _coverage_metric(
+                "Line evaluation coverage",
+                report.line_evaluated,
+                report.completed_cases,
+                report.line_coverage,
+            ),
+            _optional_metric(
+                "Average policy distance",
+                report.average_policy_distance,
+                report.policy_evaluated_cases,
+            ),
+            _coverage_metric(
+                "Policy evaluation coverage",
+                report.policy_evaluated_cases,
+                report.completed_cases,
+                report.policy_coverage,
+            ),
+            _optional_metric(
+                "Average reference EV loss",
+                report.average_reference_ev_loss_bb,
+                report.ev_evaluated_cases,
+                suffix=" BB",
+            ),
+            _coverage_metric(
+                "EV evaluation coverage",
+                report.ev_evaluated_cases,
+                report.completed_cases,
+                report.ev_coverage,
+            ),
+        ]
+    )
     if report.conditioning_expected_cases:
         lines.extend(
             [
@@ -1161,6 +1457,66 @@ def _reference_source_label(
     return f"{source.name} {source.version}" if source.version else source.name
 
 
+def _append_grading_reference(
+    lines: list[str],
+    reference: RecommendationGradingReference,
+) -> None:
+    table_coverage = "; ".join(
+        f"{table.dealt_in_count}-handed"
+        " ("
+        + ", ".join(
+            f"{position.display_label}[action={position.action_index},"
+            f"button-distance={position.button_distance}]"
+            for position in sorted(
+                table.structural_positions,
+                key=lambda item: item.action_index,
+            )
+        )
+        + ")"
+        for table in reference.coverage.table_configurations
+    )
+    stack_coverage = ", ".join(
+        f"{depth:g}" for depth in reference.coverage.effective_stack_depths_bb
+    )
+    convergence = "; ".join(
+        f"{item.metric} {item.observed:g} {item.unit}"
+        f" {'<=' if item.comparison == 'at_most' else '>='}"
+        f" {item.threshold:g} after {item.iterations} iteration(s)"
+        for item in reference.convergence_evidence
+    )
+    rights = reference.rights_evidence
+    lines.extend(
+        [
+            "Reference revisions:"
+            f" reference={reference.reference_revision},"
+            f" policy={reference.policy_revision},"
+            f" tolerance={reference.tolerance_revision}",
+            "Reference artifacts:"
+            f" source={reference.source_artifact_sha256},"
+            f" configuration={reference.source_configuration_sha256},"
+            f" policy={reference.policy_artifact_sha256}",
+            f"Table coverage: {table_coverage}; stacks {stack_coverage} BB;"
+            f" streets {', '.join(reference.coverage.streets)}",
+            "Economic model:"
+            f" {reference.economic_model.kind}/"
+            f"{reference.economic_model.name}"
+            f" ({reference.economic_model.revision});"
+            f" configuration={reference.economic_model.configuration_sha256}",
+            "Utility model:"
+            f" {reference.utility_model.name}"
+            f" ({reference.utility_model.revision});"
+            f" configuration={reference.utility_model.configuration_sha256};"
+            f" EV unit={reference.ev_unit}",
+            "Rights evidence:"
+            f" {rights.basis}/{rights.delivery_mode};"
+            f" grants={','.join(rights.grants)};"
+            f" pointer={rights.evidence_pointer};"
+            f" sha256={rights.evidence_sha256}",
+            f"Convergence evidence: {convergence}",
+        ]
+    )
+
+
 def _append_breakdowns(
     lines: list[str],
     heading: str,
@@ -1428,6 +1784,14 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="Fail when the corpus does not identify its independent reference source",
     )
     parser.add_argument(
+        "--require-grading-reference",
+        action="store_true",
+        help=(
+            "Fail unless the corpus records complete schema-v5 grading-reference"
+            " provenance and gate evidence"
+        ),
+    )
+    parser.add_argument(
         "--baseline-report",
         type=Path,
         help="Compare with a prior --json report for the same provider and corpus",
@@ -1592,6 +1956,8 @@ def _threshold_failures(
         failures.append(f"Benchmark has {report.failed_cases} failed case(s)")
     if args.require_reference_source and report.reference_source is None:
         failures.append("Benchmark reference source is not recorded")
+    if args.require_grading_reference and report.grading_reference is None:
+        failures.append("Benchmark grading reference evidence is not recorded")
     if (
         args.minimum_action_accuracy is not None
         and report.action_accuracy < args.minimum_action_accuracy

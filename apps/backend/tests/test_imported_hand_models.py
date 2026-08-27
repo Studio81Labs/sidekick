@@ -1,0 +1,638 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from decimal import Decimal
+from hashlib import sha256
+
+import pytest
+from pydantic import ValidationError
+
+from app.domain.hands import JobRecord
+from app.domain.imported_hands import (
+    ActionOrigin,
+    CanonicalHandRevision,
+    DeletionReceipt,
+    DeletionRequest,
+    DetectedImportedHand,
+    ImportProvenance,
+    ImportedAction,
+    ImportedHandLifecycle,
+    ImportedHandRecord,
+    ImportedHandState,
+    ImportedSeat,
+    RawHandHistory,
+    SourceChronology,
+    StableHandIdentity,
+    UserCorrection,
+    classify_reimport,
+    classify_restore,
+    derive_structural_positions,
+    imported_hand_state_sha256,
+)
+
+
+NOW = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
+IDENTITY = StableHandIdentity(site="pokerstars", source_hand_id="123456789")
+
+
+def evidence(raw_source_id: str = "file-1") -> dict[str, object]:
+    return {
+        "raw_source_id": raw_source_id,
+        "line_start": 1,
+        "excerpt": "PokerStars Hand #123456789",
+    }
+
+
+def chronology(raw_source_id: str = "file-1") -> SourceChronology:
+    return SourceChronology(
+        played_at=None,
+        source_timezone=None,
+        source_session_id="session-1",
+        source_file_id=raw_source_id,
+        hand_ordinal=1,
+    )
+
+
+def raw_source(
+    *,
+    raw_source_id: str = "file-1",
+    raw_text: str = "PokerStars Hand #123456789\n",
+    identity: StableHandIdentity = IDENTITY,
+) -> RawHandHistory:
+    return RawHandHistory(
+        raw_source_id=raw_source_id,
+        identity=identity,
+        chronology=chronology(raw_source_id),
+        provenance=ImportProvenance(
+            import_id=f"import-{raw_source_id}",
+            imported_at=NOW,
+            adapter_id="pokerstars",
+            adapter_version="1.0.0",
+            format_revision="pokerstars-text/v1",
+            source_filename="HH20260827.txt",
+        ),
+        content_sha256=sha256(raw_text.encode()).hexdigest(),
+        raw_text=raw_text,
+    )
+
+
+def seats() -> list[ImportedSeat]:
+    return [
+        ImportedSeat(
+            seat_number=1,
+            player_id="hero",
+            starting_stack=Decimal("100"),
+            participation="dealt_in",
+        ),
+        ImportedSeat(
+            seat_number=2,
+            player_id="villain",
+            starting_stack=Decimal("100"),
+            participation="dealt_in",
+        ),
+    ]
+
+
+def hand_state(*, hero_player_id: str | None = None) -> ImportedHandState:
+    return ImportedHandState(
+        identity=IDENTITY,
+        chronology=chronology(),
+        game={
+            "betting_limit": "no_limit",
+            "table_size": 2,
+            "blinds": {
+                "small_blind": Decimal("0.50"),
+                "big_blind": Decimal("1.00"),
+                "ante": None,
+            },
+            "economics": {"kind": "unknown", "reason": "not supplied"},
+        },
+        button_seat=1,
+        seats=seats(),
+        hero_player_id=hero_player_id,
+        hero_cards=[],
+        streets=[{"street": "preflop", "actions": []}],
+    )
+
+
+def detected(state: ImportedHandState | None = None) -> DetectedImportedHand:
+    detected_state = state or hand_state()
+    return DetectedImportedHand(
+        detection_id="detection-1",
+        raw_source_id="file-1",
+        detector_id="pokerstars",
+        detector_version="1.0.0",
+        detected_at=NOW,
+        state=detected_state,
+        field_evidence={
+            "/hero_player_id": {
+                "confidence": Decimal("0.40"),
+                "evidence": [evidence()],
+                "warnings": ["Hero line was absent"],
+            }
+        },
+        warnings=["Review hero identity"],
+        content_sha256=imported_hand_state_sha256(detected_state),
+    )
+
+
+def revision() -> CanonicalHandRevision:
+    return CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW,
+        state=hand_state(hero_player_id="hero"),
+        corrections=[
+            UserCorrection(
+                field_pointer="/hero_player_id",
+                detected_value=None,
+                approved_value="hero",
+                corrected_at=NOW,
+                reason="Confirmed from the dealt-to line",
+            )
+        ],
+    )
+
+
+def active_record() -> ImportedHandRecord:
+    return ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected()],
+        canonical_revisions=[revision()],
+        lifecycle=ImportedHandLifecycle(
+            status="active",
+            active_canonical_revision=1,
+            changed_at=NOW,
+        ),
+    )
+
+
+def test_missing_source_time_and_economics_stay_explicitly_unknown() -> None:
+    state = hand_state()
+
+    restored = ImportedHandState.model_validate_json(state.model_dump_json())
+
+    assert restored.chronology.played_at is None
+    assert restored.chronology.source_timezone is None
+    assert restored.game.economics.kind == "unknown"
+    assert restored.game.blinds.ante is None
+
+
+def test_import_boundary_rejects_legacy_screenshot_provenance() -> None:
+    payload = raw_source().model_dump()
+    payload["provenance"] = {
+        **payload["provenance"],
+        "source_kind": "screenshot",
+    }
+
+    with pytest.raises(ValidationError, match="hand_history"):
+        RawHandHistory.model_validate(payload)
+
+    # The legacy model remains a separate, valid audit contract.
+    legacy = JobRecord(
+        original_filename="table.png",
+        image_filename="original.png",
+        parser_provider="mock",
+        recommendation_provider="mock",
+    )
+    assert legacy.approved_state is None
+
+
+def test_source_chronology_requires_timezone_aware_play_time() -> None:
+    with pytest.raises(ValidationError):
+        SourceChronology(
+            played_at=datetime(2026, 8, 27, 12, 0),
+            source_file_id="file-1",
+        )
+
+    with pytest.raises(ValidationError, match="source_timezone requires played_at"):
+        SourceChronology(
+            played_at=None,
+            source_timezone="Europe/Prague",
+            source_file_id="file-1",
+        )
+
+
+def test_position_derivation_skips_sitting_out_seats_and_preserves_full_ring_labels() -> None:
+    table = [
+        ImportedSeat(
+            seat_number=number,
+            player_id=f"p{number}",
+            participation="sitting_out" if number == 5 else "dealt_in",
+        )
+        for number in range(1, 10)
+    ]
+
+    positions = derive_structural_positions(table, button_seat=9)
+
+    assert 5 not in positions
+    assert positions[9].display_label == "BTN"
+    assert positions[1].display_label == "SB"
+    assert positions[2].display_label == "BB"
+    assert positions[3].display_label == "UTG"
+    assert positions[4].display_label == "UTG+1"
+    assert positions[6].display_label == "LJ"
+    assert positions[8].display_label == "CO"
+    assert positions[3].action_index == 0
+    assert {position.dealt_in_player_count for position in positions.values()} == {8}
+
+
+def test_heads_up_position_derivation_makes_button_the_small_blind() -> None:
+    positions = derive_structural_positions(seats(), button_seat=1)
+
+    assert positions[1].display_label == "BTN/SB"
+    assert positions[1].action_index == 0
+    assert positions[2].display_label == "BB"
+    assert positions[2].button_distance == 1
+
+
+def test_hand_rejects_a_structural_position_shifted_by_a_sitting_out_seat() -> None:
+    positioned = seats()
+    positioned[0].position = {
+        "dealt_in_player_count": 2,
+        "action_index": 1,
+        "button_distance": 0,
+        "display_label": "BTN/SB",
+    }
+
+    with pytest.raises(ValidationError, match="does not match the dealt-in ring"):
+        ImportedHandState(
+            identity=IDENTITY,
+            chronology=chronology(),
+            game={
+                "betting_limit": "no_limit",
+                "table_size": 2,
+                "blinds": {},
+                "economics": {"kind": "unknown"},
+            },
+            button_seat=1,
+            seats=positioned,
+            streets=[{"street": "preflop"}],
+        )
+
+
+def test_unmarked_action_needs_versioned_semantics_to_be_player_selected() -> None:
+    base = {
+        "kind": "player_selected",
+        "basis": "versioned_absence_semantics",
+        "confidence": Decimal("0.90"),
+        "evidence": [evidence()],
+    }
+    with pytest.raises(ValidationError, match="semantics revision"):
+        ActionOrigin(**base)
+
+    origin = ActionOrigin(
+        **base,
+        semantics_revision="pokerstars-actions/v3",
+    )
+    action = ImportedAction(
+        sequence=0,
+        actor_id="hero",
+        action_type="fold",
+        total_committed=Decimal("0.50"),
+        origin=origin,
+        evidence=[evidence()],
+    )
+    assert action.is_player_decision is True
+
+
+@pytest.mark.parametrize(
+    ("kind", "basis", "reason"),
+    [
+        ("unknown", "unresolved", None),
+        ("client_automatic", "explicit_marker", "timeout"),
+    ],
+)
+def test_unknown_and_client_automatic_actions_are_not_player_decisions(
+    kind: str,
+    basis: str,
+    reason: str | None,
+) -> None:
+    action = ImportedAction(
+        sequence=0,
+        actor_id="hero",
+        action_type="fold",
+        total_committed=Decimal("0.50"),
+        origin={
+            "kind": kind,
+            "basis": basis,
+            "confidence": None,
+            "evidence": [evidence()],
+            "automatic_reason": reason,
+        },
+        evidence=[evidence()],
+    )
+
+    assert action.is_player_decision is False
+
+
+def test_reimport_classification_is_idempotent_or_conflicting_by_stable_identity() -> None:
+    existing = raw_source()
+
+    exact = classify_reimport(
+        [existing],
+        raw_source(raw_source_id="file-2"),
+    )
+    conflict = classify_reimport(
+        [existing],
+        raw_source(raw_source_id="file-2", raw_text="materially different\n"),
+    )
+    new = classify_reimport(
+        [existing],
+        raw_source(
+            raw_source_id="file-2",
+            identity=StableHandIdentity(site="pokerstars", source_hand_id="987"),
+        ),
+    )
+
+    assert exact.kind == "exact_reimport"
+    assert exact.existing_raw_source_id == "file-1"
+    assert conflict.kind == "identity_conflict"
+    assert new.kind == "new_identity"
+
+
+def test_materially_different_detected_content_is_an_explicit_conflict() -> None:
+    existing_raw = raw_source()
+    candidate_raw = raw_source(raw_source_id="file-2")
+    prior_detection = detected()
+    candidate_state = hand_state(hero_player_id="villain").model_copy(
+        update={"chronology": chronology("file-2")}
+    )
+    candidate_detection = DetectedImportedHand(
+        detection_id="detection-2",
+        raw_source_id="file-2",
+        detector_id="pokerstars",
+        detector_version="1.0.0",
+        detected_at=NOW,
+        state=candidate_state,
+        content_sha256=imported_hand_state_sha256(candidate_state),
+    )
+
+    disposition = classify_reimport(
+        [existing_raw],
+        candidate_raw,
+        existing_detections=[prior_detection],
+        candidate_detection=candidate_detection,
+    )
+
+    assert disposition.kind == "identity_conflict"
+
+
+def test_detected_state_checksum_and_raw_source_link_are_enforced() -> None:
+    state = hand_state()
+
+    with pytest.raises(ValidationError, match="normalized detected state"):
+        DetectedImportedHand(
+            detection_id="detection-bad-hash",
+            raw_source_id="file-1",
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            content_sha256="a" * 64,
+        )
+
+    with pytest.raises(ValidationError, match="detected raw_source_id"):
+        DetectedImportedHand(
+            detection_id="detection-wrong-source",
+            raw_source_id="file-2",
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+
+def test_extraction_returns_only_voluntary_hero_actions_from_active_approval() -> None:
+    selected = {
+        "sequence": 0,
+        "actor_id": "hero",
+        "action_type": "fold",
+        "total_committed": Decimal("0.50"),
+        "origin": {
+            "kind": "player_selected",
+            "basis": "explicit_marker",
+            "evidence": [evidence()],
+        },
+        "evidence": [evidence()],
+    }
+    automatic = {
+        **selected,
+        "sequence": 1,
+        "actor_id": "villain",
+        "origin": {
+            "kind": "client_automatic",
+            "basis": "explicit_marker",
+            "automatic_reason": "timeout",
+            "evidence": [evidence()],
+        },
+    }
+    state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [selected, automatic],
+        }
+    ]
+    state = ImportedHandState.model_validate(state_payload)
+    detected_state = detected(state)
+    approved = CanonicalHandRevision(
+        revision=1,
+        detection_id=detected_state.detection_id,
+        approved_at=NOW,
+        state=state,
+    )
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected_state],
+        canonical_revisions=[approved],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+    assert [action.actor_id for action in record.active_hero_actions_for_extraction] == [
+        "hero"
+    ]
+
+    withdrawn = record.model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(status="withdrawn", changed_at=NOW)
+        }
+    )
+    assert withdrawn.active_hero_actions_for_extraction == []
+
+
+def test_active_record_enforces_user_corrections_and_round_trips() -> None:
+    record = active_record()
+
+    restored = ImportedHandRecord.model_validate_json(record.model_dump_json())
+
+    assert restored == record
+    assert restored.active_state_for_extraction is not None
+    assert restored.active_state_for_extraction.hero_player_id == "hero"
+
+    bad_revision = revision().model_copy(
+        update={"state": hand_state(hero_player_id="villain")}
+    )
+    with pytest.raises(ValidationError, match="only through corrections"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[bad_revision],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+def test_reapproval_revisions_are_monotonic_and_latest_only_is_active() -> None:
+    first = revision()
+    second = first.model_copy(update={"revision": 2, "approved_at": NOW})
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected()],
+        canonical_revisions=[first, second],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 2,
+            "changed_at": NOW,
+        },
+    )
+    assert record.active_state_for_extraction == second.state
+
+    with pytest.raises(ValidationError, match="monotonic"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[second],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 2,
+                "changed_at": NOW,
+            },
+        )
+
+
+@pytest.mark.parametrize("status", ["withdrawn", "rejected"])
+def test_withdrawal_and_rejection_retain_audit_but_clear_active_pointer(
+    status: str,
+) -> None:
+    active = active_record()
+    inactive = ImportedHandRecord(
+        identity=active.identity,
+        raw_sources=active.raw_sources,
+        detections=active.detections,
+        canonical_revisions=active.canonical_revisions,
+        lifecycle={"status": status, "changed_at": NOW, "reason": "player request"},
+    )
+
+    assert inactive.active_state_for_extraction is None
+    assert inactive.canonical_revisions == active.canonical_revisions
+
+
+def test_failed_deletion_is_visibly_pending_and_learning_ineligible() -> None:
+    active = active_record()
+    pending = ImportedHandRecord(
+        identity=active.identity,
+        raw_sources=active.raw_sources,
+        detections=active.detections,
+        canonical_revisions=active.canonical_revisions,
+        lifecycle=ImportedHandLifecycle(
+            status="deletion_pending",
+            deletion_generation=1,
+            changed_at=NOW,
+            deletion_request=DeletionRequest(
+                generation=1,
+                requested_at=NOW,
+                cleanup_status="failed",
+                last_error="aggregate rebuild failed",
+            ),
+        ),
+    )
+
+    assert pending.lifecycle.learning_eligible is False
+    assert pending.active_state_for_extraction is None
+
+
+def test_permanent_deletion_retains_only_non_sensitive_generation_receipt() -> None:
+    deleted = ImportedHandRecord(
+        identity=None,
+        lifecycle={
+            "status": "deleted",
+            "deletion_generation": 2,
+            "changed_at": NOW,
+            "reason": "purged",
+        },
+        deletion_receipt=DeletionReceipt(
+            receipt_id="deletion-2",
+            generation=2,
+            deleted_at=NOW,
+            tombstone_sha256="b" * 64,
+        ),
+    )
+
+    assert deleted.active_state_for_extraction is None
+    assert deleted.raw_sources == []
+    assert deleted.canonical_revisions == []
+
+    with pytest.raises(ValidationError, match="cannot retain hand-linked"):
+        ImportedHandRecord(
+            identity=None,
+            raw_sources=[raw_source()],
+            lifecycle=deleted.lifecycle,
+            deletion_receipt=deleted.deletion_receipt,
+        )
+
+
+def test_restore_cannot_resurrect_a_deleted_generation_without_explicit_reimport() -> None:
+    deleted = ImportedHandRecord(
+        identity=None,
+        lifecycle={
+            "status": "deleted",
+            "deletion_generation": 2,
+            "changed_at": NOW,
+        },
+        deletion_receipt=DeletionReceipt(
+            receipt_id="deletion-2",
+            generation=2,
+            deleted_at=NOW,
+            tombstone_sha256="b" * 64,
+        ),
+    )
+    stale_backup = active_record()
+    same_generation_backup = stale_backup.model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(
+                status="active",
+                active_canonical_revision=1,
+                deletion_generation=2,
+                changed_at=NOW,
+            )
+        }
+    )
+
+    assert classify_restore(deleted, stale_backup).kind == "stale_deletion_generation"
+    assert (
+        classify_restore(deleted, same_generation_backup).kind
+        == "explicit_reimport_required"
+    )
+    assert (
+        classify_restore(
+            deleted,
+            same_generation_backup,
+            user_authorized_reimport=True,
+        ).kind
+        == "allow"
+    )

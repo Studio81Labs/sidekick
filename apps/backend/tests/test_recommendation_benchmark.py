@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 import sys
-from typing import Literal
+from typing import Any, Literal
 
 import pytest
 from pydantic import ValidationError
@@ -115,7 +115,9 @@ def benchmark_dataset(
 ) -> RecommendationBenchmarkDataset:
     values = {
         "schema": RECOMMENDATION_BENCHMARK_SCHEMA,
-        "schema_version": RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        # Most scoring tests exercise the still-supported v4 contract. Focused
+        # tests below opt into the evidence-complete v5 contract explicitly.
+        "schema_version": 4,
         "name": "Trusted solver sample",
         "sizing_tolerance_bb": 0.01,
         "minimum_policy_frequency": 0.05,
@@ -123,6 +125,78 @@ def benchmark_dataset(
     }
     values.update(overrides)
     return RecommendationBenchmarkDataset.model_validate(values)
+
+
+def grading_reference_evidence(
+    *,
+    ev_unit: str = "bb",
+    delivery_mode: str = "shipped_static_lookup",
+) -> dict[str, Any]:
+    grants = (
+        ["commercial_use", "embedding", "redistribution", "updates"]
+        if delivery_mode == "shipped_static_lookup"
+        else ["commercial_use", "commercial_serving", "derived_outputs"]
+    )
+    return {
+        "reference_revision": "reference-2026.08",
+        "policy_revision": "policy-2026.08.1",
+        "tolerance_revision": "tolerance-1",
+        "source_artifact_sha256": "1" * 64,
+        "source_configuration_sha256": "2" * 64,
+        "policy_artifact_sha256": "3" * 64,
+        "coverage": {
+            "table_configurations": [
+                {
+                    "dealt_in_count": 2,
+                    "structural_positions": [
+                        {
+                            "action_index": 0,
+                            "button_distance": 0,
+                            "display_label": "BTN/SB",
+                        },
+                        {
+                            "action_index": 1,
+                            "button_distance": 1,
+                            "display_label": "BB",
+                        },
+                    ],
+                }
+            ],
+            "effective_stack_depths_bb": [50.0, 100.0],
+            "streets": ["preflop"],
+        },
+        "economic_model": {
+            "kind": "cash",
+            "name": "heads-up-no-rake",
+            "revision": "economics-1",
+            "configuration_sha256": "4" * 64,
+        },
+        "utility_model": {
+            "name": "cash-expected-value",
+            "revision": "utility-1",
+            "configuration_sha256": "5" * 64,
+        },
+        "ev_unit": ev_unit,
+        "rights_evidence": {
+            "basis": "licensed",
+            "delivery_mode": delivery_mode,
+            "grants": grants,
+            "evidence_pointer": "evidence/reference-rights-review.md",
+            "evidence_sha256": "6" * 64,
+        },
+        "convergence_evidence": [
+            {
+                "metric": "exploitability",
+                "unit": "bb_per_100",
+                "comparison": "at_most",
+                "threshold": 0.02,
+                "observed": 0.01,
+                "iterations": 250000,
+                "evidence_pointer": "evidence/convergence-report.json",
+                "evidence_sha256": "7" * 64,
+            }
+        ],
+    }
 
 
 def recommendation(
@@ -188,6 +262,59 @@ def test_recommendation_dataset_fingerprint_tracks_scoring_inputs() -> None:
 
     assert recommendation_dataset_fingerprint(reordered) == baseline
     assert recommendation_dataset_fingerprint(changed) != baseline
+
+
+def test_schema_five_propagates_grading_reference_and_fingerprints_evidence() -> None:
+    dataset = benchmark_dataset(
+        [benchmark_case("preflop-check", [reference_line("check", ev_bb=0.4)])],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={
+            "name": "Independent solver export",
+            "version": "2026.08",
+            "configuration": "Heads-up cash, no rake",
+        },
+        grading_reference=grading_reference_evidence(),
+    )
+    baseline_fingerprint = recommendation_dataset_fingerprint(dataset)
+    reordered = dataset.model_copy(deep=True)
+    assert reordered.grading_reference is not None
+    reordered.grading_reference.coverage.effective_stack_depths_bb.reverse()
+    reordered.grading_reference.coverage.table_configurations[0].structural_positions.reverse()
+    reordered.grading_reference.rights_evidence.grants.reverse()
+    changed = dataset.model_copy(deep=True)
+    assert changed.grading_reference is not None
+    changed.grading_reference.source_configuration_sha256 = "8" * 64
+    changed_source = dataset.model_copy(deep=True)
+    assert changed_source.grading_reference is not None
+    changed_source.grading_reference.source_artifact_sha256 = "9" * 64
+    changed_rights = dataset.model_copy(deep=True)
+    assert changed_rights.grading_reference is not None
+    changed_rights.grading_reference.rights_evidence.evidence_sha256 = "a" * 64
+
+    report = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider([recommendation("check")]),
+    )
+
+    assert recommendation_dataset_fingerprint(reordered) == baseline_fingerprint
+    assert recommendation_dataset_fingerprint(changed) != baseline_fingerprint
+    assert (
+        recommendation_dataset_fingerprint(changed_source) != baseline_fingerprint
+    )
+    assert (
+        recommendation_dataset_fingerprint(changed_rights) != baseline_fingerprint
+    )
+    assert report.grading_reference == dataset.grading_reference
+    formatted = format_recommendation_benchmark_report(report)
+    assert "policy=policy-2026.08.1" in formatted
+    assert f"configuration={'2' * 64}" in formatted
+    assert (
+        "Table coverage: 2-handed (BTN/SB[action=0,button-distance=0], "
+        "BB[action=1,button-distance=1])" in formatted
+    )
+    assert "EV unit=bb" in formatted
+    assert "licensed/shipped_static_lookup" in formatted
+    assert "exploitability 0.01 bb_per_100 <= 0.02" in formatted
 
 
 def test_recommendation_benchmark_scores_policy_ev_fallback_and_failures() -> None:
@@ -1290,7 +1417,7 @@ def test_recommendation_benchmark_dataset_rejects_invalid_schema(
 ) -> None:
     payload = {
         "schema": RECOMMENDATION_BENCHMARK_SCHEMA,
-        "schema_version": RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        "schema_version": 4,
         "name": "Invalid sample",
         "sizing_tolerance_bb": 0.01,
         "minimum_policy_frequency": 0.05,
@@ -1348,6 +1475,80 @@ def test_recommendation_benchmark_dataset_rejects_invalid_schema(
 
     with pytest.raises(ValidationError):
         RecommendationBenchmarkDataset.model_validate(payload)
+
+
+def test_schema_five_requires_structured_reference_evidence() -> None:
+    payload = benchmark_dataset(
+        [benchmark_case("v4-check", [reference_line("check")])]
+    ).model_dump(mode="json", by_alias=True)
+    payload["schema_version"] = RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+
+    with pytest.raises(ValidationError, match="grading reference evidence"):
+        RecommendationBenchmarkDataset.model_validate(payload)
+
+    payload["schema_version"] = 4
+    payload["grading_reference"] = grading_reference_evidence()
+    with pytest.raises(ValidationError, match="requires schema version 5"):
+        RecommendationBenchmarkDataset.model_validate(payload)
+
+
+def test_schema_five_rejects_non_bb_unit_for_legacy_ev_labels() -> None:
+    with pytest.raises(ValidationError, match="ev_bb reference labels require"):
+        benchmark_dataset(
+            [benchmark_case("chip-ev", [reference_line("check", ev_bb=20.0)])],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(ev_unit="chips"),
+        )
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing_static_grant", "missing grants: redistribution"),
+        ("missing_feed_grant", "missing grants: derived_outputs"),
+        ("failed_convergence", "must be at most its threshold"),
+        ("table_position_gap", "cover every dealt-in seat exactly"),
+        ("structural_index_mismatch", "must match its button distance"),
+        ("collapsed_position_label", "must match its dealt-in table position"),
+        ("invalid_digest", "String should match pattern"),
+    ],
+)
+def test_schema_five_validates_phase_zero_gate_evidence(
+    mutation: str,
+    message: str,
+) -> None:
+    evidence = grading_reference_evidence()
+    if mutation == "missing_static_grant":
+        evidence["rights_evidence"]["grants"].remove("redistribution")
+    elif mutation == "missing_feed_grant":
+        evidence = grading_reference_evidence(delivery_mode="server_side_feed")
+        evidence["rights_evidence"]["grants"].remove("derived_outputs")
+    elif mutation == "failed_convergence":
+        evidence["convergence_evidence"][0]["observed"] = 0.03
+    elif mutation == "table_position_gap":
+        evidence["coverage"]["table_configurations"][0]["dealt_in_count"] = 3
+    elif mutation == "structural_index_mismatch":
+        evidence["coverage"]["table_configurations"][0]["structural_positions"][
+            0
+        ]["action_index"] = 1
+        evidence["coverage"]["table_configurations"][0]["structural_positions"][
+            1
+        ]["action_index"] = 0
+    elif mutation == "collapsed_position_label":
+        evidence["coverage"]["table_configurations"][0]["structural_positions"][
+            0
+        ]["display_label"] = "MP"
+    else:
+        evidence["source_artifact_sha256"] = "not-a-digest"
+
+    with pytest.raises(ValidationError, match=message):
+        benchmark_dataset(
+            [benchmark_case("phase-zero", [reference_line("check")])],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=evidence,
+        )
 
 
 def test_benchmark_file_rejects_invalid_and_oversized_json(tmp_path: Path) -> None:
@@ -1457,6 +1658,21 @@ def test_loader_rejects_range_source_expectation_in_version_three(
 
     with pytest.raises(RecommendationBenchmarkError, match="schema version 4"):
         load_recommendation_benchmark_dataset(path)
+
+
+def test_loader_accepts_version_four_corpus_without_grading_reference(
+    tmp_path: Path,
+) -> None:
+    payload = benchmark_dataset(
+        [benchmark_case("version-four-check", [reference_line("check")])]
+    ).model_dump(mode="json", by_alias=True)
+    path = tmp_path / "version-four.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    dataset = load_recommendation_benchmark_dataset(path)
+
+    assert dataset.schema_version == 4
+    assert dataset.grading_reference is None
 
 
 def test_recommendation_benchmark_cli_emits_json_and_enforces_thresholds(
@@ -2279,6 +2495,7 @@ def test_cli_enforces_reference_source_and_evaluation_coverage(
         [
             str(dataset_path),
             "--require-reference-source",
+            "--require-grading-reference",
             "--minimum-line-coverage",
             "1",
             "--minimum-policy-coverage",
@@ -2293,6 +2510,7 @@ def test_cli_enforces_reference_source_and_evaluation_coverage(
     captured = capsys.readouterr()
     assert exit_code == 1
     assert "Benchmark reference source is not recorded" in captured.err
+    assert "Benchmark grading reference evidence is not recorded" in captured.err
     assert "Line evaluation coverage 0.0% is below the minimum 100.0%" in (
         captured.err
     )

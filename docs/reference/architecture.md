@@ -165,6 +165,15 @@ training adapters import those primitives directly. The same domain owns
 detected parser state, parser evidence, and canonical user-approved state plus
 their cross-field wager and history validation.
 
+The Phase 0 V2 import contracts live separately under
+`app/domain/imported_hands`. They define immutable hand-history source evidence,
+site-agnostic detected and approved revisions, exact dealt-in-ring positions,
+action-origin evidence, re-import conflicts, lifecycle/deletion tombstones, and
+a pure pot-reconciliation oracle. The aggregate exposes only voluntary actions
+from its active approved revision for later decision extraction. These contracts
+are not yet connected to V1 routes or file-backed storage, so they do not make
+the hosted screenshot workflow a V2 player-data path.
+
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, benchmarks, and
 training aggregation import those contracts directly.
@@ -438,6 +447,13 @@ Version-4 postflop cases may additionally require the exact `raw.range_source`
 selected by the provider. The benchmark validates that value against the
 configured and contextual source registry, then reports independent agreement
 and evidence coverage with optional CI thresholds for both.
+Version-5 corpora require a grading-reference evidence envelope with immutable
+source/policy/tolerance revisions and digests, exact dealt-in structural
+positions, stack/street coverage, economic and utility models, an EV unit,
+delivery-specific rights evidence, and passing convergence measurements. The
+CLI can require that envelope, but its declarations and artifact pointers are
+not themselves source approval; production route matching and real retained
+evidence remain Phase 0 gate work.
 Reports also carry a SHA-256 fingerprint over normalized scoring inputs and
 reference provenance. The CLI can load a full prior JSON report for the same
 provider and fingerprint, display aggregate deltas, and gate direction-aware
