@@ -395,7 +395,7 @@ post-maintenance check.
 The probe validates all three deployment boundaries with bounded one-MiB
 responses, a 20-second attempt timeout, and three attempts:
 
-- the SPA returns the Poker Training Analyzer application marker;
+- the SPA returns the stable `application-name` metadata marker for Poker Hero;
 - same-origin `/api/health` returns JSON with `status: "ok"`;
 - same-origin `/api/jobs?limit=1` returns a queue-shaped response, proving the
   Worker proxy and its backend credential are operational.

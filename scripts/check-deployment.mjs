@@ -5,6 +5,8 @@ const DEFAULT_ATTEMPTS = 3;
 const DEFAULT_RETRY_DELAY_MS = 10_000;
 const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
+const PWA_APPLICATION_MARKER =
+  /<meta\b(?=[^>]*\bname\s*=\s*["']application-name["'])(?=[^>]*\bcontent\s*=\s*["']poker hero["'])[^>]*>/i;
 
 function positiveInteger(value, label) {
   const parsed = Number(value);
@@ -199,7 +201,7 @@ function parseJson(body, label) {
 
 async function checkOnce(baseUrl, headers, timeoutMs) {
   const spa = await fetchText(baseUrl, "/", "PWA", headers, timeoutMs);
-  if (!spa.toLowerCase().includes("poker training analyzer")) {
+  if (!PWA_APPLICATION_MARKER.test(spa)) {
     throw new Error("PWA response did not contain the application marker");
   }
 

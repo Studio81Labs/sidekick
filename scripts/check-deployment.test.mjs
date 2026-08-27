@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 
 import { checkDeployment } from "./check-deployment.mjs";
+
+const VALID_PWA_DOCUMENT =
+  '<meta name="application-name" content="Poker Hero">';
 
 async function withServer(handler, exercise) {
   const server = createServer((request, response) => {
@@ -24,7 +28,11 @@ async function withServer(handler, exercise) {
   }
 }
 
-test("checks the app, proxy, and MCP security boundaries", async () => {
+test("checks the committed app shell, proxy, and MCP security boundaries", async () => {
+  const committedPwaDocument = await readFile(
+    new URL("../apps/pwa/index.html", import.meta.url),
+    "utf8",
+  );
   const requestedPaths = [];
   await withServer(
     (request, response) => {
@@ -37,7 +45,7 @@ test("checks the app, proxy, and MCP security boundaries", async () => {
       }
       if (request.url === "/app") {
         response.writeHead(200, { "Content-Type": "text/html" });
-        response.end("<title>Poker Training Analyzer</title>");
+        response.end(committedPwaDocument);
         return;
       }
       if (request.url === "/api/mcp/principals" || request.url === "/mcp") {
@@ -77,11 +85,29 @@ test("checks the app, proxy, and MCP security boundaries", async () => {
   ]);
 });
 
+test("rejects branding text without the stable application metadata", async () => {
+  await withServer(
+    (_request, response) => {
+      response.writeHead(200).end("<title>Poker Training Analyzer</title>");
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        checkDeployment(baseUrl, {
+          allowHttp: true,
+          attempts: 1,
+          timeoutMs: 1_000,
+        }),
+        /PWA response did not contain the application marker/,
+      );
+    },
+  );
+});
+
 test("rejects a publicly exposed MCP administration route", async () => {
   await withServer(
     (request, response) => {
       if (request.url === "/") {
-        response.writeHead(200).end("Poker Training Analyzer");
+        response.writeHead(200).end(VALID_PWA_DOCUMENT);
         return;
       }
       response.writeHead(200, { "Content-Type": "application/json" });
@@ -112,7 +138,7 @@ test("accepts an absent MCP endpoint when hosted access is disabled", async () =
   await withServer(
     (request, response) => {
       if (request.url === "/") {
-        response.writeHead(200).end("Poker Training Analyzer");
+        response.writeHead(200).end(VALID_PWA_DOCUMENT);
         return;
       }
       if (request.url === "/api/mcp/principals") {
@@ -146,7 +172,7 @@ test("rejects an absent admin binding when hosted MCP is enabled", async () => {
   await withServer(
     (request, response) => {
       if (request.url === "/") {
-        response.writeHead(200).end("Poker Training Analyzer");
+        response.writeHead(200).end(VALID_PWA_DOCUMENT);
         return;
       }
       if (request.url === "/api/mcp/principals") {
@@ -180,7 +206,7 @@ test("retries transient failures and reports only the failed check", async () =>
   await withServer(
     (request, response) => {
       if (request.url === "/") {
-        response.writeHead(200).end("Poker Training Analyzer");
+        response.writeHead(200).end(VALID_PWA_DOCUMENT);
         return;
       }
       if (request.url === "/api/health") {
@@ -220,7 +246,7 @@ test("does not forward Access credentials across redirects", async () => {
   await withServer(
     (request, response) => {
       redirectedRequests += 1;
-      response.writeHead(200).end("Poker Training Analyzer");
+      response.writeHead(200).end(VALID_PWA_DOCUMENT);
     },
     async (redirectTarget) => {
       await withServer(

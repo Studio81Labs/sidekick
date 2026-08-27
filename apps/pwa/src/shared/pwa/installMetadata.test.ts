@@ -99,6 +99,11 @@ describe("PWA install metadata", () => {
     ).toBe("yes");
     expect(
       document
+        .querySelector('meta[name="application-name"]')
+        ?.getAttribute("content"),
+    ).toBe("Poker Hero");
+    expect(
+      document
         .querySelector('meta[name="theme-color"]')
         ?.getAttribute("content"),
     ).toBe("#c52a12");
