@@ -254,6 +254,8 @@ def test_total_only_uncalled_return_cannot_increase_commitment(
             "uncalled return cannot increase total_committed" in error
             for error in result.errors
         )
+    else:
+        assert result.uncalled_returns == {"p1": Decimal("2")}
 
 
 def test_missing_uncalled_return_fails_even_if_a_bad_source_total_matches() -> None:
@@ -378,16 +380,14 @@ def test_amount_total_disagreement_and_award_mismatch_are_explicit_failures() ->
             {
                 "street": "preflop",
                 "actions": [
-                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
-                    action(1, "p2", "post_big_blind", amount="1", total="1"),
-                    action(2, "p1", "call", amount="0.5", total="2"),
-                    action(3, "p2", "check", total="1"),
+                    action(0, "p1", "post_ante", amount="0.5", total="1"),
+                    action(1, "p2", "post_ante", amount="0.5", total="0.5"),
                 ],
             }
         ],
-        stated_gross="2",
-        stated_net="2",
-        awards=[("p1", "1.5", 0)],
+        stated_gross="1",
+        stated_net="1",
+        awards=[("p1", "0.5", 0)],
     )
 
     result = reconcile_pot(state)

@@ -696,6 +696,39 @@ class ImportedHandState(ImportedHandModel):
                     raise ValueError(
                         "an actor cannot check while facing an outstanding wager"
                     )
+                if action.action_type == "call" and current_wager is not None:
+                    if resolved_commitment is not None:
+                        if resolved_commitment > current_wager or (
+                            resolved_commitment < current_wager and not action.all_in
+                        ):
+                            raise ValueError(
+                                "a call must match the outstanding wager unless it is"
+                                " an all-in under-call"
+                            )
+                        if (
+                            actor_commitment is not None
+                            and resolved_commitment <= actor_commitment
+                        ):
+                            raise ValueError("a call requires an outstanding wager")
+                elif action.action_type == "bet" and current_wager is not None:
+                    if current_wager > 0:
+                        raise ValueError("a bet requires no outstanding wager")
+                    if resolved_commitment is not None and (
+                        resolved_commitment <= 0
+                        or (
+                            actor_commitment is not None
+                            and resolved_commitment <= actor_commitment
+                        )
+                    ):
+                        raise ValueError("a bet must add chips above the prior commitment")
+                elif action.action_type == "raise" and current_wager is not None:
+                    if current_wager == 0:
+                        raise ValueError("a raise requires an outstanding wager")
+                    if (
+                        resolved_commitment is not None
+                        and resolved_commitment <= current_wager
+                    ):
+                        raise ValueError("a raise must increase the outstanding wager")
                 if action.action_type == "fold":
                     terminal_actors[action.actor_id] = ("folded", street.street)
                 elif action.all_in:
@@ -767,8 +800,25 @@ class ImportedHandState(ImportedHandModel):
             raise ValueError("hero and board cards must be unique")
         _validate_showdown_cards(self)
 
+        dealt = [seat for seat in self.seats if seat.participation == "dealt_in"]
+        positioned = [seat.position for seat in dealt if seat.position is not None]
+        if positioned:
+            if any(
+                position.dealt_in_player_count != len(dealt)
+                for position in positioned
+            ):
+                raise ValueError(
+                    "position dealt_in_player_count must match the actual dealt-in ring"
+                )
+            for attribute in ("button_distance", "action_index", "display_label"):
+                values = [getattr(position, attribute) for position in positioned]
+                if len(values) != len(set(values)):
+                    raise ValueError(
+                        "supplied structural positions must have unique button"
+                        " distances, action indexes, and display labels"
+                    )
+
         if self.button_seat is not None:
-            dealt = [seat for seat in self.seats if seat.participation == "dealt_in"]
             button = next(seat for seat in self.seats if seat.seat_number == self.button_seat)
             if button.participation == "dealt_in" and len(dealt) >= 2:
                 expected = derive_structural_positions(self.seats, self.button_seat)

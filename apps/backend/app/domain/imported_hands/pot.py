@@ -92,8 +92,10 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                         f"{street.street} action {action.sequence}: cumulative commitment"
                         f" {hand_commitment} exceeds starting stack {starting_stack}"
                     )
-            if action.action_type == "uncalled_return" and action.amount is not None:
-                returns[action.actor_id] += action.amount
+            if action.action_type == "uncalled_return" and resolved is not None:
+                resolved_return = prior - resolved
+                if resolved_return > 0:
+                    returns[action.actor_id] += resolved_return
             if action.action_type == "fold":
                 folded.add(action.actor_id)
             if action.all_in:

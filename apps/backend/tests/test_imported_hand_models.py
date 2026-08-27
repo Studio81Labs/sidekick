@@ -435,6 +435,52 @@ def test_hand_rejects_a_structural_position_shifted_by_a_sitting_out_seat() -> N
         )
 
 
+def test_supplied_position_count_must_match_the_actual_dealt_ring() -> None:
+    payload = hand_state().model_dump()
+    payload["button_seat"] = None
+    payload["seats"][0]["position"] = {
+        "dealt_in_player_count": 3,
+        "action_index": 0,
+        "button_distance": 0,
+        "display_label": "BTN",
+    }
+
+    with pytest.raises(ValidationError, match="match the actual dealt-in ring"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_supplied_positions_must_be_unique_without_a_live_button() -> None:
+    payload = hand_state().model_dump()
+    payload["button_seat"] = None
+    duplicate = {
+        "dealt_in_player_count": 2,
+        "action_index": 0,
+        "button_distance": 0,
+        "display_label": "BTN/SB",
+    }
+    payload["seats"][0]["position"] = duplicate
+    payload["seats"][1]["position"] = duplicate
+
+    with pytest.raises(ValidationError, match="must have unique"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_partial_unique_positions_remain_reviewable_without_a_button() -> None:
+    payload = hand_state().model_dump()
+    payload["button_seat"] = None
+    payload["seats"][0]["position"] = {
+        "dealt_in_player_count": 2,
+        "action_index": 0,
+        "button_distance": 0,
+        "display_label": "BTN/SB",
+    }
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.seats[0].position is not None
+    assert state.seats[1].position is None
+
+
 def test_board_prefix_survives_an_unknown_intermediate_street() -> None:
     payload = hand_state().model_dump()
     payload["streets"] = [
@@ -955,6 +1001,102 @@ def test_check_after_an_unknown_wager_remains_reviewable() -> None:
     state = ImportedHandState.model_validate(payload)
 
     assert state.streets[0].actions[-1].action_type == "check"
+
+
+@pytest.mark.parametrize(
+    ("total", "all_in"),
+    [(Decimal("1"), False), (Decimal("3"), False), (Decimal("3"), True)],
+)
+def test_call_must_match_a_known_wager_or_be_an_all_in_undercall(
+    total: Decimal, all_in: bool
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "villain",
+                    "action_type": "bet",
+                    "amount": Decimal("2"),
+                    "total_committed": Decimal("2"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "hero",
+                    "action_type": "call",
+                    "amount": total,
+                    "total_committed": total,
+                    "all_in": all_in,
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="call must match"):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("action_type", "total", "message"),
+    [
+        ("bet", Decimal("4"), "bet requires no outstanding wager"),
+        ("raise", Decimal("2"), "raise must increase"),
+    ],
+)
+def test_bet_and_raise_labels_must_match_the_known_wager_transition(
+    action_type: str, total: Decimal, message: str
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "villain",
+                    "action_type": "bet",
+                    "amount": Decimal("2"),
+                    "total_committed": Decimal("2"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "hero",
+                    "action_type": action_type,
+                    "amount": total,
+                    "total_committed": total,
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match=message):
+        ImportedHandState.model_validate(payload)
 
 
 @pytest.mark.parametrize("terminal_action", ["fold", "all_in"])
