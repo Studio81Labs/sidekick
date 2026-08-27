@@ -751,6 +751,58 @@ def test_conflict_detections_must_belong_to_the_conflict_sources() -> None:
         )
 
 
+def test_active_revision_must_use_the_selected_conflict_source() -> None:
+    def source_detection(raw_source_id: str) -> DetectedImportedHand:
+        payload = hand_state().model_dump()
+        payload["chronology"] = chronology(raw_source_id).model_dump()
+        state = ImportedHandState.model_validate(payload)
+        return DetectedImportedHand(
+            detection_id=f"detection-{raw_source_id}",
+            raw_source_id=raw_source_id,
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+    file_1_detection = source_detection("file-1")
+    file_2_detection = source_detection("file-2")
+
+    with pytest.raises(ValidationError, match="use the selected conflict source"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[
+                raw_source(raw_source_id="file-1", raw_text="source one\n"),
+                raw_source(raw_source_id="file-2", raw_text="source two\n"),
+            ],
+            detections=[file_1_detection, file_2_detection],
+            conflicts=[
+                {
+                    "conflict_id": "conflict-1",
+                    "raw_source_ids": ["file-1", "file-2"],
+                    "detected_ids": ["detection-file-1", "detection-file-2"],
+                    "status": "resolved_use_source",
+                    "selected_raw_source_id": "file-1",
+                    "resolved_at": NOW,
+                }
+            ],
+            canonical_revisions=[
+                {
+                    "revision": 1,
+                    "detection_id": "detection-file-2",
+                    "approved_at": NOW,
+                    "state": file_2_detection.state,
+                }
+            ],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
 @pytest.mark.parametrize("participation", ["sitting_out", "not_dealt"])
 def test_actions_by_known_nonparticipants_are_rejected(participation: str) -> None:
     payload = hand_state(hero_player_id="hero").model_dump()
@@ -777,6 +829,63 @@ def test_actions_by_known_nonparticipants_are_rejected(participation: str) -> No
 
     with pytest.raises(ValidationError, match="sitting out or not dealt"):
         ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("participation", ["sitting_out", "not_dealt"])
+@pytest.mark.parametrize("result_kind", ["showdown", "awards"])
+def test_results_for_known_nonparticipants_are_rejected(
+    participation: str, result_kind: str
+) -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][0]["participation"] = participation
+    payload["results"] = {
+        result_kind: [
+            {
+                "player_id": "hero",
+                **(
+                    {
+                        "cards": [],
+                        "disposition": "not_shown",
+                        "evidence": [evidence()],
+                    }
+                    if result_kind == "showdown"
+                    else {"amount": Decimal("1"), "evidence": [evidence()]}
+                ),
+            }
+        ]
+    }
+
+    with pytest.raises(ValidationError, match="sitting out or not dealt"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_results_for_unknown_participation_remain_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][0]["participation"] = "unknown"
+    payload["results"] = {
+        "showdown": [
+            {
+                "player_id": "hero",
+                "cards": [],
+                "disposition": "not_shown",
+                "evidence": [evidence()],
+            }
+        ],
+        "awards": [
+            {
+                "player_id": "hero",
+                "amount": Decimal("1"),
+                "evidence": [evidence()],
+            }
+        ],
+    }
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.seats[0].participation == "unknown"
+    assert state.results is not None
+    assert state.results.showdown[0].player_id == "hero"
+    assert state.results.awards[0].player_id == "hero"
 
 
 def test_unknown_participation_remains_reviewable_but_is_not_extractable() -> None:

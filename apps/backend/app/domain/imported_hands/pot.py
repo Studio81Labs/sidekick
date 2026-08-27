@@ -147,6 +147,13 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
             awards_by_pot: dict[int, Decimal] = {}
             for award in awards:
                 if award.pot_index is None:
+                    if not any(
+                        award.player_id in pot.eligible_players for pot in pots
+                    ):
+                        errors.append(
+                            f"unindexed pot award recipient {award.player_id} is not"
+                            " eligible for any derived pot"
+                        )
                     continue
                 if award.pot_index >= len(pots):
                     errors.append(

@@ -423,6 +423,34 @@ def test_indexed_award_recipient_must_be_eligible_for_the_pot_layer() -> None:
     assert any("p1 is not eligible for pot index 1" in error for error in result.errors)
 
 
+def test_unindexed_award_recipient_must_be_eligible_for_a_derived_pot() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "fold", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p2", "2", None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any(
+        "unindexed pot award recipient p2 is not eligible for any derived pot"
+        in error
+        for error in result.errors
+    )
+
+
 def test_zero_rake_indexed_awards_must_reconcile_each_pot_layer() -> None:
     state = hand(
         [

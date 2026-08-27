@@ -637,6 +637,20 @@ class ImportedHandState(ImportedHandModel):
             }
             if not referenced_result_players.issubset(player_ids):
                 raise ValueError("showdown, award, and result players must identify known seats")
+            explicit_nonparticipants = {
+                seat.player_id
+                for seat in self.seats
+                if seat.participation in {"sitting_out", "not_dealt"}
+            }
+            showdown_and_award_players = {
+                *(entry.player_id for entry in self.results.showdown),
+                *(award.player_id for award in self.results.awards),
+            }
+            if showdown_and_award_players.intersection(explicit_nonparticipants):
+                raise ValueError(
+                    "showdown participants and award recipients cannot be explicitly"
+                    " sitting out or not dealt"
+                )
 
         boards = [street.board_cards for street in self.streets]
         previous_known_board: list[Card] | None = None
@@ -917,6 +931,19 @@ class ImportedHandRecord(ImportedHandModel):
         if active is not None:
             if not revisions or active != revisions[-1]:
                 raise ValueError("the active pointer must select the latest canonical revision")
+            active_revision = self.canonical_revisions[active - 1]
+            active_source_id = detection_by_id[
+                active_revision.detection_id
+            ].raw_source_id
+            if any(
+                conflict.status == "resolved_use_source"
+                and active_source_id in conflict.raw_source_ids
+                and active_source_id != conflict.selected_raw_source_id
+                for conflict in self.conflicts
+            ):
+                raise ValueError(
+                    "active canonical revision must use the selected conflict source"
+                )
 
         if self.lifecycle.status in {"withdrawn", "rejected"} and not revisions:
             raise ValueError("withdrawal/rejection audit requires a canonical revision")
