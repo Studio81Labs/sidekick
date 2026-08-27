@@ -36,7 +36,9 @@ async function readJsonRequest(request) {
 
 function respondToBaseCheck(request, response, mcpConfig) {
   if (request.url === "/") {
-    response.writeHead(200).end("Poker Training Analyzer");
+    response
+      .writeHead(200)
+      .end('<meta name="application-name" content="Poker Hero">');
     return true;
   }
   if (request.url === "/api/mcp/principals") {
