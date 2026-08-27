@@ -531,6 +531,8 @@ class ImportedHandState(ImportedHandModel):
             raise ValueError("button_seat must identify a known seat")
         if self.hero_player_id is not None and self.hero_player_id not in player_ids:
             raise ValueError("hero_player_id must identify a known seat")
+        if self.hero_cards and self.hero_player_id is None:
+            raise ValueError("hero_cards require a known hero_player_id")
 
         street_indexes = [_STREET_ORDER[street.street] for street in self.streets]
         if street_indexes != list(range(len(self.streets))):
@@ -539,6 +541,15 @@ class ImportedHandState(ImportedHandModel):
             for action in street.actions:
                 if action.actor_id not in player_ids:
                     raise ValueError("every action actor must identify a known seat")
+                participation = next(
+                    seat.participation
+                    for seat in self.seats
+                    if seat.player_id == action.actor_id
+                )
+                if participation in {"sitting_out", "not_dealt"}:
+                    raise ValueError(
+                        "an action actor cannot be explicitly sitting out or not dealt"
+                    )
         if self.results is not None:
             referenced_result_players = {
                 *(entry.player_id for entry in self.results.showdown),
@@ -554,9 +565,10 @@ class ImportedHandState(ImportedHandModel):
                 raise ValueError("street boards must preserve the earlier board prefix")
         all_cards = [*self.hero_cards]
         if boards:
-            all_cards.extend(boards[-1])
+            all_cards.extend(max(boards, key=len))
         if len({card.code for card in all_cards}) != len(all_cards):
             raise ValueError("hero and board cards must be unique")
+        _validate_showdown_cards(self)
 
         if self.button_seat is not None:
             dealt = [seat for seat in self.seats if seat.participation == "dealt_in"]
@@ -814,6 +826,11 @@ class ImportedHandRecord(ImportedHandModel):
         state = self.active_state_for_extraction
         if state is None or state.hero_player_id is None:
             return []
+        hero = next(
+            seat for seat in state.seats if seat.player_id == state.hero_player_id
+        )
+        if hero.participation != "dealt_in":
+            return []
         return [
             action
             for street in state.streets
@@ -859,7 +876,8 @@ def classify_reimport(
                 if detection.raw_source_id == exact.raw_source_id
             ]
             if matching_detections and all(
-                detection.content_sha256 != candidate_detection.content_sha256
+                _detected_state_semantic_sha256(detection.state)
+                != _detected_state_semantic_sha256(candidate_detection.state)
                 for detection in matching_detections
             ):
                 return ReimportDisposition(kind="identity_conflict")
@@ -894,6 +912,22 @@ def imported_hand_state_sha256(state: ImportedHandState) -> str:
 
     payload = json.dumps(
         state.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
+    """Hash detected poker meaning without source-file location evidence."""
+
+    normalized = _without_source_evidence(state.model_dump(mode="json"))
+    chronology = normalized["chronology"]
+    for field_name in ("source_file_id", "source_session_id", "hand_ordinal"):
+        chronology.pop(field_name, None)
+    payload = json.dumps(
+        normalized,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -972,6 +1006,63 @@ def _validate_unique(items: list[Any], attribute: str, label: str) -> None:
     values = [getattr(item, attribute) for item in items]
     if len(values) != len(set(values)):
         raise ValueError(f"{label} values must be unique")
+
+
+def _validate_showdown_cards(hand: ImportedHandState) -> None:
+    if hand.results is None or not hand.results.showdown:
+        return
+
+    known_cards = {card.code for card in hand.hero_cards}
+    if hand.streets:
+        known_board = max(
+            (street.board_cards for street in hand.streets),
+            key=len,
+        )
+        known_cards.update(card.code for card in known_board)
+
+    hero_entry = next(
+        (
+            entry
+            for entry in hand.results.showdown
+            if entry.player_id == hand.hero_player_id
+        ),
+        None,
+    )
+    if hero_entry is not None and hero_entry.cards:
+        hero_showdown_codes = [card.code for card in hero_entry.cards]
+        if len(hero_showdown_codes) != len(set(hero_showdown_codes)):
+            raise ValueError("showdown cards must be unique within one holding")
+        if hand.hero_cards:
+            if set(hero_showdown_codes) != {card.code for card in hand.hero_cards}:
+                raise ValueError("hero showdown cards must match the stored hero holding")
+        else:
+            overlap = known_cards.intersection(hero_showdown_codes)
+            if overlap:
+                raise ValueError("showdown cards must not duplicate known board cards")
+            known_cards.update(hero_showdown_codes)
+
+    for entry in hand.results.showdown:
+        if entry is hero_entry or not entry.cards:
+            continue
+        entry_codes = [card.code for card in entry.cards]
+        if len(entry_codes) != len(set(entry_codes)):
+            raise ValueError("showdown cards must be unique within one holding")
+        overlap = known_cards.intersection(entry_codes)
+        if overlap:
+            raise ValueError("showdown holdings must not duplicate any known card")
+        known_cards.update(entry_codes)
+
+
+def _without_source_evidence(value: JsonValue) -> JsonValue:
+    if isinstance(value, dict):
+        return {
+            key: _without_source_evidence(item)
+            for key, item in value.items()
+            if key != "evidence"
+        }
+    if isinstance(value, list):
+        return [_without_source_evidence(item) for item in value]
+    return value
 
 
 def _validate_json_pointer(pointer: str) -> None:

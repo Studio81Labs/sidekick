@@ -379,6 +379,55 @@ def test_materially_different_detected_content_is_an_explicit_conflict() -> None
     assert disposition.kind == "identity_conflict"
 
 
+def test_exact_reimport_ignores_source_location_in_detected_fingerprint() -> None:
+    def detected_from_source(raw_source_id: str) -> DetectedImportedHand:
+        payload = hand_state(hero_player_id="hero").model_dump()
+        payload["chronology"] = chronology(raw_source_id).model_dump()
+        payload["streets"] = [
+            {
+                "street": "preflop",
+                "actions": [
+                    {
+                        "sequence": 0,
+                        "actor_id": "hero",
+                        "action_type": "fold",
+                        "total_committed": Decimal("0.50"),
+                        "origin": {
+                            "kind": "player_selected",
+                            "basis": "explicit_marker",
+                            "evidence": [evidence(raw_source_id)],
+                        },
+                        "evidence": [evidence(raw_source_id)],
+                    }
+                ],
+            }
+        ]
+        state = ImportedHandState.model_validate(payload)
+        return DetectedImportedHand(
+            detection_id=f"detection-{raw_source_id}",
+            raw_source_id=raw_source_id,
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+    existing_detection = detected_from_source("file-1")
+    candidate_detection = detected_from_source("file-2")
+
+    assert existing_detection.content_sha256 != candidate_detection.content_sha256
+    disposition = classify_reimport(
+        [raw_source()],
+        raw_source(raw_source_id="file-2"),
+        existing_detections=[existing_detection],
+        candidate_detection=candidate_detection,
+    )
+
+    assert disposition.kind == "exact_reimport"
+    assert disposition.existing_raw_source_id == "file-1"
+
+
 def test_detected_state_checksum_and_raw_source_link_are_enforced() -> None:
     state = hand_state()
 
@@ -403,6 +452,186 @@ def test_detected_state_checksum_and_raw_source_link_are_enforced() -> None:
             state=state,
             content_sha256=imported_hand_state_sha256(state),
         )
+
+
+@pytest.mark.parametrize("participation", ["sitting_out", "not_dealt"])
+def test_actions_by_known_nonparticipants_are_rejected(participation: str) -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["seats"][0]["participation"] = participation
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "fold",
+                    "total_committed": Decimal("0.50"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="sitting out or not dealt"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unknown_participation_remains_reviewable_but_is_not_extractable() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["seats"][0]["participation"] = "unknown"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "fold",
+                    "total_committed": Decimal("0.50"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                }
+            ],
+        }
+    ]
+    state = ImportedHandState.model_validate(payload)
+    detection = detected(state)
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detection],
+        canonical_revisions=[
+            CanonicalHandRevision(
+                revision=1,
+                detection_id=detection.detection_id,
+                approved_at=NOW,
+                state=state,
+            )
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_showdown_cards_must_be_consistent_with_the_known_deck() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["hero_cards"] = [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
+    payload["streets"] = [
+        {"street": "preflop", "actions": []},
+        {
+            "street": "flop",
+            "board_cards": [
+                {"rank": "Q", "suit": "spades"},
+                {"rank": "7", "suit": "clubs"},
+                {"rank": "2", "suit": "hearts"},
+            ],
+            "actions": [],
+        },
+    ]
+    payload["results"] = {
+        "showdown": [
+            {
+                "player_id": "villain",
+                "cards": [
+                    {"rank": "Q", "suit": "spades"},
+                    {"rank": "Q", "suit": "clubs"},
+                ],
+                "disposition": "shown",
+                "evidence": [evidence()],
+            }
+        ]
+    }
+
+    with pytest.raises(ValidationError, match="must not duplicate any known card"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_opponent_showdown_holdings_cannot_duplicate_each_other() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "third-player",
+            "starting_stack": Decimal("100"),
+            "participation": "dealt_in",
+            "position": None,
+        }
+    )
+    payload["results"] = {
+        "showdown": [
+            {
+                "player_id": "villain",
+                "cards": [
+                    {"rank": "Q", "suit": "spades"},
+                    {"rank": "J", "suit": "clubs"},
+                ],
+                "disposition": "shown",
+                "evidence": [evidence()],
+            },
+            {
+                "player_id": "third-player",
+                "cards": [
+                    {"rank": "Q", "suit": "spades"},
+                    {"rank": "T", "suit": "diamonds"},
+                ],
+                "disposition": "shown",
+                "evidence": [evidence()],
+            },
+        ]
+    }
+
+    with pytest.raises(ValidationError, match="must not duplicate any known card"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_hero_showdown_may_repeat_only_the_stored_hero_holding() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["hero_cards"] = [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
+    payload["results"] = {
+        "showdown": [
+            {
+                "player_id": "hero",
+                "cards": [
+                    {"rank": "K", "suit": "diamonds"},
+                    {"rank": "A", "suit": "hearts"},
+                ],
+                "disposition": "shown",
+                "evidence": [evidence()],
+            }
+        ]
+    }
+
+    state = ImportedHandState.model_validate(payload)
+    assert {card.code for card in state.results.showdown[0].cards} == {"Ah", "Kd"}
+
+    payload["results"]["showdown"][0]["cards"][0] = {
+        "rank": "Q",
+        "suit": "diamonds",
+    }
+    with pytest.raises(ValidationError, match="must match the stored hero holding"):
+        ImportedHandState.model_validate(payload)
 
 
 def test_extraction_returns_only_voluntary_hero_actions_from_active_approval() -> None:
