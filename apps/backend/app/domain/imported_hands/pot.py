@@ -226,6 +226,12 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
             errors.append(
                 f"aggregate pot awards {awarded_total} do not match net pot {expected_awards}"
             )
+    known_gross = stated_gross if stated_gross is not None else derived_gross
+    if awarded_total is not None and known_gross is not None:
+        if awarded_total > known_gross:
+            errors.append(
+                f"aggregate pot awards {awarded_total} exceed known gross pot {known_gross}"
+            )
 
     if stated is not None and stated.gross_pots and derived_gross is not None:
         derived_components = [pot.amount for pot in pots]

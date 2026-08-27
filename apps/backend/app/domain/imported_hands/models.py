@@ -410,6 +410,21 @@ class StructuralPosition(ImportedHandModel):
             raise ValueError("action_index must be within the dealt-in action ring")
         if self.button_distance >= self.dealt_in_player_count:
             raise ValueError("button_distance must be within the dealt-in action ring")
+        expected_label = structural_position_labels(self.dealt_in_player_count)[
+            self.button_distance
+        ]
+        if self.display_label != expected_label:
+            raise ValueError(
+                "display_label must match dealt_in_player_count and button_distance"
+            )
+        expected_action_index = _structural_action_index(
+            self.dealt_in_player_count,
+            self.button_distance,
+        )
+        if self.action_index != expected_action_index:
+            raise ValueError(
+                "action_index must match dealt_in_player_count and button_distance"
+            )
         return self
 
 
@@ -616,6 +631,7 @@ class ImportedHandState(ImportedHandModel):
         street_indexes = [_STREET_ORDER[street.street] for street in self.streets]
         if street_indexes != list(range(len(self.streets))):
             raise ValueError("streets must be unique and ordered from preflop")
+        terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]] = {}
         for street in self.streets:
             for action in street.actions:
                 if action.actor_id not in player_ids:
@@ -629,6 +645,22 @@ class ImportedHandState(ImportedHandModel):
                     raise ValueError(
                         "an action actor cannot be explicitly sitting out or not dealt"
                     )
+                terminal = terminal_actors.get(action.actor_id)
+                if terminal is not None:
+                    reason, terminal_street = terminal
+                    applicable_return = (
+                        reason == "all_in"
+                        and action.action_type == "uncalled_return"
+                        and street.street == terminal_street
+                    )
+                    if not applicable_return:
+                        raise ValueError(
+                            "an actor cannot act after folding or going all-in"
+                        )
+                if action.action_type == "fold":
+                    terminal_actors[action.actor_id] = ("folded", street.street)
+                elif action.all_in:
+                    terminal_actors[action.actor_id] = ("all_in", street.street)
         if self.results is not None:
             referenced_result_players = {
                 *(entry.player_id for entry in self.results.showdown),
@@ -1107,17 +1139,10 @@ def derive_structural_positions(
     )
     ring = dealt[button_index:] + dealt[:button_index]
     labels = structural_position_labels(count)
-    if count == 2:
-        action_order_distances = [0, 1]
-    else:
-        action_order_distances = [*range(3, count), 0, 1, 2]
-    action_index_by_distance = {
-        distance: index for index, distance in enumerate(action_order_distances)
-    }
     return {
         seat.seat_number: StructuralPosition(
             dealt_in_player_count=count,
-            action_index=action_index_by_distance[distance],
+            action_index=_structural_action_index(count, distance),
             button_distance=distance,
             display_label=labels[distance],
         )
@@ -1143,6 +1168,12 @@ def structural_position_labels(count: int) -> list[str]:
     if count == 2:
         return ["BTN/SB", "BB"]
     return ["BTN", "SB", "BB", *early[count]]
+
+
+def _structural_action_index(count: int, button_distance: int) -> int:
+    if count == 2:
+        return button_distance
+    return (button_distance - 3) % count
 
 
 def _validate_unique(items: list[Any], attribute: str, label: str) -> None:

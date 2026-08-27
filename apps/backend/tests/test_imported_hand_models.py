@@ -24,6 +24,7 @@ from app.domain.imported_hands import (
     SourceChronology,
     StableHandIdentity,
     StatedPotSummary,
+    StructuralPosition,
     TournamentEconomics,
     UserCorrection,
     classify_reimport,
@@ -361,13 +362,35 @@ def test_heads_up_position_derivation_makes_button_the_small_blind() -> None:
     assert positions[2].button_distance == 1
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("display_label", "BB", "display_label must match"),
+        ("action_index", 0, "action_index must match"),
+    ],
+)
+def test_structural_position_fields_must_agree_without_a_seat_ring(
+    field: str, value: object, message: str
+) -> None:
+    payload: dict[str, object] = {
+        "dealt_in_player_count": 6,
+        "action_index": 3,
+        "button_distance": 0,
+        "display_label": "BTN",
+    }
+    payload[field] = value
+
+    with pytest.raises(ValidationError, match=message):
+        StructuralPosition.model_validate(payload)
+
+
 def test_hand_rejects_a_structural_position_shifted_by_a_sitting_out_seat() -> None:
     positioned = seats()
     positioned[0].position = {
         "dealt_in_player_count": 2,
         "action_index": 1,
-        "button_distance": 0,
-        "display_label": "BTN/SB",
+        "button_distance": 1,
+        "display_label": "BB",
     }
 
     with pytest.raises(ValidationError, match="does not match the dealt-in ring"):
@@ -829,6 +852,97 @@ def test_actions_by_known_nonparticipants_are_rejected(participation: str) -> No
 
     with pytest.raises(ValidationError, match="sitting out or not dealt"):
         ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("terminal_action", ["fold", "all_in"])
+@pytest.mark.parametrize("same_street", [True, False])
+def test_actions_after_a_player_becomes_terminal_are_rejected(
+    terminal_action: str, same_street: bool
+) -> None:
+    payload = hand_state().model_dump()
+    first_action = {
+        "sequence": 0,
+        "actor_id": "hero",
+        "action_type": "fold" if terminal_action == "fold" else "bet",
+        "total_committed": Decimal("0") if terminal_action == "fold" else Decimal("10"),
+        "all_in": terminal_action == "all_in",
+        "origin": {
+            "kind": "player_selected",
+            "basis": "explicit_marker",
+            "evidence": [evidence()],
+        },
+        "evidence": [evidence()],
+    }
+    if terminal_action == "all_in":
+        first_action["amount"] = Decimal("10")
+    later_action = {
+        "sequence": 1 if same_street else 0,
+        "actor_id": "hero",
+        "action_type": "check",
+        "total_committed": Decimal("10") if same_street else Decimal("0"),
+        "origin": {
+            "kind": "player_selected",
+            "basis": "explicit_marker",
+            "evidence": [evidence()],
+        },
+        "evidence": [evidence()],
+    }
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [first_action, *([later_action] if same_street else [])],
+        },
+        *(
+            [{"street": "flop", "actions": [later_action]}]
+            if not same_street
+            else []
+        ),
+    ]
+
+    with pytest.raises(ValidationError, match="after folding or going all-in"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_same_street_uncalled_return_is_allowed_after_all_in() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "bet",
+                    "amount": Decimal("10"),
+                    "total_committed": Decimal("10"),
+                    "all_in": True,
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "hero",
+                    "action_type": "uncalled_return",
+                    "amount": Decimal("2"),
+                    "total_committed": Decimal("8"),
+                    "origin": {
+                        "kind": "forced_system",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].action_type == "uncalled_return"
 
 
 @pytest.mark.parametrize("participation", ["sitting_out", "not_dealt"])

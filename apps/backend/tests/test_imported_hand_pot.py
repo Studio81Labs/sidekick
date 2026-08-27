@@ -451,6 +451,33 @@ def test_unindexed_award_recipient_must_be_eligible_for_a_derived_pot() -> None:
     )
 
 
+def test_aggregate_awards_cannot_exceed_a_known_gross_pot() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        rake=None,
+        awards=[("p1", "100", None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any(
+        "aggregate pot awards 100 exceed known gross pot 2" in error
+        for error in result.errors
+    )
+
+
 def test_zero_rake_indexed_awards_must_reconcile_each_pot_layer() -> None:
     state = hand(
         [
