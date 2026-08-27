@@ -127,6 +127,25 @@ def benchmark_dataset(
     return RecommendationBenchmarkDataset.model_validate(values)
 
 
+def covered_preflop_case(
+    case_id: str = "covered-preflop",
+) -> RecommendationBenchmarkCase:
+    return benchmark_case(
+        case_id,
+        [reference_line("check", ev_bb=0.4)],
+        street="preflop",
+        board_cards=[],
+        effective_stack=100.0,
+        players_in_hand=2,
+        hero_structural_position={
+            "dealt_in_player_count": 2,
+            "action_index": 0,
+            "button_distance": 0,
+            "display_label": "BTN/SB",
+        },
+    )
+
+
 def grading_reference_evidence(
     *,
     ev_unit: str = "bb",
@@ -266,7 +285,7 @@ def test_recommendation_dataset_fingerprint_tracks_scoring_inputs() -> None:
 
 def test_schema_five_propagates_grading_reference_and_fingerprints_evidence() -> None:
     dataset = benchmark_dataset(
-        [benchmark_case("preflop-check", [reference_line("check", ev_bb=0.4)])],
+        [covered_preflop_case("preflop-check")],
         schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
         reference_source={
             "name": "Independent solver export",
@@ -315,6 +334,60 @@ def test_schema_five_propagates_grading_reference_and_fingerprints_evidence() ->
     assert "EV unit=bb" in formatted
     assert "licensed/shipped_static_lookup" in formatted
     assert "exploitability 0.01 bb_per_100 <= 0.02" in formatted
+
+
+@pytest.mark.parametrize(
+    ("state_overrides", "message"),
+    [
+        (
+            {
+                "street": "flop",
+                "board_cards": [
+                    Card.from_code("Qs"),
+                    Card.from_code("Jc"),
+                    Card.from_code("2h"),
+                ],
+            },
+            "street 'flop' is outside declared",
+        ),
+        ({"street": None, "board_cards": []}, "street None is outside declared"),
+        ({"effective_stack": 99.999}, "effective stack 99.999 BB is outside"),
+        ({"effective_stack": None}, "requires an effective stack"),
+        ({"hero_structural_position": None}, "requires a structural position"),
+        (
+            {
+                "hero_structural_position": {
+                    "dealt_in_player_count": 3,
+                    "action_index": 0,
+                    "button_distance": 0,
+                    "display_label": "BTN",
+                }
+            },
+            "dealt-in count 3 is outside declared",
+        ),
+        ({"players_in_hand": 3}, "players_in_hand must be between 2"),
+        (
+            {"board_cards": [Card.from_code("Qs")]},
+            "board does not match its declared street",
+        ),
+    ],
+)
+def test_schema_five_cases_must_fit_declared_grading_coverage(
+    state_overrides: dict[str, object],
+    message: str,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload.update(state_overrides)
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+
+    with pytest.raises(ValidationError, match=message):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
 
 
 def test_recommendation_benchmark_scores_policy_ev_fallback_and_failures() -> None:

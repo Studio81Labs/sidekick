@@ -19,7 +19,7 @@ from pydantic import (
 )
 
 from app.config import Settings, get_settings
-from app.domain.imported_hands import structural_position_labels
+from app.domain.imported_hands import StructuralPosition, structural_position_labels
 from app.domain.poker import CanonicalState, Street
 from app.domain.recommendations import (
     RecommendationAction,
@@ -205,6 +205,8 @@ class RecommendationBenchmarkError(RuntimeError):
 
 class RecommendationBenchmarkState(CanonicalState):
     model_config = ConfigDict(extra="forbid")
+
+    hero_structural_position: StructuralPosition | None = None
 
 
 class RecommendationReferenceSource(BaseModel):
@@ -549,6 +551,11 @@ class RecommendationBenchmarkDataset(BaseModel):
                 raise ValueError(
                     "ev_bb reference labels require a BB grading-reference EV unit"
                 )
+            for case in self.cases:
+                _validate_case_within_grading_coverage(
+                    case,
+                    self.grading_reference.coverage,
+                )
         case_ids = [case.id for case in self.cases]
         if len(case_ids) != len(set(case_ids)):
             raise ValueError("Recommendation benchmark case IDs must be unique")
@@ -588,6 +595,79 @@ class RecommendationBenchmarkDataset(BaseModel):
                             f"Case {case.id} has ambiguous {action} sizings"
                         )
         return self
+
+
+def _validate_case_within_grading_coverage(
+    case: RecommendationBenchmarkCase,
+    coverage: RecommendationReferenceCoverage,
+) -> None:
+    state = case.state
+    if state.street is None or state.street not in coverage.streets:
+        raise ValueError(
+            f"Case {case.id} street {state.street!r} is outside declared"
+            " grading-reference coverage"
+        )
+    expected_board_cards = {
+        "preflop": 0,
+        "flop": 3,
+        "turn": 4,
+        "river": 5,
+    }[state.street]
+    if len(state.board_cards) != expected_board_cards:
+        raise ValueError(
+            f"Case {case.id} board does not match its declared street"
+        )
+    if state.effective_stack is None:
+        raise ValueError(
+            f"Case {case.id} requires an effective stack for grading coverage"
+        )
+    covered_stacks = {
+        Decimal(str(depth)) for depth in coverage.effective_stack_depths_bb
+    }
+    if Decimal(str(state.effective_stack)) not in covered_stacks:
+        raise ValueError(
+            f"Case {case.id} effective stack {state.effective_stack:g} BB is outside"
+            " declared grading-reference coverage"
+        )
+
+    structural_position = state.hero_structural_position
+    if structural_position is None:
+        raise ValueError(
+            f"Case {case.id} requires a structural position for grading coverage"
+        )
+    table_configuration = next(
+        (
+            table
+            for table in coverage.table_configurations
+            if table.dealt_in_count
+            == structural_position.dealt_in_player_count
+        ),
+        None,
+    )
+    if table_configuration is None:
+        raise ValueError(
+            f"Case {case.id} dealt-in count"
+            f" {structural_position.dealt_in_player_count} is outside declared"
+            " grading-reference coverage"
+        )
+    if not any(
+        position.action_index == structural_position.action_index
+        and position.button_distance == structural_position.button_distance
+        and position.display_label == structural_position.display_label
+        for position in table_configuration.structural_positions
+    ):
+        raise ValueError(
+            f"Case {case.id} structural position is outside declared"
+            " grading-reference coverage"
+        )
+    if (
+        state.players_in_hand is None
+        or state.players_in_hand < 2
+        or state.players_in_hand > structural_position.dealt_in_player_count
+    ):
+        raise ValueError(
+            f"Case {case.id} players_in_hand must be between 2 and its dealt-in count"
+        )
 
 
 class RecommendationBenchmarkCaseResult(BaseModel):

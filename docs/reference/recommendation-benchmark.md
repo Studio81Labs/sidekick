@@ -122,7 +122,7 @@ was evaluated and disappears from the current run, the case fails explicitly.
           ]
         }
       ],
-      "effective_stack_depths_bb": [100.0],
+      "effective_stack_depths_bb": [97.5],
       "streets": ["turn"]
     },
     "economic_model": {
@@ -188,6 +188,12 @@ was evaluated and disappears from the current run, the case fails explicitly.
         "opponent_stack": 97.5,
         "effective_stack": 97.5,
         "players_in_hand": 2,
+        "hero_structural_position": {
+          "dealt_in_player_count": 2,
+          "action_index": 0,
+          "button_distance": 0,
+          "display_label": "BTN/SB"
+        },
         "hero_position": "button",
         "opponent_position": "big_blind",
         "preflop_opener_position": "button",
@@ -252,7 +258,11 @@ real evidence, license conclusions, benchmark results, or strategy claims.
 - Coverage declares every supported dealt-in count and structural position,
   exact effective-stack depth, and street. Each table configuration covers every
   action index and button distance exactly once and enforces its table-size
-  display label, including the heads-up button/small-blind special case. The
+  display label, including the heads-up button/small-blind special case. Every
+  version-5 case supplies its exact `hero_structural_position`; its street,
+  decision-time `effective_stack`, dealt-in count, and position must fall inside
+  the declared envelope. `players_in_hand` is the number of current survivors,
+  so it may be lower than the dealt-in count but cannot exceed it. The
   listed table configurations, stacks, and streets define the declared Cartesian
   coverage boundary. The economic and utility models are separately named,
   revisioned, and configuration-digested. `ev_unit` is one of `bb`, `chips`,

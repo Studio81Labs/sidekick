@@ -1187,6 +1187,240 @@ def test_call_must_match_a_known_wager_or_be_an_all_in_undercall(
         ImportedHandState.model_validate(payload)
 
 
+@pytest.mark.parametrize("all_in", [False, True])
+def test_call_requires_a_positive_outstanding_wager(all_in: bool) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {"street": "preflop", "actions": []},
+        {
+            "street": "flop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "call",
+                    "amount": Decimal("1"),
+                    "total_committed": Decimal("1"),
+                    "all_in": all_in,
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                }
+            ],
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="call requires an outstanding wager"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unknown_call_amount_cannot_hide_a_known_absence_of_a_wager() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "call",
+                    "origin": {
+                        "kind": "unknown",
+                        "basis": "unresolved",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="call requires an outstanding wager"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_call_after_an_unknown_wager_remains_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "villain",
+                    "action_type": "bet",
+                    "origin": {
+                        "kind": "unknown",
+                        "basis": "unresolved",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "hero",
+                    "action_type": "call",
+                    "amount": Decimal("1"),
+                    "total_committed": Decimal("1"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].action_type == "call"
+
+
+def test_voluntary_action_after_folds_leave_one_winner_is_rejected() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "villain",
+                    "action_type": "fold",
+                    "total_committed": Decimal("0"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "hero",
+                    "action_type": "check",
+                    "total_committed": Decimal("0"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="after folds end the hand"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_sole_winner_can_receive_a_same_street_uncalled_return() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "bet",
+                    "amount": Decimal("2"),
+                    "total_committed": Decimal("2"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "villain",
+                    "action_type": "fold",
+                    "total_committed": Decimal("0"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 2,
+                    "actor_id": "hero",
+                    "action_type": "uncalled_return",
+                    "amount": Decimal("2"),
+                    "total_committed": Decimal("0"),
+                    "origin": {
+                        "kind": "forced_system",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].action_type == "uncalled_return"
+
+
+def test_one_fold_does_not_end_a_multiway_hand() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "third-player",
+            "starting_stack": Decimal("100"),
+            "participation": "dealt_in",
+            "position": None,
+        }
+    )
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "villain",
+                    "action_type": "fold",
+                    "total_committed": Decimal("0"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "hero",
+                    "action_type": "check",
+                    "total_committed": Decimal("0"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].action_type == "check"
+
+
 @pytest.mark.parametrize(
     ("action_type", "total", "message"),
     [
@@ -1512,7 +1746,12 @@ def test_actions_after_a_player_becomes_terminal_are_rejected(
         ),
     ]
 
-    with pytest.raises(ValidationError, match="after folding or going all-in"):
+    expected_message = (
+        "after folds end the hand"
+        if terminal_action == "fold"
+        else "after folding or going all-in"
+    )
+    with pytest.raises(ValidationError, match=expected_message):
         ImportedHandState.model_validate(payload)
 
 
@@ -1784,8 +2023,8 @@ def test_extraction_returns_only_voluntary_hero_actions_from_active_approval() -
     selected = {
         "sequence": 0,
         "actor_id": "hero",
-        "action_type": "fold",
-        "total_committed": Decimal("0.50"),
+        "action_type": "check",
+        "total_committed": Decimal("0"),
         "origin": {
             "kind": "player_selected",
             "basis": "explicit_marker",

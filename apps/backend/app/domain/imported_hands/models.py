@@ -659,6 +659,12 @@ class ImportedHandState(ImportedHandModel):
         if street_indexes != list(range(len(self.streets))):
             raise ValueError("streets must be unique and ordered from preflop")
         terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]] = {}
+        live_players = {
+            seat.player_id
+            for seat in self.seats
+            if seat.participation in {"dealt_in", "unknown"}
+        }
+        fold_end: tuple[StreetName, str] | None = None
         for street in self.streets:
             street_commitments: dict[str, Decimal | None] = {
                 player_id: Decimal(0) for player_id in player_ids
@@ -676,6 +682,18 @@ class ImportedHandState(ImportedHandModel):
                     raise ValueError(
                         "an action actor cannot be explicitly sitting out or not dealt"
                     )
+                if fold_end is not None:
+                    final_fold_street, sole_winner = fold_end
+                    valid_return = (
+                        action.action_type == "uncalled_return"
+                        and action.actor_id == sole_winner
+                        and street.street == final_fold_street
+                    )
+                    if not valid_return:
+                        raise ValueError(
+                            "only the sole winner's same-street uncalled return is"
+                            " allowed after folds end the hand"
+                        )
                 terminal = terminal_actors.get(action.actor_id)
                 if terminal is not None:
                     reason, terminal_street = terminal
@@ -749,6 +767,8 @@ class ImportedHandState(ImportedHandModel):
                         "an actor cannot check while facing an outstanding wager"
                     )
                 if action.action_type == "call" and current_wager is not None:
+                    if current_wager == 0:
+                        raise ValueError("a call requires an outstanding wager")
                     if resolved_commitment is not None:
                         if resolved_commitment > current_wager or (
                             resolved_commitment < current_wager and not action.all_in
@@ -783,6 +803,9 @@ class ImportedHandState(ImportedHandModel):
                         raise ValueError("a raise must increase the outstanding wager")
                 if action.action_type == "fold":
                     terminal_actors[action.actor_id] = ("folded", street.street)
+                    live_players.discard(action.actor_id)
+                    if len(live_players) == 1:
+                        fold_end = (street.street, next(iter(live_players)))
                 elif action.all_in:
                     terminal_actors[action.actor_id] = ("all_in", street.street)
                 street_commitments[action.actor_id] = resolved_commitment
