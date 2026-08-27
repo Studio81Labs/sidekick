@@ -23,6 +23,8 @@ from app.domain.imported_hands import (
     RawHandHistory,
     SourceChronology,
     StableHandIdentity,
+    StatedPotSummary,
+    TournamentEconomics,
     UserCorrection,
     classify_reimport,
     classify_restore,
@@ -177,6 +179,98 @@ def test_missing_source_time_and_economics_stay_explicitly_unknown() -> None:
     assert restored.chronology.source_timezone is None
     assert restored.game.economics.kind == "unknown"
     assert restored.game.blinds.ante is None
+
+
+def complete_tournament_economics() -> dict[str, object]:
+    return {
+        "tournament_id": "tournament-1",
+        "tournament_type": "multi-table",
+        "stage": "final-table",
+        "currency": "USD",
+        "paid_places": 2,
+        "players_remaining": 3,
+        "payouts": [
+            {
+                "place_from": 1,
+                "place_to": 1,
+                "share": Decimal("0.60"),
+            },
+            {
+                "place_from": 2,
+                "place_to": 2,
+                "share": Decimal("0.40"),
+            },
+        ],
+        "remaining_stacks": [
+            {"player_id": "hero", "stack": Decimal("40")},
+            {"player_id": "villain", "stack": Decimal("30")},
+            {"player_id": "third-player", "stack": Decimal("20")},
+        ],
+        "icm_inputs_complete": True,
+    }
+
+
+def test_complete_icm_inputs_require_concrete_values_and_coherent_coverage() -> None:
+    complete = complete_tournament_economics()
+    economics = TournamentEconomics.model_validate(complete)
+    assert economics.icm_inputs_complete is True
+
+    missing_payout = complete_tournament_economics()
+    missing_payout["payouts"][0]["share"] = None
+    with pytest.raises(ValidationError, match="exactly one amount or share"):
+        TournamentEconomics.model_validate(missing_payout)
+
+    missing_stack = complete_tournament_economics()
+    missing_stack["remaining_stacks"][0]["stack"] = None
+    with pytest.raises(ValidationError, match="positive remaining stacks"):
+        TournamentEconomics.model_validate(missing_stack)
+
+    incomplete_stack_field = complete_tournament_economics()
+    incomplete_stack_field["remaining_stacks"].pop()
+    with pytest.raises(ValidationError, match="one remaining stack per player"):
+        TournamentEconomics.model_validate(incomplete_stack_field)
+
+    payout_gap = complete_tournament_economics()
+    payout_gap["payouts"][1]["place_from"] = 3
+    payout_gap["payouts"][1]["place_to"] = 3
+    with pytest.raises(ValidationError, match="contiguous from first place"):
+        TournamentEconomics.model_validate(payout_gap)
+
+    bad_share_total = complete_tournament_economics()
+    bad_share_total["payouts"][1]["share"] = Decimal("0.30")
+    with pytest.raises(ValidationError, match="shares must sum to one"):
+        TournamentEconomics.model_validate(bad_share_total)
+
+
+def test_complete_bounty_icm_inputs_cover_every_remaining_player() -> None:
+    complete = complete_tournament_economics()
+    complete["bounty_format"] = "progressive-knockout"
+    complete["bounties"] = [
+        {"player_id": "hero", "value": Decimal("25")},
+        {"player_id": "villain", "value": Decimal("10")},
+        {"player_id": "third-player", "value": Decimal("5")},
+    ]
+    assert TournamentEconomics.model_validate(complete).icm_inputs_complete is True
+
+    complete["bounties"][2]["player_id"] = "unrelated-player"
+    with pytest.raises(ValidationError, match="cover the remaining players"):
+        TournamentEconomics.model_validate(complete)
+
+
+def test_stated_net_pot_cannot_exceed_gross_when_rake_is_unknown() -> None:
+    with pytest.raises(ValidationError, match="net_total cannot exceed gross_total"):
+        StatedPotSummary(
+            gross_total=Decimal("2"),
+            rake=None,
+            net_total=Decimal("3"),
+        )
+
+    summary = StatedPotSummary(
+        gross_total=Decimal("2"),
+        rake=None,
+        net_total=Decimal("1.5"),
+    )
+    assert summary.net_total == Decimal("1.5")
 
 
 def test_import_boundary_rejects_legacy_screenshot_provenance() -> None:
@@ -715,6 +809,37 @@ def test_active_record_enforces_user_corrections_and_round_trips() -> None:
             raw_sources=[raw_source()],
             detections=[detected()],
             canonical_revisions=[bad_revision],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+@pytest.mark.parametrize("token", ["-1", "+1", "01", "1.0", "-"])
+def test_correction_paths_reject_noncanonical_array_indices(token: str) -> None:
+    invalid_revision = CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW,
+        state=hand_state(),
+        corrections=[
+            UserCorrection(
+                field_pointer=f"/seats/{token}/player_id",
+                detected_value="hero",
+                approved_value="hero",
+                corrected_at=NOW,
+            )
+        ],
+    )
+
+    with pytest.raises(ValidationError, match="non-canonical array index"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[invalid_revision],
             lifecycle={
                 "status": "active",
                 "active_canonical_revision": 1,

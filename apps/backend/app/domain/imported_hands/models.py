@@ -289,6 +289,72 @@ class TournamentEconomics(ImportedHandModel):
             )
             if any(value is None or value == [] for value in required):
                 raise ValueError("complete ICM inputs require places, players, payouts, and stacks")
+            if len(self.remaining_stacks) != self.players_remaining:
+                raise ValueError(
+                    "complete ICM inputs require one remaining stack per player"
+                )
+            if any(
+                player.stack is None or player.stack <= 0
+                for player in self.remaining_stacks
+            ):
+                raise ValueError("complete ICM inputs require positive remaining stacks")
+
+            ordered_payouts = sorted(self.payouts, key=lambda payout: payout.place_from)
+            expected_place = 1
+            payout_unit: Literal["amount", "share"] | None = None
+            prior_value: Decimal | None = None
+            share_total = Decimal(0)
+            for payout in ordered_payouts:
+                if payout.place_from != expected_place:
+                    raise ValueError(
+                        "complete ICM payout places must be contiguous from first place"
+                    )
+                expected_place = payout.place_to + 1
+                has_amount = payout.amount is not None
+                has_share = payout.share is not None
+                if has_amount == has_share:
+                    raise ValueError(
+                        "complete ICM payouts require exactly one amount or share"
+                    )
+                current_unit: Literal["amount", "share"] = (
+                    "amount" if has_amount else "share"
+                )
+                if payout_unit is not None and current_unit != payout_unit:
+                    raise ValueError("complete ICM payouts must use one value unit")
+                payout_unit = current_unit
+                value = payout.amount if has_amount else payout.share
+                if value is None or value <= 0:
+                    raise ValueError("complete ICM payouts require positive values")
+                if prior_value is not None and value > prior_value:
+                    raise ValueError(
+                        "complete ICM payout values cannot increase for lower places"
+                    )
+                prior_value = value
+                if current_unit == "share":
+                    places = payout.place_to - payout.place_from + 1
+                    share_total += value * places
+            if expected_place != self.paid_places + 1:
+                raise ValueError(
+                    "complete ICM payouts must cover every paid place exactly"
+                )
+            if payout_unit == "share" and share_total != Decimal(1):
+                raise ValueError("complete ICM payout shares must sum to one")
+
+            if self.bounty_format is not None:
+                if len(self.bounties) != self.players_remaining:
+                    raise ValueError(
+                        "complete bounty ICM inputs require one bounty per player"
+                    )
+                if any(bounty.value is None for bounty in self.bounties):
+                    raise ValueError(
+                        "complete bounty ICM inputs require concrete bounty values"
+                    )
+                if {bounty.player_id for bounty in self.bounties} != {
+                    player.player_id for player in self.remaining_stacks
+                }:
+                    raise ValueError(
+                        "complete bounty ICM inputs must cover the remaining players"
+                    )
         return self
 
 
@@ -488,6 +554,12 @@ class StatedPotSummary(ImportedHandModel):
         if self.gross_total is not None and self.rake is not None and self.net_total is not None:
             if self.gross_total - self.rake != self.net_total:
                 raise ValueError("net_total must equal gross_total minus rake")
+        if (
+            self.gross_total is not None
+            and self.net_total is not None
+            and self.net_total > self.gross_total
+        ):
+            raise ValueError("net_total cannot exceed gross_total")
         if self.rake is not None and self.gross_total is not None and self.rake > self.gross_total:
             raise ValueError("rake cannot exceed the gross pot")
         return self
@@ -1088,10 +1160,7 @@ def _pointer_get(document: JsonValue, pointer: str) -> JsonValue:
     current: Any = document
     for token in _pointer_tokens(pointer):
         if isinstance(current, list):
-            try:
-                current = current[int(token)]
-            except (ValueError, IndexError) as exc:
-                raise ValueError(f"correction path does not exist: {pointer}") from exc
+            current = current[_pointer_list_index(token, len(current), pointer)]
         elif isinstance(current, dict) and token in current:
             current = current[token]
         else:
@@ -1104,24 +1173,33 @@ def _pointer_set(document: JsonValue, pointer: str, value: JsonValue) -> None:
     current: Any = document
     for token in tokens[:-1]:
         if isinstance(current, list):
-            try:
-                current = current[int(token)]
-            except (ValueError, IndexError) as exc:
-                raise ValueError(f"correction path does not exist: {pointer}") from exc
+            current = current[_pointer_list_index(token, len(current), pointer)]
         elif isinstance(current, dict) and token in current:
             current = current[token]
         else:
             raise ValueError(f"correction path does not exist: {pointer}")
     final = tokens[-1]
     if isinstance(current, list):
-        try:
-            current[int(final)] = value
-        except (ValueError, IndexError) as exc:
-            raise ValueError(f"correction path does not exist: {pointer}") from exc
+        current[_pointer_list_index(final, len(current), pointer)] = value
     elif isinstance(current, dict) and final in current:
         current[final] = value
     else:
         raise ValueError(f"correction path does not exist: {pointer}")
+
+
+def _pointer_list_index(token: str, length: int, pointer: str) -> int:
+    canonical = token == "0" or (
+        token.startswith(tuple("123456789"))
+        and all("0" <= character <= "9" for character in token)
+    )
+    if not canonical:
+        raise ValueError(
+            f"correction path has a non-canonical array index: {pointer}"
+        )
+    index = int(token)
+    if index >= length:
+        raise ValueError(f"correction path does not exist: {pointer}")
+    return index
 
 
 def _validate_corrections_win(
