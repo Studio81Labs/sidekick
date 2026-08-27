@@ -92,14 +92,21 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                         f"{street.street} action {action.sequence}: cumulative commitment"
                         f" {hand_commitment} exceeds starting stack {starting_stack}"
                     )
+                if action.all_in:
+                    if starting_stack is None or hand_commitment == starting_stack:
+                        all_in_players.add(action.actor_id)
+                    elif hand_commitment < starting_stack:
+                        errors.append(
+                            f"{street.street} action {action.sequence}: all-in cumulative"
+                            f" commitment {hand_commitment} does not exhaust starting"
+                            f" stack {starting_stack}"
+                        )
             if action.action_type == "uncalled_return" and resolved is not None:
                 resolved_return = prior - resolved
                 if resolved_return > 0:
                     returns[action.actor_id] += resolved_return
             if action.action_type == "fold":
                 folded.add(action.actor_id)
-            if action.all_in:
-                all_in_players.add(action.actor_id)
         for player_id, amount in street_totals.items():
             contributions[player_id] += amount
 
@@ -309,6 +316,16 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
     known_player_collections = sum(
         reconciled_player_collections.values(), Decimal(0)
     )
+    if not contributions_incomplete:
+        eligible_players = {
+            player_id for pot in pots for player_id in pot.eligible_players
+        }
+        for player_id, collection in reconciled_player_collections.items():
+            if collection > 0 and player_id not in eligible_players:
+                errors.append(
+                    f"player result {player_id} has positive collection {collection}"
+                    " but is not eligible for any derived pot"
+                )
     if (
         collection_ceiling is not None
         and known_player_collections > collection_ceiling

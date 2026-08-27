@@ -254,6 +254,7 @@ def test_total_only_uncalled_return_cannot_increase_commitment(
         stated_gross=stated_total,
         stated_net=stated_total,
         awards=[("p1", stated_total, None)],
+        starting_stacks={"p2": "1"},
     )
 
     result = reconcile_pot(state)
@@ -320,6 +321,7 @@ def test_derives_all_in_main_and_side_pots_without_treating_folds_as_caps() -> N
         stated_net="120",
         gross_pots=["60", "60"],
         awards=[("p1", "60", 0), ("p3", "60", 1)],
+        starting_stacks={"p1": "20", "p2": "50"},
     )
 
     result = reconcile_pot(state)
@@ -364,6 +366,43 @@ def test_known_exhausted_stack_creates_an_all_in_pot_boundary() -> None:
     assert result.pots[1].eligible_players == ["p2", "p3"]
 
 
+def test_false_all_in_marker_below_a_known_stack_does_not_split_the_pot() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5", all_in=True),
+                    action(1, "p2", "call", amount="5", total="5"),
+                    action(2, "p3", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p2", "bet", amount="5", total="5"),
+                    action(1, "p3", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="25",
+        stated_net="25",
+        gross_pots=["15", "10"],
+        awards=[("p1", "15", 0), ("p2", "10", 1)],
+        starting_stacks={"p1": "100", "p2": "10", "p3": "10"},
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert [pot.amount for pot in result.pots] == [Decimal("25")]
+    assert any(
+        "all-in cumulative commitment 5 does not exhaust starting stack 100"
+        in error
+        for error in result.errors
+    )
+
+
 def test_mismatched_side_pot_components_fail_without_guessing_rake_allocation() -> None:
     state = hand(
         [
@@ -387,6 +426,7 @@ def test_mismatched_side_pot_components_fail_without_guessing_rake_allocation() 
         stated_net="120",
         gross_pots=["50", "70"],
         awards=[("p3", "120", None)],
+        starting_stacks={"p1": "20"},
     )
 
     result = reconcile_pot(state)
@@ -511,6 +551,7 @@ def test_indexed_award_recipient_must_be_eligible_for_the_pot_layer() -> None:
         stated_net="120",
         gross_pots=["60", "60"],
         awards=[("p1", "60", 0), ("p1", "60", 1)],
+        starting_stacks={"p1": "20", "p2": "50"},
     )
 
     result = reconcile_pot(state)
@@ -602,6 +643,80 @@ def test_player_collections_cannot_exceed_the_distributable_pot() -> None:
 
 
 @pytest.mark.parametrize(
+    ("player_id", "total_collected", "net_result", "expected_status"),
+    [
+        ("p2", "2", "1", "fail"),
+        ("p1", "2", "1", "pass"),
+        ("p2", "0", "-1", "pass"),
+    ],
+)
+def test_player_result_collections_require_derived_pot_eligibility(
+    player_id: str,
+    total_collected: str,
+    net_result: str,
+    expected_status: str,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "fold", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        player_results=[(player_id, total_collected, net_result)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    eligibility_errors = [
+        error for error in result.errors if "not eligible for any derived pot" in error
+    ]
+    if expected_status == "fail":
+        assert eligibility_errors == [
+            "player result p2 has positive collection 2 but is not eligible"
+            " for any derived pot"
+        ]
+    else:
+        assert eligibility_errors == []
+
+
+def test_implied_player_collection_requires_derived_pot_eligibility() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "fold", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        player_results=[("p2", None, "1")],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any(
+        "player result p2 has positive collection 2 but is not eligible"
+        " for any derived pot" in error
+        for error in result.errors
+    )
+
+
+@pytest.mark.parametrize(
     ("total_collected", "net_result", "message"),
     [
         ("1", "0", "does not match concrete awards 2"),
@@ -658,6 +773,7 @@ def test_zero_rake_indexed_awards_must_reconcile_each_pot_layer() -> None:
         stated_net="120",
         gross_pots=["60", "60"],
         awards=[("p3", "70", 0), ("p3", "50", 1)],
+        starting_stacks={"p1": "20", "p2": "50"},
     )
 
     result = reconcile_pot(state)
