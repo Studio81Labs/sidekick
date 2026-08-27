@@ -99,6 +99,12 @@ _FORCED_ACTIONS = {
     "post_straddle",
     "uncalled_return",
 }
+_FORCED_POST_FIELDS = {
+    "post_ante": "ante",
+    "post_small_blind": "small_blind",
+    "post_big_blind": "big_blind",
+    "post_straddle": "straddle",
+}
 _CHIP_ACTIONS = _FORCED_ACTIONS | {"bet", "call", "raise"}
 
 
@@ -687,6 +693,52 @@ class ImportedHandState(ImportedHandModel):
                     action,
                     actor_commitment,
                 )
+                forced_post_field = _FORCED_POST_FIELDS.get(action.action_type)
+                if forced_post_field is not None:
+                    if street.street != "preflop":
+                        raise ValueError("forced blind and ante posts must be preflop")
+                    configured_amount = getattr(
+                        self.game.blinds,
+                        forced_post_field,
+                    )
+                    posted_amount = action.amount
+                    if (
+                        posted_amount is None
+                        and actor_commitment is not None
+                        and resolved_commitment is not None
+                    ):
+                        posted_amount = resolved_commitment - actor_commitment
+                    if (
+                        configured_amount is not None
+                        and posted_amount is not None
+                        and posted_amount != configured_amount
+                    ):
+                        starting_stack = next(
+                            seat.starting_stack
+                            for seat in self.seats
+                            if seat.player_id == action.actor_id
+                        )
+                        short_stack_exhausted = (
+                            Decimal(0) < posted_amount < configured_amount
+                            and (
+                                (
+                                    starting_stack is not None
+                                    and resolved_commitment is not None
+                                    and resolved_commitment == starting_stack
+                                )
+                                or (
+                                    starting_stack is None
+                                    and action.all_in
+                                )
+                                or resolved_commitment is None
+                            )
+                        )
+                        if not short_stack_exhausted:
+                            raise ValueError(
+                                f"{action.action_type} amount {posted_amount} does not"
+                                f" match configured {forced_post_field}"
+                                f" {configured_amount} or a short-stack all-in"
+                            )
                 if (
                     action.action_type == "check"
                     and resolved_commitment is not None

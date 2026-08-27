@@ -1236,6 +1236,237 @@ def test_bet_and_raise_labels_must_match_the_known_wager_transition(
         ImportedHandState.model_validate(payload)
 
 
+def forced_post(
+    sequence: int,
+    action_type: str,
+    *,
+    amount: Decimal | None = None,
+    total: Decimal | None = None,
+    all_in: bool = False,
+) -> dict[str, object]:
+    return {
+        "sequence": sequence,
+        "actor_id": "hero",
+        "action_type": action_type,
+        "amount": amount,
+        "total_committed": total,
+        "all_in": all_in,
+        "origin": {
+            "kind": "forced_system",
+            "basis": "explicit_marker",
+            "evidence": [evidence()],
+        },
+        "evidence": [evidence()],
+    }
+
+
+@pytest.mark.parametrize(
+    "action_type",
+    ["post_ante", "post_small_blind", "post_big_blind", "post_straddle"],
+)
+def test_forced_post_must_match_its_configured_amount(action_type: str) -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["blinds"] = {
+        "ante": Decimal("0.1"),
+        "small_blind": Decimal("0.5"),
+        "big_blind": Decimal("1"),
+        "straddle": Decimal("2"),
+    }
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    action_type,
+                    amount=Decimal("100"),
+                    total=Decimal("100"),
+                )
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="does not match configured"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_total_only_forced_post_uses_the_increment_after_an_ante() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_ante",
+                    amount=Decimal("0.1"),
+                    total=Decimal("0.1"),
+                ),
+                forced_post(
+                    1,
+                    "post_small_blind",
+                    total=Decimal("100.1"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="post_small_blind amount 100.0"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_ante_plus_blind_cumulative_total_accepts_the_configured_increment() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_ante",
+                    amount=Decimal("0.1"),
+                    total=Decimal("0.1"),
+                ),
+                forced_post(
+                    1,
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.6"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("0.6")
+
+
+def test_short_forced_post_accepts_known_stack_exhaustion_after_an_ante() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.2")
+    payload["seats"][0]["starting_stack"] = Decimal("0.6")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_ante",
+                    amount=Decimal("0.2"),
+                    total=Decimal("0.2"),
+                ),
+                forced_post(
+                    1,
+                    "post_small_blind",
+                    amount=Decimal("0.4"),
+                    total=Decimal("0.6"),
+                    all_in=True,
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].all_in is True
+
+
+@pytest.mark.parametrize("all_in", [False, True])
+def test_short_forced_post_rejects_a_known_nonexhausted_stack(all_in: bool) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_big_blind",
+                    amount=Decimal("0.4"),
+                    total=Decimal("0.4"),
+                    all_in=all_in,
+                )
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="short-stack all-in"):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("all_in", [False, True])
+def test_short_forced_post_with_unknown_stack_requires_an_all_in_marker(
+    all_in: bool,
+) -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][0]["starting_stack"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_big_blind",
+                    amount=Decimal("0.4"),
+                    total=Decimal("0.4"),
+                    all_in=all_in,
+                )
+            ],
+        }
+    ]
+
+    if all_in:
+        state = ImportedHandState.model_validate(payload)
+        assert state.streets[0].actions[0].all_in is True
+    else:
+        with pytest.raises(ValidationError, match="short-stack all-in"):
+            ImportedHandState.model_validate(payload)
+
+
+def test_forced_post_with_unknown_configuration_remains_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_straddle",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                )
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[0].action_type == "post_straddle"
+
+
+def test_forced_posts_are_rejected_after_preflop() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {"street": "preflop", "actions": []},
+        {
+            "street": "flop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                )
+            ],
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="posts must be preflop"):
+        ImportedHandState.model_validate(payload)
+
+
 @pytest.mark.parametrize("terminal_action", ["fold", "all_in"])
 @pytest.mark.parametrize("same_street", [True, False])
 def test_actions_after_a_player_becomes_terminal_are_rejected(
