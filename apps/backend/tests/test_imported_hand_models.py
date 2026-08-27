@@ -1470,6 +1470,750 @@ def test_bet_and_raise_labels_must_match_the_known_wager_transition(
         ImportedHandState.model_validate(payload)
 
 
+def wager_action(
+    sequence: int,
+    actor_id: str,
+    action_type: str,
+    *,
+    amount: Decimal | None = None,
+    total: Decimal | None = None,
+    all_in: bool = False,
+) -> dict[str, object]:
+    forced = action_type.startswith("post_")
+    return {
+        "sequence": sequence,
+        "actor_id": actor_id,
+        "action_type": action_type,
+        "amount": amount,
+        "total_committed": total,
+        "all_in": all_in,
+        "origin": {
+            "kind": "forced_system" if forced else "player_selected",
+            "basis": "explicit_marker",
+            "evidence": [evidence()],
+        },
+        "evidence": [evidence()],
+    }
+
+
+def three_player_wager_payload(
+    *,
+    third_stack: Decimal = Decimal("100"),
+) -> dict[str, object]:
+    payload = hand_state().model_dump()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "third-player",
+            "starting_stack": third_stack,
+            "participation": "dealt_in",
+            "position": None,
+        }
+    )
+    return payload
+
+
+def test_non_all_in_raise_must_match_the_big_blind_minimum_increment() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "raise",
+                    amount=Decimal("1.5"),
+                    total=Decimal("1.5"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="non-all-in raise must be at least"):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("total", "all_in"),
+    [(Decimal("2"), False), (Decimal("1.5"), True)],
+)
+def test_minimum_full_raise_and_short_all_in_raise_are_accepted(
+    total: Decimal, all_in: bool
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "raise",
+                    amount=total,
+                    total=total,
+                    all_in=all_in,
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].all_in is all_in
+
+
+def test_opening_bet_sets_the_next_minimum_raise_increment() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {"street": "preflop", "actions": []},
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "raise",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                ),
+            ],
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="non-all-in raise must be at least"):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("betting_limit", ["no_limit", "pot_limit"])
+def test_non_all_in_opening_bet_must_reach_the_big_blind_minimum(
+    betting_limit: str,
+) -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["betting_limit"] = betting_limit
+    payload["streets"] = [
+        {"street": "preflop", "actions": []},
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                )
+            ],
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="non-all-in bet must be at least"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_short_all_in_opening_bet_below_the_big_blind_is_accepted() -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][0]["starting_stack"] = Decimal("0.5")
+    payload["streets"] = [
+        {"street": "preflop", "actions": []},
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                    all_in=True,
+                )
+            ],
+        },
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[-1].actions[-1].all_in is True
+
+
+@pytest.mark.parametrize("betting_limit", ["fixed_limit", "unknown"])
+def test_unsupported_limit_minimum_raise_size_remains_reviewable(
+    betting_limit: str,
+) -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["betting_limit"] = betting_limit
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "raise",
+                    amount=Decimal("1.5"),
+                    total=Decimal("1.5"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("1.5")
+
+
+def test_short_all_in_raise_does_not_reduce_the_next_full_raise_increment() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "third-player",
+            "starting_stack": Decimal("4"),
+            "participation": "dealt_in",
+            "position": None,
+        }
+    )
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "raise",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "raise",
+                    amount=Decimal("4"),
+                    total=Decimal("4"),
+                    all_in=True,
+                ),
+                wager_action(
+                    3,
+                    "hero",
+                    "raise",
+                    amount=Decimal("4"),
+                    total=Decimal("5"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="non-all-in raise must be at least"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_full_reraise_may_match_the_previous_full_raise_increment() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "raise",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                ),
+                wager_action(
+                    2,
+                    "villain",
+                    "raise",
+                    amount=Decimal("4"),
+                    total=Decimal("5"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("5")
+
+
+def test_straddle_sets_the_preflop_minimum_raise_increment() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["blinds"]["straddle"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_straddle",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "raise",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="non-all-in raise must be at least"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unknown_raise_size_after_a_known_wager_remains_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(1, "hero", "raise"),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed is None
+
+
+def test_unknown_raise_size_keeps_later_minimum_raise_validation_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "third-player",
+            "starting_stack": Decimal("100"),
+            "participation": "dealt_in",
+            "position": None,
+        }
+    )
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "hero", "bet"),
+                wager_action(
+                    1,
+                    "villain",
+                    "raise",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "raise",
+                    amount=Decimal("3.5"),
+                    total=Decimal("3.5"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("3.5")
+
+
+def test_minimum_raise_increment_resets_for_each_street() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "raise",
+                    amount=Decimal("4"),
+                    total=Decimal("4"),
+                ),
+                wager_action(
+                    2,
+                    "villain",
+                    "call",
+                    amount=Decimal("2"),
+                    total=Decimal("4"),
+                ),
+            ],
+        },
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "raise",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+            ],
+        },
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[-1].actions[-1].action_type == "raise"
+
+
+def test_short_all_in_does_not_reopen_raising_for_a_player_who_already_acted() -> None:
+    payload = three_player_wager_payload(third_stack=Decimal("1.5"))
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "raise",
+                    amount=Decimal("1.5"),
+                    total=Decimal("1.5"),
+                    all_in=True,
+                ),
+                wager_action(
+                    3,
+                    "hero",
+                    "raise",
+                    amount=Decimal("1.5"),
+                    total=Decimal("2.5"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="have not reopened betting"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_player_who_has_not_acted_may_raise_over_a_short_all_in() -> None:
+    payload = three_player_wager_payload()
+    payload["seats"][1]["starting_stack"] = Decimal("1.5")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "raise",
+                    amount=Decimal("1.5"),
+                    total=Decimal("1.5"),
+                    all_in=True,
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "raise",
+                    amount=Decimal("2.5"),
+                    total=Decimal("2.5"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("2.5")
+
+
+def test_cumulative_short_all_ins_reopen_raising_at_one_full_increment() -> None:
+    payload = three_player_wager_payload(third_stack=Decimal("2"))
+    payload["seats"][1]["starting_stack"] = Decimal("1.5")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "raise",
+                    amount=Decimal("1.5"),
+                    total=Decimal("1.5"),
+                    all_in=True,
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "raise",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                    all_in=True,
+                ),
+                wager_action(
+                    3,
+                    "hero",
+                    "raise",
+                    amount=Decimal("2"),
+                    total=Decimal("3"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("3")
+
+
+def test_unknown_short_raise_keeps_reopening_rights_reviewable() -> None:
+    payload = three_player_wager_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(1, "villain", "raise", all_in=True),
+                wager_action(
+                    2,
+                    "hero",
+                    "raise",
+                    amount=Decimal("1"),
+                    total=Decimal("2"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].action_type == "raise"
+
+
+def test_big_blind_ante_is_dead_money_for_call_and_raise_targets() -> None:
+    payload = three_player_wager_payload()
+    payload["game"]["blinds"]["ante"] = Decimal("1")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "third-player",
+                    "post_ante",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("1")
+
+
+def short_big_blind_payload() -> dict[str, object]:
+    payload = three_player_wager_payload(third_stack=Decimal("1.5"))
+    payload["game"]["blinds"]["ante"] = Decimal("1")
+    return payload
+
+
+@pytest.mark.parametrize(
+    ("action_type", "total"),
+    [("call", Decimal("1")), ("raise", Decimal("2"))],
+)
+def test_short_all_in_big_blind_preserves_the_nominal_multiway_bring_in(
+    action_type: str,
+    total: Decimal,
+) -> None:
+    payload = short_big_blind_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "third-player",
+                    "post_ante",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1.5"),
+                    all_in=True,
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    action_type,
+                    amount=total,
+                    total=total,
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == total
+
+
+def test_short_all_in_big_blind_does_not_reduce_the_minimum_full_raise() -> None:
+    payload = short_big_blind_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "third-player",
+                    "post_ante",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1.5"),
+                    all_in=True,
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "raise",
+                    amount=Decimal("1.5"),
+                    total=Decimal("1.5"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="non-all-in raise must be at least"):
+        ImportedHandState.model_validate(payload)
+
+
 def forced_post(
     sequence: int,
     action_type: str,

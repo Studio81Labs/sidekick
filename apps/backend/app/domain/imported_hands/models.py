@@ -665,11 +665,22 @@ class ImportedHandState(ImportedHandModel):
             if seat.participation in {"dealt_in", "unknown"}
         }
         fold_end: tuple[StreetName, str] | None = None
+        enforce_full_raise_increment = self.game.betting_limit in {
+            "no_limit",
+            "pot_limit",
+        }
         for street in self.streets:
             street_commitments: dict[str, Decimal | None] = {
                 player_id: Decimal(0) for player_id in player_ids
             }
+            live_commitments: dict[str, Decimal | None] = {
+                player_id: Decimal(0) for player_id in player_ids
+            }
+            acted_wager_by_player: dict[str, Decimal | None] = {}
+            reopen_increment_by_player: dict[str, Decimal | None] = {}
             current_wager: Decimal | None = Decimal(0)
+            nominal_bring_in = Decimal(0)
+            last_full_wager_increment = self.game.blinds.big_blind
             for action in street.actions:
                 if action.actor_id not in player_ids:
                     raise ValueError("every action actor must identify a known seat")
@@ -707,15 +718,27 @@ class ImportedHandState(ImportedHandModel):
                             "an actor cannot act after folding or going all-in"
                         )
                 actor_commitment = street_commitments[action.actor_id]
+                actor_live_commitment = live_commitments[action.actor_id]
                 resolved_commitment = _known_action_total(
                     action,
                     actor_commitment,
                 )
+                resolved_live_commitment = _known_live_action_total(
+                    action,
+                    actor_commitment,
+                    resolved_commitment,
+                    actor_live_commitment,
+                )
+                posted_amount: Decimal | None = None
+                configured_post_amount: Decimal | None = None
+                short_forced_post = False
+                bet_increment: Decimal | None = None
+                raise_increment: Decimal | None = None
                 forced_post_field = _FORCED_POST_FIELDS.get(action.action_type)
                 if forced_post_field is not None:
                     if street.street != "preflop":
                         raise ValueError("forced blind and ante posts must be preflop")
-                    configured_amount = getattr(
+                    configured_post_amount = getattr(
                         self.game.blinds,
                         forced_post_field,
                     )
@@ -727,9 +750,9 @@ class ImportedHandState(ImportedHandModel):
                     ):
                         posted_amount = resolved_commitment - actor_commitment
                     if (
-                        configured_amount is not None
+                        configured_post_amount is not None
                         and posted_amount is not None
-                        and posted_amount != configured_amount
+                        and posted_amount != configured_post_amount
                     ):
                         starting_stack = next(
                             seat.starting_stack
@@ -737,7 +760,7 @@ class ImportedHandState(ImportedHandModel):
                             if seat.player_id == action.actor_id
                         )
                         short_stack_exhausted = (
-                            Decimal(0) < posted_amount < configured_amount
+                            Decimal(0) < posted_amount < configured_post_amount
                             and (
                                 (
                                     starting_stack is not None
@@ -751,17 +774,18 @@ class ImportedHandState(ImportedHandModel):
                                 or resolved_commitment is None
                             )
                         )
+                        short_forced_post = short_stack_exhausted
                         if not short_stack_exhausted:
                             raise ValueError(
                                 f"{action.action_type} amount {posted_amount} does not"
                                 f" match configured {forced_post_field}"
-                                f" {configured_amount} or a short-stack all-in"
+                                f" {configured_post_amount} or a short-stack all-in"
                             )
                 if (
                     action.action_type == "check"
-                    and resolved_commitment is not None
+                    and resolved_live_commitment is not None
                     and current_wager is not None
-                    and resolved_commitment < current_wager
+                    and resolved_live_commitment < current_wager
                 ):
                     raise ValueError(
                         "an actor cannot check while facing an outstanding wager"
@@ -769,38 +793,80 @@ class ImportedHandState(ImportedHandModel):
                 if action.action_type == "call" and current_wager is not None:
                     if current_wager == 0:
                         raise ValueError("a call requires an outstanding wager")
-                    if resolved_commitment is not None:
-                        if resolved_commitment > current_wager or (
-                            resolved_commitment < current_wager and not action.all_in
+                    if resolved_live_commitment is not None:
+                        if resolved_live_commitment > current_wager or (
+                            resolved_live_commitment < current_wager and not action.all_in
                         ):
                             raise ValueError(
                                 "a call must match the outstanding wager unless it is"
                                 " an all-in under-call"
                             )
                         if (
-                            actor_commitment is not None
-                            and resolved_commitment <= actor_commitment
+                            actor_live_commitment is not None
+                            and resolved_live_commitment <= actor_live_commitment
                         ):
                             raise ValueError("a call requires an outstanding wager")
                 elif action.action_type == "bet" and current_wager is not None:
                     if current_wager > 0:
                         raise ValueError("a bet requires no outstanding wager")
-                    if resolved_commitment is not None and (
-                        resolved_commitment <= 0
+                    if resolved_live_commitment is not None:
+                        if actor_live_commitment is not None:
+                            bet_increment = (
+                                resolved_live_commitment - actor_live_commitment
+                            )
+                        elif action.amount is not None:
+                            bet_increment = action.amount
+                    if resolved_live_commitment is not None and (
+                        resolved_live_commitment <= 0
                         or (
-                            actor_commitment is not None
-                            and resolved_commitment <= actor_commitment
+                            actor_live_commitment is not None
+                            and resolved_live_commitment <= actor_live_commitment
                         )
                     ):
                         raise ValueError("a bet must add chips above the prior commitment")
+                    if (
+                        enforce_full_raise_increment
+                        and bet_increment is not None
+                        and last_full_wager_increment is not None
+                        and bet_increment < last_full_wager_increment
+                        and not action.all_in
+                    ):
+                        raise ValueError(
+                            "a non-all-in bet must be at least the minimum full"
+                            " wager increment"
+                        )
                 elif action.action_type == "raise" and current_wager is not None:
                     if current_wager == 0:
                         raise ValueError("a raise requires an outstanding wager")
-                    if (
-                        resolved_commitment is not None
-                        and resolved_commitment <= current_wager
-                    ):
-                        raise ValueError("a raise must increase the outstanding wager")
+                    if resolved_live_commitment is not None:
+                        raise_increment = resolved_live_commitment - current_wager
+                        if raise_increment <= 0:
+                            raise ValueError("a raise must increase the outstanding wager")
+                        acted_wager = acted_wager_by_player.get(action.actor_id)
+                        reopen_increment = reopen_increment_by_player.get(
+                            action.actor_id
+                        )
+                        if (
+                            enforce_full_raise_increment
+                            and action.actor_id in acted_wager_by_player
+                            and acted_wager is not None
+                            and reopen_increment is not None
+                            and current_wager - acted_wager < reopen_increment
+                        ):
+                            raise ValueError(
+                                "a raise is not allowed because short all-ins have not"
+                                " reopened betting for this actor"
+                            )
+                        if (
+                            enforce_full_raise_increment
+                            and last_full_wager_increment is not None
+                            and raise_increment < last_full_wager_increment
+                            and not action.all_in
+                        ):
+                            raise ValueError(
+                                "a non-all-in raise must be at least the last full"
+                                " bet or raise increment"
+                            )
                 if action.action_type == "fold":
                     terminal_actors[action.actor_id] = ("folded", street.street)
                     live_players.discard(action.actor_id)
@@ -809,6 +875,51 @@ class ImportedHandState(ImportedHandModel):
                 elif action.all_in:
                     terminal_actors[action.actor_id] = ("all_in", street.street)
                 street_commitments[action.actor_id] = resolved_commitment
+                live_commitments[action.actor_id] = resolved_live_commitment
+                if action.action_type in {"post_big_blind", "post_straddle"}:
+                    full_live_post = (
+                        posted_amount is not None
+                        and (
+                            (
+                                configured_post_amount is not None
+                                and posted_amount >= configured_post_amount
+                            )
+                            or (
+                                configured_post_amount is None
+                                and not action.all_in
+                            )
+                        )
+                    )
+                    if full_live_post and posted_amount is not None:
+                        if (
+                            last_full_wager_increment is None
+                            or posted_amount > last_full_wager_increment
+                        ):
+                            last_full_wager_increment = posted_amount
+                    elif action.action_type == "post_straddle" and posted_amount is None:
+                        last_full_wager_increment = None
+                elif action.action_type == "bet":
+                    if bet_increment is None:
+                        last_full_wager_increment = None
+                    elif (
+                        last_full_wager_increment is None
+                        and not action.all_in
+                    ) or (
+                        last_full_wager_increment is not None
+                        and bet_increment >= last_full_wager_increment
+                    ):
+                        last_full_wager_increment = bet_increment
+                elif action.action_type == "raise":
+                    if raise_increment is None:
+                        last_full_wager_increment = None
+                    elif (
+                        last_full_wager_increment is None
+                        and not action.all_in
+                    ) or (
+                        last_full_wager_increment is not None
+                        and raise_increment >= last_full_wager_increment
+                    ):
+                        last_full_wager_increment = raise_increment
                 if action.action_type in {
                     "bet",
                     "raise",
@@ -816,24 +927,46 @@ class ImportedHandState(ImportedHandModel):
                     "post_big_blind",
                     "post_straddle",
                 }:
-                    if resolved_commitment is None:
+                    if (
+                        action.action_type == "post_big_blind"
+                        and short_forced_post
+                        and configured_post_amount is not None
+                        and len(live_players) >= 3
+                    ):
+                        nominal_bring_in = max(
+                            nominal_bring_in,
+                            configured_post_amount,
+                        )
+                    if resolved_live_commitment is None:
                         current_wager = None
                     elif current_wager is None:
-                        current_wager = resolved_commitment
+                        current_wager = resolved_live_commitment
                     else:
-                        current_wager = max(current_wager, resolved_commitment)
+                        current_wager = max(
+                            current_wager,
+                            resolved_live_commitment,
+                            nominal_bring_in,
+                        )
                 elif action.action_type == "uncalled_return":
                     if any(
                         commitment is None
-                        for commitment in street_commitments.values()
+                        for commitment in live_commitments.values()
                     ):
                         current_wager = None
                     else:
                         current_wager = max(
-                            commitment
-                            for commitment in street_commitments.values()
-                            if commitment is not None
+                            nominal_bring_in,
+                            *(
+                                commitment
+                                for commitment in live_commitments.values()
+                                if commitment is not None
+                            ),
                         )
+                if action.action_type in {"check", "bet", "call", "raise"}:
+                    acted_wager_by_player[action.actor_id] = current_wager
+                    reopen_increment_by_player[action.actor_id] = (
+                        last_full_wager_increment
+                    )
         if self.results is not None:
             referenced_result_players = {
                 *(entry.player_id for entry in self.results.showdown),
@@ -1509,6 +1642,27 @@ def _known_action_total(
     if action.action_type == "uncalled_return":
         return prior - action.amount
     return prior + action.amount
+
+
+def _known_live_action_total(
+    action: ImportedAction,
+    prior_commitment: Decimal | None,
+    resolved_commitment: Decimal | None,
+    prior_live_commitment: Decimal | None,
+) -> Decimal | None:
+    """Resolve chips that count toward the live wager, excluding dead antes."""
+
+    if prior_live_commitment is None:
+        return None
+    if action.action_type in {"fold", "check", "post_ante"}:
+        return prior_live_commitment
+    if prior_commitment is not None and resolved_commitment is not None:
+        return prior_live_commitment + resolved_commitment - prior_commitment
+    if action.amount is None:
+        return None
+    if action.action_type == "uncalled_return":
+        return prior_live_commitment - action.amount
+    return prior_live_commitment + action.amount
 
 
 def _validate_unique(items: list[Any], attribute: str, label: str) -> None:

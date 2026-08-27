@@ -236,7 +236,18 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
         if net_error not in errors:
             errors.append(net_error)
 
-    expected_awards = stated_net if stated_net is not None else derived_net
+    stated_distributable_net = (
+        stated_net
+        if stated_net is not None
+        else stated_gross - rake
+        if stated_gross is not None and rake is not None
+        else None
+    )
+    expected_awards = (
+        stated_distributable_net
+        if stated_distributable_net is not None
+        else derived_net
+    )
     if awarded_total is not None and expected_awards is not None:
         if awarded_total != expected_awards:
             errors.append(
@@ -253,12 +264,11 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
     award_entries_by_player: dict[str, list[Decimal | None]] = {}
     for award in awards:
         award_entries_by_player.setdefault(award.player_id, []).append(award.amount)
-    collection_ceiling = (
-        stated_net
-        if stated_net is not None
-        else derived_net
-        if derived_net is not None
-        else known_gross
+    collection_ceiling = expected_awards if expected_awards is not None else known_gross
+    concrete_awards_exhaust_net = (
+        awarded_total is not None
+        and expected_awards is not None
+        and awarded_total == expected_awards
     )
     reconciled_player_collections: dict[str, Decimal] = {}
     for player_result in player_results:
@@ -267,8 +277,9 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
             (amount for amount in player_awards if amount is not None),
             Decimal(0),
         )
-        awards_complete = bool(player_awards) and all(
-            amount is not None for amount in player_awards
+        awards_complete = concrete_awards_exhaust_net or (
+            bool(player_awards)
+            and all(amount is not None for amount in player_awards)
         )
         if player_result.total_collected is not None:
             if awards_complete and player_result.total_collected != known_awards:

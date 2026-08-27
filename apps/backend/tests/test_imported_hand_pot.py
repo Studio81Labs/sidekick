@@ -750,6 +750,192 @@ def test_player_results_must_reconcile_with_awards_and_contributions(
     assert any(message in error for error in result.errors)
 
 
+@pytest.mark.parametrize(
+    ("total_collected", "net_result", "expected_status", "message"),
+    [
+        ("2", "1", "fail", "does not match concrete awards 0"),
+        (None, "1", "fail", "does not match collected 0 minus contribution 1"),
+        ("0", "-1", "pass", None),
+        (None, "-1", "pass", None),
+    ],
+)
+def test_exhaustive_concrete_awards_reconcile_results_for_players_without_awards(
+    total_collected: str | None,
+    net_result: str,
+    expected_status: str,
+    message: str | None,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", "2", None)],
+        player_results=[("p2", total_collected, net_result)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    if message is not None:
+        assert any(message in error for error in result.errors)
+    else:
+        assert result.errors == []
+
+
+def test_concrete_awards_do_not_imply_zero_for_other_players_without_a_known_net() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        rake=None,
+        awards=[("p1", "2", None)],
+        player_results=[("p2", "2", "1")],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "pass"
+    assert not any("does not match concrete awards 0" in error for error in result.errors)
+
+
+def test_derived_net_can_make_concrete_awards_exhaustive_for_player_results() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        rake="0",
+        awards=[("p1", "1", None), ("p1", "1", None)],
+        player_results=[("p1", "2", "1"), ("p2", "0", "-1")],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "pass"
+    assert result.derived_net_total == Decimal("2")
+    assert result.errors == []
+
+
+@pytest.mark.parametrize(
+    ("stated_gross", "gross_pots", "rake", "distributable_net"),
+    [
+        ("2", None, "0", "2"),
+        (None, ["2"], "0", "2"),
+        ("2", None, "0.5", "1.5"),
+    ],
+)
+def test_stated_gross_and_rake_make_awards_exhaustive_when_actions_are_incomplete(
+    stated_gross: str | None,
+    gross_pots: list[str] | None,
+    rake: str,
+    distributable_net: str,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call"),
+                ],
+            }
+        ],
+        stated_gross=stated_gross,
+        gross_pots=gross_pots,
+        rake=rake,
+        awards=[("p1", distributable_net, None)],
+        player_results=[("p2", distributable_net, "1")],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert result.derived_net_total is None
+    assert any(
+        f"player result p2 total_collected {distributable_net} does not match"
+        " concrete awards 0" in error
+        for error in result.errors
+    )
+
+
+def test_unknown_rake_keeps_award_exhaustiveness_indeterminate_with_incomplete_actions() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        rake=None,
+        awards=[("p1", "2", None)],
+        player_results=[("p2", "2", "1")],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "indeterminate"
+    assert result.derived_net_total is None
+    assert not any("does not match concrete awards 0" in error for error in result.errors)
+
+
+def test_unknown_award_amount_does_not_imply_zero_for_other_players() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", None, None)],
+        player_results=[("p2", "2", "1")],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "indeterminate"
+    assert not any("does not match concrete awards 0" in error for error in result.errors)
+
+
 def test_zero_rake_indexed_awards_must_reconcile_each_pot_layer() -> None:
     state = hand(
         [
