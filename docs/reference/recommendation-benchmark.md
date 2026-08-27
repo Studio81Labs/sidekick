@@ -264,7 +264,16 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   the declared envelope. `players_in_hand` is the number of current survivors,
   so it may be lower than the dealt-in count but cannot exceed it. The
   listed table configurations, stacks, and streets define the declared Cartesian
-  coverage boundary. The economic and utility models are separately named,
+  coverage boundary. Until recommendation providers consume structural position
+  directly, the legacy `hero_position` route must agree exactly: `BTN/SB` and
+  `BTN` route as `button`, `SB` as `small_blind`, `BB` as `big_blind`, `UTG` as
+  `utg`, `HJ` as `hijack`, and `CO` as `cutoff`. Table-specific full-ring labels
+  such as `UTG+1`, `LJ`, and combined `*/LJ` labels have no exact legacy route;
+  version-5 corpora are rejected instead of coercing them into a nearby policy.
+  Versions 1 through 4 retain their legacy behavior. Canonical nine-handed
+  positions are `BTN`, `SB`, `BB`, `UTG`, `UTG+1`, `UTG+2`, `LJ`, `HJ`, and
+  `CO`; ten-handed adds the distinct `UTG+3` seat before `LJ`. The economic and
+  utility models are separately named,
   revisioned, and configuration-digested. `ev_unit` is one of `bb`, `chips`,
   `currency`, or `utility`.
 - The current EV scorer consumes only `ev_bb`. A version-5 corpus with a non-BB

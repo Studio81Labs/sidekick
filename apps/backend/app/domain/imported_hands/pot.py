@@ -161,8 +161,17 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
             )
         elif not contributions_incomplete:
             awards_by_pot: dict[int, Decimal] = {}
+            concrete_awards_by_player: dict[str, Decimal] = {}
+            recipients_with_concrete_unindexed_awards: set[str] = set()
             for award in awards:
+                if award.amount is not None:
+                    concrete_awards_by_player[award.player_id] = (
+                        concrete_awards_by_player.get(award.player_id, Decimal(0))
+                        + award.amount
+                    )
                 if award.pot_index is None:
+                    if award.amount is not None:
+                        recipients_with_concrete_unindexed_awards.add(award.player_id)
                     if not any(
                         award.player_id in pot.eligible_players for pot in pots
                     ):
@@ -185,6 +194,21 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                     awards_by_pot[award.pot_index] = (
                         awards_by_pot.get(award.pot_index, Decimal(0))
                         + award.amount
+                    )
+            for player_id in sorted(recipients_with_concrete_unindexed_awards):
+                eligible_total = sum(
+                    (
+                        pot.amount
+                        for pot in pots
+                        if player_id in pot.eligible_players
+                    ),
+                    Decimal(0),
+                )
+                concrete_total = concrete_awards_by_player[player_id]
+                if eligible_total > 0 and concrete_total > eligible_total:
+                    errors.append(
+                        f"concrete awards {concrete_total} to {player_id} exceed"
+                        f" eligible derived pots {eligible_total}"
                     )
             for pot_index, indexed_total in awards_by_pot.items():
                 if pot_index < len(pots) and indexed_total > pots[pot_index].amount:

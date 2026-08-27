@@ -20,7 +20,7 @@ from pydantic import (
 
 from app.config import Settings, get_settings
 from app.domain.imported_hands import StructuralPosition, structural_position_labels
-from app.domain.poker import CanonicalState, Street
+from app.domain.poker import CanonicalState, PreflopPosition, Street
 from app.domain.recommendations import (
     RecommendationAction,
     RecommendationRequest,
@@ -33,6 +33,7 @@ from app.providers.base import (
 )
 from app.providers.registry import build_provider
 from app.solvers.postflop_ranges import RangeSource
+from app.solvers.preflop_context import normalize_position
 
 
 RECOMMENDATION_BENCHMARK_SCHEMA = "poker-hero-recommendation-benchmark"
@@ -51,6 +52,19 @@ WAGER_ACTIONS = {"bet", "raise"}
 VALID_ACTIONS: frozenset[str] = frozenset(get_args(RecommendationAction))
 VALID_RANGE_SOURCES: frozenset[str] = frozenset(get_args(RangeSource))
 RangeConditioningStatus = Literal["applied", "skipped"]
+
+# The current provider boundary still routes the legacy six-max position field.
+# Only structural labels with one exact legacy meaning may cross that boundary;
+# full-ring seats must not be coerced into a nearby six-max policy.
+LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL: dict[str, PreflopPosition] = {
+    "BTN/SB": "button",
+    "BTN": "button",
+    "SB": "small_blind",
+    "BB": "big_blind",
+    "UTG": "utg",
+    "HJ": "hijack",
+    "CO": "cutoff",
+}
 
 FiniteNumber = Annotated[
     float,
@@ -659,6 +673,25 @@ def _validate_case_within_grading_coverage(
         raise ValueError(
             f"Case {case.id} structural position is outside declared"
             " grading-reference coverage"
+        )
+    expected_legacy_position = LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL.get(
+        structural_position.display_label
+    )
+    if expected_legacy_position is None:
+        raise ValueError(
+            f"Case {case.id} structural position"
+            f" {structural_position.display_label!r} at"
+            f" {structural_position.dealt_in_player_count}-handed cannot be"
+            " represented exactly by legacy hero_position routing"
+        )
+    routed_legacy_position = normalize_position(state.hero_position)
+    if routed_legacy_position != expected_legacy_position:
+        raise ValueError(
+            f"Case {case.id} hero_position {state.hero_position!r} routes to"
+            f" {routed_legacy_position!r}, but structural position"
+            f" {structural_position.display_label!r} at"
+            f" {structural_position.dealt_in_player_count}-handed requires"
+            f" {expected_legacy_position!r}"
         )
     if (
         state.players_in_hand is None

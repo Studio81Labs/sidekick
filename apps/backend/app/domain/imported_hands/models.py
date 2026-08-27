@@ -402,6 +402,7 @@ class StructuralPosition(ImportedHandModel):
         "UTG",
         "UTG+1",
         "UTG+2",
+        "UTG+3",
         "UTG+3/LJ",
         "UTG+2/LJ",
         "UTG+1/LJ",
@@ -669,6 +670,7 @@ class ImportedHandState(ImportedHandModel):
             "no_limit",
             "pot_limit",
         }
+        committed_pot_before_street: Decimal | None = Decimal(0)
         for street in self.streets:
             street_commitments: dict[str, Decimal | None] = {
                 player_id: Decimal(0) for player_id in player_ids
@@ -682,6 +684,23 @@ class ImportedHandState(ImportedHandModel):
             nominal_bring_in = Decimal(0)
             last_full_wager_increment = self.game.blinds.big_blind
             for action in street.actions:
+                pot_before_action = (
+                    committed_pot_before_street
+                    + sum(
+                        (
+                            commitment
+                            for commitment in street_commitments.values()
+                            if commitment is not None
+                        ),
+                        Decimal(0),
+                    )
+                    if committed_pot_before_street is not None
+                    and all(
+                        commitment is not None
+                        for commitment in street_commitments.values()
+                    )
+                    else None
+                )
                 if action.actor_id not in player_ids:
                     raise ValueError("every action actor must identify a known seat")
                 participation = next(
@@ -867,6 +886,31 @@ class ImportedHandState(ImportedHandModel):
                                 "a non-all-in raise must be at least the last full"
                                 " bet or raise increment"
                             )
+                if (
+                    self.game.betting_limit == "pot_limit"
+                    and action.action_type in {"bet", "raise"}
+                    and pot_before_action is not None
+                    and current_wager is not None
+                    and actor_live_commitment is not None
+                    and resolved_live_commitment is not None
+                ):
+                    call_amount = max(
+                        current_wager - actor_live_commitment,
+                        Decimal(0),
+                    )
+                    # Calling adds `call_amount` to both the pot and the actor's
+                    # commitment. The actor may then raise by that resulting pot,
+                    # so the maximum chips added are pot + twice the call.
+                    maximum_wager_addition = pot_before_action + call_amount * 2
+                    wager_addition = (
+                        resolved_live_commitment - actor_live_commitment
+                    )
+                    if wager_addition > maximum_wager_addition:
+                        raise ValueError(
+                            f"pot-limit wager adds {wager_addition}, exceeding the"
+                            f" legal maximum {maximum_wager_addition} from pot"
+                            f" {pot_before_action} and call {call_amount}"
+                        )
                 if action.action_type == "fold":
                     terminal_actors[action.actor_id] = ("folded", street.street)
                     live_players.discard(action.actor_id)
@@ -967,6 +1011,19 @@ class ImportedHandState(ImportedHandModel):
                     reopen_increment_by_player[action.actor_id] = (
                         last_full_wager_increment
                     )
+            if committed_pot_before_street is not None and all(
+                commitment is not None for commitment in street_commitments.values()
+            ):
+                committed_pot_before_street += sum(
+                    (
+                        commitment
+                        for commitment in street_commitments.values()
+                        if commitment is not None
+                    ),
+                    Decimal(0),
+                )
+            else:
+                committed_pot_before_street = None
         if self.results is not None:
             referenced_result_players = {
                 *(entry.player_id for entry in self.results.showdown),
@@ -1615,8 +1672,8 @@ def structural_position_labels(count: int) -> list[str]:
         6: ["UTG", "HJ", "CO"],
         7: ["UTG", "UTG+1/LJ", "HJ", "CO"],
         8: ["UTG", "UTG+1", "LJ", "HJ", "CO"],
-        9: ["UTG", "UTG+1", "UTG+2/LJ", "HJ", "CO"],
-        10: ["UTG", "UTG+1", "UTG+2", "UTG+3/LJ", "HJ", "CO"],
+        9: ["UTG", "UTG+1", "UTG+2", "LJ", "HJ", "CO"],
+        10: ["UTG", "UTG+1", "UTG+2", "UTG+3", "LJ", "HJ", "CO"],
     }
     if count == 2:
         return ["BTN/SB", "BB"]

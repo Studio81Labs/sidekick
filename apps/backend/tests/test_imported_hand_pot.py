@@ -588,6 +588,115 @@ def test_unindexed_award_recipient_must_be_eligible_for_a_derived_pot() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("awards", "expected_status", "expected_total"),
+    [
+        ([("p1", "25", None)], "fail", "25"),
+        ([("p1", "8", None), ("p1", "8", None), ("p2", "9", None)], "fail", "16"),
+        ([("p1", "15", None), ("p2", "10", None)], "pass", None),
+        ([("p1", "10", 0), ("p1", "5", None), ("p2", "10", 1)], "pass", None),
+        ([("p1", "10", 0), ("p1", "6", None), ("p2", "9", 1)], "fail", "16"),
+    ],
+)
+def test_unindexed_awards_cannot_exceed_recipient_eligible_pot_layers(
+    awards: list[tuple[str, str | None, int | None]],
+    expected_status: str,
+    expected_total: str | None,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5"),
+                    action(1, "p2", "call", amount="5", total="5"),
+                    action(2, "p3", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p2", "bet", amount="5", total="5"),
+                    action(1, "p3", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="25",
+        stated_net="25",
+        gross_pots=["15", "10"],
+        awards=awards,
+        starting_stacks={"p1": "5", "p2": "10", "p3": "10"},
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    capacity_errors = [
+        error for error in result.errors if "eligible derived pots" in error
+    ]
+    if expected_total is None:
+        assert capacity_errors == []
+    else:
+        assert capacity_errors == [
+            f"concrete awards {expected_total} to p1 exceed eligible derived pots 15"
+        ]
+
+
+def test_unknown_unindexed_award_amount_keeps_recipient_capacity_reviewable() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5"),
+                    action(1, "p2", "call", amount="5", total="5"),
+                    action(2, "p3", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p2", "bet", amount="5", total="5"),
+                    action(1, "p3", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="25",
+        stated_net="25",
+        gross_pots=["15", "10"],
+        awards=[("p1", None, None)],
+        starting_stacks={"p1": "5", "p2": "10", "p3": "10"},
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "indeterminate"
+    assert not any("eligible derived pots" in error for error in result.errors)
+
+
+def test_incomplete_contributions_keep_unindexed_award_capacity_reviewable() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", "2", None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "indeterminate"
+    assert not any("eligible derived pots" in error for error in result.errors)
+
+
 def test_aggregate_awards_cannot_exceed_a_known_gross_pot() -> None:
     state = hand(
         [

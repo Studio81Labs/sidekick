@@ -31,6 +31,7 @@ from app.domain.imported_hands import (
     classify_restore,
     derive_structural_positions,
     imported_hand_state_sha256,
+    structural_position_labels,
 )
 
 
@@ -377,6 +378,34 @@ def test_position_derivation_skips_sitting_out_seats_and_preserves_full_ring_lab
     assert positions[8].display_label == "CO"
     assert positions[3].action_index == 0
     assert {position.dealt_in_player_count for position in positions.values()} == {8}
+
+
+def test_structural_position_labels_cover_every_seat_from_heads_up_through_ten_max(
+) -> None:
+    for dealt_in_count in range(2, 11):
+        labels = structural_position_labels(dealt_in_count)
+
+        assert len(labels) == dealt_in_count
+        assert len(labels) == len(set(labels))
+
+
+@pytest.mark.parametrize(
+    ("dealt_in_count", "expected_early_positions"),
+    [
+        (9, ["UTG", "UTG+1", "UTG+2", "LJ", "HJ", "CO"]),
+        (10, ["UTG", "UTG+1", "UTG+2", "UTG+3", "LJ", "HJ", "CO"]),
+    ],
+)
+def test_full_ring_position_labels_preserve_distinct_early_seats(
+    dealt_in_count: int,
+    expected_early_positions: list[str],
+) -> None:
+    assert structural_position_labels(dealt_in_count) == [
+        "BTN",
+        "SB",
+        "BB",
+        *expected_early_positions,
+    ]
 
 
 def test_heads_up_position_derivation_makes_button_the_small_blind() -> None:
@@ -2212,6 +2241,330 @@ def test_short_all_in_big_blind_does_not_reduce_the_minimum_full_raise() -> None
 
     with pytest.raises(ValidationError, match="non-all-in raise must be at least"):
         ImportedHandState.model_validate(payload)
+
+
+def pot_limit_three_player_payload() -> dict[str, object]:
+    payload = three_player_wager_payload()
+    payload["game"]["betting_limit"] = "pot_limit"
+    return payload
+
+
+def pot_limit_postflop_bet_payload(
+    amount: Decimal,
+    *,
+    all_in: bool = False,
+) -> dict[str, object]:
+    payload = hand_state().model_dump()
+    payload["game"]["betting_limit"] = "pot_limit"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1"),
+                ),
+                wager_action(3, "villain", "check", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=amount,
+                    total=amount,
+                    all_in=all_in,
+                )
+            ],
+        },
+    ]
+    return payload
+
+
+def test_pot_limit_opening_bet_may_equal_the_pot_before_the_action() -> None:
+    state = ImportedHandState.model_validate(
+        pot_limit_postflop_bet_payload(Decimal("2"))
+    )
+
+    assert state.streets[-1].actions[-1].total_committed == Decimal("2")
+
+
+@pytest.mark.parametrize("all_in", [False, True])
+def test_pot_limit_opening_bet_cannot_exceed_the_pot(
+    all_in: bool,
+) -> None:
+    payload = pot_limit_postflop_bet_payload(
+        Decimal("2.1"),
+        all_in=all_in,
+    )
+
+    with pytest.raises(ValidationError, match="pot-limit wager adds"):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("raise_total", "valid"),
+    [(Decimal("3.5"), True), (Decimal("3.6"), False)],
+)
+def test_pot_limit_preflop_raise_cap_includes_the_posted_blinds(
+    raise_total: Decimal,
+    valid: bool,
+) -> None:
+    payload = pot_limit_three_player_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "raise",
+                    amount=raise_total,
+                    total=raise_total,
+                ),
+            ],
+        }
+    ]
+
+    if valid:
+        state = ImportedHandState.model_validate(payload)
+        assert state.streets[0].actions[-1].total_committed == raise_total
+    else:
+        with pytest.raises(ValidationError, match="pot-limit wager adds"):
+            ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("raise_total", "valid"),
+    [(Decimal("4"), True), (Decimal("4.1"), False)],
+)
+def test_pot_limit_raise_cap_grows_after_a_multiway_call(
+    raise_total: Decimal,
+    valid: bool,
+) -> None:
+    payload = pot_limit_three_player_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    3,
+                    "hero",
+                    "raise",
+                    amount=raise_total - Decimal("0.5"),
+                    total=raise_total,
+                ),
+            ],
+        }
+    ]
+
+    if valid:
+        state = ImportedHandState.model_validate(payload)
+        assert state.streets[0].actions[-1].total_committed == raise_total
+    else:
+        with pytest.raises(ValidationError, match="pot-limit wager adds"):
+            ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("raise_total", "valid"),
+    [(Decimal("3.5"), True), (Decimal("3.6"), False)],
+)
+def test_pot_limit_short_big_blind_cap_counts_dead_bba_money(
+    raise_total: Decimal,
+    valid: bool,
+) -> None:
+    payload = short_big_blind_payload()
+    payload["game"]["betting_limit"] = "pot_limit"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "third-player",
+                    "post_ante",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1.5"),
+                    all_in=True,
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "raise",
+                    amount=raise_total,
+                    total=raise_total,
+                ),
+            ],
+        }
+    ]
+
+    if valid:
+        state = ImportedHandState.model_validate(payload)
+        assert state.streets[0].actions[-1].total_committed == raise_total
+    else:
+        with pytest.raises(ValidationError, match="pot-limit wager adds"):
+            ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("raise_total", "valid"),
+    [(Decimal("5.5"), True), (Decimal("5.6"), False)],
+)
+def test_pot_limit_cap_after_a_short_all_in_uses_the_actual_pot_and_live_call(
+    raise_total: Decimal,
+    valid: bool,
+) -> None:
+    payload = pot_limit_three_player_payload()
+    payload["seats"][2]["starting_stack"] = Decimal("1.5")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "raise",
+                    amount=Decimal("1.5"),
+                    total=Decimal("1.5"),
+                    all_in=True,
+                ),
+                wager_action(
+                    3,
+                    "hero",
+                    "raise",
+                    amount=raise_total - Decimal("0.5"),
+                    total=raise_total,
+                ),
+            ],
+        }
+    ]
+
+    if valid:
+        state = ImportedHandState.model_validate(payload)
+        assert state.streets[0].actions[-1].total_committed == raise_total
+    else:
+        with pytest.raises(ValidationError, match="pot-limit wager adds"):
+            ImportedHandState.model_validate(payload)
+
+
+def test_pot_limit_cap_remains_reviewable_when_prior_pot_is_unknown() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["betting_limit"] = "pot_limit"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(2, "hero", "call"),
+            ],
+        },
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("100"),
+                    total=Decimal("100"),
+                )
+            ],
+        },
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[-1].actions[-1].total_committed == Decimal("100")
 
 
 def forced_post(

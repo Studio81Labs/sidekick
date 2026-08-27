@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings, get_settings
+from app.domain.imported_hands import structural_position_labels
 from app.domain.poker import Card, PreflopAction
 from app.domain.recommendations import RecommendationRequest, RecommendationResult
 from app.providers.base import ProviderConfigurationError
@@ -218,6 +219,38 @@ def grading_reference_evidence(
     }
 
 
+def reference_table_configuration(dealt_in_count: int) -> dict[str, object]:
+    action_order_distances = (
+        [0, 1]
+        if dealt_in_count == 2
+        else [*range(3, dealt_in_count), 0, 1, 2]
+    )
+    action_index_by_distance = {
+        distance: index for index, distance in enumerate(action_order_distances)
+    }
+    return {
+        "dealt_in_count": dealt_in_count,
+        "structural_positions": [
+            {
+                "action_index": action_index_by_distance[button_distance],
+                "button_distance": button_distance,
+                "display_label": display_label,
+            }
+            for button_distance, display_label in enumerate(
+                structural_position_labels(dealt_in_count)
+            )
+        ],
+    }
+
+
+def grading_reference_for_table_counts(*dealt_in_counts: int) -> dict[str, Any]:
+    evidence = grading_reference_evidence()
+    evidence["coverage"]["table_configurations"] = [
+        reference_table_configuration(count) for count in dealt_in_counts
+    ]
+    return evidence
+
+
 def recommendation(
     action: str,
     *,
@@ -388,6 +421,238 @@ def test_schema_five_cases_must_fit_declared_grading_coverage(
             reference_source={"name": "Independent solver export"},
             grading_reference=grading_reference_evidence(),
         )
+
+
+@pytest.mark.parametrize(
+    ("dealt_in_count", "button_distance", "hero_position"),
+    [
+        (2, 0, "dealer"),
+        (6, 0, "btn"),
+        (6, 1, "small blind"),
+        (6, 2, "BB"),
+        (6, 3, "under the gun"),
+        (6, 4, "middle position"),
+        (6, 5, "co"),
+    ],
+)
+def test_schema_five_accepts_exact_legacy_routes_for_structural_positions(
+    dealt_in_count: int,
+    button_distance: int,
+    hero_position: str,
+) -> None:
+    table = reference_table_configuration(dealt_in_count)
+    structural = table["structural_positions"][button_distance]
+    case = benchmark_case(
+        f"route-{dealt_in_count}-{button_distance}",
+        [reference_line("check")],
+        street="preflop",
+        board_cards=[],
+        effective_stack=100.0,
+        players_in_hand=2,
+        hero_position=hero_position,
+        hero_structural_position={
+            "dealt_in_player_count": dealt_in_count,
+            **structural,
+        },
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(dealt_in_count),
+    )
+
+    assert dataset.cases[0].state.hero_position == hero_position
+
+
+def test_schema_five_exact_legacy_routes_cover_every_representable_table_position(
+) -> None:
+    expected_legacy_position = {
+        "BTN/SB": "button",
+        "BTN": "button",
+        "SB": "small_blind",
+        "BB": "big_blind",
+        "UTG": "utg",
+        "HJ": "hijack",
+        "CO": "cutoff",
+    }
+    cases: list[RecommendationBenchmarkCase] = []
+    for dealt_in_count in range(2, 11):
+        table = reference_table_configuration(dealt_in_count)
+        for structural in table["structural_positions"]:
+            hero_position = expected_legacy_position.get(
+                structural["display_label"]
+            )
+            if hero_position is None:
+                continue
+            cases.append(
+                benchmark_case(
+                    f"route-{dealt_in_count}-{structural['button_distance']}",
+                    [reference_line("check")],
+                    street="preflop",
+                    board_cards=[],
+                    effective_stack=100.0,
+                    players_in_hand=2,
+                    hero_position=hero_position,
+                    hero_structural_position={
+                        "dealt_in_player_count": dealt_in_count,
+                        **structural,
+                    },
+                )
+            )
+
+    dataset = benchmark_dataset(
+        cases,
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(*range(2, 11)),
+    )
+
+    assert len(dataset.cases) == 44
+
+
+@pytest.mark.parametrize("hero_position", ["big_blind", "small_blind", "lojack", None])
+def test_schema_five_rejects_a_legacy_route_that_disagrees_with_heads_up_button(
+    hero_position: str | None,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state.hero_position = hero_position
+
+    with pytest.raises(
+        ValidationError,
+        match="structural position 'BTN/SB' at 2-handed requires 'button'",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("dealt_in_count", "button_distance", "hero_position"),
+    [
+        (6, 0, "small_blind"),
+        (6, 1, "button"),
+        (6, 2, "button"),
+        (6, 3, "hijack"),
+        (6, 4, "cutoff"),
+        (6, 5, "button"),
+    ],
+)
+def test_schema_five_rejects_mismatched_routes_for_every_exact_legacy_position(
+    dealt_in_count: int,
+    button_distance: int,
+    hero_position: str,
+) -> None:
+    table = reference_table_configuration(dealt_in_count)
+    structural = table["structural_positions"][button_distance]
+    case = benchmark_case(
+        f"mismatch-{button_distance}",
+        [reference_line("check")],
+        street="preflop",
+        board_cards=[],
+        effective_stack=100.0,
+        players_in_hand=2,
+        hero_position=hero_position,
+        hero_structural_position={
+            "dealt_in_player_count": dealt_in_count,
+            **structural,
+        },
+    )
+
+    with pytest.raises(ValidationError, match="routes to .* requires"):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_for_table_counts(dealt_in_count),
+        )
+
+
+def test_schema_five_route_mismatch_fails_before_provider_execution(
+    tmp_path: Path,
+) -> None:
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    payload = dataset.model_dump(mode="json", by_alias=True)
+    payload["cases"][0]["state"]["hero_position"] = "big_blind"
+    path = tmp_path / "mismatched-route.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    provider = SequenceProvider([recommendation("check")])
+
+    with pytest.raises(RecommendationBenchmarkError, match="hero_position"):
+        benchmark_recommendation_file(
+            path,
+            Settings(data_dir=tmp_path / "unused"),
+            provider,
+        )
+
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize(
+    ("dealt_in_count", "button_distance", "hero_position"),
+    [
+        (7, 4, "hijack"),
+        (8, 4, "utg"),
+        (8, 5, "hijack"),
+        (9, 4, "utg"),
+        (9, 5, "utg"),
+        (9, 6, "hijack"),
+        (10, 4, "utg"),
+        (10, 5, "utg"),
+        (10, 6, "utg"),
+        (10, 7, "hijack"),
+    ],
+)
+def test_schema_five_rejects_structural_positions_without_an_exact_legacy_route(
+    dealt_in_count: int,
+    button_distance: int,
+    hero_position: str,
+) -> None:
+    table = reference_table_configuration(dealt_in_count)
+    structural = table["structural_positions"][button_distance]
+    case = benchmark_case(
+        f"unrouteable-{dealt_in_count}-{button_distance}",
+        [reference_line("check")],
+        street="preflop",
+        board_cards=[],
+        effective_stack=100.0,
+        players_in_hand=2,
+        hero_position=hero_position,
+        hero_structural_position={
+            "dealt_in_player_count": dealt_in_count,
+            **structural,
+        },
+    )
+
+    with pytest.raises(ValidationError, match="cannot be represented exactly"):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_for_table_counts(dealt_in_count),
+        )
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schema_versions_do_not_enforce_structural_position_routing(
+    schema_version: int,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state.hero_position = "big_blind"
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+
+    assert dataset.schema_version == schema_version
+    assert dataset.cases[0].state.hero_position == "big_blind"
 
 
 def test_recommendation_benchmark_scores_policy_ev_fallback_and_failures() -> None:
