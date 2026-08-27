@@ -103,6 +103,13 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
         for player_id, amount in street_totals.items():
             contributions[player_id] += amount
 
+    all_in_players.update(
+        player_id
+        for player_id, contribution in contributions.items()
+        if (starting_stack := starting_stacks[player_id]) is not None
+        and starting_stack > 0
+        and contribution == starting_stack
+    )
     pots = _build_pot_layers(contributions, folded, all_in_players)
     positive_contributions = sorted(
         (amount for amount in contributions.values() if amount > 0),

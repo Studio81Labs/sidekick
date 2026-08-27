@@ -56,6 +56,7 @@ def hand(
     awards: list[tuple[str, str | None, int | None]] | None = None,
     player_results: list[tuple[str, str | None, str | None]] | None = None,
     starting_stack: str = "200",
+    starting_stacks: dict[str, str | None] | None = None,
 ) -> ImportedHandState:
     player_ids = ["p1", "p2", "p3"]
     stated = None
@@ -87,7 +88,16 @@ def hand(
             {
                 "seat_number": index,
                 "player_id": player_id,
-                "starting_stack": Decimal(starting_stack),
+                "starting_stack": (
+                    Decimal(stack)
+                    if (
+                        stack := (starting_stacks or {}).get(
+                            player_id, starting_stack
+                        )
+                    )
+                    is not None
+                    else None
+                ),
                 "participation": "dealt_in",
             }
             for index, player_id in enumerate(player_ids, start=1)
@@ -318,6 +328,40 @@ def test_derives_all_in_main_and_side_pots_without_treating_folds_as_caps() -> N
     assert [pot.amount for pot in result.pots] == [Decimal("60"), Decimal("60")]
     assert result.pots[0].contributors == ["p1", "p2", "p3"]
     assert result.pots[1].contributors == ["p2", "p3"]
+
+
+def test_known_exhausted_stack_creates_an_all_in_pot_boundary() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5"),
+                    action(1, "p2", "call", amount="5", total="5"),
+                    action(2, "p3", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p2", "bet", amount="5", total="5"),
+                    action(1, "p3", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="25",
+        stated_net="25",
+        gross_pots=["15", "10"],
+        awards=[("p1", "15", 0), ("p2", "10", 1)],
+        starting_stacks={"p1": "5", "p2": "10", "p3": "10"},
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "pass"
+    assert [pot.amount for pot in result.pots] == [Decimal("15"), Decimal("10")]
+    assert result.pots[0].eligible_players == ["p1", "p2", "p3"]
+    assert result.pots[1].eligible_players == ["p2", "p3"]
 
 
 def test_mismatched_side_pot_components_fail_without_guessing_rake_allocation() -> None:

@@ -840,6 +840,7 @@ def test_conflict_detections_must_belong_to_the_conflict_sources() -> None:
                     "conflict_id": "conflict-1",
                     "raw_source_ids": ["file-1", "file-2"],
                     "detected_ids": ["detection-file-1", "detection-file-3"],
+                    "active_canonical_revision_at_creation": None,
                 }
             ],
             lifecycle={"status": "pending_review", "changed_at": NOW},
@@ -878,6 +879,7 @@ def test_active_revision_must_use_the_selected_conflict_source(status: str) -> N
                     "conflict_id": "conflict-1",
                     "raw_source_ids": ["file-1", "file-2"],
                     "detected_ids": ["detection-file-1", "detection-file-2"],
+                    "active_canonical_revision_at_creation": None,
                     "status": status,
                     "selected_raw_source_id": "file-1",
                     "resolved_at": NOW,
@@ -891,6 +893,141 @@ def test_active_revision_must_use_the_selected_conflict_source(status: str) -> N
                     "state": file_2_detection.state,
                 }
             ],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+def test_unresolved_conflict_cannot_replace_the_preserved_active_source() -> None:
+    def source_detection(raw_source_id: str) -> DetectedImportedHand:
+        payload = hand_state().model_dump()
+        payload["chronology"] = chronology(raw_source_id).model_dump()
+        state = ImportedHandState.model_validate(payload)
+        return DetectedImportedHand(
+            detection_id=f"detection-{raw_source_id}",
+            raw_source_id=raw_source_id,
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+    file_1_detection = source_detection("file-1")
+    file_2_detection = source_detection("file-2")
+
+    with pytest.raises(ValidationError, match="cannot replace the preserved active source"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[
+                raw_source(raw_source_id="file-1", raw_text="source one\n"),
+                raw_source(raw_source_id="file-2", raw_text="source two\n"),
+            ],
+            detections=[file_1_detection, file_2_detection],
+            conflicts=[
+                {
+                    "conflict_id": "conflict-1",
+                    "raw_source_ids": ["file-1", "file-2"],
+                    "detected_ids": ["detection-file-1", "detection-file-2"],
+                    "active_canonical_revision_at_creation": 1,
+                }
+            ],
+            canonical_revisions=[
+                {
+                    "revision": 1,
+                    "detection_id": "detection-file-1",
+                    "approved_at": NOW,
+                    "state": file_1_detection.state,
+                },
+                {
+                    "revision": 2,
+                    "detection_id": "detection-file-2",
+                    "approved_at": NOW,
+                    "state": file_2_detection.state,
+                },
+            ],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 2,
+                "changed_at": NOW,
+            },
+        )
+
+
+def test_unresolved_conflict_allows_reapproval_from_the_preserved_source() -> None:
+    def source_detection(raw_source_id: str) -> DetectedImportedHand:
+        payload = hand_state().model_dump()
+        payload["chronology"] = chronology(raw_source_id).model_dump()
+        state = ImportedHandState.model_validate(payload)
+        return DetectedImportedHand(
+            detection_id=f"detection-{raw_source_id}",
+            raw_source_id=raw_source_id,
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+    file_1_detection = source_detection("file-1")
+    file_2_detection = source_detection("file-2")
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(raw_source_id="file-1", raw_text="source one\n"),
+            raw_source(raw_source_id="file-2", raw_text="source two\n"),
+        ],
+        detections=[file_1_detection, file_2_detection],
+        conflicts=[
+            {
+                "conflict_id": "conflict-1",
+                "raw_source_ids": ["file-1", "file-2"],
+                "detected_ids": ["detection-file-1", "detection-file-2"],
+                "active_canonical_revision_at_creation": 1,
+            }
+        ],
+        canonical_revisions=[
+            {
+                "revision": revision_number,
+                "detection_id": "detection-file-1",
+                "approved_at": NOW,
+                "state": file_1_detection.state,
+            }
+            for revision_number in (1, 2)
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 2,
+            "changed_at": NOW,
+        },
+    )
+
+    assert record.active_state_for_extraction == file_1_detection.state
+
+
+def test_unresolved_conflict_without_a_prior_revision_cannot_activate_a_source() -> None:
+    file_1_detection = detected()
+
+    with pytest.raises(ValidationError, match="without a prior active revision"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[
+                raw_source(raw_source_id="file-1", raw_text="source one\n"),
+                raw_source(raw_source_id="file-2", raw_text="source two\n"),
+            ],
+            detections=[file_1_detection],
+            conflicts=[
+                {
+                    "conflict_id": "conflict-1",
+                    "raw_source_ids": ["file-1", "file-2"],
+                    "detected_ids": ["detection-1"],
+                    "active_canonical_revision_at_creation": None,
+                }
+            ],
+            canonical_revisions=[revision()],
             lifecycle={
                 "status": "active",
                 "active_canonical_revision": 1,

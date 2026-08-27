@@ -920,6 +920,7 @@ class ImportConflict(ImportedHandModel):
     conflict_id: Identifier
     raw_source_ids: list[Identifier] = Field(min_length=2)
     detected_ids: list[Identifier] = Field(default_factory=list)
+    active_canonical_revision_at_creation: PositiveInteger | None
     status: Literal["unresolved", "resolved_keep_active", "resolved_use_source"] = "unresolved"
     selected_raw_source_id: Identifier | None = None
     resolved_at: AwareDatetime | None = None
@@ -1075,6 +1076,27 @@ class ImportedHandRecord(ImportedHandModel):
                 )
             _validate_corrections_win(detected, revision)
 
+        conflict_active_sources: dict[str, str] = {}
+        for conflict in self.conflicts:
+            preserved_revision = conflict.active_canonical_revision_at_creation
+            if preserved_revision is None:
+                continue
+            if preserved_revision > len(self.canonical_revisions):
+                raise ValueError(
+                    "conflict active revision must reference a retained canonical revision"
+                )
+            preserved_detection_id = self.canonical_revisions[
+                preserved_revision - 1
+            ].detection_id
+            preserved_source_id = detection_by_id[
+                preserved_detection_id
+            ].raw_source_id
+            if preserved_source_id not in conflict.raw_source_ids:
+                raise ValueError(
+                    "conflict active revision source must belong to the conflict"
+                )
+            conflict_active_sources[conflict.conflict_id] = preserved_source_id
+
         active = self.lifecycle.active_canonical_revision
         if active is not None:
             if not revisions or active != revisions[-1]:
@@ -1083,15 +1105,28 @@ class ImportedHandRecord(ImportedHandModel):
             active_source_id = detection_by_id[
                 active_revision.detection_id
             ].raw_source_id
-            if any(
-                conflict.status in {"resolved_keep_active", "resolved_use_source"}
-                and active_source_id in conflict.raw_source_ids
-                and active_source_id != conflict.selected_raw_source_id
-                for conflict in self.conflicts
-            ):
-                raise ValueError(
-                    "active canonical revision must use the selected conflict source"
-                )
+            for conflict in self.conflicts:
+                if conflict.status == "unresolved":
+                    preserved_source_id = conflict_active_sources.get(
+                        conflict.conflict_id
+                    )
+                    if preserved_source_id is None:
+                        raise ValueError(
+                            "an unresolved conflict without a prior active revision"
+                            " cannot activate a canonical source"
+                        )
+                    if active_source_id != preserved_source_id:
+                        raise ValueError(
+                            "an unresolved conflict cannot replace the preserved"
+                            " active source"
+                        )
+                elif (
+                    active_source_id in conflict.raw_source_ids
+                    and active_source_id != conflict.selected_raw_source_id
+                ):
+                    raise ValueError(
+                        "active canonical revision must use the selected conflict source"
+                    )
 
         if self.lifecycle.status in {"withdrawn", "rejected"} and not revisions:
             raise ValueError("withdrawal/rejection audit requires a canonical revision")
