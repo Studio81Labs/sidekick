@@ -363,6 +363,8 @@ def _resolve_action_total(
             if resolved is not None and resolved != resolved_from_amount:
                 errors.append("uncalled return amount disagrees with total_committed")
             resolved = resolved_from_amount
+        if resolved is not None and resolved > prior:
+            errors.append("uncalled return cannot increase total_committed")
         return resolved, errors, resolved is None
 
     if action.amount is None and action.total_committed is None:

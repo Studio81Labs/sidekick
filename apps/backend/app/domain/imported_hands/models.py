@@ -642,12 +642,22 @@ class ImportedHandState(ImportedHandModel):
             raise ValueError("hero_player_id must identify a known seat")
         if self.hero_cards and self.hero_player_id is None:
             raise ValueError("hero_cards require a known hero_player_id")
+        if self.hero_cards and self.hero_player_id is not None:
+            hero = next(
+                seat for seat in self.seats if seat.player_id == self.hero_player_id
+            )
+            if hero.participation != "dealt_in":
+                raise ValueError("hero_cards require a dealt-in hero seat")
 
         street_indexes = [_STREET_ORDER[street.street] for street in self.streets]
         if street_indexes != list(range(len(self.streets))):
             raise ValueError("streets must be unique and ordered from preflop")
         terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]] = {}
         for street in self.streets:
+            street_commitments: dict[str, Decimal | None] = {
+                player_id: Decimal(0) for player_id in player_ids
+            }
+            current_wager: Decimal | None = Decimal(0)
             for action in street.actions:
                 if action.actor_id not in player_ids:
                     raise ValueError("every action actor must identify a known seat")
@@ -672,10 +682,50 @@ class ImportedHandState(ImportedHandModel):
                         raise ValueError(
                             "an actor cannot act after folding or going all-in"
                         )
+                actor_commitment = street_commitments[action.actor_id]
+                resolved_commitment = _known_action_total(
+                    action,
+                    actor_commitment,
+                )
+                if (
+                    action.action_type == "check"
+                    and resolved_commitment is not None
+                    and current_wager is not None
+                    and resolved_commitment < current_wager
+                ):
+                    raise ValueError(
+                        "an actor cannot check while facing an outstanding wager"
+                    )
                 if action.action_type == "fold":
                     terminal_actors[action.actor_id] = ("folded", street.street)
                 elif action.all_in:
                     terminal_actors[action.actor_id] = ("all_in", street.street)
+                street_commitments[action.actor_id] = resolved_commitment
+                if action.action_type in {
+                    "bet",
+                    "raise",
+                    "post_small_blind",
+                    "post_big_blind",
+                    "post_straddle",
+                }:
+                    if resolved_commitment is None:
+                        current_wager = None
+                    elif current_wager is None:
+                        current_wager = resolved_commitment
+                    else:
+                        current_wager = max(current_wager, resolved_commitment)
+                elif action.action_type == "uncalled_return":
+                    if any(
+                        commitment is None
+                        for commitment in street_commitments.values()
+                    ):
+                        current_wager = None
+                    else:
+                        current_wager = max(
+                            commitment
+                            for commitment in street_commitments.values()
+                            if commitment is not None
+                        )
         if self.results is not None:
             referenced_result_players = {
                 *(entry.player_id for entry in self.results.showdown),
@@ -828,15 +878,16 @@ class ImportConflict(ImportedHandModel):
     def validate_resolution(self) -> Self:
         if len(self.raw_source_ids) != len(set(self.raw_source_ids)):
             raise ValueError("conflict raw_source_ids must be unique")
-        if self.status == "resolved_use_source":
+        if self.status != "unresolved":
             if self.selected_raw_source_id not in self.raw_source_ids:
                 raise ValueError("resolved source must belong to the conflict")
             if self.resolved_at is None:
                 raise ValueError("resolved conflict requires resolved_at")
-        elif self.selected_raw_source_id is not None:
-            raise ValueError("only a source-resolution can select a raw source")
-        if self.status != "unresolved" and self.resolved_at is None:
-            raise ValueError("resolved conflict requires resolved_at")
+        else:
+            if self.selected_raw_source_id is not None:
+                raise ValueError("only a resolved conflict can select a raw source")
+            if self.resolved_at is not None:
+                raise ValueError("an unresolved conflict cannot have resolved_at")
         return self
 
 
@@ -983,7 +1034,7 @@ class ImportedHandRecord(ImportedHandModel):
                 active_revision.detection_id
             ].raw_source_id
             if any(
-                conflict.status == "resolved_use_source"
+                conflict.status in {"resolved_keep_active", "resolved_use_source"}
                 and active_source_id in conflict.raw_source_ids
                 and active_source_id != conflict.selected_raw_source_id
                 for conflict in self.conflicts
@@ -1189,6 +1240,21 @@ def _structural_action_index(count: int, button_distance: int) -> int:
     if count == 2:
         return button_distance
     return (button_distance - 3) % count
+
+
+def _known_action_total(
+    action: ImportedAction,
+    prior: Decimal | None,
+) -> Decimal | None:
+    if action.action_type in {"fold", "check"}:
+        return prior if prior is not None else action.total_committed
+    if action.total_committed is not None:
+        return action.total_committed
+    if action.amount is None or prior is None:
+        return None
+    if action.action_type == "uncalled_return":
+        return prior - action.amount
+    return prior + action.amount
 
 
 def _validate_unique(items: list[Any], attribute: str, label: str) -> None:

@@ -800,7 +800,8 @@ def test_conflict_detections_must_belong_to_the_conflict_sources() -> None:
         )
 
 
-def test_active_revision_must_use_the_selected_conflict_source() -> None:
+@pytest.mark.parametrize("status", ["resolved_keep_active", "resolved_use_source"])
+def test_active_revision_must_use_the_selected_conflict_source(status: str) -> None:
     def source_detection(raw_source_id: str) -> DetectedImportedHand:
         payload = hand_state().model_dump()
         payload["chronology"] = chronology(raw_source_id).model_dump()
@@ -831,7 +832,7 @@ def test_active_revision_must_use_the_selected_conflict_source() -> None:
                     "conflict_id": "conflict-1",
                     "raw_source_ids": ["file-1", "file-2"],
                     "detected_ids": ["detection-file-1", "detection-file-2"],
-                    "status": "resolved_use_source",
+                    "status": status,
                     "selected_raw_source_id": "file-1",
                     "resolved_at": NOW,
                 }
@@ -878,6 +879,82 @@ def test_actions_by_known_nonparticipants_are_rejected(participation: str) -> No
 
     with pytest.raises(ValidationError, match="sitting out or not dealt"):
         ImportedHandState.model_validate(payload)
+
+
+def test_check_is_rejected_while_facing_a_known_wager() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "villain",
+                    "action_type": "bet",
+                    "amount": Decimal("2"),
+                    "total_committed": Decimal("2"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "hero",
+                    "action_type": "check",
+                    "total_committed": Decimal("0"),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="cannot check while facing"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_check_after_an_unknown_wager_remains_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "villain",
+                    "action_type": "bet",
+                    "origin": {
+                        "kind": "unknown",
+                        "basis": "unresolved",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 1,
+                    "actor_id": "hero",
+                    "action_type": "check",
+                    "origin": {
+                        "kind": "unknown",
+                        "basis": "unresolved",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].action_type == "check"
 
 
 @pytest.mark.parametrize("terminal_action", ["fold", "all_in"])
@@ -1026,6 +1103,19 @@ def test_results_for_unknown_participation_remain_reviewable() -> None:
     assert state.results is not None
     assert state.results.showdown[0].player_id == "hero"
     assert state.results.awards[0].player_id == "hero"
+
+
+@pytest.mark.parametrize("participation", ["sitting_out", "not_dealt", "unknown"])
+def test_hero_cards_require_a_dealt_in_hero(participation: str) -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["seats"][0]["participation"] = participation
+    payload["hero_cards"] = [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
+
+    with pytest.raises(ValidationError, match="require a dealt-in hero seat"):
+        ImportedHandState.model_validate(payload)
 
 
 def test_unknown_participation_remains_reviewable_but_is_not_extractable() -> None:

@@ -223,6 +223,39 @@ def test_reconciles_uncalled_return_before_comparing_the_pot() -> None:
     assert result.pots[0].eligible_players == ["p1"]
 
 
+@pytest.mark.parametrize(
+    ("return_total", "stated_total", "expected_status"),
+    [("4", "5", "fail"), ("1", "2", "pass")],
+)
+def test_total_only_uncalled_return_cannot_increase_commitment(
+    return_total: str, stated_total: str, expected_status: str
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="3", total="3"),
+                    action(1, "p2", "call", amount="1", total="1", all_in=True),
+                    action(2, "p1", "uncalled_return", total=return_total),
+                ],
+            }
+        ],
+        stated_gross=stated_total,
+        stated_net=stated_total,
+        awards=[("p1", stated_total, None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    if expected_status == "fail":
+        assert any(
+            "uncalled return cannot increase total_committed" in error
+            for error in result.errors
+        )
+
+
 def test_missing_uncalled_return_fails_even_if_a_bad_source_total_matches() -> None:
     state = hand(
         [
