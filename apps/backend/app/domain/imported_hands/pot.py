@@ -233,6 +233,82 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                 f"aggregate pot awards {awarded_total} exceed known gross pot {known_gross}"
             )
 
+    player_results = hand.results.players if hand.results is not None else []
+    award_entries_by_player: dict[str, list[Decimal | None]] = {}
+    for award in awards:
+        award_entries_by_player.setdefault(award.player_id, []).append(award.amount)
+    collection_ceiling = (
+        stated_net
+        if stated_net is not None
+        else derived_net
+        if derived_net is not None
+        else known_gross
+    )
+    reconciled_player_collections: dict[str, Decimal] = {}
+    for player_result in player_results:
+        player_awards = award_entries_by_player.get(player_result.player_id, [])
+        known_awards = sum(
+            (amount for amount in player_awards if amount is not None),
+            Decimal(0),
+        )
+        awards_complete = bool(player_awards) and all(
+            amount is not None for amount in player_awards
+        )
+        if player_result.total_collected is not None:
+            if awards_complete and player_result.total_collected != known_awards:
+                errors.append(
+                    f"player result {player_result.player_id} total_collected"
+                    f" {player_result.total_collected} does not match concrete"
+                    f" awards {known_awards}"
+                )
+            elif known_awards > player_result.total_collected:
+                errors.append(
+                    f"player result {player_result.player_id} total_collected"
+                    f" {player_result.total_collected} is below concrete awards"
+                    f" {known_awards}"
+                )
+
+        collected_basis = (
+            player_result.total_collected
+            if player_result.total_collected is not None
+            else known_awards
+            if awards_complete
+            else None
+        )
+        if collected_basis is not None:
+            reconciled_player_collections[player_result.player_id] = collected_basis
+        if player_result.net_result is None or contributions_incomplete:
+            continue
+        contribution = contributions[player_result.player_id]
+        if collected_basis is not None:
+            expected_net = collected_basis - contribution
+            if player_result.net_result != expected_net:
+                errors.append(
+                    f"player result {player_result.player_id} net_result"
+                    f" {player_result.net_result} does not match collected"
+                    f" {collected_basis} minus contribution {contribution}"
+                )
+            continue
+        implied_collection = player_result.net_result + contribution
+        if implied_collection < 0:
+            errors.append(
+                f"player result {player_result.player_id} implies a negative collection"
+            )
+        else:
+            reconciled_player_collections[player_result.player_id] = implied_collection
+
+    known_player_collections = sum(
+        reconciled_player_collections.values(), Decimal(0)
+    )
+    if (
+        collection_ceiling is not None
+        and known_player_collections > collection_ceiling
+    ):
+        errors.append(
+            f"known player collections {known_player_collections} exceed known"
+            f" distributable pot {collection_ceiling}"
+        )
+
     if stated is not None and stated.gross_pots and derived_gross is not None:
         derived_components = [pot.amount for pot in pots]
         if derived_components != stated.gross_pots:

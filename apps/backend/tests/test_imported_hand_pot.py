@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
+import pytest
+
 from app.domain.imported_hands import ImportedHandState, reconcile_pot
 
 
@@ -52,6 +54,7 @@ def hand(
     stated_net: str | None = None,
     gross_pots: list[str] | None = None,
     awards: list[tuple[str, str | None, int | None]] | None = None,
+    player_results: list[tuple[str, str | None, str | None]] | None = None,
     starting_stack: str = "200",
 ) -> ImportedHandState:
     player_ids = ["p1", "p2", "p3"]
@@ -101,6 +104,20 @@ def hand(
                 }
                 for player_id, amount, pot_index in (awards or [])
             ],
+            "players": [
+                {
+                    "player_id": player_id,
+                    "total_collected": (
+                        Decimal(total_collected)
+                        if total_collected is not None
+                        else None
+                    ),
+                    "net_result": (
+                        Decimal(net_result) if net_result is not None else None
+                    ),
+                }
+                for player_id, total_collected, net_result in (player_results or [])
+            ],
         },
     )
 
@@ -121,6 +138,7 @@ def test_reconciles_basic_blinds_call_and_check() -> None:
         stated_gross="2",
         stated_net="2",
         awards=[("p1", "2", 0)],
+        player_results=[("p1", "2", "1")],
     )
 
     result = reconcile_pot(state)
@@ -194,6 +212,7 @@ def test_reconciles_uncalled_return_before_comparing_the_pot() -> None:
         stated_gross="2",
         stated_net="2",
         awards=[("p1", "2", 0)],
+        player_results=[("p1", "2", "1")],
     )
 
     result = reconcile_pot(state)
@@ -476,6 +495,67 @@ def test_aggregate_awards_cannot_exceed_a_known_gross_pot() -> None:
         "aggregate pot awards 100 exceed known gross pot 2" in error
         for error in result.errors
     )
+
+
+def test_player_collections_cannot_exceed_the_distributable_pot() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        player_results=[("p1", "100", None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any(
+        "known player collections 100 exceed known distributable pot 2" in error
+        for error in result.errors
+    )
+
+
+@pytest.mark.parametrize(
+    ("total_collected", "net_result", "message"),
+    [
+        ("1", "0", "does not match concrete awards 2"),
+        ("2", "0", "does not match collected 2 minus contribution 1"),
+    ],
+)
+def test_player_results_must_reconcile_with_awards_and_contributions(
+    total_collected: str, net_result: str, message: str
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", "2", None)],
+        player_results=[("p1", total_collected, net_result)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any(message in error for error in result.errors)
 
 
 def test_zero_rake_indexed_awards_must_reconcile_each_pot_layer() -> None:

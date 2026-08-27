@@ -294,6 +294,32 @@ def test_stated_net_pot_cannot_exceed_gross_when_rake_is_unknown() -> None:
     assert summary.net_total == Decimal("1.5")
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"gross_pots": [Decimal("2")], "net_total": Decimal("3")},
+        {"gross_pots": [Decimal("2")], "rake": Decimal("3")},
+        {
+            "gross_pots": [Decimal("2")],
+            "rake": Decimal("0.5"),
+            "net_total": Decimal("1.6"),
+        },
+    ],
+)
+def test_stated_gross_components_constrain_net_and_rake(
+    payload: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        StatedPotSummary.model_validate(payload)
+
+    summary = StatedPotSummary(
+        gross_pots=[Decimal("2")],
+        rake=Decimal("0.5"),
+        net_total=Decimal("1.5"),
+    )
+    assert summary.net_total == Decimal("1.5")
+
+
 def test_import_boundary_rejects_legacy_screenshot_provenance() -> None:
     payload = raw_source().model_dump()
     payload["provenance"] = {

@@ -570,19 +570,34 @@ class StatedPotSummary(ImportedHandModel):
     def validate_totals(self) -> Self:
         if self.gross_total is None and self.net_total is None and not self.gross_pots:
             raise ValueError("a stated pot summary requires at least one stated total")
+        component_gross: Decimal | None = None
         if self.gross_pots and self.gross_total is not None:
-            if sum(self.gross_pots, Decimal(0)) != self.gross_total:
+            component_gross = sum(self.gross_pots, Decimal(0))
+            if component_gross != self.gross_total:
                 raise ValueError("stated gross pot components must sum to gross_total")
-        if self.gross_total is not None and self.rake is not None and self.net_total is not None:
-            if self.gross_total - self.rake != self.net_total:
+        elif self.gross_pots:
+            component_gross = sum(self.gross_pots, Decimal(0))
+        effective_gross = (
+            self.gross_total if self.gross_total is not None else component_gross
+        )
+        if (
+            effective_gross is not None
+            and self.rake is not None
+            and self.net_total is not None
+        ):
+            if effective_gross - self.rake != self.net_total:
                 raise ValueError("net_total must equal gross_total minus rake")
         if (
-            self.gross_total is not None
+            effective_gross is not None
             and self.net_total is not None
-            and self.net_total > self.gross_total
+            and self.net_total > effective_gross
         ):
             raise ValueError("net_total cannot exceed gross_total")
-        if self.rake is not None and self.gross_total is not None and self.rake > self.gross_total:
+        if (
+            self.rake is not None
+            and effective_gross is not None
+            and self.rake > effective_gross
+        ):
             raise ValueError("rake cannot exceed the gross pot")
         return self
 
