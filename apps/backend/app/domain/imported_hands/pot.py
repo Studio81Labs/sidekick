@@ -63,6 +63,7 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
 
     contributions = {seat.player_id: Decimal(0) for seat in hand.seats}
     returns = {seat.player_id: Decimal(0) for seat in hand.seats}
+    starting_stacks = {seat.player_id: seat.starting_stack for seat in hand.seats}
     folded: set[str] = set()
     all_in_players: set[str] = set()
     errors: list[str] = []
@@ -81,6 +82,16 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
             incomplete = incomplete or is_incomplete
             if resolved is not None:
                 street_totals[action.actor_id] = resolved
+                starting_stack = starting_stacks[action.actor_id]
+                hand_commitment = contributions[action.actor_id] + resolved
+                if (
+                    starting_stack is not None
+                    and hand_commitment > starting_stack
+                ):
+                    errors.append(
+                        f"{street.street} action {action.sequence}: cumulative commitment"
+                        f" {hand_commitment} exceeds starting stack {starting_stack}"
+                    )
             if action.action_type == "uncalled_return" and action.amount is not None:
                 returns[action.actor_id] += action.amount
             if action.action_type == "fold":
@@ -116,6 +127,7 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
     )
     stated_net = stated.net_total if stated is not None else None
     awards = hand.results.awards if hand.results is not None else []
+    contributions_incomplete = incomplete
     awarded_total: Decimal | None = None
     if awards:
         if any(award.amount is None for award in awards):
@@ -125,6 +137,26 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
             awarded_total = sum(
                 (award.amount or Decimal(0) for award in awards), Decimal(0)
             )
+        if contributions_incomplete and any(
+            award.pot_index is not None for award in awards
+        ):
+            warnings.append(
+                "indexed pot awards cannot be validated with incomplete contributions"
+            )
+        elif not contributions_incomplete:
+            for award in awards:
+                if award.pot_index is None:
+                    continue
+                if award.pot_index >= len(pots):
+                    errors.append(
+                        f"pot award references nonexistent pot index {award.pot_index}"
+                    )
+                    continue
+                if award.player_id not in pots[award.pot_index].eligible_players:
+                    errors.append(
+                        f"pot award recipient {award.player_id} is not eligible for"
+                        f" pot index {award.pot_index}"
+                    )
 
     discrepancy: Decimal | None = None
     if stated is None:

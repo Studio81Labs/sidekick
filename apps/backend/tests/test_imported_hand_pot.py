@@ -52,6 +52,7 @@ def hand(
     stated_net: str | None = None,
     gross_pots: list[str] | None = None,
     awards: list[tuple[str, str | None, int | None]] | None = None,
+    starting_stack: str = "200",
 ) -> ImportedHandState:
     player_ids = ["p1", "p2", "p3"]
     stated = None
@@ -83,7 +84,7 @@ def hand(
             {
                 "seat_number": index,
                 "player_id": player_id,
-                "starting_stack": Decimal("200"),
+                "starting_stack": Decimal(starting_stack),
                 "participation": "dealt_in",
             }
             for index, player_id in enumerate(player_ids, start=1)
@@ -342,3 +343,81 @@ def test_amount_total_disagreement_and_award_mismatch_are_explicit_failures() ->
     assert result.status == "fail"
     assert any("amount disagrees" in error for error in result.errors)
     assert any("aggregate pot awards" in error for error in result.errors)
+
+
+def test_commitments_cannot_exceed_a_known_starting_stack() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="20", total="20", all_in=True),
+                    action(1, "p2", "call", amount="20", total="20", all_in=True),
+                ],
+            }
+        ],
+        stated_gross="40",
+        stated_net="40",
+        awards=[("p1", "40", 0)],
+        starting_stack="10",
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any("exceeds starting stack 10" in error for error in result.errors)
+
+
+def test_indexed_award_must_reference_an_existing_pot() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", "2", 1)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any("nonexistent pot index 1" in error for error in result.errors)
+
+
+def test_indexed_award_recipient_must_be_eligible_for_the_pot_layer() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="20", total="20", all_in=True),
+                    action(1, "p2", "call", amount="20", total="20"),
+                    action(2, "p3", "call", amount="20", total="20"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p2", "bet", amount="30", total="30", all_in=True),
+                    action(1, "p3", "call", amount="30", total="30"),
+                ],
+            },
+        ],
+        stated_gross="120",
+        stated_net="120",
+        gross_pots=["60", "60"],
+        awards=[("p1", "60", 0), ("p1", "60", 1)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any("p1 is not eligible for pot index 1" in error for error in result.errors)

@@ -262,9 +262,18 @@ class TournamentEconomics(ImportedHandModel):
         pattern=r"^[A-Z]{3}$",
         strict=True,
     )
-    paid_places: PositiveInteger | None = None
+    paid_places: PositiveInteger | None = Field(
+        default=None,
+        description="Total paid places in the tournament, independent of field size",
+    )
     players_remaining: PositiveInteger | None = None
-    payouts: list[TournamentPayout] = Field(default_factory=list)
+    payouts: list[TournamentPayout] = Field(
+        default_factory=list,
+        description=(
+            "Still-relevant payout vector from first place through the lower of "
+            "paid_places and players_remaining"
+        ),
+    )
     remaining_stacks: list[TournamentStack] = Field(default_factory=list)
     bounty_format: NonEmptyText | None = None
     bounties: list[TournamentBounty] = Field(default_factory=list)
@@ -272,12 +281,6 @@ class TournamentEconomics(ImportedHandModel):
 
     @model_validator(mode="after")
     def validate_tournament_context(self) -> Self:
-        if (
-            self.paid_places is not None
-            and self.players_remaining is not None
-            and self.paid_places > self.players_remaining
-        ):
-            raise ValueError("paid_places cannot exceed players_remaining")
         _validate_unique(self.remaining_stacks, "player_id", "remaining stack player")
         _validate_unique(self.bounties, "player_id", "bounty player")
         if self.icm_inputs_complete:
@@ -300,6 +303,7 @@ class TournamentEconomics(ImportedHandModel):
                 raise ValueError("complete ICM inputs require positive remaining stacks")
 
             ordered_payouts = sorted(self.payouts, key=lambda payout: payout.place_from)
+            relevant_paid_places = min(self.paid_places, self.players_remaining)
             expected_place = 1
             payout_unit: Literal["amount", "share"] | None = None
             prior_value: Decimal | None = None
@@ -333,12 +337,15 @@ class TournamentEconomics(ImportedHandModel):
                 if current_unit == "share":
                     places = payout.place_to - payout.place_from + 1
                     share_total += value * places
-            if expected_place != self.paid_places + 1:
+            if expected_place != relevant_paid_places + 1:
                 raise ValueError(
-                    "complete ICM payouts must cover every paid place exactly"
+                    "complete ICM payouts must cover every still-relevant paid place exactly"
                 )
-            if payout_unit == "share" and share_total != Decimal(1):
-                raise ValueError("complete ICM payout shares must sum to one")
+            if payout_unit == "share":
+                if self.paid_places <= self.players_remaining and share_total != Decimal(1):
+                    raise ValueError("complete ICM payout shares must sum to one")
+                if share_total > Decimal(1):
+                    raise ValueError("complete ICM payout shares cannot exceed one")
 
             if self.bounty_format is not None:
                 if len(self.bounties) != self.players_remaining:
@@ -632,9 +639,16 @@ class ImportedHandState(ImportedHandModel):
                 raise ValueError("showdown, award, and result players must identify known seats")
 
         boards = [street.board_cards for street in self.streets]
-        for previous, current in zip(boards, boards[1:]):
-            if previous and current and current[: len(previous)] != previous:
+        previous_known_board: list[Card] | None = None
+        for current in boards:
+            if not current:
+                continue
+            if (
+                previous_known_board is not None
+                and current[: len(previous_known_board)] != previous_known_board
+            ):
                 raise ValueError("street boards must preserve the earlier board prefix")
+            previous_known_board = current
         all_cards = [*self.hero_cards]
         if boards:
             all_cards.extend(max(boards, key=len))
@@ -681,6 +695,16 @@ class DetectedImportedHand(ImportedHandModel):
             )
         if self.content_sha256 != imported_hand_state_sha256(self.state):
             raise ValueError("content_sha256 must match the normalized detected state")
+        evidence_ids = _state_source_evidence_ids(self.state)
+        evidence_ids.update(
+            item.raw_source_id
+            for field in self.field_evidence.values()
+            for item in field.evidence
+        )
+        if evidence_ids.difference({self.raw_source_id}):
+            raise ValueError(
+                "detected evidence must reference only the detected raw source"
+            )
         return self
 
     @field_validator("field_evidence")
@@ -866,6 +890,10 @@ class ImportedHandRecord(ImportedHandModel):
             if revision.state.chronology.source_file_id != detected.raw_source_id:
                 raise ValueError(
                     "canonical revision source_file_id must match its detected raw source"
+                )
+            if not _state_source_evidence_ids(revision.state).issubset(raw_ids):
+                raise ValueError(
+                    "canonical source evidence must reference a retained raw source"
                 )
             _validate_corrections_win(detected, revision)
 
@@ -1123,6 +1151,20 @@ def _validate_showdown_cards(hand: ImportedHandState) -> None:
         if overlap:
             raise ValueError("showdown holdings must not duplicate any known card")
         known_cards.update(entry_codes)
+
+
+def _state_source_evidence_ids(state: ImportedHandState) -> set[str]:
+    evidence_ids: set[str] = set()
+    for street in state.streets:
+        for action in street.actions:
+            evidence_ids.update(item.raw_source_id for item in action.evidence)
+            evidence_ids.update(item.raw_source_id for item in action.origin.evidence)
+    if state.results is not None:
+        for entry in state.results.showdown:
+            evidence_ids.update(item.raw_source_id for item in entry.evidence)
+        for award in state.results.awards:
+            evidence_ids.update(item.raw_source_id for item in award.evidence)
+    return evidence_ids
 
 
 def _without_source_evidence(value: JsonValue) -> JsonValue:

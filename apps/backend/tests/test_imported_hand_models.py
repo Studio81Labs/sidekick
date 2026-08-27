@@ -257,6 +257,26 @@ def test_complete_bounty_icm_inputs_cover_every_remaining_player() -> None:
         TournamentEconomics.model_validate(complete)
 
 
+def test_paid_places_are_independent_from_the_remaining_field() -> None:
+    late_stage = TournamentEconomics(
+        paid_places=100,
+        players_remaining=50,
+        icm_inputs_complete=False,
+    )
+    assert late_stage.paid_places == 100
+    assert late_stage.players_remaining == 50
+
+    complete = complete_tournament_economics()
+    complete["paid_places"] = 3
+    complete["players_remaining"] = 2
+    complete["remaining_stacks"].pop()
+    complete["payouts"][1]["share"] = Decimal("0.30")
+
+    economics = TournamentEconomics.model_validate(complete)
+    assert economics.icm_inputs_complete is True
+    assert economics.paid_places > economics.players_remaining
+
+
 def test_stated_net_pot_cannot_exceed_gross_when_rake_is_unknown() -> None:
     with pytest.raises(ValidationError, match="net_total cannot exceed gross_total"):
         StatedPotSummary(
@@ -364,6 +384,37 @@ def test_hand_rejects_a_structural_position_shifted_by_a_sitting_out_seat() -> N
             seats=positioned,
             streets=[{"street": "preflop"}],
         )
+
+
+def test_board_prefix_survives_an_unknown_intermediate_street() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {"street": "preflop", "actions": []},
+        {
+            "street": "flop",
+            "board_cards": [
+                {"rank": "A", "suit": "spades"},
+                {"rank": "K", "suit": "hearts"},
+                {"rank": "2", "suit": "clubs"},
+            ],
+            "actions": [],
+        },
+        {"street": "turn", "board_cards": [], "actions": []},
+        {
+            "street": "river",
+            "board_cards": [
+                {"rank": "A", "suit": "spades"},
+                {"rank": "Q", "suit": "hearts"},
+                {"rank": "2", "suit": "clubs"},
+                {"rank": "4", "suit": "diamonds"},
+                {"rank": "5", "suit": "spades"},
+            ],
+            "actions": [],
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="preserve the earlier board prefix"):
+        ImportedHandState.model_validate(payload)
 
 
 def test_unmarked_action_needs_versioned_semantics_to_be_player_selected() -> None:
@@ -545,6 +596,100 @@ def test_detected_state_checksum_and_raw_source_link_are_enforced() -> None:
             detected_at=NOW,
             state=state,
             content_sha256=imported_hand_state_sha256(state),
+        )
+
+
+def test_detected_evidence_must_reference_its_single_raw_source() -> None:
+    state = hand_state()
+
+    with pytest.raises(ValidationError, match="only the detected raw source"):
+        DetectedImportedHand(
+            detection_id="detection-wrong-field-evidence",
+            raw_source_id="file-1",
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=state,
+            field_evidence={
+                "/hero_player_id": {
+                    "evidence": [evidence("missing-file")],
+                }
+            },
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "fold",
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence("missing-file")],
+                    },
+                    "evidence": [evidence("missing-file")],
+                }
+            ],
+        }
+    ]
+    action_state = ImportedHandState.model_validate(payload)
+    with pytest.raises(ValidationError, match="only the detected raw source"):
+        DetectedImportedHand(
+            detection_id="detection-wrong-action-evidence",
+            raw_source_id="file-1",
+            detector_id="pokerstars",
+            detector_version="1.0.0",
+            detected_at=NOW,
+            state=action_state,
+            content_sha256=imported_hand_state_sha256(action_state),
+        )
+
+
+def test_canonical_evidence_must_reference_a_retained_raw_source() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "fold",
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence("missing-file")],
+                    },
+                    "evidence": [evidence("missing-file")],
+                }
+            ],
+        }
+    ]
+    canonical_state = ImportedHandState.model_validate(payload)
+
+    with pytest.raises(ValidationError, match="retained raw source"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[
+                CanonicalHandRevision(
+                    revision=1,
+                    detection_id="detection-1",
+                    approved_at=NOW,
+                    state=canonical_state,
+                )
+            ],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
         )
 
 
