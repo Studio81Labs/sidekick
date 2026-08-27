@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
 
@@ -2042,3 +2042,119 @@ def test_restore_cannot_resurrect_a_deleted_generation_without_explicit_reimport
         ).kind
         == "allow"
     )
+
+
+def record_with_revisions(
+    revision_count: int,
+    *,
+    status: str = "active",
+    changed_at: datetime = NOW,
+) -> ImportedHandRecord:
+    detected_state = detected()
+    revisions = [
+        revision().model_copy(update={"revision": revision_number})
+        for revision_number in range(1, revision_count + 1)
+    ]
+    return ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected_state],
+        canonical_revisions=revisions,
+        lifecycle={
+            "status": status,
+            "active_canonical_revision": (
+                revision_count if status == "active" else None
+            ),
+            "changed_at": changed_at,
+        },
+    )
+
+
+def test_same_generation_restore_rejects_an_older_canonical_revision() -> None:
+    current = record_with_revisions(2, changed_at=NOW + timedelta(minutes=2))
+    candidate = record_with_revisions(1, changed_at=NOW + timedelta(minutes=1))
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "stale_record"
+
+
+@pytest.mark.parametrize("status", ["withdrawn", "rejected"])
+def test_same_generation_restore_cannot_reactivate_a_newer_inactive_record(
+    status: str,
+) -> None:
+    current = record_with_revisions(
+        1,
+        status=status,
+        changed_at=NOW + timedelta(minutes=2),
+    )
+    candidate = record_with_revisions(1, changed_at=NOW + timedelta(minutes=1))
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "stale_record"
+
+
+def test_same_generation_restore_allows_an_idempotent_record() -> None:
+    current = active_record()
+
+    disposition = classify_restore(current, current.model_copy(deep=True))
+
+    assert disposition.kind == "allow"
+
+
+def test_same_generation_restore_allows_a_monotonic_revision_extension() -> None:
+    current = record_with_revisions(1, changed_at=NOW + timedelta(minutes=1))
+    candidate = record_with_revisions(2, changed_at=NOW + timedelta(minutes=2))
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "allow"
+
+
+def test_same_generation_restore_requires_merge_for_divergent_revision_history() -> None:
+    current = record_with_revisions(1, changed_at=NOW + timedelta(minutes=1))
+    candidate_revision = revision().model_copy(
+        update={"approved_at": NOW + timedelta(minutes=1)}
+    )
+    candidate = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected()],
+        canonical_revisions=[candidate_revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW + timedelta(minutes=2),
+        },
+    )
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "conflict_merge_required"
+
+
+def test_newer_lifecycle_on_an_older_revision_requires_conflict_merge() -> None:
+    current = record_with_revisions(2, changed_at=NOW + timedelta(minutes=1))
+    candidate = record_with_revisions(
+        1,
+        status="withdrawn",
+        changed_at=NOW + timedelta(minutes=2),
+    )
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "conflict_merge_required"
+
+
+def test_restore_requires_merge_before_reactivating_an_inactive_record() -> None:
+    current = record_with_revisions(
+        1,
+        status="withdrawn",
+        changed_at=NOW + timedelta(minutes=1),
+    )
+    candidate = record_with_revisions(2, changed_at=NOW + timedelta(minutes=2))
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "conflict_merge_required"

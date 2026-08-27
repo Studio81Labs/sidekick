@@ -1226,6 +1226,8 @@ class RestoreDisposition(ImportedHandModel):
     kind: Literal[
         "allow",
         "stale_deletion_generation",
+        "stale_record",
+        "conflict_merge_required",
         "explicit_reimport_required",
     ]
 
@@ -1279,10 +1281,102 @@ def classify_restore(
     if (
         current.lifecycle.status == "deleted"
         and candidate.lifecycle.status != "deleted"
-        and not user_authorized_reimport
     ):
-        return RestoreDisposition(kind="explicit_reimport_required")
+        return RestoreDisposition(
+            kind=(
+                "allow"
+                if user_authorized_reimport
+                else "explicit_reimport_required"
+            )
+        )
+    if candidate.lifecycle.deletion_generation > current.lifecycle.deletion_generation:
+        return RestoreDisposition(kind="allow")
+
+    current_revisions = current.canonical_revisions
+    candidate_revisions = candidate.canonical_revisions
+    common_revision_count = min(len(current_revisions), len(candidate_revisions))
+    if (
+        current_revisions[:common_revision_count]
+        != candidate_revisions[:common_revision_count]
+    ):
+        return RestoreDisposition(kind="conflict_merge_required")
+
+    current_changed_at = current.lifecycle.changed_at
+    candidate_changed_at = candidate.lifecycle.changed_at
+    if len(candidate_revisions) < len(current_revisions):
+        return RestoreDisposition(
+            kind=(
+                "stale_record"
+                if candidate_changed_at <= current_changed_at
+                else "conflict_merge_required"
+            )
+        )
+    if len(candidate_revisions) > len(current_revisions):
+        if candidate_changed_at <= current_changed_at:
+            return RestoreDisposition(kind="conflict_merge_required")
+    elif candidate_changed_at < current_changed_at:
+        return RestoreDisposition(kind="stale_record")
+    elif candidate_changed_at == current_changed_at:
+        return RestoreDisposition(
+            kind="allow" if candidate == current else "conflict_merge_required"
+        )
+
+    if (
+        current.lifecycle.status in {"withdrawn", "rejected", "deletion_pending"}
+        and candidate.lifecycle.status == "active"
+    ):
+        return RestoreDisposition(kind="conflict_merge_required")
+    if not _restore_candidate_preserves_audit(current, candidate):
+        return RestoreDisposition(kind="conflict_merge_required")
     return RestoreDisposition(kind="allow")
+
+
+def _restore_candidate_preserves_audit(
+    current: ImportedHandRecord,
+    candidate: ImportedHandRecord,
+) -> bool:
+    if current.identity != candidate.identity:
+        return False
+    if current.deletion_receipt != candidate.deletion_receipt:
+        return False
+    for attribute, key in (
+        ("raw_sources", "raw_source_id"),
+        ("detections", "detection_id"),
+    ):
+        current_items = getattr(current, attribute)
+        candidate_by_id = {
+            getattr(item, key): item for item in getattr(candidate, attribute)
+        }
+        if any(
+            candidate_by_id.get(getattr(item, key)) != item
+            for item in current_items
+        ):
+            return False
+
+    candidate_conflicts = {
+        conflict.conflict_id: conflict for conflict in candidate.conflicts
+    }
+    for conflict in current.conflicts:
+        candidate_conflict = candidate_conflicts.get(conflict.conflict_id)
+        if candidate_conflict is None:
+            return False
+        immutable_fields_match = (
+            candidate_conflict.raw_source_ids == conflict.raw_source_ids
+            and candidate_conflict.detected_ids == conflict.detected_ids
+            and candidate_conflict.active_canonical_revision_at_creation
+            == conflict.active_canonical_revision_at_creation
+        )
+        if not immutable_fields_match:
+            return False
+        if conflict.status != "unresolved" and candidate_conflict != conflict:
+            return False
+        if (
+            conflict.status == "unresolved"
+            and candidate_conflict.status == "unresolved"
+            and candidate_conflict != conflict
+        ):
+            return False
+    return True
 
 
 def imported_hand_state_sha256(state: ImportedHandState) -> str:
