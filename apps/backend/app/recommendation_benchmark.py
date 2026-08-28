@@ -28,7 +28,12 @@ from app.domain.imported_hands import (
     UnknownEconomics,
     structural_position_labels,
 )
-from app.domain.poker import CanonicalState, PreflopPosition, Street
+from app.domain.poker import (
+    CanonicalState,
+    CompletedPostflopStreetHistory,
+    PreflopPosition,
+    Street,
+)
 from app.domain.recommendations import (
     RecommendationAction,
     RecommendationRequest,
@@ -1424,6 +1429,11 @@ def _validate_case_within_grading_coverage(
         raise ValueError(
             f"Case {case.id} players_in_hand must be between 2 and its dealt-in count"
         )
+    if state.street != "preflop" and state.players_in_hand > 2:
+        raise ValueError(
+            f"Case {case.id} schema version 5 does not support multiway postflop"
+            " grading because its state contract represents only one opponent"
+        )
     _validate_case_actor_economics(
         case,
         case_economic_model,
@@ -1456,6 +1466,32 @@ def _validate_case_within_grading_coverage(
                 f" coverage requires a distinct exact seat routed as one of:"
                 f" {expected_positions}"
             )
+    required_completed_streets = {
+        "preflop": (),
+        "flop": (),
+        "turn": ("flop",),
+        "river": ("flop", "turn"),
+    }[state.street]
+    actual_completed_streets = tuple(
+        history.street for history in state.completed_postflop_streets
+    )
+    if actual_completed_streets != required_completed_streets:
+        required_label = ", ".join(required_completed_streets) or "none"
+        actual_label = ", ".join(actual_completed_streets) or "none"
+        raise ValueError(
+            f"Case {case.id} {state.street} grading requires completed postflop"
+            f" street evidence for exactly: {required_label}; got: {actual_label}"
+        )
+    for index, history in enumerate(state.completed_postflop_streets):
+        try:
+            CompletedPostflopStreetHistory.model_validate(
+                history.model_dump(mode="python")
+            )
+        except ValidationError as exc:
+            raise ValueError(
+                f"Case {case.id} completed_postflop_streets[{index}] root evidence"
+                f" is invalid: {exc}"
+            ) from exc
 
 
 class RecommendationBenchmarkCaseResult(BaseModel):

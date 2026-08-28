@@ -320,7 +320,12 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   multiway cases remain valid without an equality inference because the exact
   opponent minimum is not then determined by these two fields. The listed table
   configurations, stacks, and streets define the declared Cartesian coverage
-  boundary. Every version-5 case also repeats the exact economic-model identity
+  boundary. Version-5 postflop cases must also carry the complete chronological
+  root prefix before the decision street: flop requires no earlier postflop
+  entry, turn requires a validated completed-flop history, and river requires
+  validated completed-flop and completed-turn histories. An omitted or partial
+  prefix is reviewable canonical state but is outside grading coverage and fails
+  before provider execution. Every version-5 case also repeats the exact economic-model identity
   declared by `grading_reference`: kind, name, immutable revision, and
   configuration SHA-256 must all match. Both locations include the complete
   structured configuration; the loader normalizes it, sorts tournament payouts,
@@ -372,7 +377,11 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   providers do not claim such a binding. Their schema-v5 cases therefore fail
   before a Python/Rust subprocess or remote request can be attributed to the
   declared grading model. Versions 1 through 4 retain their prior provider and
-  serialized-shape behavior. Until recommendation providers
+  serialized-shape behavior. Schema version 5 supports `players_in_hand > 2`
+  only preflop. It rejects multiway postflop grading because the current
+  canonical contract represents one selected opponent and its postflop histories
+  use heads-up OOP/IP actors; versions 1 through 4 remain readable without this
+  new coverage gate. Until recommendation providers
   consume structural position directly, the legacy `hero_position` route must
   agree exactly: `BTN/SB` and
   `BTN` route as `button`, `SB` as `small_blind`, `BB` as `big_blind`, `UTG` as

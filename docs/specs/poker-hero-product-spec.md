@@ -468,7 +468,9 @@ ceiling on learning quality, so it is treated as first-class.
   hand resolves an exact supported line against a benchmarked solved-tree
   revision **and** all required root inputs are verified: effective stack,
   players/relative position, pot and action history, board, and ranges derived
-  and conditioned from complete prior-street evidence. Any 100-BB stack
+  and conditioned from complete prior-street evidence. Schema-v5 grading
+  requires the full completed postflop prefix: turn includes flop, and river
+  includes flop plus turn. Any 100-BB stack
   assumption, configured/default range, ambiguous player mapping, incomplete
   prior street, or approximate/skipped conditioning makes the current result
   `heuristic`, even if the current-street line exists.

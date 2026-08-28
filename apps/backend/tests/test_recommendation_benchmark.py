@@ -136,6 +136,16 @@ def benchmark_case(
     )
 
 
+def completed_postflop_street(street: Literal["flop", "turn"]) -> dict[str, object]:
+    return {
+        "street": street,
+        "actions": [
+            {"actor": "oop", "action": "check"},
+            {"actor": "ip", "action": "check"},
+        ],
+    }
+
+
 def benchmark_dataset(
     cases: list[RecommendationBenchmarkCase],
     **overrides: object,
@@ -2253,6 +2263,81 @@ def test_schema_five_cases_must_fit_declared_grading_coverage(
         )
 
 
+@pytest.mark.parametrize("street", ["flop", "turn", "river"])
+def test_schema_five_rejects_multiway_postflop_grading(
+    street: Literal["flop", "turn", "river"],
+) -> None:
+    case = covered_big_blind_case_for_table(3, street=street)
+    case.state.players_in_hand = 3
+
+    with pytest.raises(
+        ValidationError,
+        match="schema version 5 does not support multiway postflop grading",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=postflop_grading_reference_for_table_counts(3),
+        )
+
+
+def test_schema_five_accepts_heads_up_postflop_from_a_multiway_table() -> None:
+    case = covered_big_blind_case_for_table(3, street="flop")
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=postflop_grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.players_in_hand == 2
+    assert dataset.cases[0].state.hero_structural_position is not None
+    assert (
+        dataset.cases[0].state.hero_structural_position.dealt_in_player_count
+        == 3
+    )
+
+
+def test_unsafe_multiway_postflop_fails_before_provider_execution() -> None:
+    dataset = benchmark_dataset(
+        [covered_big_blind_case_for_table(3, street="flop")],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=postflop_grading_reference_for_table_counts(3),
+    )
+    dataset.cases[0].state = dataset.cases[0].state.model_copy(
+        update={"players_in_hand": 3}
+    )
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.cases[0].status == "error"
+    assert "does not support multiway postflop grading" in (
+        report.cases[0].error or ""
+    )
+    assert provider.requests == []
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schema_versions_preserve_multiway_postflop_cases(
+    schema_version: int,
+) -> None:
+    case = benchmark_case(
+        "legacy-multiway-flop",
+        [reference_line("check")],
+        players_in_hand=3,
+    )
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+
+    assert dataset.cases[0].state.street == "flop"
+    assert dataset.cases[0].state.players_in_hand == 3
+
+
 @pytest.mark.parametrize(
     ("hero_stack", "opponent_stack"),
     [
@@ -3016,6 +3101,222 @@ def test_schema_five_opponent_route_mismatch_fails_before_provider_execution(
         )
 
     assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize(
+    ("street", "board_cards", "completed_streets", "required_label"),
+    [
+        (
+            "turn",
+            [
+                Card.from_code("Qs"),
+                Card.from_code("Jc"),
+                Card.from_code("2h"),
+                Card.from_code("7d"),
+            ],
+            [],
+            "flop",
+        ),
+        (
+            "river",
+            [
+                Card.from_code("Qs"),
+                Card.from_code("Jc"),
+                Card.from_code("2h"),
+                Card.from_code("7d"),
+                Card.from_code("9s"),
+            ],
+            [],
+            "flop, turn",
+        ),
+        (
+            "river",
+            [
+                Card.from_code("Qs"),
+                Card.from_code("Jc"),
+                Card.from_code("2h"),
+                Card.from_code("7d"),
+                Card.from_code("9s"),
+            ],
+            [completed_postflop_street("flop")],
+            "flop, turn",
+        ),
+    ],
+)
+def test_schema_five_rejects_missing_completed_postflop_root_prefixes(
+    street: Literal["turn", "river"],
+    board_cards: list[Card],
+    completed_streets: list[dict[str, object]],
+    required_label: str,
+) -> None:
+    case = covered_heads_up_postflop_case(
+        street=street,
+        board_cards=board_cards,
+        completed_postflop_streets=completed_streets,
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"{street} grading requires completed postflop street evidence"
+        rf" for exactly: {required_label}",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=postflop_grading_reference_for_table_counts(2),
+        )
+
+
+@pytest.mark.parametrize(
+    ("street", "board_cards", "completed_streets"),
+    [
+        (
+            "turn",
+            [
+                Card.from_code("Qs"),
+                Card.from_code("Jc"),
+                Card.from_code("2h"),
+                Card.from_code("7d"),
+            ],
+            [completed_postflop_street("flop")],
+        ),
+        (
+            "river",
+            [
+                Card.from_code("Qs"),
+                Card.from_code("Jc"),
+                Card.from_code("2h"),
+                Card.from_code("7d"),
+                Card.from_code("9s"),
+            ],
+            [
+                completed_postflop_street("flop"),
+                completed_postflop_street("turn"),
+            ],
+        ),
+    ],
+)
+def test_schema_five_accepts_complete_postflop_root_prefixes(
+    street: Literal["turn", "river"],
+    board_cards: list[Card],
+    completed_streets: list[dict[str, object]],
+) -> None:
+    case = covered_heads_up_postflop_case(
+        street=street,
+        board_cards=board_cards,
+        completed_postflop_streets=completed_streets,
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=postflop_grading_reference_for_table_counts(2),
+    )
+
+    assert [
+        history.street
+        for history in dataset.cases[0].state.completed_postflop_streets
+    ] == (["flop"] if street == "turn" else ["flop", "turn"])
+
+
+def test_unsafe_missing_postflop_prefix_fails_before_provider_execution() -> None:
+    case = covered_heads_up_postflop_case(
+        street="river",
+        board_cards=[
+            Card.from_code("Qs"),
+            Card.from_code("Jc"),
+            Card.from_code("2h"),
+            Card.from_code("7d"),
+            Card.from_code("9s"),
+        ],
+        completed_postflop_streets=[
+            completed_postflop_street("flop"),
+            completed_postflop_street("turn"),
+        ],
+    )
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=postflop_grading_reference_for_table_counts(2),
+    )
+    dataset.cases[0].state = dataset.cases[0].state.model_copy(
+        update={
+            "completed_postflop_streets": dataset.cases[
+                0
+            ].state.completed_postflop_streets[:1]
+        }
+    )
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.cases[0].status == "error"
+    assert "river grading requires completed postflop street evidence" in (
+        report.cases[0].error or ""
+    )
+    assert provider.requests == []
+    assert len(provider.outcomes) == 1
+
+
+def test_unsafe_invalid_completed_street_root_fails_before_provider_execution() -> None:
+    case = covered_heads_up_postflop_case(
+        street="turn",
+        board_cards=[
+            Card.from_code("Qs"),
+            Card.from_code("Jc"),
+            Card.from_code("2h"),
+            Card.from_code("7d"),
+        ],
+        completed_postflop_streets=[completed_postflop_street("flop")],
+    )
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=postflop_grading_reference_for_table_counts(2),
+    )
+    history = dataset.cases[0].state.completed_postflop_streets[0]
+    dataset.cases[0].state = dataset.cases[0].state.model_copy(
+        update={
+            "completed_postflop_streets": [
+                history.model_copy(update={"actions": []})
+            ]
+        }
+    )
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.cases[0].status == "error"
+    assert "completed_postflop_streets[0] root evidence is invalid" in (
+        report.cases[0].error or ""
+    )
+    assert provider.requests == []
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schemas_allow_missing_completed_postflop_prefixes(
+    schema_version: int,
+) -> None:
+    case = covered_heads_up_postflop_case(
+        street="river",
+        board_cards=[
+            Card.from_code("Qs"),
+            Card.from_code("Jc"),
+            Card.from_code("2h"),
+            Card.from_code("7d"),
+            Card.from_code("9s"),
+        ],
+        completed_postflop_streets=[],
+    )
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+
+    assert dataset.cases[0].state.completed_postflop_streets == []
 
 
 @pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
