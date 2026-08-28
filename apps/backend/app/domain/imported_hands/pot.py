@@ -62,6 +62,7 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
     """
 
     contributions = {seat.player_id: Decimal(0) for seat in hand.seats}
+    live_contributions = {seat.player_id: Decimal(0) for seat in hand.seats}
     returns = {seat.player_id: Decimal(0) for seat in hand.seats}
     starting_stacks = {seat.player_id: seat.starting_stack for seat in hand.seats}
     folded: set[str] = set()
@@ -160,6 +161,9 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                 folded.add(action.actor_id)
         for player_id, amount in street_totals.items():
             contributions[player_id] += amount
+        for player_id, amount in street_live_totals.items():
+            if amount is not None:
+                live_contributions[player_id] += amount
 
     all_in_players.update(
         player_id
@@ -169,15 +173,15 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
         and contribution == starting_stack
     )
     pots = _build_pot_layers(contributions, folded, all_in_players)
-    positive_contributions = sorted(
-        (amount for amount in contributions.values() if amount > 0),
+    positive_live_contributions = sorted(
+        (amount for amount in live_contributions.values() if amount > 0),
         reverse=True,
     )
     if not incomplete and (
-        len(positive_contributions) == 1
+        len(positive_live_contributions) == 1
         or (
-            len(positive_contributions) > 1
-            and positive_contributions[0] > positive_contributions[1]
+            len(positive_live_contributions) > 1
+            and positive_live_contributions[0] > positive_live_contributions[1]
         )
     ):
         errors.append(

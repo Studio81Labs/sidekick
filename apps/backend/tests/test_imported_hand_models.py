@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
@@ -195,6 +196,46 @@ def test_missing_source_time_and_economics_stay_explicitly_unknown() -> None:
     assert restored.chronology.source_timezone is None
     assert restored.game.economics.kind == "unknown"
     assert restored.game.blinds.ante is None
+    assert restored.game.blinds.ante_mode == "per_player"
+
+
+def test_legacy_per_player_ante_checksum_remains_stable() -> None:
+    state = hand_state()
+    legacy_payload = state.model_dump(mode="json")
+    legacy_payload["game"]["blinds"].pop("ante_mode")
+    legacy_checksum = sha256(
+        json.dumps(
+            legacy_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+    assert imported_hand_state_sha256(state) == legacy_checksum
+    retained = DetectedImportedHand(
+        detection_id="legacy-detection",
+        raw_source_id="file-1",
+        detector_id="pokerstars",
+        detector_version="1.0.0",
+        detected_at=NOW,
+        state=state,
+        content_sha256=legacy_checksum,
+    )
+    assert retained.state.game.blinds.ante_mode == "per_player"
+
+    big_blind_ante_state = state.model_copy(
+        update={
+            "game": state.game.model_copy(
+                update={
+                    "blinds": state.game.blinds.model_copy(
+                        update={"ante_mode": "big_blind"}
+                    )
+                }
+            )
+        }
+    )
+    assert imported_hand_state_sha256(big_blind_ante_state) != legacy_checksum
 
 
 @pytest.mark.parametrize("field", ["excerpt", "marker"])
@@ -7215,6 +7256,22 @@ def known_ring_payload_with_ante_posts(
     return payload
 
 
+def known_ring_big_blind_ante_payload(
+    player_count: int,
+    *,
+    include_ante: bool = True,
+    include_table_action: bool = False,
+) -> dict[str, object]:
+    big_blind_actor = "villain" if player_count == 2 else "third-player"
+    payload = known_ring_payload_with_ante_posts(
+        player_count,
+        (big_blind_actor,) if include_ante else (),
+        include_table_action=include_table_action,
+    )
+    payload["game"]["blinds"]["ante_mode"] = "big_blind"
+    return payload
+
+
 @pytest.mark.parametrize("boundary", ["table_action", "street_end"])
 @pytest.mark.parametrize(
     ("player_count", "required_players", "missing_player"),
@@ -7277,6 +7334,102 @@ def test_known_ring_accepts_every_configured_ante_before_action_or_end(
         action.action_type == "post_ante"
         for action in state.streets[0].actions
     ) == player_count
+
+
+@pytest.mark.parametrize("player_count", [2, 3])
+@pytest.mark.parametrize("include_table_action", [False, True])
+def test_known_ring_accepts_only_the_big_blind_ante_poster(
+    player_count: int,
+    include_table_action: bool,
+) -> None:
+    payload = known_ring_big_blind_ante_payload(
+        player_count,
+        include_table_action=include_table_action,
+    )
+
+    state = ImportedHandState.model_validate(payload)
+
+    ante_posts = [
+        action
+        for action in state.streets[0].actions
+        if action.action_type == "post_ante"
+    ]
+    expected_actor = "villain" if player_count == 2 else "third-player"
+    assert [action.actor_id for action in ante_posts] == [expected_actor]
+
+
+@pytest.mark.parametrize("boundary", ["table_action", "street_end"])
+@pytest.mark.parametrize("player_count", [2, 3])
+def test_big_blind_ante_requires_the_structural_big_blind_post(
+    boundary: str,
+    player_count: int,
+) -> None:
+    payload = known_ring_big_blind_ante_payload(
+        player_count,
+        include_ante=False,
+        include_table_action=boundary == "table_action",
+    )
+    expected_actor = "villain" if player_count == 2 else "third-player"
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"missing post_ante for {expected_actor}",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("player_count", [2, 3])
+def test_big_blind_ante_rejects_a_non_big_blind_poster(
+    player_count: int,
+) -> None:
+    payload = known_ring_payload_with_ante_posts(
+        player_count,
+        ("hero",),
+        include_table_action=False,
+    )
+    payload["game"]["blinds"]["ante_mode"] = "big_blind"
+
+    with pytest.raises(
+        ValidationError,
+        match="post_ante actor must match the configured ante mode",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_big_blind_ante_rejects_a_duplicate_big_blind_post() -> None:
+    payload = known_ring_big_blind_ante_payload(3)
+    actions = payload["streets"][0]["actions"]
+    actions.insert(
+        1,
+        wager_action(
+            1,
+            "third-player",
+            "post_ante",
+            amount=Decimal("0.1"),
+            total=Decimal("0.2"),
+        ),
+    )
+    for sequence, action in enumerate(actions):
+        action["sequence"] = sequence
+
+    with pytest.raises(
+        ValidationError,
+        match="post_ante may occur only once.*known dealt-in seat ring",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unknown_ante_mode_keeps_known_ring_posts_reviewable() -> None:
+    payload = known_ring_payload_with_ante_posts(
+        3,
+        (),
+        include_table_action=True,
+    )
+    payload["game"]["blinds"]["ante_mode"] = "unknown"
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.game.blinds.ante_mode == "unknown"
 
 
 def test_known_ring_rejects_a_duplicate_configured_ante_for_one_player() -> None:
@@ -7467,6 +7620,36 @@ def test_short_all_in_ante_satisfies_presence_and_waives_its_later_blind() -> No
             action.actor_id == "villain"
             and action.action_type == "post_small_blind"
         )
+        for action in state.streets[0].actions
+    )
+
+
+def test_short_all_in_big_blind_ante_waives_the_later_big_blind() -> None:
+    payload = known_ring_big_blind_ante_payload(3)
+    payload["seats"][2]["starting_stack"] = Decimal("0.05")
+    actions = payload["streets"][0]["actions"]
+    ante = next(
+        action
+        for action in actions
+        if action["actor_id"] == "third-player"
+        and action["action_type"] == "post_ante"
+    )
+    ante["amount"] = Decimal("0.05")
+    ante["total_committed"] = Decimal("0.05")
+    ante["all_in"] = True
+    actions[:] = [
+        action
+        for action in actions
+        if action["action_type"] != "post_big_blind"
+    ]
+    for sequence, action in enumerate(actions):
+        action["sequence"] = sequence
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[0].all_in is True
+    assert all(
+        action.action_type != "post_big_blind"
         for action in state.streets[0].actions
     )
 
@@ -10346,6 +10529,42 @@ def extraction_ready_state_payload() -> dict[str, object]:
     return payload
 
 
+def extraction_payload_with_stated_rake(
+    *,
+    percentage: Decimal,
+    cap: Decimal,
+    fixed_drop: Decimal,
+    stated_rake: Decimal,
+) -> dict[str, object]:
+    payload = extraction_ready_state_payload()
+    payload["game"]["economics"] = {
+        "kind": "cash",
+        "currency": "USD",
+        "rake": {
+            "percentage": percentage,
+            "cap": cap,
+            "fixed_drop": fixed_drop,
+        },
+    }
+    net_total = Decimal("2") - stated_rake
+    payload["results"] = {
+        "stated_pot": {
+            "gross_total": Decimal("2"),
+            "rake": stated_rake,
+            "net_total": net_total,
+        },
+        "awards": [
+            {
+                "player_id": "hero",
+                "amount": net_total,
+                "pot_index": 0,
+                "evidence": [evidence()],
+            }
+        ],
+    }
+    return payload
+
+
 @pytest.mark.parametrize(
     "missing_blinds",
     [
@@ -10481,6 +10700,101 @@ def test_positive_ante_with_required_posts_and_reconciliation_is_extractable(
     assert [
         action.action_type for action in record.active_hero_actions_for_extraction
     ] == ["call"]
+
+
+def test_big_blind_ante_is_dead_money_and_remains_extractable() -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["blinds"]["ante"] = Decimal("1")
+    payload["game"]["blinds"]["ante_mode"] = "big_blind"
+    payload["results"]["stated_pot"]["gross_total"] = Decimal("3")
+    payload["streets"][0]["actions"] = [
+        wager_action(
+            0,
+            "villain",
+            "post_ante",
+            amount=Decimal("1"),
+            total=Decimal("1"),
+        ),
+        wager_action(
+            1,
+            "hero",
+            "post_small_blind",
+            amount=Decimal("0.5"),
+            total=Decimal("0.5"),
+        ),
+        wager_action(
+            2,
+            "villain",
+            "post_big_blind",
+            amount=Decimal("1"),
+            total=Decimal("2"),
+        ),
+        wager_action(
+            3,
+            "hero",
+            "call",
+            amount=Decimal("0.5"),
+            total=Decimal("1"),
+        ),
+        automatic_action(4, "villain", total=Decimal("2")),
+    ]
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["call"]
+
+
+def test_unknown_positive_ante_mode_is_not_extractable() -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["game"]["blinds"]["ante_mode"] = "unknown"
+    payload["results"]["stated_pot"]["gross_total"] = Decimal("2.2")
+    payload["streets"][0]["actions"] = [
+        wager_action(
+            0,
+            "hero",
+            "post_ante",
+            amount=Decimal("0.1"),
+            total=Decimal("0.1"),
+        ),
+        wager_action(
+            1,
+            "villain",
+            "post_ante",
+            amount=Decimal("0.1"),
+            total=Decimal("0.1"),
+        ),
+        wager_action(
+            2,
+            "hero",
+            "post_small_blind",
+            amount=Decimal("0.5"),
+            total=Decimal("0.6"),
+        ),
+        wager_action(
+            3,
+            "villain",
+            "post_big_blind",
+            amount=Decimal("1"),
+            total=Decimal("1.1"),
+        ),
+        wager_action(
+            4,
+            "hero",
+            "call",
+            amount=Decimal("0.5"),
+            total=Decimal("1.1"),
+        ),
+        automatic_action(5, "villain", total=Decimal("1.1")),
+    ]
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert record.active_hero_actions_for_extraction == []
 
 
 @pytest.mark.parametrize(
@@ -10658,6 +10972,113 @@ def test_explicit_zero_cash_rake_components_are_complete_for_extraction() -> Non
     assert [
         action.actor_id for action in record.active_hero_actions_for_extraction
     ] == ["hero"]
+
+
+def test_zero_cash_schedule_rejects_contradictory_stated_rake_for_extraction(
+) -> None:
+    payload = extraction_payload_with_stated_rake(
+        percentage=Decimal(0),
+        cap=Decimal(0),
+        fixed_drop=Decimal(0),
+        stated_rake=Decimal("0.1"),
+    )
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_zero_cash_schedule_accepts_explicit_zero_stated_rake() -> None:
+    payload = extraction_payload_with_stated_rake(
+        percentage=Decimal(0),
+        cap=Decimal(0),
+        fixed_drop=Decimal(0),
+        stated_rake=Decimal(0),
+    )
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+def test_missing_stated_rake_preserves_cash_extraction_behavior() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    record = extraction_record_for_state(state)
+
+    assert state.results is not None
+    assert state.results.stated_pot is not None
+    assert state.results.stated_pot.rake is None
+    assert reconcile_pot(state).status == "pass"
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+def test_nonzero_cash_schedule_with_stated_rake_fails_closed_for_extraction(
+) -> None:
+    payload = extraction_payload_with_stated_rake(
+        percentage=Decimal("0.05"),
+        cap=Decimal("3"),
+        fixed_drop=Decimal(0),
+        stated_rake=Decimal("0.1"),
+    )
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_tournament_extraction_does_not_apply_cash_rake_schedule_gate() -> None:
+    payload = extraction_payload_with_stated_rake(
+        percentage=Decimal(0),
+        cap=Decimal(0),
+        fixed_drop=Decimal(0),
+        stated_rake=Decimal("0.1"),
+    )
+    payload["game"]["economics"] = complete_route_tournament_economics()
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+def test_cash_rake_consistency_fails_closed_for_an_unsafe_schedule_copy() -> None:
+    state = ImportedHandState.model_validate(
+        extraction_payload_with_stated_rake(
+            percentage=Decimal(0),
+            cap=Decimal(0),
+            fixed_drop=Decimal(0),
+            stated_rake=Decimal(0),
+        )
+    )
+    record = extraction_record_for_state(state)
+    assert record.active_hero_actions_for_extraction
+    economics = state.game.economics
+    assert economics.kind == "cash" and economics.rake is not None
+    unsafe_rake = economics.rake.model_copy(
+        update={"percentage": Decimal("0.05")}
+    )
+    unsafe_economics = economics.model_copy(update={"rake": unsafe_rake})
+    unsafe_game = state.game.model_copy(update={"economics": unsafe_economics})
+    unsafe_state = state.model_copy(update={"game": unsafe_game})
+    unsafe_revision = record.canonical_revisions[0].model_copy(
+        update={"state": unsafe_state}
+    )
+    unsafe_record = record.model_copy(
+        update={"canonical_revisions": [unsafe_revision]}
+    )
+
+    assert reconcile_pot(unsafe_state).status == "pass"
+    assert unsafe_record.active_hero_actions_for_extraction == []
 
 
 @pytest.mark.parametrize("bounty_format", ["none", "progressive-knockout"])

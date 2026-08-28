@@ -53,6 +53,7 @@ PositiveInteger = Annotated[int, Field(ge=1, strict=True)]
 NonNegativeInteger = Annotated[int, Field(ge=0, strict=True)]
 
 ParticipationStatus = Literal["dealt_in", "sitting_out", "not_dealt", "unknown"]
+AnteMode = Literal["per_player", "big_blind", "unknown"]
 StreetName = Literal["preflop", "flop", "turn", "river"]
 ActionType = Literal[
     "post_ante",
@@ -210,6 +211,7 @@ class BlindStructure(ImportedHandModel):
     small_blind: PositiveDecimal | None = None
     big_blind: PositiveDecimal | None = None
     ante: NonNegativeDecimal | None = None
+    ante_mode: AnteMode = "per_player"
     straddle: PositiveDecimal | None = None
 
     @model_validator(mode="after")
@@ -724,13 +726,20 @@ class ImportedHandState(ImportedHandModel):
             if action_type in expected_blind_actors
             and getattr(self.game.blinds, _FORCED_POST_FIELDS[action_type]) is not None
         )
-        required_ante_players = (
-            tuple(clockwise_action_order)
-            if clockwise_action_order is not None
-            and self.game.blinds.ante is not None
+        configured_positive_ante = (
+            self.game.blinds.ante is not None
             and self.game.blinds.ante > 0
-            else ()
         )
+        if clockwise_action_order is None or not configured_positive_ante:
+            required_ante_players: tuple[str, ...] = ()
+        elif self.game.blinds.ante_mode == "per_player":
+            required_ante_players = tuple(clockwise_action_order)
+        elif self.game.blinds.ante_mode == "big_blind":
+            required_ante_players = (
+                expected_blind_actors["post_big_blind"],
+            )
+        else:
+            required_ante_players = ()
         configured_straddle_required = (
             clockwise_action_order is not None
             and self.game.blinds.straddle is not None
@@ -1037,14 +1046,18 @@ class ImportedHandState(ImportedHandModel):
                         self.game.blinds,
                         forced_post_field,
                     )
-                    if (
-                        action.action_type == "post_ante"
-                        and action.actor_id in required_ante_players
-                    ):
+                    if action.action_type == "post_ante" and required_ante_players:
+                        if action.actor_id not in required_ante_players:
+                            expected_posters = ", ".join(required_ante_players)
+                            raise ValueError(
+                                "post_ante actor must match the configured ante"
+                                f" mode; expected one of {expected_posters}, got"
+                                f" {action.actor_id}"
+                            )
                         if action.actor_id in seen_ante_posts:
                             raise ValueError(
-                                "post_ante may occur only once for each player in"
-                                " the known dealt-in seat ring"
+                                "post_ante may occur only once for each required"
+                                " player in the known dealt-in seat ring"
                             )
                         seen_ante_posts.add(action.actor_id)
                     if (
@@ -2449,6 +2462,8 @@ class ImportedHandRecord(ImportedHandModel):
             return []
         if not _pot_reconciliation_ready_for_extraction(state):
             return []
+        if not _cash_rake_consistent_for_extraction(state):
+            return []
         hero = next(
             seat for seat in state.seats if seat.player_id == state.hero_player_id
         )
@@ -2866,7 +2881,7 @@ def imported_hand_state_sha256(state: ImportedHandState) -> str:
     """Return the canonical checksum used to identify detected-state content."""
 
     payload = json.dumps(
-        state.model_dump(mode="json"),
+        _state_payload_for_hash(state),
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
@@ -2877,7 +2892,7 @@ def imported_hand_state_sha256(state: ImportedHandState) -> str:
 def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
     """Hash detected poker meaning without source-file location evidence."""
 
-    normalized = _without_source_evidence(state.model_dump(mode="json"))
+    normalized = _without_source_evidence(_state_payload_for_hash(state))
     chronology = normalized["chronology"]
     for field_name in ("source_file_id", "source_session_id", "hand_ordinal"):
         chronology.pop(field_name, None)
@@ -2888,6 +2903,16 @@ def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return sha256(payload).hexdigest()
+
+
+def _state_payload_for_hash(state: ImportedHandState) -> dict[str, Any]:
+    """Keep legacy per-player-ante hashes stable while binding new schemes."""
+
+    payload = state.model_dump(mode="json")
+    blinds = payload["game"]["blinds"]
+    if blinds.get("ante_mode") == "per_player":
+        blinds.pop("ante_mode")
+    return payload
 
 
 def derive_structural_positions(
@@ -3378,6 +3403,33 @@ def _pot_reconciliation_ready_for_extraction(state: ImportedHandState) -> bool:
     return reconcile_pot(state).status == "pass"
 
 
+def _cash_rake_consistent_for_extraction(state: ImportedHandState) -> bool:
+    """Reject stated cash rake the approved schedule cannot prove exactly."""
+
+    economics = state.game.economics
+    if not isinstance(economics, CashEconomics):
+        return True
+    stated_pot = state.results.stated_pot if state.results is not None else None
+    if stated_pot is None or stated_pot.rake is None:
+        return True
+    schedule = economics.rake
+    if schedule is None:
+        return False
+    components = (
+        schedule.percentage,
+        schedule.cap,
+        schedule.fixed_drop,
+    )
+    if any(component is None for component in components):
+        return False
+    if any(component != 0 for component in components):
+        # The current contract does not declare the percentage basis, cap/drop
+        # ordering, applicability, or rounding policy needed to derive a
+        # nonzero schedule's exact per-hand rake.
+        return False
+    return stated_pot.rake == 0
+
+
 def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:
     """Require exact blinds and an explicitly resolved ante context."""
 
@@ -3391,6 +3443,7 @@ def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:
         and small_blind > 0
         and big_blind > 0
         and ante >= 0
+        and (ante == 0 or blinds.ante_mode != "unknown")
         and small_blind <= big_blind
     )
 

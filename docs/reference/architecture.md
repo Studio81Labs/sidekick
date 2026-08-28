@@ -168,8 +168,9 @@ their cross-field wager and history validation.
 The Phase 0 V2 import contracts live separately under
 `app/domain/imported_hands`. They define immutable hand-history source evidence,
 site-agnostic detected and approved revisions, exact dealt-in-ring positions,
-action-origin evidence, re-import conflicts, lifecycle/deletion tombstones, and
-a pure pot-reconciliation oracle. The aggregate exposes only voluntary actions
+action-origin evidence, explicit per-player/big-blind/unknown ante schemes,
+re-import conflicts, lifecycle/deletion tombstones, and a pure
+pot-reconciliation oracle. The aggregate exposes only voluntary actions
 from its active approved revision for later decision extraction. These contracts
 are not yet connected to V1 routes or file-backed storage, so they do not make
 the hosted screenshot workflow a V2 player-data path.

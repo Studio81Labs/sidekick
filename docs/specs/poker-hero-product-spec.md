@@ -256,9 +256,11 @@ shape includes at minimum:
 
 - Hand id, site, source hand timestamp (with source timezone/offset when
   available), stable source-session/file identity and ordering, import
-  provenance, game type, stakes, table size, blinds/antes. Missing source time
-  remains explicitly unknown; ingestion time must not stand in for play time in
-  recency, session, or proof-of-learning calculations.
+  provenance, game type, stakes, table size, blinds/antes, and whether a
+  positive ante is posted per player or by the big blind for the table. An ante
+  scheme that the source semantics do not prove remains explicitly unknown.
+  Missing source time remains explicitly unknown; ingestion time must not stand
+  in for play time in recency, session, or proof-of-learning calculations.
 - Economic context when supplied: for cash games, currency and the applicable
   rake/drop schedule and cap; for tournaments, tournament identity/type and
   stage, payout/paid-place structure, players remaining, relevant remaining
@@ -307,6 +309,16 @@ Independently-computed pot == stated pot is a per-hand pass/fail that validates
 the action/amount parse without manual eyeballing. It is necessary but not
 sufficient: a wrong button, hero identity, card, timestamp, or participation
 status can reconcile the pot and still corrupt grading.
+
+Pot reconciliation remains an amount-only oracle and does not infer a site's
+cash-rake formula from percentage, cap, and fixed-drop values. Decision
+extraction separately checks any stated cash rake against the approved schedule.
+An all-zero schedule permits only stated rake zero. If stated rake is present and
+any schedule component is nonzero, extraction fails closed until the canonical
+economics contract declares the calculation basis, cap/drop ordering and
+applicability, and rounding policy required to derive an exact allowed value.
+An absent stated rake preserves gross-only reconciliation and extraction
+behavior; tournament economics do not use this cash-rake gate.
 
 An uncalled return closes a betting round only when it exactly removes the
 actor's unique unmatched live commitment after every other actionable opponent
@@ -489,9 +501,10 @@ ceiling on learning quality, so it is treated as first-class.
 
 Coverage also includes game economics. A solved route declares the cash rake
 model or tournament chip-EV/ICM/bounty context it assumes, the exact blind/ante
-level and units used to convert canonical BB amounts, and the canonical fields
-required to match it. Tournament grading maps table actors to the identified
-remaining-stack and bounty entries rather than assuming reserved player names.
+level, ante poster scheme, and units used to convert canonical BB amounts, and
+the canonical fields required to match it. Tournament grading maps table actors
+to the identified remaining-stack and bounty entries rather than assuming
+reserved player names.
 Cash hands with an unknown or different material
 rake structure and tournament hands lacking the payout, field, stack, or bounty
 state required by the reference are heuristic/ungraded for mastery. A generic
