@@ -2266,7 +2266,9 @@ class ImportedHandRecord(ImportedHandModel):
 
         Forced, client-automatic, and unresolved actions remain in the canonical
         audit stream but cannot become learning decision points. Player-selected
-        wagers also require an approved chip representation before extraction.
+        decisions require two approved hero cards and the complete cumulative
+        board for their street. Wagers also require an approved chip
+        representation before extraction.
         """
 
         state = self.active_state_for_extraction
@@ -2876,7 +2878,7 @@ def _known_live_action_total(
 def _hero_actions_ready_for_extraction(
     state: ImportedHandState,
 ) -> list[ImportedAction]:
-    """Return hero decisions whose chip-state prefix is exactly reconstructable."""
+    """Return hero decisions with complete cards and reconstructable chip state."""
 
     assert state.hero_player_id is not None
     player_ids = {seat.player_id for seat in state.seats}
@@ -2887,6 +2889,16 @@ def _hero_actions_ready_for_extraction(
     )
 
     for street in state.streets:
+        required_board_cards = {
+            "preflop": 0,
+            "flop": 3,
+            "turn": 4,
+            "river": 5,
+        }[street.street]
+        cards_are_ready = (
+            len(state.hero_cards) == 2
+            and len(street.board_cards) == required_board_cards
+        )
         street_commitments: dict[str, Decimal | None] = {
             player_id: Decimal(0) for player_id in player_ids
         }
@@ -2925,6 +2937,7 @@ def _hero_actions_ready_for_extraction(
             if (
                 action.actor_id == state.hero_player_id
                 and action.is_player_decision
+                and cards_are_ready
                 and committed_pot_before_street is not None
                 and current_wager is not None
                 and exact_commitment_context

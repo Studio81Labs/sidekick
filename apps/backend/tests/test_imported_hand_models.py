@@ -8367,6 +8367,10 @@ def test_extraction_returns_only_voluntary_hero_actions_from_supported_approval(
         },
     }
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["hero_cards"] = [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
     state_payload["game"]["betting_limit"] = betting_limit
     state_payload["streets"] = [
         {
@@ -8442,6 +8446,10 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
         )
     )
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["hero_cards"] = [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
     state_payload["streets"] = [{"street": "preflop", "actions": actions}]
     state = ImportedHandState.model_validate(state_payload)
     source_detection = detected(state)
@@ -8471,6 +8479,10 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
 def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
 ) -> None:
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["hero_cards"] = [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
     state_payload["streets"] = [
         {
             "street": "preflop",
@@ -8514,8 +8526,18 @@ def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
 
 def extraction_record_for_streets(
     streets: list[dict[str, object]],
+    *,
+    hero_cards: list[dict[str, str]] | None = None,
 ) -> ImportedHandRecord:
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["hero_cards"] = (
+        [
+            {"rank": "A", "suit": "hearts"},
+            {"rank": "K", "suit": "diamonds"},
+        ]
+        if hero_cards is None
+        else hero_cards
+    )
     state_payload["streets"] = streets
     state = ImportedHandState.model_validate(state_payload)
     source_detection = detected(state)
@@ -8537,6 +8559,145 @@ def extraction_record_for_streets(
             "changed_at": NOW,
         },
     )
+
+
+@pytest.mark.parametrize(
+    ("hero_cards", "is_extractable"),
+    [
+        ([], False),
+        ([{"rank": "A", "suit": "hearts"}], False),
+        (
+            [
+                {"rank": "A", "suit": "hearts"},
+                {"rank": "K", "suit": "diamonds"},
+            ],
+            True,
+        ),
+    ],
+)
+def test_extraction_requires_exactly_two_known_hero_cards(
+    hero_cards: list[dict[str, str]],
+    is_extractable: bool,
+) -> None:
+    record = extraction_record_for_streets(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    wager_action(0, "hero", "check", total=Decimal(0)),
+                ],
+            }
+        ],
+        hero_cards=hero_cards,
+    )
+
+    assert bool(record.active_hero_actions_for_extraction) is is_extractable
+
+
+@pytest.mark.parametrize(
+    ("candidate_street", "board_card_count", "is_extractable"),
+    [
+        ("flop", 2, False),
+        ("flop", 3, True),
+        ("turn", 3, False),
+        ("turn", 4, True),
+        ("river", 4, False),
+        ("river", 5, True),
+    ],
+)
+def test_extraction_requires_the_complete_cumulative_board_for_each_street(
+    candidate_street: str,
+    board_card_count: int,
+    is_extractable: bool,
+) -> None:
+    board = [
+        {"rank": "2", "suit": "clubs"},
+        {"rank": "3", "suit": "clubs"},
+        {"rank": "4", "suit": "clubs"},
+        {"rank": "5", "suit": "clubs"},
+        {"rank": "6", "suit": "clubs"},
+    ]
+    required_board_cards = {"preflop": 0, "flop": 3, "turn": 4, "river": 5}
+    streets: list[dict[str, object]] = [
+        {"street": "preflop", "board_cards": [], "actions": []}
+    ]
+    for street_name in ("flop", "turn", "river"):
+        if street_name == candidate_street:
+            streets.append(
+                {
+                    "street": street_name,
+                    "board_cards": board[:board_card_count],
+                    "actions": [
+                        wager_action(0, "hero", "check", total=Decimal(0)),
+                    ],
+                }
+            )
+            break
+        streets.append(
+            {
+                "street": street_name,
+                "board_cards": board[: required_board_cards[street_name]],
+                "actions": [],
+            }
+        )
+
+    record = extraction_record_for_streets(streets)
+
+    assert bool(record.active_hero_actions_for_extraction) is is_extractable
+
+
+def test_incomplete_later_board_does_not_suppress_an_earlier_ready_action() -> None:
+    record = extraction_record_for_streets(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    wager_action(0, "hero", "check", total=Decimal(0)),
+                ],
+            },
+            {
+                "street": "flop",
+                "board_cards": [
+                    {"rank": "2", "suit": "clubs"},
+                    {"rank": "3", "suit": "clubs"},
+                ],
+                "actions": [
+                    wager_action(0, "hero", "check", total=Decimal(0)),
+                ],
+            },
+        ]
+    )
+
+    extracted = record.active_hero_actions_for_extraction
+    assert len(extracted) == 1
+    assert record.active_state_for_extraction is not None
+    assert extracted[0] is record.active_state_for_extraction.streets[0].actions[0]
+
+
+def test_complete_cumulative_board_restores_later_street_extraction() -> None:
+    board = [
+        {"rank": "2", "suit": "clubs"},
+        {"rank": "3", "suit": "clubs"},
+        {"rank": "4", "suit": "clubs"},
+        {"rank": "5", "suit": "clubs"},
+    ]
+    record = extraction_record_for_streets(
+        [
+            {"street": "preflop", "actions": []},
+            {"street": "flop", "board_cards": board[:2], "actions": []},
+            {
+                "street": "turn",
+                "board_cards": board,
+                "actions": [
+                    wager_action(0, "hero", "check", total=Decimal(0)),
+                ],
+            },
+        ]
+    )
+
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["check"]
 
 
 @pytest.mark.parametrize("action_type", ["fold", "check", "bet", "call", "raise"])
@@ -8607,6 +8768,11 @@ def test_extraction_withholds_later_street_decisions_after_an_unknown_pot(
             },
             {
                 "street": "flop",
+                "board_cards": [
+                    {"rank": "2", "suit": "clubs"},
+                    {"rank": "3", "suit": "clubs"},
+                    {"rank": "4", "suit": "clubs"},
+                ],
                 "actions": [
                     wager_action(
                         0,
@@ -8685,6 +8851,11 @@ def test_exact_resolution_restores_same_and_later_street_extraction() -> None:
             },
             {
                 "street": "flop",
+                "board_cards": [
+                    {"rank": "2", "suit": "clubs"},
+                    {"rank": "3", "suit": "clubs"},
+                    {"rank": "4", "suit": "clubs"},
+                ],
                 "actions": [
                     wager_action(0, "hero", "check", total=Decimal(0)),
                 ],
