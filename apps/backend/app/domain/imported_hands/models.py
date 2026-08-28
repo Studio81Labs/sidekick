@@ -721,8 +721,23 @@ class ImportedHandState(ImportedHandModel):
             if action_type in expected_blind_actors
             and getattr(self.game.blinds, _FORCED_POST_FIELDS[action_type]) is not None
         )
+        required_ante_players = (
+            tuple(clockwise_action_order)
+            if clockwise_action_order is not None
+            and self.game.blinds.ante is not None
+            and self.game.blinds.ante > 0
+            else ()
+        )
+        seen_ante_posts: set[str] = set()
         seen_structural_blind_posts: set[str] = set()
         forced_stack_exhausted_players: set[str] = set()
+
+        def missing_ante_posts() -> list[str]:
+            return [
+                f"post_ante for {player_id}"
+                for player_id in required_ante_players
+                if player_id not in seen_ante_posts
+            ]
 
         def missing_structural_blind_posts() -> list[str]:
             return [
@@ -878,6 +893,13 @@ class ImportedHandState(ImportedHandModel):
                     street.street == "preflop"
                     and action.action_type in _TABLE_ACTIONS
                 ):
+                    missing_antes = missing_ante_posts()
+                    if missing_antes:
+                        raise ValueError(
+                            "a preflop table decision requires all configured"
+                            " ante posts first; missing "
+                            + ", ".join(missing_antes)
+                        )
                     missing_blind_posts = missing_structural_blind_posts()
                     if missing_blind_posts:
                         raise ValueError(
@@ -999,6 +1021,11 @@ class ImportedHandState(ImportedHandModel):
                         self.game.blinds,
                         forced_post_field,
                     )
+                    if (
+                        action.action_type == "post_ante"
+                        and action.actor_id in required_ante_players
+                    ):
+                        seen_ante_posts.add(action.actor_id)
                     posted_amount = action.amount
                     if (
                         posted_amount is None
@@ -1672,6 +1699,13 @@ class ImportedHandState(ImportedHandModel):
                 if action.action_type in _TABLE_ACTIONS:
                     table_decision_seen = True
             if street.street == "preflop":
+                missing_antes = missing_ante_posts()
+                if missing_antes:
+                    raise ValueError(
+                        "the preflop street cannot end before all configured"
+                        " ante posts; missing "
+                        + ", ".join(missing_antes)
+                    )
                 missing_blind_posts = missing_structural_blind_posts()
                 if missing_blind_posts:
                     raise ValueError(
@@ -2185,6 +2219,16 @@ class ImportedHandRecord(ImportedHandModel):
                     "withdrawn/rejected lifecycle changed_at cannot precede the"
                     " latest canonical revision approved_at"
                 )
+        elif (
+            self.lifecycle.status == "deletion_pending"
+            and revisions
+            and self.lifecycle.changed_at
+            < self.canonical_revisions[-1].approved_at
+        ):
+            raise ValueError(
+                "deletion_pending lifecycle changed_at cannot precede the latest"
+                " canonical revision approved_at"
+            )
         return self
 
     @property
@@ -2201,7 +2245,8 @@ class ImportedHandRecord(ImportedHandModel):
         """Return only voluntary hero actions from the active approved revision.
 
         Forced, client-automatic, and unresolved actions remain in the canonical
-        audit stream but cannot become learning decision points.
+        audit stream but cannot become learning decision points. Player-selected
+        wagers also require an approved chip representation before extraction.
         """
 
         state = self.active_state_for_extraction
@@ -2218,7 +2263,13 @@ class ImportedHandRecord(ImportedHandModel):
             action
             for street in state.streets
             for action in street.actions
-            if action.actor_id == state.hero_player_id and action.is_player_decision
+            if action.actor_id == state.hero_player_id
+            and action.is_player_decision
+            and not (
+                action.action_type in {"bet", "raise"}
+                and action.amount is None
+                and action.total_committed is None
+            )
         ]
 
 
