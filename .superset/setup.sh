@@ -38,7 +38,8 @@ MAIN_DIR=$(CDPATH='' cd -- "$MAIN_DIR" && pwd -P)
 . "$ROOT_DIR/.superset/lib.sh"
 ensure_node "$ROOT_DIR" \
   || fail "Node.js $WANTED_NODE+ is required, found $(node_found) (see .nvmrc)"
-ensure_pnpm || fail "pnpm 11+ is required (not on PATH, and none found beside an nvm-managed node)"
+ensure_pnpm "$ROOT_DIR" \
+  || fail "pnpm $WANTED_PNPM+ is required, found $(pnpm --version 2>/dev/null || echo none) (see package.json)"
 
 PYTHON_BIN="${POKER_PYTHON:-}"
 if [ -z "$PYTHON_BIN" ]; then
@@ -54,11 +55,11 @@ fi
 
 step "Workspace: $ROOT_DIR"
 echo "main checkout: $MAIN_DIR"
-echo "node $(node --version), pnpm $(pnpm --version), $("$PYTHON_BIN" --version 2>&1)"
+echo "node $(node --version), pnpm $("$PNPM" --version), $("$PYTHON_BIN" --version 2>&1)"
 
 # --- JavaScript ---------------------------------------------------------------
 step "Installing JavaScript dependencies"
-(cd "$ROOT_DIR" && pnpm install --frozen-lockfile)
+(cd "$ROOT_DIR" && "$PNPM" install --frozen-lockfile)
 
 # --- Python -------------------------------------------------------------------
 step "Preparing backend virtualenv"

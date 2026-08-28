@@ -21,11 +21,11 @@ node_found() {
   node --version 2>/dev/null || echo none
 }
 
-# nvm_bin_dir <major> <executable>: the bin directory of the best nvm-managed
-# Node install (at least <major>) that contains <executable>: the newest
-# install of exactly that major (the .nvmrc choice) when there is one, else
-# the newest compatible higher major.
-nvm_bin_dir() {
+# nvm_bin_dirs <major> <executable>: the bin directories of nvm-managed Node
+# installs (at least <major>) that contain <executable>, best first: installs
+# of exactly that major (the .nvmrc choice) newest first, then compatible
+# higher majors newest first.
+nvm_bin_dirs() {
   for dir in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v*/bin; do
     [ -x "$dir/$2" ] || continue
     ver=${dir%/bin}
@@ -39,7 +39,12 @@ nvm_bin_dir() {
     [ "$major" -ge "$1" ] || continue
     if [ "$major" -eq "$1" ]; then rank=1; else rank=0; fi
     printf '%d %d %s\n' "$rank" "$((major * 1000000 + minor * 1000 + patch))" "$dir"
-  done | sort -k1,1nr -k2,2nr | head -n 1 | cut -d' ' -f3-
+  done | sort -k1,1nr -k2,2nr | cut -d' ' -f3-
+}
+
+# nvm_bin_dir <major> <executable>: the best of the above, or nothing.
+nvm_bin_dir() {
+  nvm_bin_dirs "$1" "$2" | head -n 1
 }
 
 # ensure_node <root>: Superset's setup and Run processes may not load the
@@ -59,18 +64,45 @@ ensure_node() {
   node_ok "$WANTED_NODE"
 }
 
-# ensure_pnpm: when pnpm is not on PATH, look for one installed beside an
-# nvm-managed Node (a global install or corepack shim), preferring installs
-# compatible with WANTED_NODE, and append that directory — appended, so its
-# node never shadows the node already chosen. Fails when none is found.
+# wanted_pnpm_major <root>: the pnpm major from package.json's packageManager
+# field (engines says pnpm >=11), defaulting to 11.
+wanted_pnpm_major() {
+  major=$(sed -n 's/^[[:space:]]*"packageManager":[[:space:]]*"pnpm@\([0-9][0-9]*\).*/\1/p' "$1/package.json" 2>/dev/null)
+  echo "${major:-11}"
+}
+
+# pnpm_version_ok <executable> <major>: succeeds when that pnpm is at least
+# that major.
+pnpm_version_ok() {
+  have=$("$1" --version 2>/dev/null | sed -n 's/^\([0-9][0-9]*\).*/\1/p')
+  [ "${have:-0}" -ge "$2" ] 2>/dev/null
+}
+
+# ensure_pnpm <root>: sets PNPM to a pnpm executable of at least the major
+# from package.json: the one on PATH when it is recent enough, otherwise one
+# installed beside an nvm-managed Node (global install or corepack shim),
+# preferring installs compatible with WANTED_NODE. PATH is left alone, so an
+# older pnpm ahead on PATH is simply bypassed and no other node gets in front
+# of the one already chosen. Fails when none qualifies.
+# shellcheck disable=SC2034  # PNPM is consumed by the sourcing script
 ensure_pnpm() {
-  command -v pnpm >/dev/null 2>&1 && return 0
-  pnpm_bin=$(nvm_bin_dir "${WANTED_NODE:-0}" pnpm)
-  [ -n "$pnpm_bin" ] || pnpm_bin=$(nvm_bin_dir 0 pnpm)
-  [ -n "$pnpm_bin" ] || return 1
-  PATH="$PATH:$pnpm_bin"
-  export PATH
-  command -v pnpm >/dev/null 2>&1
+  WANTED_PNPM=$(wanted_pnpm_major "$1")
+  PNPM=""
+  if command -v pnpm >/dev/null 2>&1 && pnpm_version_ok pnpm "$WANTED_PNPM"; then
+    PNPM=$(command -v pnpm)
+    return 0
+  fi
+  candidates=$(nvm_bin_dirs "${WANTED_NODE:-0}" pnpm; nvm_bin_dirs 0 pnpm)
+  while IFS= read -r dir; do
+    [ -n "$dir" ] || continue
+    if pnpm_version_ok "$dir/pnpm" "$WANTED_PNPM"; then
+      PNPM="$dir/pnpm"
+      return 0
+    fi
+  done <<EOF
+$candidates
+EOF
+  return 1
 }
 
 # solver_fallback_enabled <backend dir> <venv python>: prints "yes" or "no",
