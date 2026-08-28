@@ -1779,6 +1779,76 @@ def resolved_source_switch_conflict() -> dict[str, object]:
     }
 
 
+def source_lineage_record(
+    source_ids: tuple[str, ...],
+    conflicts: list[dict[str, object]],
+    *,
+    lifecycle_changed_at: datetime = NOW,
+    revision_approved_ats: tuple[datetime, ...] | None = None,
+) -> ImportedHandRecord:
+    approved_ats = revision_approved_ats or tuple(NOW for _ in source_ids)
+    assert len(approved_ats) == len(source_ids)
+    conflict_source_ids = (
+        item
+        for conflict in conflicts
+        for item in conflict["raw_source_ids"]
+    )
+    unique_source_ids = tuple(
+        dict.fromkeys((*source_ids, *conflict_source_ids))
+    )
+    detections = {
+        source_id: detected_for_source(source_id, hero_player_id="hero")
+        for source_id in dict.fromkeys(source_ids)
+    }
+    return ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(
+                raw_source_id=source_id,
+                raw_text=f"source {source_id}\n",
+            )
+            for source_id in unique_source_ids
+        ],
+        detections=list(detections.values()),
+        conflicts=conflicts,
+        canonical_revisions=[
+            {
+                "revision": revision_number,
+                "detection_id": detections[source_id].detection_id,
+                "approved_at": approved_at,
+                "state": detections[source_id].state,
+            }
+            for revision_number, (source_id, approved_at) in enumerate(
+                zip(source_ids, approved_ats, strict=True),
+                start=1,
+            )
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": len(source_ids),
+            "changed_at": lifecycle_changed_at,
+        },
+    )
+
+
+def resolved_source_transition_conflict(
+    conflict_id: str,
+    *,
+    source_ids: tuple[str, str],
+    preserved_revision: int,
+    selected_source_id: str,
+) -> dict[str, object]:
+    return {
+        "conflict_id": conflict_id,
+        "raw_source_ids": list(source_ids),
+        "detected_ids": [],
+        "active_canonical_revision_at_creation": preserved_revision,
+        "status": "resolved_use_source",
+        "selected_raw_source_id": selected_source_id,
+        "resolved_at": NOW,
+    }
+
+
 def test_active_canonical_source_change_requires_an_explicit_conflict() -> None:
     with pytest.raises(
         ValidationError,
@@ -1962,6 +2032,645 @@ def test_each_multi_hop_source_change_requires_its_own_resolved_conflict() -> No
                     "conflicts": [retained_conflict],
                 }
             )
+
+
+def test_each_source_reversal_uses_the_resolution_from_its_preceding_run() -> None:
+    conflicts = [
+        resolved_source_transition_conflict(
+            "conflict-a-to-b",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-b",
+        ),
+        resolved_source_transition_conflict(
+            "conflict-b-to-a",
+            source_ids=("file-b", "file-a"),
+            preserved_revision=2,
+            selected_source_id="file-a",
+        ),
+    ]
+
+    record = source_lineage_record(
+        ("file-a", "file-b", "file-a"),
+        conflicts,
+    )
+
+    assert record.active_state_for_extraction == detected_for_source(
+        "file-a", hero_player_id="hero"
+    ).state
+
+
+def test_old_resolution_cannot_be_reused_after_a_source_reversal() -> None:
+    conflicts = [
+        resolved_source_transition_conflict(
+            "conflict-a-to-b",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-b",
+        ),
+        resolved_source_transition_conflict(
+            "conflict-b-to-a",
+            source_ids=("file-b", "file-a"),
+            preserved_revision=2,
+            selected_source_id="file-a",
+        ),
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="canonical raw-source change requires an explicitly resolved conflict",
+    ):
+        source_lineage_record(
+            ("file-a", "file-b", "file-a", "file-b"),
+            conflicts,
+        )
+
+
+def test_resolved_transition_cannot_bypass_an_applicable_unresolved_conflict(
+) -> None:
+    unresolved = {
+        "conflict_id": "conflict-unresolved-a-to-b",
+        "raw_source_ids": ["file-a", "file-b"],
+        "detected_ids": [],
+        "active_canonical_revision_at_creation": 1,
+    }
+    resolved = resolved_source_transition_conflict(
+        "conflict-resolved-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="unresolved conflict cannot replace the preserved active source",
+    ):
+        source_lineage_record(
+            ("file-a", "file-b"),
+            [unresolved, resolved],
+        )
+
+
+def test_resolved_transition_cannot_bypass_another_unresolved_source() -> None:
+    unresolved = {
+        "conflict_id": "conflict-unresolved-a-to-c",
+        "raw_source_ids": ["file-a", "file-c"],
+        "detected_ids": [],
+        "active_canonical_revision_at_creation": 1,
+    }
+    resolved = resolved_source_transition_conflict(
+        "conflict-resolved-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="unresolved conflict cannot replace the preserved active source",
+    ):
+        source_lineage_record(
+            ("file-a", "file-b"),
+            [unresolved, resolved],
+        )
+
+
+def test_source_transition_resolution_can_anchor_earlier_in_the_same_source_run(
+) -> None:
+    conflict = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+
+    record = source_lineage_record(
+        ("file-a", "file-a", "file-b"),
+        [conflict],
+    )
+
+    assert record.lifecycle.active_canonical_revision == 3
+
+
+def test_historical_keep_active_resolution_does_not_override_a_later_transition(
+) -> None:
+    keep_active = {
+        **resolved_source_transition_conflict(
+            "conflict-keep-a",
+            source_ids=("file-a", "file-c"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "status": "resolved_keep_active",
+    }
+    use_source = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+
+    record = source_lineage_record(
+        ("file-a", "file-b"),
+        [keep_active, use_source],
+    )
+
+    assert record.lifecycle.active_canonical_revision == 2
+
+
+def test_later_same_pair_resolution_can_replace_a_keep_active_choice() -> None:
+    transition_at = NOW + timedelta(microseconds=1)
+    keep_active = {
+        **resolved_source_transition_conflict(
+            "conflict-keep-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "status": "resolved_keep_active",
+    }
+    use_source = {
+        **resolved_source_transition_conflict(
+            "conflict-a-to-b",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-b",
+        ),
+        "resolved_at": transition_at,
+    }
+
+    record = source_lineage_record(
+        ("file-a", "file-b"),
+        [keep_active, use_source],
+        lifecycle_changed_at=transition_at,
+        revision_approved_ats=(NOW, transition_at),
+    )
+
+    assert record.lifecycle.active_canonical_revision == 2
+
+
+def test_later_keep_active_choice_blocks_an_older_use_source_resolution() -> None:
+    transition_at = NOW + timedelta(microseconds=1)
+    use_source = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+    keep_active = {
+        **resolved_source_transition_conflict(
+            "conflict-keep-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "status": "resolved_keep_active",
+        "resolved_at": transition_at,
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="active canonical revision must use the selected conflict source",
+    ):
+        source_lineage_record(
+            ("file-a", "file-b"),
+            [use_source, keep_active],
+            lifecycle_changed_at=transition_at,
+            revision_approved_ats=(NOW, transition_at),
+        )
+
+
+def test_later_keep_active_choice_restores_the_current_source_head() -> None:
+    reviewed_at = NOW + timedelta(microseconds=1)
+    use_source = resolved_source_transition_conflict(
+        "conflict-use-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+    keep_active = {
+        **resolved_source_transition_conflict(
+            "conflict-keep-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "status": "resolved_keep_active",
+        "resolved_at": reviewed_at,
+    }
+    current = source_lineage_record(("file-a",), [])
+
+    candidate = source_lineage_record(
+        ("file-a",),
+        [use_source, keep_active],
+        lifecycle_changed_at=reviewed_at,
+    )
+
+    assert candidate.active_state_for_extraction is not None
+    assert classify_restore(current, candidate).kind == "allow"
+
+
+def test_later_use_source_choice_blocks_the_current_source_head() -> None:
+    reviewed_at = NOW + timedelta(microseconds=1)
+    keep_active = {
+        **resolved_source_transition_conflict(
+            "conflict-keep-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "status": "resolved_keep_active",
+    }
+    use_source = {
+        **resolved_source_transition_conflict(
+            "conflict-use-b",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-b",
+        ),
+        "resolved_at": reviewed_at,
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="active canonical revision must use the selected conflict source",
+    ):
+        source_lineage_record(
+            ("file-a",),
+            [keep_active, use_source],
+            lifecycle_changed_at=reviewed_at,
+        )
+
+
+def test_initial_source_selection_does_not_override_a_later_transition() -> None:
+    initial_selection = {
+        **resolved_source_transition_conflict(
+            "conflict-initial-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "active_canonical_revision_at_creation": None,
+    }
+    use_source = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+
+    record = source_lineage_record(
+        ("file-a", "file-b"),
+        [initial_selection, use_source],
+    )
+
+    assert record.lifecycle.active_canonical_revision == 2
+
+
+def test_initial_conflict_must_be_resolved_before_first_source_approval() -> None:
+    resolved_at = NOW + timedelta(microseconds=1)
+    initial_selection = {
+        **resolved_source_transition_conflict(
+            "conflict-initial-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "active_canonical_revision_at_creation": None,
+        "resolved_at": resolved_at,
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="no-prior conflict must be resolved before activating the initial",
+    ):
+        source_lineage_record(
+            ("file-a",),
+            [initial_selection],
+            lifecycle_changed_at=resolved_at,
+        )
+
+
+def test_unsafe_late_initial_resolution_cannot_extract_or_restore() -> None:
+    current = source_lineage_record(("file-a",), [])
+    initial_selection = {
+        **resolved_source_transition_conflict(
+            "conflict-initial-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "active_canonical_revision_at_creation": None,
+    }
+    candidate = source_lineage_record(("file-a",), [initial_selection])
+    resolved_at = NOW + timedelta(microseconds=1)
+    late_selection = candidate.conflicts[0].model_copy(
+        update={
+            "conflict_id": "conflict-late-initial-a",
+            "resolved_at": resolved_at,
+        }
+    )
+    unsafe_active = candidate.model_copy(
+        update={
+            "conflicts": [*candidate.conflicts, late_selection],
+            "lifecycle": candidate.lifecycle.model_copy(
+                update={"changed_at": resolved_at}
+            ),
+        }
+    )
+
+    assert unsafe_active.active_state_for_extraction is None
+    assert unsafe_active.active_hero_actions_for_extraction == []
+    assert classify_restore(current, unsafe_active).kind == "conflict_merge_required"
+    with pytest.raises(
+        ValidationError,
+        match="no-prior conflict must be resolved before activating the initial",
+    ):
+        unsafe_active.revalidated_snapshot()
+
+    unsafe_inactive = unsafe_active.model_copy(
+        update={
+            "lifecycle": unsafe_active.lifecycle.model_copy(
+                update={
+                    "status": "withdrawn",
+                    "active_canonical_revision": None,
+                }
+            )
+        }
+    )
+    assert classify_restore(current, unsafe_inactive).kind == "conflict_merge_required"
+    with pytest.raises(
+        ValidationError,
+        match="no-prior conflict must be resolved before activating the initial",
+    ):
+        unsafe_inactive.revalidated_snapshot()
+
+
+def test_source_transition_must_be_approved_after_its_resolution() -> None:
+    conflict = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+    conflict["resolved_at"] = NOW + timedelta(microseconds=1)
+
+    with pytest.raises(
+        ValidationError,
+        match="conflict must be resolved before activating its destination",
+    ):
+        source_lineage_record(
+            ("file-a", "file-b"),
+            [conflict],
+            lifecycle_changed_at=NOW + timedelta(microseconds=1),
+        )
+
+
+def test_late_conflict_resolution_cannot_rewrite_an_approved_transition() -> None:
+    transition_at = NOW + timedelta(microseconds=1)
+    use_source = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+    late_keep_active = {
+        **resolved_source_transition_conflict(
+            "conflict-late-keep-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "status": "resolved_keep_active",
+        "resolved_at": transition_at,
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="conflict must be resolved before activating its destination",
+    ):
+        source_lineage_record(
+            ("file-a", "file-b"),
+            [use_source, late_keep_active],
+            lifecycle_changed_at=transition_at,
+        )
+
+
+def test_unsafe_late_resolution_copy_cannot_extract_or_restore() -> None:
+    current = source_lineage_record(("file-a",), [])
+    use_source = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+    candidate = source_lineage_record(
+        ("file-a", "file-b"),
+        [use_source],
+    )
+    transition_at = NOW + timedelta(microseconds=1)
+    late_keep_active = candidate.conflicts[0].model_copy(
+        update={
+            "conflict_id": "conflict-late-keep-a",
+            "status": "resolved_keep_active",
+            "selected_raw_source_id": "file-a",
+            "resolved_at": transition_at,
+        }
+    )
+    unsafe_candidate = candidate.model_copy(
+        update={
+            "conflicts": [*candidate.conflicts, late_keep_active],
+            "lifecycle": candidate.lifecycle.model_copy(
+                update={"changed_at": transition_at}
+            ),
+        }
+    )
+
+    assert unsafe_candidate.active_state_for_extraction is None
+    assert unsafe_candidate.active_hero_actions_for_extraction == []
+    assert (
+        classify_restore(current, unsafe_candidate).kind
+        == "conflict_merge_required"
+    )
+    with pytest.raises(
+        ValidationError,
+        match="conflict must be resolved before activating its destination",
+    ):
+        unsafe_candidate.revalidated_snapshot()
+
+
+def source_reversal_restore_pair() -> tuple[ImportedHandRecord, ImportedHandRecord]:
+    first_conflict = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+    second_conflict = resolved_source_transition_conflict(
+        "conflict-b-to-a",
+        source_ids=("file-b", "file-a"),
+        preserved_revision=2,
+        selected_source_id="file-a",
+    )
+    current = source_lineage_record(
+        ("file-a", "file-b"),
+        [first_conflict],
+    )
+    candidate = source_lineage_record(
+        ("file-a", "file-b", "file-a"),
+        [first_conflict, second_conflict],
+        lifecycle_changed_at=NOW + timedelta(minutes=1),
+    )
+    return current, candidate
+
+
+def test_restore_allows_a_resolved_source_reversal() -> None:
+    current, candidate = source_reversal_restore_pair()
+
+    assert classify_restore(current, candidate).kind == "allow"
+
+
+@pytest.mark.parametrize("status", ["withdrawn", "rejected"])
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+def test_restore_rejects_inactive_records_with_invalid_source_history(
+    status: str,
+    invalid_side: str,
+) -> None:
+    conflict = resolved_source_transition_conflict(
+        "conflict-a-to-b",
+        source_ids=("file-a", "file-b"),
+        preserved_revision=1,
+        selected_source_id="file-b",
+    )
+    active = source_lineage_record(("file-a", "file-b"), [conflict])
+    inactive = ImportedHandRecord.model_validate(
+        {
+            **active.model_dump(mode="python"),
+            "lifecycle": {
+                "status": status,
+                "active_canonical_revision": None,
+                "changed_at": NOW,
+            },
+        }
+    )
+    unsafe = inactive.model_copy(update={"conflicts": []})
+    current, candidate = (
+        (unsafe, inactive)
+        if invalid_side == "current"
+        else (inactive, unsafe)
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="canonical raw-source change requires an explicitly resolved conflict",
+    ):
+        unsafe.revalidated_snapshot()
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+@pytest.mark.parametrize("mutation", ["unresolved", "wrong_selection"])
+def test_restore_rejects_inactive_records_with_invalid_initial_selection(
+    invalid_side: str,
+    mutation: str,
+) -> None:
+    initial_conflict = {
+        **resolved_source_transition_conflict(
+            "conflict-initial-a",
+            source_ids=("file-a", "file-b"),
+            preserved_revision=1,
+            selected_source_id="file-a",
+        ),
+        "active_canonical_revision_at_creation": None,
+    }
+    active = source_lineage_record(("file-a",), [initial_conflict])
+    inactive = ImportedHandRecord.model_validate(
+        {
+            **active.model_dump(mode="python"),
+            "lifecycle": {
+                "status": "withdrawn",
+                "active_canonical_revision": None,
+                "changed_at": NOW,
+            },
+        }
+    )
+    conflict = inactive.conflicts[0]
+    if mutation == "unresolved":
+        invalid_conflict = conflict.model_copy(
+            update={
+                "status": "unresolved",
+                "selected_raw_source_id": None,
+                "resolved_at": None,
+            }
+        )
+    else:
+        invalid_conflict = conflict.model_copy(
+            update={"selected_raw_source_id": "file-b"}
+        )
+    unsafe = inactive.model_copy(update={"conflicts": [invalid_conflict]})
+    current, candidate = (
+        (unsafe, inactive)
+        if invalid_side == "current"
+        else (inactive, unsafe)
+    )
+
+    with pytest.raises(ValidationError):
+        unsafe.revalidated_snapshot()
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
+@pytest.mark.parametrize("conflict_index", [0, 1])
+@pytest.mark.parametrize(
+    "mutation",
+    ["remove", "unresolve", "wrong_selection", "wrong_run", "stale_resolution"],
+)
+def test_unsafe_source_reversal_conflict_copies_cannot_extract_or_restore(
+    conflict_index: int,
+    mutation: str,
+) -> None:
+    current, candidate = source_reversal_restore_pair()
+    conflicts = list(candidate.conflicts)
+    conflict = conflicts[conflict_index]
+    if mutation == "remove":
+        conflicts.pop(conflict_index)
+    elif mutation == "unresolve":
+        conflicts[conflict_index] = conflict.model_copy(
+            update={
+                "status": "unresolved",
+                "selected_raw_source_id": None,
+                "resolved_at": None,
+            }
+        )
+    elif mutation == "wrong_selection":
+        conflicts[conflict_index] = conflict.model_copy(
+            update={
+                "selected_raw_source_id": (
+                    "file-a" if conflict_index == 0 else "file-b"
+                )
+            }
+        )
+    elif mutation == "wrong_run":
+        conflicts[conflict_index] = conflict.model_copy(
+            update={
+                "active_canonical_revision_at_creation": (
+                    2 if conflict_index == 0 else 1
+                )
+            }
+        )
+    else:
+        conflicts[conflict_index] = conflict.model_copy(
+            update={"resolved_at": NOW - timedelta(microseconds=1)}
+        )
+    unsafe_candidate = candidate.model_copy(update={"conflicts": conflicts})
+
+    assert unsafe_candidate.active_state_for_extraction is None
+    assert unsafe_candidate.active_hero_actions_for_extraction == []
+    assert (
+        classify_restore(current, unsafe_candidate).kind
+        == "conflict_merge_required"
+    )
+    with pytest.raises(ValidationError):
+        unsafe_candidate.revalidated_snapshot()
 
 
 @pytest.mark.parametrize(

@@ -2416,15 +2416,12 @@ class ImportedHandRecord(ImportedHandModel):
                 )
             _validate_corrections_win(detected, revision)
 
-        conflict_active_sources: dict[str, str] = {}
         for conflict in self.conflicts:
             preserved_source_id = _conflict_preserved_source_id(
                 conflict,
                 detection_by_id=detection_by_id,
                 revisions=self.canonical_revisions,
             )
-            if preserved_source_id is not None:
-                conflict_active_sources[conflict.conflict_id] = preserved_source_id
             _validate_resolved_keep_active_source(
                 conflict,
                 preserved_source_id=preserved_source_id,
@@ -2456,41 +2453,12 @@ class ImportedHandRecord(ImportedHandModel):
                     "active lifecycle changed_at cannot precede the"
                     f" latest retained {latest_event[1]}"
                 )
-            active_source_id = detection_by_id[
-                active_revision.detection_id
-            ].raw_source_id
-            for conflict in self.conflicts:
-                if conflict.status == "unresolved":
-                    preserved_source_id = conflict_active_sources.get(
-                        conflict.conflict_id
-                    )
-                    if preserved_source_id is None:
-                        raise ValueError(
-                            "an unresolved conflict without a prior active revision"
-                            " cannot activate a canonical source"
-                        )
-                    if active_source_id != preserved_source_id:
-                        raise ValueError(
-                            "an unresolved conflict cannot replace the preserved"
-                            " active source"
-                        )
-                elif (
-                    active_source_id in conflict.raw_source_ids
-                    and active_source_id != conflict.selected_raw_source_id
-                ):
-                    raise ValueError(
-                        "active canonical revision must use the selected conflict source"
-                    )
-            if not _canonical_source_changes_are_resolved(
-                conflicts=self.conflicts,
-                detection_by_id=detection_by_id,
-                revisions=self.canonical_revisions,
-                lifecycle_changed_at=self.lifecycle.changed_at,
-            ):
-                raise ValueError(
-                    "activating a canonical raw-source change requires an"
-                    " explicitly resolved conflict selecting the new source"
-                )
+        _validate_canonical_source_lineage(
+            conflicts=self.conflicts,
+            detection_by_id=detection_by_id,
+            revisions=self.canonical_revisions,
+            validate_active_conflicts=active is not None,
+        )
 
         if self.lifecycle.status == "pending_review":
             latest_event = _latest_retained_audit_event(self)
@@ -2955,23 +2923,157 @@ def _validate_conflict_resolution_chronology(
         )
 
 
-def _canonical_source_changes_are_resolved(
+def _validate_canonical_source_lineage(
     *,
     conflicts: list[ImportConflict],
     detection_by_id: dict[str, DetectedImportedHand],
     revisions: list[CanonicalHandRevision],
-    lifecycle_changed_at: datetime,
-) -> bool:
-    """Require each canonical raw-source transition to be explicitly selected."""
+    validate_active_conflicts: bool,
+) -> None:
+    """Bind each canonical source transition to its own conflict resolution."""
 
-    authorized_transitions: set[tuple[str, str]] = set()
-    for conflict in conflicts:
-        if (
-            conflict.status != "resolved_use_source"
-            or conflict.selected_raw_source_id is None
-            or conflict.resolved_at is None
-            or lifecycle_changed_at < conflict.resolved_at
+    source_ids: list[str] = []
+    for revision in revisions:
+        detected = detection_by_id.get(revision.detection_id)
+        if detected is None:
+            raise ValueError(
+                "canonical source lineage must reference retained detections"
+            )
+        source_ids.append(detected.raw_source_id)
+    if not source_ids:
+        return
+
+    source_run_start = 1
+    for previous_revision, (previous_source_id, source_id) in enumerate(
+        zip(source_ids[:-1], source_ids[1:], strict=True),
+        start=1,
+    ):
+        if source_id == previous_source_id:
+            continue
+        destination_revision = revisions[previous_revision]
+        transition_conflicts: list[ImportConflict] = []
+        for conflict in conflicts:
+            preserved_revision = conflict.active_canonical_revision_at_creation
+            if (
+                preserved_revision is None
+                or preserved_revision < source_run_start
+                or preserved_revision > previous_revision
+            ):
+                continue
+            preserved_source_id = _conflict_preserved_source_id(
+                conflict,
+                detection_by_id=detection_by_id,
+                revisions=revisions,
+            )
+            if (
+                preserved_source_id != previous_source_id
+                or not {previous_source_id, source_id}.issubset(
+                    conflict.raw_source_ids
+                )
+            ):
+                continue
+            transition_conflicts.append(conflict)
+        if any(
+            conflict.status == "unresolved"
+            for conflict in transition_conflicts
         ):
+            raise ValueError(
+                "an unresolved conflict cannot replace the preserved active source"
+            )
+        if any(
+            conflict.resolved_at is None
+            or conflict.resolved_at > destination_revision.approved_at
+            for conflict in transition_conflicts
+        ):
+            raise ValueError(
+                "an applicable conflict must be resolved before activating"
+                " its destination canonical revision"
+            )
+        eligible_resolutions = [
+            conflict
+            for conflict in transition_conflicts
+            if conflict.resolved_at is not None
+        ]
+        if not eligible_resolutions:
+            raise ValueError(
+                "activating a canonical raw-source change requires an"
+                " explicitly resolved conflict selecting the new source"
+            )
+        transition_scopes: dict[tuple[str, ...], list[ImportConflict]] = {}
+        for conflict in eligible_resolutions:
+            transition_scopes.setdefault(
+                tuple(sorted(conflict.raw_source_ids)),
+                [],
+            ).append(conflict)
+        for scoped_resolutions in transition_scopes.values():
+            latest_resolved_at = max(
+                conflict.resolved_at for conflict in scoped_resolutions
+            )
+            latest_resolutions = [
+                conflict
+                for conflict in scoped_resolutions
+                if conflict.resolved_at == latest_resolved_at
+            ]
+            if any(
+                conflict.status != "resolved_use_source"
+                or conflict.selected_raw_source_id != source_id
+                for conflict in latest_resolutions
+            ):
+                raise ValueError(
+                    "active canonical revision must use the selected conflict source"
+                )
+        source_run_start = previous_revision + 1
+
+    initial_source_id = source_ids[0]
+    initial_conflicts = [
+        conflict
+        for conflict in conflicts
+        if conflict.active_canonical_revision_at_creation is None
+    ]
+    for conflict in initial_conflicts:
+        if conflict.status == "unresolved":
+            raise ValueError(
+                "an unresolved conflict without a prior active revision"
+                " cannot activate a canonical source"
+            )
+        if (
+            conflict.resolved_at is None
+            or conflict.resolved_at > revisions[0].approved_at
+        ):
+            raise ValueError(
+                "a no-prior conflict must be resolved before activating"
+                " the initial canonical revision"
+            )
+    initial_scopes: dict[tuple[str, ...], list[ImportConflict]] = {}
+    for conflict in initial_conflicts:
+        if initial_source_id in conflict.raw_source_ids:
+            initial_scopes.setdefault(
+                tuple(sorted(conflict.raw_source_ids)),
+                [],
+            ).append(conflict)
+    for scoped_resolutions in initial_scopes.values():
+        latest_resolved_at = max(
+            conflict.resolved_at for conflict in scoped_resolutions
+        )
+        latest_resolutions = [
+            conflict
+            for conflict in scoped_resolutions
+            if conflict.resolved_at == latest_resolved_at
+        ]
+        if any(
+            conflict.selected_raw_source_id != initial_source_id
+            for conflict in latest_resolutions
+        ):
+            raise ValueError(
+                "active canonical revision must use the selected conflict source"
+            )
+
+    if not validate_active_conflicts:
+        return
+
+    active_source_id = source_ids[-1]
+    for conflict in conflicts:
+        if conflict.status != "unresolved":
             continue
         preserved_source_id = _conflict_preserved_source_id(
             conflict,
@@ -2979,30 +3081,44 @@ def _canonical_source_changes_are_resolved(
             revisions=revisions,
         )
         if preserved_source_id is None:
-            continue
-        selected_source_id = conflict.selected_raw_source_id
-        if not {preserved_source_id, selected_source_id}.issubset(
-            conflict.raw_source_ids
-        ):
-            continue
-        authorized_transitions.add(
-            (preserved_source_id, selected_source_id)
-        )
+            raise ValueError(
+                "an unresolved conflict without a prior active revision"
+                " cannot activate a canonical source"
+            )
+        if active_source_id != preserved_source_id:
+            raise ValueError(
+                "an unresolved conflict cannot replace the preserved active source"
+            )
 
-    previous_source_id: str | None = None
-    for revision in revisions:
-        detected = detection_by_id.get(revision.detection_id)
-        if detected is None:
-            return False
-        source_id = detected.raw_source_id
+    active_scopes: dict[tuple[str, ...], list[ImportConflict]] = {}
+    for conflict in conflicts:
+        preserved_revision = conflict.active_canonical_revision_at_creation
         if (
-            previous_source_id is not None
-            and source_id != previous_source_id
-            and (previous_source_id, source_id) not in authorized_transitions
+            preserved_revision is None
+            or preserved_revision < source_run_start
+            or conflict.status == "unresolved"
         ):
-            return False
-        previous_source_id = source_id
-    return True
+            continue
+        active_scopes.setdefault(
+            tuple(sorted(conflict.raw_source_ids)),
+            [],
+        ).append(conflict)
+    for scoped_resolutions in active_scopes.values():
+        latest_resolved_at = max(
+            conflict.resolved_at for conflict in scoped_resolutions
+        )
+        latest_resolutions = [
+            conflict
+            for conflict in scoped_resolutions
+            if conflict.resolved_at == latest_resolved_at
+        ]
+        if any(
+            conflict.selected_raw_source_id != active_source_id
+            for conflict in latest_resolutions
+        ):
+            raise ValueError(
+                "active canonical revision must use the selected conflict source"
+            )
 
 
 def _record_conflict_resolution_is_valid(
@@ -3012,7 +3128,6 @@ def _record_conflict_resolution_is_valid(
     detection_by_id = {
         detected.detection_id: detected for detected in record.detections
     }
-    conflict_active_sources: dict[str, str] = {}
     try:
         for expected_revision, revision in enumerate(
             record.canonical_revisions,
@@ -3034,8 +3149,6 @@ def _record_conflict_resolution_is_valid(
                 detection_by_id=detection_by_id,
                 revisions=record.canonical_revisions,
             )
-            if preserved_source_id is not None:
-                conflict_active_sources[conflict.conflict_id] = preserved_source_id
             _validate_resolved_keep_active_source(
                 conflict,
                 preserved_source_id=preserved_source_id,
@@ -3061,29 +3174,12 @@ def _record_conflict_resolution_is_valid(
             active_detection = detection_by_id.get(active_revision.detection_id)
             if active_detection is None:
                 return False
-            active_source_id = active_detection.raw_source_id
-            for conflict in record.conflicts:
-                if conflict.status == "unresolved":
-                    preserved_source_id = conflict_active_sources.get(
-                        conflict.conflict_id
-                    )
-                    if (
-                        preserved_source_id is None
-                        or active_source_id != preserved_source_id
-                    ):
-                        return False
-                elif (
-                    active_source_id in conflict.raw_source_ids
-                    and active_source_id != conflict.selected_raw_source_id
-                ):
-                    return False
-            if not _canonical_source_changes_are_resolved(
-                conflicts=record.conflicts,
-                detection_by_id=detection_by_id,
-                revisions=record.canonical_revisions,
-                lifecycle_changed_at=record.lifecycle.changed_at,
-            ):
-                return False
+        _validate_canonical_source_lineage(
+            conflicts=record.conflicts,
+            detection_by_id=detection_by_id,
+            revisions=record.canonical_revisions,
+            validate_active_conflicts=active is not None,
+        )
     except (AttributeError, IndexError, KeyError, TypeError, ValueError):
         return False
     return True
