@@ -2721,10 +2721,18 @@ def _run_case(
         execution_state_sha256 = _grading_context_payload_sha256(
             execution_state_payload
         )
-        request = RecommendationBenchmarkRequest(
-            state=execution_state,
-            provider=provider.name,
-        )
+        if dataset.schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION:
+            request: RecommendationRequest = RecommendationBenchmarkRequest(
+                state=execution_state,
+                provider=provider.name,
+            )
+        else:
+            request = RecommendationRequest(
+                state=CanonicalState.model_validate(
+                    _canonical_decision_state_payload(execution_state)
+                ),
+                provider=provider.name,
+            )
         result = provider.recommend(request)
     except ProviderConfigurationError:
         raise

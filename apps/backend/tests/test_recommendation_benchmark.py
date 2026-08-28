@@ -31,6 +31,7 @@ from app.recommendation_benchmark import (
     RecommendationBenchmarkDataset,
     RecommendationBenchmarkError,
     RecommendationBenchmarkReport,
+    RecommendationBenchmarkRequest,
     RecommendationBenchmarkState,
     RecommendationEconomicBlindLevel,
     RecommendationReferenceLine,
@@ -995,6 +996,7 @@ def test_schema_five_routes_exact_utility_context_to_the_provider() -> None:
     report = run_recommendation_benchmark(dataset, provider)
 
     assert report.completed_cases == 1
+    assert type(provider.requests[0]) is RecommendationBenchmarkRequest
     request_state = provider.requests[0].model_dump(mode="json")["state"]
     assert request_state["utility_model"] == (
         dataset.cases[0].state.utility_model.model_dump(mode="json")
@@ -2239,6 +2241,32 @@ def test_legacy_schema_still_allows_an_unbound_provider() -> None:
     assert report.completed_cases == 1
     assert report.dataset_schema_version == 4
     assert report.cases[0].grading_context_sha256 is None
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schema_provider_requests_preserve_the_canonical_state_shape(
+    schema_version: int,
+) -> None:
+    case = covered_preflop_case()
+    assert case.state.hero_structural_position is not None
+    assert case.state.economic_model is not None
+    assert case.state.utility_model is not None
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 1
+    request = provider.requests[0]
+    assert type(request) is RecommendationRequest
+    assert type(request.state) is CanonicalState
+    request_state = request.model_dump(mode="json")["state"]
+    benchmark_only_fields = set(RecommendationBenchmarkState.model_fields).difference(
+        CanonicalState.model_fields
+    )
+    assert set(request_state).isdisjoint(benchmark_only_fields)
+    for field_name in CanonicalState.model_fields:
+        assert getattr(request.state, field_name) == getattr(case.state, field_name)
 
 
 def test_schema_five_revalidates_utility_binding_before_provider_execution() -> None:
