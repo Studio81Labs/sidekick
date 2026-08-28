@@ -13,13 +13,30 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
+    ModelWrapValidatorHandler,
+    StringConstraints,
     ValidationError,
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticSerializationError
 
 from app.config import Settings, get_settings
-from app.domain.poker import CanonicalState, Street
+from app.domain.imported_hands import (
+    AnteMode,
+    CashEconomics,
+    StructuralPosition,
+    TournamentEconomics,
+    UnknownEconomics,
+    structural_position_labels,
+)
+from app.domain.poker import (
+    CanonicalState,
+    CompletedPostflopStreetHistory,
+    PreflopPosition,
+    Street,
+)
 from app.domain.recommendations import (
     RecommendationAction,
     RecommendationRequest,
@@ -27,15 +44,18 @@ from app.domain.recommendations import (
 )
 from app.providers.base import (
     ProviderConfigurationError,
+    ProviderGradingContextBinding,
     RecommendationProvider,
     missing_required_fields,
 )
 from app.providers.registry import build_provider
 from app.solvers.postflop_ranges import RangeSource
+from app.solvers.preflop_context import normalize_position, opening_raise_position
 
 
 RECOMMENDATION_BENCHMARK_SCHEMA = "poker-hero-recommendation-benchmark"
-RECOMMENDATION_BENCHMARK_SCHEMA_VERSION = 4
+RECOMMENDATION_BENCHMARK_SCHEMA_VERSION = 5
+RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION = 4
 RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION = 3
 RECOMMENDATION_BENCHMARK_TAGGED_SCHEMA_VERSION = 2
 RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION = 1
@@ -49,6 +69,19 @@ WAGER_ACTIONS = {"bet", "raise"}
 VALID_ACTIONS: frozenset[str] = frozenset(get_args(RecommendationAction))
 VALID_RANGE_SOURCES: frozenset[str] = frozenset(get_args(RangeSource))
 RangeConditioningStatus = Literal["applied", "skipped"]
+
+# The current provider boundary still routes the legacy six-max position field.
+# Only structural labels with one exact legacy meaning may cross that boundary;
+# full-ring seats must not be coerced into a nearby six-max policy.
+LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL: dict[str, PreflopPosition] = {
+    "BTN/SB": "button",
+    "BTN": "button",
+    "SB": "small_blind",
+    "BB": "big_blind",
+    "UTG": "utg",
+    "HJ": "hijack",
+    "CO": "cutoff",
+}
 
 FiniteNumber = Annotated[
     float,
@@ -74,6 +107,62 @@ BenchmarkTag = Annotated[
         pattern=r"^[a-z0-9][a-z0-9-]*$",
     ),
 ]
+Sha256Digest = Annotated[
+    str,
+    Field(pattern=r"^[0-9a-f]{64}$"),
+]
+EvidenceRevision = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=128,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
+    ),
+]
+StructuralPositionLabel = Annotated[
+    str,
+    Field(
+        min_length=1,
+        max_length=64,
+        pattern=r"^[A-Z][A-Z0-9+/]*$",
+    ),
+]
+DealtInCount = Annotated[int, Field(ge=2, le=10, strict=True)]
+PositiveInteger = Annotated[int, Field(ge=1, strict=True)]
+NonNegativeFiniteNumber = Annotated[
+    float,
+    Field(ge=0, allow_inf_nan=False, strict=True),
+]
+PositiveDecimal = Annotated[
+    Decimal,
+    Field(gt=0, allow_inf_nan=False),
+]
+NonNegativeDecimal = Annotated[
+    Decimal,
+    Field(ge=0, allow_inf_nan=False),
+]
+BenchmarkActorId = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/+\-]*$",
+        strict=True,
+    ),
+]
+
+
+GradingDeliveryMode = Literal["shipped_static_lookup", "server_side_feed"]
+GradingRight = Literal[
+    "commercial_use",
+    "embedding",
+    "redistribution",
+    "updates",
+    "commercial_serving",
+    "derived_outputs",
+]
+GradingEvUnit = Literal["bb", "chips", "currency", "utility"]
 
 
 @dataclass(frozen=True)
@@ -163,16 +252,807 @@ class RecommendationBenchmarkError(RuntimeError):
     pass
 
 
-class RecommendationBenchmarkState(CanonicalState):
-    model_config = ConfigDict(extra="forbid")
-
-
 class RecommendationReferenceSource(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     name: str = Field(min_length=1, max_length=200)
     version: str | None = Field(default=None, min_length=1, max_length=100)
     configuration: str | None = Field(default=None, min_length=1, max_length=1_000)
+
+
+class RecommendationReferenceStructuralPosition(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_index: Annotated[int, Field(ge=0, le=9, strict=True)]
+    button_distance: Annotated[int, Field(ge=0, le=9, strict=True)]
+    display_label: StructuralPositionLabel
+
+
+class RecommendationReferenceTableConfiguration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dealt_in_count: DealtInCount
+    structural_positions: list[RecommendationReferenceStructuralPosition] = Field(
+        min_length=2,
+        max_length=10,
+    )
+
+    @model_validator(mode="after")
+    def validate_positions(self) -> Self:
+        if len(self.structural_positions) != self.dealt_in_count:
+            raise ValueError(
+                "Structural positions must cover every dealt-in seat exactly"
+            )
+        indexes = [position.action_index for position in self.structural_positions]
+        distances = [
+            position.button_distance for position in self.structural_positions
+        ]
+        labels = [position.display_label for position in self.structural_positions]
+        expected_values = list(range(self.dealt_in_count))
+        if sorted(indexes) != expected_values:
+            raise ValueError(
+                "Structural positions must cover every action index exactly"
+            )
+        if sorted(distances) != expected_values:
+            raise ValueError(
+                "Structural positions must cover every button distance exactly"
+            )
+        if len(labels) != len(set(labels)):
+            raise ValueError("Structural position display labels must be unique")
+
+        action_order_distances = (
+            [0, 1]
+            if self.dealt_in_count == 2
+            else [*range(3, self.dealt_in_count), 0, 1, 2]
+        )
+        action_index_by_distance = {
+            distance: index
+            for index, distance in enumerate(action_order_distances)
+        }
+        expected_labels = structural_position_labels(self.dealt_in_count)
+        for position in self.structural_positions:
+            if (
+                position.action_index
+                != action_index_by_distance[position.button_distance]
+            ):
+                raise ValueError(
+                    "Structural action index must match its button distance"
+                )
+            if position.display_label != expected_labels[position.button_distance]:
+                raise ValueError(
+                    "Structural display label must match its dealt-in table position"
+                )
+        return self
+
+
+class RecommendationReferenceCoverage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    table_configurations: list[RecommendationReferenceTableConfiguration] = Field(
+        min_length=1,
+        max_length=9,
+    )
+    effective_stack_depths_bb: list[PositiveFiniteNumber] = Field(
+        min_length=1,
+        max_length=100,
+    )
+    streets: list[Street] = Field(min_length=1, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_coverage(self) -> Self:
+        table_keys = [table.dealt_in_count for table in self.table_configurations]
+        if len(table_keys) != len(set(table_keys)):
+            raise ValueError("Reference table configurations must be unique")
+        if len(self.effective_stack_depths_bb) != len(
+            set(self.effective_stack_depths_bb)
+        ):
+            raise ValueError("Effective stack depths must be unique")
+        if len(self.streets) != len(set(self.streets)):
+            raise ValueError("Reference streets must be unique")
+        return self
+
+
+RecommendationEconomicConfiguration = Annotated[
+    CashEconomics | TournamentEconomics | UnknownEconomics,
+    Field(discriminator="kind"),
+]
+
+
+class RecommendationEconomicBlindLevel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state_amount_unit: Literal["bb"]
+    denomination_unit: Literal["currency", "tournament_chips"]
+    small_blind: PositiveDecimal
+    big_blind: PositiveDecimal
+    ante: NonNegativeDecimal
+    ante_mode: AnteMode | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def validate_denominations(self) -> Self:
+        if self.small_blind > self.big_blind:
+            raise ValueError("Small blind cannot exceed the big blind")
+        return self
+
+
+def _normalized_economic_value(value: object) -> object:
+    if isinstance(value, Decimal):
+        if value == 0:
+            return "0"
+        return format(value.normalize(), "f")
+    if isinstance(value, dict):
+        return {
+            str(key): _normalized_economic_value(item) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalized_economic_value(item) for item in value]
+    return value
+
+
+def _normalized_economic_configuration(
+    configuration: RecommendationEconomicConfiguration,
+) -> dict[str, object]:
+    normalized = cast(
+        dict[str, object],
+        _normalized_economic_value(configuration.model_dump(mode="python")),
+    )
+    if isinstance(configuration, TournamentEconomics):
+        normalized["payouts"] = sorted(
+            normalized["payouts"],
+            key=lambda payout: (payout["place_from"], payout["place_to"]),
+        )
+        normalized["remaining_stacks"] = sorted(
+            normalized["remaining_stacks"],
+            key=lambda stack: stack["player_id"],
+        )
+        normalized["bounties"] = sorted(
+            normalized["bounties"],
+            key=lambda bounty: bounty["player_id"],
+        )
+    return normalized
+
+
+def recommendation_economic_configuration_sha256(
+    configuration: RecommendationEconomicConfiguration,
+    blind_level: RecommendationEconomicBlindLevel | None = None,
+) -> str:
+    normalized_configuration = _normalized_economic_configuration(configuration)
+    normalized_context: object = normalized_configuration
+    if blind_level is not None:
+        normalized_context = {
+            "schema": "poker-hero-recommendation-economic-context/v2",
+            "configuration": normalized_configuration,
+            "blind_level": _normalized_economic_value(
+                blind_level.model_dump(mode="python")
+            ),
+        }
+    payload = json.dumps(
+        normalized_context,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _incomplete_economic_configuration_fields(
+    configuration: CashEconomics | TournamentEconomics,
+) -> list[str]:
+    if isinstance(configuration, CashEconomics):
+        missing = ["currency"] if configuration.currency is None else []
+        if configuration.rake is None:
+            return [*missing, "rake"]
+        return [
+            *missing,
+            *(
+                f"rake.{field_name}"
+                for field_name in ("percentage", "cap", "fixed_drop")
+                if getattr(configuration.rake, field_name) is None
+            ),
+        ]
+
+    missing = [
+        field_name
+        for field_name in (
+            "tournament_type",
+            "stage",
+            "currency",
+            "paid_places",
+            "players_remaining",
+            "bounty_format",
+        )
+        if getattr(configuration, field_name) is None
+    ]
+    if not configuration.payouts:
+        missing.append("payouts")
+    if not configuration.remaining_stacks:
+        missing.append("remaining_stacks")
+    if not configuration.bounties:
+        missing.append("bounties")
+    if not configuration.icm_inputs_complete:
+        missing.append("icm_inputs_complete")
+    return missing
+
+
+class RecommendationEconomicModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal["cash", "tournament"]
+    name: str = Field(min_length=1, max_length=200)
+    revision: EvidenceRevision
+    configuration_sha256: Sha256Digest
+    configuration: RecommendationEconomicConfiguration
+    blind_level: RecommendationEconomicBlindLevel | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def validate_configuration(self) -> Self:
+        if self.configuration.kind != self.kind:
+            raise ValueError(
+                "Economic model kind must match its route-critical configuration"
+            )
+        if isinstance(self.configuration, UnknownEconomics):
+            raise ValueError("Economic model configuration cannot be unknown")
+        missing = _incomplete_economic_configuration_fields(self.configuration)
+        if missing:
+            raise ValueError(
+                "Economic model configuration has unknown route-critical fields:"
+                f" {', '.join(missing)}"
+            )
+        if (
+            isinstance(self.configuration, TournamentEconomics)
+            and self.configuration.bounty_format == "none"
+            and any(bounty.value != 0 for bounty in self.configuration.bounties)
+        ):
+            raise ValueError(
+                "A no-bounty economic configuration requires explicit zero bounty"
+                " values for every remaining player"
+            )
+        if self.blind_level is not None:
+            expected_unit = (
+                "currency" if self.kind == "cash" else "tournament_chips"
+            )
+            if self.blind_level.denomination_unit != expected_unit:
+                raise ValueError(
+                    f"A {self.kind} economic model requires blind denominations"
+                    f" in {expected_unit} units"
+                )
+        expected_sha256 = recommendation_economic_configuration_sha256(
+            self.configuration,
+            self.blind_level,
+        )
+        if self.configuration_sha256 != expected_sha256:
+            raise ValueError(
+                "Economic model configuration_sha256 must match its normalized"
+                " route-critical configuration"
+            )
+        return self
+
+
+class RecommendationUnknownEconomicModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal["unknown"] = "unknown"
+    reason: str | None = Field(default=None, min_length=1, max_length=1_000)
+
+
+RecommendationCaseEconomicModel = Annotated[
+    RecommendationEconomicModel | RecommendationUnknownEconomicModel,
+    Field(discriminator="kind"),
+]
+
+
+def _normalized_utility_value(value: object) -> object:
+    if isinstance(value, bool) or value is None or isinstance(value, (int, str)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Utility model configuration numbers must be finite")
+        if value == 0:
+            return 0
+        if value.is_integer():
+            return int(value)
+        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _normalized_utility_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalized_utility_value(item) for item in value]
+    raise ValueError("Utility model configuration must contain only JSON values")
+
+
+def _normalized_utility_configuration(
+    configuration: dict[str, JsonValue],
+) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        _normalized_utility_value(configuration),
+    )
+
+
+def recommendation_utility_configuration_sha256(
+    configuration: dict[str, JsonValue],
+) -> str:
+    payload = json.dumps(
+        _normalized_utility_configuration(configuration),
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+class RecommendationUtilityModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: str = Field(min_length=1, max_length=200)
+    revision: EvidenceRevision
+    configuration_sha256: Sha256Digest
+    configuration: dict[str, JsonValue] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_configuration(self) -> Self:
+        expected_sha256 = recommendation_utility_configuration_sha256(
+            self.configuration
+        )
+        if self.configuration_sha256 != expected_sha256:
+            raise ValueError(
+                "Utility model configuration_sha256 must match its normalized"
+                " route-critical configuration"
+            )
+        return self
+
+
+class RecommendationBenchmarkState(CanonicalState):
+    model_config = ConfigDict(extra="forbid")
+
+    hero_structural_position: StructuralPosition | None = None
+    hero_player_id: BenchmarkActorId | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    opponent_player_id: BenchmarkActorId | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    dealt_in_player_ids_by_position: dict[
+        StructuralPositionLabel, BenchmarkActorId
+    ] | None = Field(
+        default=None,
+        min_length=2,
+        max_length=10,
+        exclude_if=lambda value: value is None,
+    )
+    active_player_ids: list[BenchmarkActorId] | None = Field(
+        default=None,
+        min_length=2,
+        max_length=10,
+        exclude_if=lambda value: value is None,
+    )
+    economic_model: RecommendationCaseEconomicModel | None = None
+    utility_model: RecommendationUtilityModel | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+    @model_validator(mode="after")
+    def validate_actor_identities(self) -> Self:
+        if (
+            self.hero_player_id is not None
+            and self.opponent_player_id is not None
+            and self.hero_player_id == self.opponent_player_id
+        ):
+            raise ValueError("Hero and opponent player identities must be distinct")
+        if self.dealt_in_player_ids_by_position is not None:
+            dealt_in_player_ids = list(
+                self.dealt_in_player_ids_by_position.values()
+            )
+            if len(dealt_in_player_ids) != len(set(dealt_in_player_ids)):
+                raise ValueError("Dealt-in player identities must be unique")
+        if self.active_player_ids is not None and len(
+            self.active_player_ids
+        ) != len(set(self.active_player_ids)):
+            raise ValueError("Active player identities must be unique")
+        return self
+
+
+class RecommendationBenchmarkRequest(RecommendationRequest):
+    """Preserve benchmark-only route context at the provider boundary."""
+
+    state: RecommendationBenchmarkState
+
+
+class RecommendationGradingDecisionState(CanonicalState):
+    """Lossless provider-visible state required in configured route catalogs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def require_exact_canonical_shape(
+        cls,
+        value: object,
+        handler: ModelWrapValidatorHandler[Self],
+    ) -> Self:
+        if not isinstance(value, dict):
+            return handler(value)
+        expected_fields = set(CanonicalState.model_fields)
+        supplied_fields = set(value)
+        missing = sorted(expected_fields - supplied_fields)
+        extras = sorted(supplied_fields - expected_fields)
+        if missing or extras:
+            differences = []
+            if missing:
+                differences.append(
+                    f"decision_state missing fields: {', '.join(missing)}"
+                )
+            if extras:
+                differences.append(
+                    f"decision_state unknown fields: {', '.join(extras)}"
+                )
+            raise ValueError(
+                "Grading decision state must declare the canonical JSON shape"
+                f" exactly ({'; '.join(differences)})"
+            )
+        validated = handler(value)
+        _require_exact_json_shape(
+            value,
+            _canonical_decision_state_payload(validated),
+            path="decision_state",
+            subject="Grading decision state",
+        )
+        return validated
+
+
+def _json_shape_differences(
+    declared: object,
+    canonical: object,
+    *,
+    path: str,
+) -> list[str]:
+    if isinstance(canonical, dict):
+        if not isinstance(declared, dict):
+            return [f"{path} must be an object"]
+        differences: list[str] = []
+        declared_keys = set(declared)
+        canonical_keys = set(canonical)
+        missing = sorted(canonical_keys - declared_keys)
+        extras = sorted(declared_keys - canonical_keys)
+        if missing:
+            differences.append(f"{path} missing fields: {', '.join(missing)}")
+        if extras:
+            differences.append(f"{path} unknown fields: {', '.join(extras)}")
+        for key in sorted(declared_keys & canonical_keys):
+            differences.extend(
+                _json_shape_differences(
+                    declared[key],
+                    canonical[key],
+                    path=f"{path}.{key}",
+                )
+            )
+        return differences
+    if isinstance(canonical, list):
+        if not isinstance(declared, list):
+            return [f"{path} must be an array"]
+        differences = []
+        if len(declared) != len(canonical):
+            differences.append(
+                f"{path} must contain exactly {len(canonical)} items"
+            )
+        for index, (declared_item, canonical_item) in enumerate(
+            zip(declared, canonical, strict=False)
+        ):
+            differences.extend(
+                _json_shape_differences(
+                    declared_item,
+                    canonical_item,
+                    path=f"{path}[{index}]",
+                )
+            )
+        return differences
+    return []
+
+
+def _require_exact_json_shape(
+    declared: object,
+    canonical: object,
+    *,
+    path: str,
+    subject: str,
+) -> None:
+    differences = _json_shape_differences(
+        declared,
+        canonical,
+        path=path,
+    )
+    if differences:
+        raise ValueError(
+            f"{subject} must declare the canonical JSON shape exactly"
+            f" ({'; '.join(differences)})"
+        )
+
+
+class RecommendationGradingContext(BaseModel):
+    """Canonical route context independently compared with provider configuration."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    context_schema: Literal[
+        "poker-hero-recommendation-grading-context/v4"
+    ] = Field(alias="schema")
+    decision_state: RecommendationGradingDecisionState
+    street: Street
+    effective_stack_bb: PositiveDecimal
+    players_in_hand: DealtInCount
+    hero_structural_position: StructuralPosition
+    hero_player_id: BenchmarkActorId | None = None
+    opponent_player_id: BenchmarkActorId | None = None
+    dealt_in_player_ids_by_position: dict[
+        StructuralPositionLabel, BenchmarkActorId
+    ] | None = None
+    active_player_ids: list[BenchmarkActorId] | None = None
+    economic_model: RecommendationEconomicModel
+    utility_model: RecommendationUtilityModel
+
+    @model_validator(mode="after")
+    def validate_actor_identities(self) -> Self:
+        if (
+            self.hero_player_id is not None
+            and self.opponent_player_id is not None
+            and self.hero_player_id == self.opponent_player_id
+        ):
+            raise ValueError("Hero and opponent player identities must be distinct")
+        if self.dealt_in_player_ids_by_position is not None:
+            dealt_in_player_ids = list(
+                self.dealt_in_player_ids_by_position.values()
+            )
+            if len(dealt_in_player_ids) != len(set(dealt_in_player_ids)):
+                raise ValueError("Dealt-in player identities must be unique")
+        if self.active_player_ids is not None and len(
+            self.active_player_ids
+        ) != len(set(self.active_player_ids)):
+            raise ValueError("Active player identities must be unique")
+        return self
+
+
+def _canonical_decision_state_payload(
+    state: CanonicalState,
+) -> dict[str, object]:
+    """Serialize every field available to a recommendation provider."""
+
+    payload = state.model_dump(
+        mode="json",
+        include=set(CanonicalState.model_fields),
+        exclude_none=False,
+    )
+    # This field has an empty-value serialization exclusion on the domain model,
+    # but empty history is still route-critical evidence rather than absence from
+    # the provider contract.
+    payload["completed_postflop_streets"] = [
+        history.model_dump(mode="json")
+        for history in state.completed_postflop_streets
+    ]
+    return payload
+
+
+def _canonical_grading_context_payload(
+    context: RecommendationGradingContext,
+) -> dict[str, object]:
+    economic_model = context.economic_model
+    if economic_model.blind_level is None:
+        raise ValueError("A grading context requires an exact economic blind level")
+    if (
+        economic_model.blind_level.ante > 0
+        and economic_model.blind_level.ante_mode
+        not in {"per_player", "big_blind"}
+    ):
+        raise ValueError(
+            "A grading context with a positive ante requires a known ante"
+            " posting mode"
+        )
+    return {
+        "schema": context.context_schema,
+        "decision_state": _canonical_decision_state_payload(
+            context.decision_state
+        ),
+        "street": context.street,
+        "effective_stack_bb": _normalized_economic_value(
+            context.effective_stack_bb
+        ),
+        "players_in_hand": context.players_in_hand,
+        "hero_structural_position": context.hero_structural_position.model_dump(
+            mode="json"
+        ),
+        "hero_player_id": context.hero_player_id,
+        "opponent_player_id": context.opponent_player_id,
+        "dealt_in_player_ids_by_position": (
+            dict(sorted(context.dealt_in_player_ids_by_position.items()))
+            if context.dealt_in_player_ids_by_position is not None
+            else None
+        ),
+        "active_player_ids": (
+            sorted(context.active_player_ids)
+            if context.active_player_ids is not None
+            else None
+        ),
+        "economic_model": {
+            "kind": economic_model.kind,
+            "name": economic_model.name,
+            "revision": economic_model.revision,
+            "configuration_sha256": economic_model.configuration_sha256,
+            "configuration": _normalized_economic_configuration(
+                economic_model.configuration
+            ),
+            "blind_level": _normalized_economic_value(
+                economic_model.blind_level.model_dump(mode="python")
+            ),
+        },
+        "utility_model": {
+            "name": context.utility_model.name,
+            "revision": context.utility_model.revision,
+            "configuration_sha256": context.utility_model.configuration_sha256,
+            "configuration": _normalized_utility_configuration(
+                context.utility_model.configuration
+            ),
+        },
+    }
+
+
+def recommendation_grading_context_payload(
+    state: RecommendationBenchmarkState,
+) -> dict[str, object]:
+    """Return the benchmark-owned canonical context a provider route must bind."""
+
+    economic_model = state.economic_model
+    if not isinstance(economic_model, RecommendationEconomicModel):
+        raise ValueError("A grading context requires an exact economic model")
+    if economic_model.blind_level is None:
+        raise ValueError("A grading context requires an exact economic blind level")
+    utility_model = state.utility_model
+    if utility_model is None:
+        raise ValueError("A grading context requires an exact utility model")
+    structural_position = state.hero_structural_position
+    if structural_position is None:
+        raise ValueError("A grading context requires an exact structural position")
+    if state.street is None:
+        raise ValueError("A grading context requires an exact street")
+    if state.effective_stack is None:
+        raise ValueError("A grading context requires an exact effective stack")
+    if state.players_in_hand is None:
+        raise ValueError("A grading context requires an exact active-player count")
+    decision_state = RecommendationGradingDecisionState.model_validate(
+        _canonical_decision_state_payload(state)
+    )
+    context = RecommendationGradingContext(
+        context_schema="poker-hero-recommendation-grading-context/v4",
+        decision_state=decision_state,
+        street=state.street,
+        effective_stack_bb=Decimal(str(state.effective_stack)),
+        players_in_hand=state.players_in_hand,
+        hero_structural_position=structural_position,
+        hero_player_id=state.hero_player_id,
+        opponent_player_id=state.opponent_player_id,
+        dealt_in_player_ids_by_position=state.dealt_in_player_ids_by_position,
+        active_player_ids=state.active_player_ids,
+        economic_model=economic_model,
+        utility_model=utility_model,
+    )
+    return _canonical_grading_context_payload(context)
+
+
+def recommendation_grading_context_sha256(
+    state: RecommendationBenchmarkState,
+) -> str:
+    """Fingerprint the route-critical context a provider must actually bind."""
+
+    normalized = recommendation_grading_context_payload(state)
+    payload = json.dumps(
+        normalized,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+class RecommendationRightsEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    basis: Literal["owned", "licensed"]
+    delivery_mode: GradingDeliveryMode
+    grants: list[GradingRight] = Field(min_length=1, max_length=6)
+    evidence_pointer: str = Field(min_length=1, max_length=1_000)
+    evidence_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_rights_for_delivery_mode(self) -> Self:
+        if len(self.grants) != len(set(self.grants)):
+            raise ValueError("Reference rights grants must be unique")
+        required_rights = {
+            "shipped_static_lookup": {
+                "commercial_use",
+                "embedding",
+                "redistribution",
+                "updates",
+            },
+            "server_side_feed": {
+                "commercial_use",
+                "commercial_serving",
+                "derived_outputs",
+            },
+        }[self.delivery_mode]
+        missing = required_rights.difference(self.grants)
+        if missing:
+            raise ValueError(
+                f"{self.delivery_mode} rights evidence is missing grants:"
+                f" {', '.join(sorted(missing))}"
+            )
+        return self
+
+
+class RecommendationConvergenceEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    metric: str = Field(min_length=1, max_length=100)
+    unit: str = Field(min_length=1, max_length=100)
+    comparison: Literal["at_most", "at_least"]
+    threshold: NonNegativeFiniteNumber
+    observed: NonNegativeFiniteNumber
+    iterations: PositiveInteger
+    evidence_pointer: str = Field(min_length=1, max_length=1_000)
+    evidence_sha256: Sha256Digest
+
+    @model_validator(mode="after")
+    def validate_threshold(self) -> Self:
+        passed = (
+            self.observed <= self.threshold
+            if self.comparison == "at_most"
+            else self.observed >= self.threshold
+        )
+        if not passed:
+            relation = "at most" if self.comparison == "at_most" else "at least"
+            raise ValueError(
+                f"Observed convergence metric must be {relation} its threshold"
+            )
+        return self
+
+
+class RecommendationGradingReference(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reference_revision: EvidenceRevision
+    policy_revision: EvidenceRevision
+    tolerance_revision: EvidenceRevision
+    source_artifact_sha256: Sha256Digest
+    source_configuration_sha256: Sha256Digest
+    policy_artifact_sha256: Sha256Digest
+    coverage: RecommendationReferenceCoverage
+    economic_model: RecommendationEconomicModel
+    utility_model: RecommendationUtilityModel
+    ev_unit: GradingEvUnit
+    rights_evidence: RecommendationRightsEvidence
+    convergence_evidence: list[RecommendationConvergenceEvidence] = Field(
+        min_length=1,
+        max_length=100,
+    )
+
+    @model_validator(mode="after")
+    def validate_convergence_evidence(self) -> Self:
+        convergence_keys = [
+            (evidence.metric, evidence.unit, evidence.evidence_sha256)
+            for evidence in self.convergence_evidence
+        ]
+        if len(convergence_keys) != len(set(convergence_keys)):
+            raise ValueError("Convergence evidence entries must be unique")
+        return self
 
 
 class RecommendationReferenceLine(BaseModel):
@@ -238,7 +1118,7 @@ class RecommendationBenchmarkCase(BaseModel):
         return self
 
 
-class RecommendationBenchmarkDataset(BaseModel):
+class _RecommendationBenchmarkDatasetMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_name: Literal[RECOMMENDATION_BENCHMARK_SCHEMA] = Field(alias="schema")
@@ -246,16 +1126,14 @@ class RecommendationBenchmarkDataset(BaseModel):
         RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION,
         RECOMMENDATION_BENCHMARK_TAGGED_SCHEMA_VERSION,
         RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION,
         RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
     ]
     name: str = Field(min_length=1, max_length=200)
     reference_source: RecommendationReferenceSource | None = None
+    grading_reference: RecommendationGradingReference | None = None
     sizing_tolerance_bb: PositiveFiniteNumber = 0.01
     minimum_policy_frequency: PositiveProbability = 0.05
-    cases: list[RecommendationBenchmarkCase] = Field(
-        min_length=1,
-        max_length=MAX_RECOMMENDATION_BENCHMARK_CASES,
-    )
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -265,68 +1143,661 @@ class RecommendationBenchmarkDataset(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_cases(self) -> Self:
-        if self.schema_version == RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION:
-            if self.reference_source is not None or any(
-                case.tags for case in self.cases
-            ):
-                raise ValueError(
-                    "Reference source and case tags require schema version 2"
-                )
+    def validate_trust_metadata(self) -> Self:
         if (
-            self.schema_version < RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION
-            and any(
-                case.expected_range_conditioning is not None
-                for case in self.cases
+            self.schema_version == RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION
+            and self.reference_source is not None
+        ):
+            raise ValueError("Reference source and case tags require schema version 2")
+        if self.schema_version < RECOMMENDATION_BENCHMARK_SCHEMA_VERSION:
+            if self.grading_reference is not None:
+                raise ValueError("Grading reference evidence requires schema version 5")
+        elif self.grading_reference is None:
+            raise ValueError("Schema version 5 requires grading reference evidence")
+        if self.grading_reference is not None and self.reference_source is None:
+            raise ValueError("Grading reference evidence requires a reference source")
+        return self
+
+
+def _validate_recommendation_benchmark_case_collection(
+    metadata: _RecommendationBenchmarkDatasetMetadata,
+    cases: Sequence[RecommendationBenchmarkCase],
+) -> None:
+    """Validate corpus-wide case rules without requiring case serialization."""
+
+    if not 1 <= len(cases) <= MAX_RECOMMENDATION_BENCHMARK_CASES:
+        raise ValueError(
+            "Recommendation benchmark must contain between 1 and"
+            f" {MAX_RECOMMENDATION_BENCHMARK_CASES} cases"
+        )
+    if (
+        metadata.schema_version == RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION
+        and any(case.tags for case in cases)
+    ):
+        raise ValueError("Reference source and case tags require schema version 2")
+    if (
+        metadata.schema_version < RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION
+        and any(case.expected_range_conditioning is not None for case in cases)
+    ):
+        raise ValueError("Range conditioning expectations require schema version 3")
+    if (
+        metadata.schema_version
+        < RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION
+        and any(case.expected_range_source is not None for case in cases)
+    ):
+        raise ValueError("Range source expectations require schema version 4")
+    if metadata.grading_reference is not None:
+        if metadata.grading_reference.ev_unit != "bb" and any(
+            line.ev_bb is not None
+            for case in cases
+            for line in case.reference_lines
+        ):
+            raise ValueError(
+                "ev_bb reference labels require a BB grading-reference EV unit"
+            )
+        for case in cases:
+            _validate_case_within_grading_coverage(
+                case,
+                metadata.grading_reference.coverage,
+                metadata.grading_reference.economic_model,
+                metadata.grading_reference.utility_model,
+            )
+    case_ids = [case.id for case in cases]
+    if len(case_ids) != len(set(case_ids)):
+        raise ValueError("Recommendation benchmark case IDs must be unique")
+    for case in cases:
+        if (
+            case.expected_range_conditioning is not None
+            and case.state.street not in {"turn", "river"}
+        ):
+            raise ValueError(
+                f"Case {case.id} can expect range conditioning only on turn or river"
+            )
+        if (
+            case.expected_range_source is not None
+            and case.state.street not in {"flop", "turn", "river"}
+        ):
+            raise ValueError(
+                f"Case {case.id} can expect a range source only postflop"
+            )
+        if not any(
+            line.frequency >= metadata.minimum_policy_frequency
+            for line in case.reference_lines
+        ):
+            raise ValueError(f"Case {case.id} has no line at the supported frequency")
+        for action in WAGER_ACTIONS:
+            sizings = sorted(
+                line.sizing
+                for line in case.reference_lines
+                if line.action == action and line.sizing is not None
+            )
+            for left, right in zip(sizings, sizings[1:], strict=False):
+                sizing_gap = Decimal(str(right)) - Decimal(str(left))
+                minimum_gap = Decimal(str(metadata.sizing_tolerance_bb)) * 2
+                if sizing_gap < minimum_gap:
+                    raise ValueError(f"Case {case.id} has ambiguous {action} sizings")
+
+
+class RecommendationBenchmarkDataset(_RecommendationBenchmarkDatasetMetadata):
+    cases: list[RecommendationBenchmarkCase] = Field(
+        min_length=1,
+        max_length=MAX_RECOMMENDATION_BENCHMARK_CASES,
+    )
+
+    @model_validator(mode="after")
+    def validate_cases(self) -> Self:
+        _validate_recommendation_benchmark_case_collection(self, self.cases)
+        return self
+
+
+def _validate_case_actor_economics(
+    case: RecommendationBenchmarkCase,
+    economic_model: RecommendationEconomicModel,
+    table_configuration: RecommendationReferenceTableConfiguration,
+) -> None:
+    state = case.state
+    if not isinstance(economic_model.configuration, TournamentEconomics):
+        if any(
+            value is not None
+            for value in (
+                state.hero_player_id,
+                state.opponent_player_id,
+                state.dealt_in_player_ids_by_position,
+                state.active_player_ids,
             )
         ):
             raise ValueError(
-                "Range conditioning expectations require schema version 3"
+                f"Case {case.id} actor identities are only valid for tournament"
+                " economic models"
+            )
+        return
+
+    if state.hero_player_id is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require hero_player_id"
+        )
+    if state.opponent_player_id is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require opponent_player_id"
+        )
+    if state.dealt_in_player_ids_by_position is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require"
+            " dealt_in_player_ids_by_position"
+        )
+    if state.active_player_ids is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require active_player_ids"
+        )
+    if economic_model.blind_level is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require an exact blind_level"
+        )
+    if state.hero_player_id == state.opponent_player_id:
+        raise ValueError(
+            f"Case {case.id} hero and opponent player identities must be distinct"
+        )
+    dealt_in_values = list(state.dealt_in_player_ids_by_position.values())
+    if len(dealt_in_values) != len(set(dealt_in_values)):
+        raise ValueError(
+            f"Case {case.id} dealt-in player identities must be unique"
+        )
+    if len(state.active_player_ids) != len(set(state.active_player_ids)):
+        raise ValueError(
+            f"Case {case.id} active player identities must be unique"
+        )
+
+    expected_position_labels = {
+        position.display_label
+        for position in table_configuration.structural_positions
+    }
+    actual_position_labels = set(state.dealt_in_player_ids_by_position)
+    if actual_position_labels != expected_position_labels:
+        raise ValueError(
+            f"Case {case.id} dealt_in_player_ids_by_position must map every exact"
+            " structural position in its table configuration"
+        )
+    structural_position = state.hero_structural_position
+    if structural_position is None:
+        raise ValueError(
+            f"Case {case.id} tournament actor mapping requires a structural position"
+        )
+    if (
+        state.dealt_in_player_ids_by_position[structural_position.display_label]
+        != state.hero_player_id
+    ):
+        raise ValueError(
+            f"Case {case.id} hero_player_id does not match the player mapped to"
+            f" hero structural position {structural_position.display_label!r}"
+        )
+
+    if (
+        table_configuration.dealt_in_count > 2
+        or state.opponent_position is not None
+    ):
+        routed_opponent_position = normalize_position(state.opponent_position)
+        opponent_structural_positions = [
+            position
+            for position in table_configuration.structural_positions
+            if routed_opponent_position is not None
+            and LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL.get(
+                position.display_label
+            )
+            == routed_opponent_position
+        ]
+        if len(opponent_structural_positions) != 1:
+            raise ValueError(
+                f"Case {case.id} tournament opponent_position"
+                f" {state.opponent_position!r} must route to one exact structural"
+                " position in its table configuration"
+            )
+        opponent_structural_position = opponent_structural_positions[0]
+        mapped_opponent_player_id = state.dealt_in_player_ids_by_position[
+            opponent_structural_position.display_label
+        ]
+        if mapped_opponent_player_id != state.opponent_player_id:
+            raise ValueError(
+                f"Case {case.id} opponent_position {state.opponent_position!r} maps"
+                f" to player {mapped_opponent_player_id!r}, not opponent_player_id"
+                f" {state.opponent_player_id!r}"
+            )
+
+    dealt_in_player_ids = set(state.dealt_in_player_ids_by_position.values())
+    active_player_ids = set(state.active_player_ids)
+    if not active_player_ids <= dealt_in_player_ids:
+        raise ValueError(
+            f"Case {case.id} active_player_ids must be a subset of dealt-in players"
+        )
+    if state.players_in_hand is None or len(active_player_ids) != state.players_in_hand:
+        raise ValueError(
+            f"Case {case.id} active_player_ids count must equal players_in_hand"
+        )
+    if state.hero_player_id not in active_player_ids:
+        raise ValueError(
+            f"Case {case.id} active_player_ids must include hero_player_id"
+        )
+    if state.opponent_player_id not in active_player_ids:
+        raise ValueError(
+            f"Case {case.id} opponent_player_id must identify an active player"
+        )
+    if state.players_in_hand == 2 and active_player_ids != {
+        state.hero_player_id,
+        state.opponent_player_id,
+    }:
+        raise ValueError(
+            f"Case {case.id} heads-up active_player_ids must be exactly the hero"
+            " and opponent identities"
+        )
+
+    stack_by_player = {
+        stack.player_id: stack.stack
+        for stack in economic_model.configuration.remaining_stacks
+    }
+    bounty_player_ids = {
+        bounty.player_id for bounty in economic_model.configuration.bounties
+    }
+    for player_id in dealt_in_player_ids:
+        if player_id not in stack_by_player:
+            raise ValueError(
+                f"Case {case.id} dealt-in player {player_id!r} is absent from"
+                " tournament remaining_stacks"
+            )
+        if player_id not in bounty_player_ids:
+            raise ValueError(
+                f"Case {case.id} dealt-in player {player_id!r} is absent from"
+                " tournament bounties"
+            )
+
+    for role, player_id, visible_stack in (
+        ("hero", state.hero_player_id, state.hero_stack),
+        ("opponent", state.opponent_player_id, state.opponent_stack),
+    ):
+        if visible_stack is None:
+            raise ValueError(
+                f"Case {case.id} tournament economics require {role}_stack"
+            )
+        configured_stack = stack_by_player[player_id]
+        expected_stack = Decimal(str(visible_stack)) * (
+            economic_model.blind_level.big_blind
+        )
+        if expected_stack != configured_stack:
+            raise ValueError(
+                f"Case {case.id} {role}_stack {visible_stack:g} BB does not match"
+                f" tournament remaining_stacks value {configured_stack}"
+                f" {economic_model.blind_level.denomination_unit} at big blind"
+                f" {economic_model.blind_level.big_blind}"
+            )
+
+
+def _validate_case_within_grading_coverage(
+    case: RecommendationBenchmarkCase,
+    coverage: RecommendationReferenceCoverage,
+    economic_model: RecommendationEconomicModel,
+    utility_model: RecommendationUtilityModel,
+) -> None:
+    state = case.state
+    case_economic_model = state.economic_model
+    if case_economic_model is None:
+        raise ValueError(
+            f"Case {case.id} requires an economic_model for grading coverage"
+        )
+    if isinstance(case_economic_model, RecommendationUnknownEconomicModel):
+        raise ValueError(
+            f"Case {case.id} economic_model is unknown and cannot match the declared"
+            " grading-reference economic model"
+        )
+    for model_label, model in (
+        ("case", case_economic_model),
+        ("grading-reference", economic_model),
+    ):
+        try:
+            RecommendationEconomicModel.model_validate(
+                model.model_dump(mode="python")
+            )
+        except ValidationError as exc:
+            raise ValueError(
+                f"Case {case.id} {model_label} economic_model is invalid: {exc}"
+            ) from exc
+        if model.blind_level is None:
+            raise ValueError(
+                f"Case {case.id} {model_label} economic_model requires an exact"
+                " blind_level for grading coverage"
             )
         if (
-            self.schema_version < RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
-            and any(case.expected_range_source is not None for case in self.cases)
+            model.blind_level.ante > 0
+            and model.blind_level.ante_mode
+            not in {"per_player", "big_blind"}
         ):
-            raise ValueError("Range source expectations require schema version 4")
-        case_ids = [case.id for case in self.cases]
-        if len(case_ids) != len(set(case_ids)):
-            raise ValueError("Recommendation benchmark case IDs must be unique")
-        for case in self.cases:
+            raise ValueError(
+                f"Case {case.id} {model_label} economic_model with a positive"
+                " ante requires a known ante posting mode for grading coverage"
+            )
+        actual_sha256 = recommendation_economic_configuration_sha256(
+            model.configuration,
+            model.blind_level,
+        )
+        if model.configuration_sha256 != actual_sha256:
+            raise ValueError(
+                f"Case {case.id} {model_label} economic_model configuration was"
+                " modified without updating its normalized configuration_sha256"
+            )
+    for field_name in (
+        "kind",
+        "name",
+        "revision",
+        "configuration_sha256",
+        "blind_level",
+    ):
+        case_value = getattr(case_economic_model, field_name)
+        reference_value = getattr(economic_model, field_name)
+        if case_value != reference_value:
+            raise ValueError(
+                f"Case {case.id} economic_model.{field_name} {case_value!r} does not"
+                f" match declared grading-reference value {reference_value!r}"
+            )
+    if _normalized_economic_configuration(
+        case_economic_model.configuration
+    ) != _normalized_economic_configuration(economic_model.configuration):
+        raise ValueError(
+            f"Case {case.id} economic_model.configuration does not match the"
+            " declared grading-reference route-critical configuration"
+        )
+    case_utility_model = state.utility_model
+    if case_utility_model is None:
+        raise ValueError(
+            f"Case {case.id} requires a utility_model for grading coverage"
+        )
+    for model_label, model in (
+        ("case", case_utility_model),
+        ("grading-reference", utility_model),
+    ):
+        actual_sha256 = recommendation_utility_configuration_sha256(
+            model.configuration
+        )
+        if model.configuration_sha256 != actual_sha256:
+            raise ValueError(
+                f"Case {case.id} {model_label} utility_model configuration was"
+                " modified without updating its normalized configuration_sha256"
+            )
+    for field_name in ("name", "revision", "configuration_sha256"):
+        case_value = getattr(case_utility_model, field_name)
+        reference_value = getattr(utility_model, field_name)
+        if case_value != reference_value:
+            raise ValueError(
+                f"Case {case.id} utility_model.{field_name} {case_value!r} does not"
+                f" match declared grading-reference value {reference_value!r}"
+            )
+    if _normalized_utility_configuration(
+        case_utility_model.configuration
+    ) != _normalized_utility_configuration(utility_model.configuration):
+        raise ValueError(
+            f"Case {case.id} utility_model.configuration does not match the"
+            " declared grading-reference route-critical configuration"
+        )
+    if len(state.hero_cards) != 2:
+        raise ValueError(
+            f"Case {case.id} requires exactly two hero cards for grading coverage"
+        )
+    if state.street is None or state.street not in coverage.streets:
+        raise ValueError(
+            f"Case {case.id} street {state.street!r} is outside declared"
+            " grading-reference coverage"
+        )
+    expected_board_cards = {
+        "preflop": 0,
+        "flop": 3,
+        "turn": 4,
+        "river": 5,
+    }[state.street]
+    if len(state.board_cards) != expected_board_cards:
+        raise ValueError(
+            f"Case {case.id} board does not match its declared street"
+        )
+    if state.effective_stack is None:
+        raise ValueError(
+            f"Case {case.id} requires an effective stack for grading coverage"
+        )
+    covered_stacks = {
+        Decimal(str(depth)) for depth in coverage.effective_stack_depths_bb
+    }
+    if Decimal(str(state.effective_stack)) not in covered_stacks:
+        raise ValueError(
+            f"Case {case.id} effective stack {state.effective_stack:g} BB is outside"
+            " declared grading-reference coverage"
+        )
+    effective_stack = Decimal(str(state.effective_stack))
+    visible_stacks = {
+        "hero_stack": state.hero_stack,
+        "opponent_stack": state.opponent_stack,
+    }
+    for field_name, visible_stack in visible_stacks.items():
+        if (
+            visible_stack is not None
+            and Decimal(str(visible_stack)) < effective_stack
+        ):
+            raise ValueError(
+                f"Case {case.id} {field_name} {visible_stack:g} BB is below"
+                f" effective stack {state.effective_stack:g} BB"
+            )
+    if (
+        state.players_in_hand == 2
+        and state.hero_stack is not None
+        and state.opponent_stack is not None
+    ):
+        visible_effective_stack = min(
+            Decimal(str(state.hero_stack)),
+            Decimal(str(state.opponent_stack)),
+        )
+        if effective_stack != visible_effective_stack:
+            raise ValueError(
+                f"Case {case.id} heads-up effective stack"
+                f" {state.effective_stack:g} BB does not equal the visible-stack"
+                f" minimum {visible_effective_stack:g} BB"
+            )
+
+    structural_position = state.hero_structural_position
+    if structural_position is None:
+        raise ValueError(
+            f"Case {case.id} requires a structural position for grading coverage"
+        )
+    table_configuration = next(
+        (
+            table
+            for table in coverage.table_configurations
+            if table.dealt_in_count
+            == structural_position.dealt_in_player_count
+        ),
+        None,
+    )
+    if table_configuration is None:
+        raise ValueError(
+            f"Case {case.id} dealt-in count"
+            f" {structural_position.dealt_in_player_count} is outside declared"
+            " grading-reference coverage"
+        )
+    if not any(
+        position.action_index == structural_position.action_index
+        and position.button_distance == structural_position.button_distance
+        and position.display_label == structural_position.display_label
+        for position in table_configuration.structural_positions
+    ):
+        raise ValueError(
+            f"Case {case.id} structural position is outside declared"
+            " grading-reference coverage"
+        )
+    expected_legacy_position = LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL.get(
+        structural_position.display_label
+    )
+    if expected_legacy_position is None:
+        raise ValueError(
+            f"Case {case.id} structural position"
+            f" {structural_position.display_label!r} at"
+            f" {structural_position.dealt_in_player_count}-handed cannot be"
+            " represented exactly by legacy hero_position routing"
+        )
+    routed_legacy_position = normalize_position(state.hero_position)
+    if routed_legacy_position != expected_legacy_position:
+        raise ValueError(
+            f"Case {case.id} hero_position {state.hero_position!r} routes to"
+            f" {routed_legacy_position!r}, but structural position"
+            f" {structural_position.display_label!r} at"
+            f" {structural_position.dealt_in_player_count}-handed requires"
+            f" {expected_legacy_position!r}"
+        )
+    exact_table_routes = {
+        legacy_position
+        for position in table_configuration.structural_positions
+        if (
+            legacy_position := LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL.get(
+                position.display_label
+            )
+        )
+        is not None
+    }
+    expected_table_routes = ", ".join(
+        repr(position) for position in sorted(exact_table_routes)
+    )
+    for index, action in enumerate(state.preflop_action_history):
+        if action.actor not in exact_table_routes:
+            raise ValueError(
+                f"Case {case.id} preflop_action_history[{index}].actor"
+                f" {action.actor!r} is outside the declared"
+                f" {table_configuration.dealt_in_count}-handed exact structural"
+                f" routes: {expected_table_routes}"
+            )
+    first_structured_raise = next(
+        (
+            action
+            for action in state.preflop_action_history
+            if action.action == "raise"
+        ),
+        None,
+    )
+    if (
+        state.preflop_action_history
+        and first_structured_raise is None
+        and (
+            state.preflop_opener_position is not None
+            or state.preflop_open_size is not None
+        )
+    ):
+        raise ValueError(
+            f"Case {case.id} structured preflop history has no raise, so"
+            " preflop_opener_position and preflop_open_size must both be absent"
+        )
+    routed_opener_position = None
+    opener_source: str | None = None
+    opener_value: str | None = None
+    if state.preflop_opener_position is not None:
+        routed_opener_position = opening_raise_position(
+            state.action_context,
+            state.preflop_opener_position,
+        )
+        opener_source = "preflop_opener_position"
+        opener_value = state.preflop_opener_position
+    elif not state.preflop_action_history:
+        routed_opener_position = opening_raise_position(state.action_context)
+        if routed_opener_position is not None:
+            opener_source = "action_context preflop opener"
+            opener_value = routed_opener_position
+    if opener_source is not None and routed_opener_position not in exact_table_routes:
+        raise ValueError(
+            f"Case {case.id} {opener_source} {opener_value!r} routes to"
+            f" {routed_opener_position!r}, outside the declared"
+            f" {table_configuration.dealt_in_count}-handed exact structural"
+            f" routes: {expected_table_routes}"
+        )
+    if first_structured_raise is not None:
+        if (
+            state.preflop_opener_position is not None
+            and routed_opener_position != first_structured_raise.actor
+        ):
+            raise ValueError(
+                f"Case {case.id} preflop_opener_position"
+                f" {state.preflop_opener_position!r} routes to"
+                f" {routed_opener_position!r}, but the first structured raise is"
+                f" from {first_structured_raise.actor!r}"
+            )
+        if state.preflop_open_size is not None:
+            explicit_open_size = Decimal(str(state.preflop_open_size))
+            structured_open_size = Decimal(str(first_structured_raise.amount))
+            if explicit_open_size != structured_open_size:
+                raise ValueError(
+                    f"Case {case.id} preflop_open_size"
+                    f" {state.preflop_open_size:g} BB does not match first"
+                    f" structured raise size {first_structured_raise.amount:g} BB"
+                )
+    if (
+        state.players_in_hand is None
+        or state.players_in_hand < 2
+        or state.players_in_hand > structural_position.dealt_in_player_count
+    ):
+        raise ValueError(
+            f"Case {case.id} players_in_hand must be between 2 and its dealt-in count"
+        )
+    if state.street != "preflop" and state.players_in_hand > 2:
+        raise ValueError(
+            f"Case {case.id} schema version 5 does not support multiway postflop"
+            " grading because its state contract represents only one opponent"
+        )
+    _validate_case_actor_economics(
+        case,
+        case_economic_model,
+        table_configuration,
+    )
+    if state.street != "preflop" and state.players_in_hand == 2:
+        compatible_opponent_positions = {
+            legacy_position
+            for position in table_configuration.structural_positions
+            if not (
+                position.action_index == structural_position.action_index
+                and position.button_distance == structural_position.button_distance
+                and position.display_label == structural_position.display_label
+            )
             if (
-                case.expected_range_conditioning is not None
-                and case.state.street not in {"turn", "river"}
-            ):
-                raise ValueError(
-                    f"Case {case.id} can expect range conditioning only on turn or river"
+                legacy_position := LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL.get(
+                    position.display_label
                 )
-            if (
-                case.expected_range_source is not None
-                and case.state.street not in {"flop", "turn", "river"}
-            ):
-                raise ValueError(
-                    f"Case {case.id} can expect a range source only postflop"
-                )
-            if not any(
-                line.frequency >= self.minimum_policy_frequency
-                for line in case.reference_lines
-            ):
-                raise ValueError(
-                    f"Case {case.id} has no line at the supported frequency"
-                )
-            for action in WAGER_ACTIONS:
-                sizings = sorted(
-                    line.sizing
-                    for line in case.reference_lines
-                    if line.action == action and line.sizing is not None
-                )
-                for left, right in zip(sizings, sizings[1:], strict=False):
-                    sizing_gap = Decimal(str(right)) - Decimal(str(left))
-                    minimum_gap = Decimal(str(self.sizing_tolerance_bb)) * 2
-                    if sizing_gap < minimum_gap:
-                        raise ValueError(
-                            f"Case {case.id} has ambiguous {action} sizings"
-                        )
-        return self
+            )
+            is not None
+        }
+        routed_opponent_position = normalize_position(state.opponent_position)
+        if routed_opponent_position not in compatible_opponent_positions:
+            expected_positions = ", ".join(
+                repr(position) for position in sorted(compatible_opponent_positions)
+            )
+            raise ValueError(
+                f"Case {case.id} opponent_position {state.opponent_position!r} routes"
+                f" to {routed_opponent_position!r}, but heads-up postflop structural"
+                f" coverage requires a distinct exact seat routed as one of:"
+                f" {expected_positions}"
+            )
+    required_completed_streets = {
+        "preflop": (),
+        "flop": (),
+        "turn": ("flop",),
+        "river": ("flop", "turn"),
+    }[state.street]
+    actual_completed_streets = tuple(
+        history.street for history in state.completed_postflop_streets
+    )
+    if actual_completed_streets != required_completed_streets:
+        required_label = ", ".join(required_completed_streets) or "none"
+        actual_label = ", ".join(actual_completed_streets) or "none"
+        raise ValueError(
+            f"Case {case.id} {state.street} grading requires completed postflop"
+            f" street evidence for exactly: {required_label}; got: {actual_label}"
+        )
+    for index, history in enumerate(state.completed_postflop_streets):
+        try:
+            CompletedPostflopStreetHistory.model_validate(
+                history.model_dump(mode="python")
+            )
+        except ValidationError as exc:
+            raise ValueError(
+                f"Case {case.id} completed_postflop_streets[{index}] root evidence"
+                f" is invalid: {exc}"
+            ) from exc
 
 
 class RecommendationBenchmarkCaseResult(BaseModel):
@@ -345,6 +1816,28 @@ class RecommendationBenchmarkCaseResult(BaseModel):
     reference_ev_loss_bb: float | None = None
     engine: str | None = None
     fallback_reason: str | None = None
+    grading_context_sha256: Sha256Digest | None = None
+    grading_context_attestation_sha256: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_route_id: EvidenceRevision | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_engine_id: EvidenceRevision | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_engine_revision: EvidenceRevision | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_configuration_sha256: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_binding_revision: EvidenceRevision | None = None
     expected_range_conditioning: RangeConditioningStatus | None = None
     range_conditioning_status: RangeConditioningStatus | None = None
     range_conditioning_match: bool | None = None
@@ -391,12 +1884,20 @@ class RecommendationBenchmarkBreakdown(RecommendationBenchmarkMetrics):
 
 class RecommendationBenchmarkReport(RecommendationBenchmarkMetrics):
     dataset_name: str
+    dataset_schema_version: Literal[
+        RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_TAGGED_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+    ] | None = None
     dataset_fingerprint: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
     )
     provider: str
     reference_source: RecommendationReferenceSource | None = None
+    grading_reference: RecommendationGradingReference | None = None
     street_metrics: list[RecommendationBenchmarkBreakdown] = Field(
         default_factory=list
     )
@@ -438,7 +1939,7 @@ def recommendation_dataset_fingerprint(
 ) -> str:
     normalized = dataset.model_dump(mode="json", by_alias=True)
     normalized.pop("name", None)
-    for case in normalized["cases"]:
+    for source_case, case in zip(dataset.cases, normalized["cases"], strict=True):
         case.pop("description", None)
         case["tags"] = sorted(case["tags"])
         case["reference_lines"] = sorted(
@@ -450,10 +1951,81 @@ def recommendation_dataset_fingerprint(
                 sort_keys=True,
             ),
         )
+        active_player_ids = case["state"].get("active_player_ids")
+        if isinstance(active_player_ids, list):
+            case["state"]["active_player_ids"] = sorted(active_player_ids)
+        case_economic_model = source_case.state.economic_model
+        if isinstance(case_economic_model, RecommendationEconomicModel):
+            case["state"]["economic_model"]["configuration"] = (
+                _normalized_economic_configuration(
+                    case_economic_model.configuration
+                )
+            )
+            if case_economic_model.blind_level is not None:
+                case["state"]["economic_model"]["blind_level"] = (
+                    _normalized_economic_value(
+                        case_economic_model.blind_level.model_dump(mode="python")
+                    )
+                )
+        case_utility_model = source_case.state.utility_model
+        if case_utility_model is not None:
+            case["state"]["utility_model"]["configuration"] = (
+                _normalized_utility_configuration(
+                    case_utility_model.configuration
+                )
+            )
     normalized["cases"] = sorted(
         normalized["cases"],
         key=lambda case: case["id"],
     )
+    grading_reference = normalized.get("grading_reference")
+    if isinstance(grading_reference, dict):
+        if dataset.grading_reference is None:
+            raise ValueError("Normalized grading reference is missing its source model")
+        grading_reference["economic_model"]["configuration"] = (
+            _normalized_economic_configuration(
+                dataset.grading_reference.economic_model.configuration
+            )
+        )
+        reference_blind_level = (
+            dataset.grading_reference.economic_model.blind_level
+        )
+        if reference_blind_level is not None:
+            grading_reference["economic_model"]["blind_level"] = (
+                _normalized_economic_value(
+                    reference_blind_level.model_dump(mode="python")
+                )
+            )
+        grading_reference["utility_model"]["configuration"] = (
+            _normalized_utility_configuration(
+                dataset.grading_reference.utility_model.configuration
+            )
+        )
+        coverage = grading_reference["coverage"]
+        coverage["table_configurations"] = sorted(
+            coverage["table_configurations"],
+            key=lambda table: table["dealt_in_count"],
+        )
+        for table in coverage["table_configurations"]:
+            table["structural_positions"] = sorted(
+                table["structural_positions"],
+                key=lambda position: position["action_index"],
+            )
+        coverage["effective_stack_depths_bb"] = sorted(
+            coverage["effective_stack_depths_bb"]
+        )
+        coverage["streets"] = sorted(coverage["streets"])
+        rights_evidence = grading_reference["rights_evidence"]
+        rights_evidence["grants"] = sorted(rights_evidence["grants"])
+        grading_reference["convergence_evidence"] = sorted(
+            grading_reference["convergence_evidence"],
+            key=lambda evidence: json.dumps(
+                evidence,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+        )
     payload = json.dumps(
         normalized,
         ensure_ascii=True,
@@ -519,9 +2091,88 @@ def run_recommendation_benchmark(
     dataset: RecommendationBenchmarkDataset,
     provider: RecommendationProvider,
 ) -> RecommendationBenchmarkReport:
+    dataset_snapshot_error: str | None = None
+    try:
+        dataset_snapshot = RecommendationBenchmarkDataset.model_validate_json(
+            dataset.model_dump_json(by_alias=True)
+        )
+    except PydanticSerializationError:
+        dataset_snapshot = dataset.model_copy(deep=True)
+        try:
+            metadata_snapshot = (
+                _RecommendationBenchmarkDatasetMetadata.model_validate_json(
+                    dataset.model_dump_json(by_alias=True, exclude={"cases"})
+                )
+            )
+            _validate_recommendation_benchmark_case_collection(
+                metadata_snapshot,
+                dataset.cases,
+            )
+        except PydanticSerializationError as exc:
+            dataset_snapshot_error = (
+                "Recommendation benchmark snapshot is invalid: "
+                f"{str(exc) or exc.__class__.__name__}"
+            )
+        except ValidationError as exc:
+            first_error = exc.errors(include_url=False)[0]
+            location = (
+                ".".join(str(part) for part in first_error["loc"]) or "dataset"
+            )
+            dataset_snapshot_error = (
+                f"Recommendation benchmark snapshot is invalid at {location}:"
+                f" {first_error['msg']}"
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            dataset_snapshot_error = (
+                "Recommendation benchmark snapshot is invalid at dataset: "
+                f"{str(exc) or exc.__class__.__name__}"
+            )
+        # With global rules independently validated, one non-JSON case may
+        # still fail in isolation before its case-scoped provider hooks.
+    except ValidationError as exc:
+        # Unsafe in-memory model copies are still reviewed by the existing
+        # fail-closed per-case validators, but provider hooks never receive the
+        # caller-owned corpus object.
+        dataset_snapshot = dataset.model_copy(deep=True)
+        first_error = exc.errors(include_url=False)[0]
+        location = ".".join(str(part) for part in first_error["loc"]) or "dataset"
+        dataset_snapshot_error = (
+            f"Recommendation benchmark snapshot is invalid at {location}:"
+            f" {first_error['msg']}"
+        )
+    schema_five = (
+        dataset_snapshot.schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+    )
+    if dataset_snapshot_error is not None and not dataset_snapshot.cases:
+        raise RecommendationBenchmarkError(dataset_snapshot_error)
+    try:
+        dataset_fingerprint = recommendation_dataset_fingerprint(dataset_snapshot)
+    except PydanticSerializationError:
+        # A non-JSON corpus cannot have a truthful normalized fingerprint. The
+        # affected case still fails in isolation and the report cannot be used
+        # as an attested comparable baseline without this identity.
+        dataset_fingerprint = None
+    grading_context_bindings: tuple[
+        _VerifiedProviderGradingContextBinding, ...
+    ] | None = None
+    grading_context_binding_error: str | None = None
+    if schema_five and dataset_snapshot_error is None:
+        try:
+            grading_context_bindings = (
+                _snapshot_provider_grading_context_bindings(provider)
+            )
+        except Exception as exc:
+            grading_context_binding_error = str(exc) or exc.__class__.__name__
     results = [
-        _run_case(case, dataset, provider)
-        for case in dataset.cases
+        _run_case(
+            case,
+            dataset_snapshot,
+            provider,
+            grading_context_bindings,
+            grading_context_binding_error,
+            dataset_snapshot_error,
+        )
+        for case in dataset_snapshot.cases
     ]
     metrics = _aggregate_metrics(results)
     street_metrics = [
@@ -544,10 +2195,12 @@ def run_recommendation_benchmark(
         for tag in sorted({tag for result in results for tag in result.tags})
     ]
     return RecommendationBenchmarkReport(
-        dataset_name=dataset.name,
-        dataset_fingerprint=recommendation_dataset_fingerprint(dataset),
+        dataset_name=dataset_snapshot.name,
+        dataset_schema_version=dataset_snapshot.schema_version,
+        dataset_fingerprint=dataset_fingerprint,
         provider=provider.name,
-        reference_source=dataset.reference_source,
+        reference_source=dataset_snapshot.reference_source,
+        grading_reference=dataset_snapshot.grading_reference,
         street_metrics=street_metrics,
         tag_metrics=tag_metrics,
         cases=results,
@@ -723,6 +2376,69 @@ def validate_comparable_recommendation_baseline(
         raise RecommendationBenchmarkError(
             "Recommendation baseline cases do not match the benchmark dataset"
         )
+    report_is_schema_five = (
+        report.dataset_schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+        or report.grading_reference is not None
+    )
+    baseline_is_schema_five = (
+        baseline.dataset_schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+        or baseline.grading_reference is not None
+    )
+    if report_is_schema_five or baseline_is_schema_five:
+        baseline_by_id = {case.case_id: case for case in baseline.cases}
+        binding_identity_fields = (
+            "grading_context_sha256",
+            "grading_context_attestation_sha256",
+            "grading_context_route_id",
+            "grading_context_engine_id",
+            "grading_context_engine_revision",
+            "grading_context_configuration_sha256",
+            "grading_context_binding_revision",
+        )
+        for case in report.cases:
+            baseline_case = baseline_by_id[case.case_id]
+            for report_label, bound_case in (
+                ("current report", case),
+                ("baseline", baseline_case),
+            ):
+                if bound_case.status != "completed":
+                    continue
+                if bound_case.fallback_reason is not None:
+                    raise RecommendationBenchmarkError(
+                        f"Recommendation {report_label} contains a completed"
+                        " fallback for schema-v5 case"
+                        f" {case.case_id!r}"
+                    )
+                if (
+                    bound_case.engine is None
+                    or bound_case.grading_context_engine_id is None
+                    or bound_case.engine
+                    != bound_case.grading_context_engine_id
+                ):
+                    raise RecommendationBenchmarkError(
+                        f"Recommendation {report_label} lacks matching runtime"
+                        " engine attestation for schema-v5 case"
+                        f" {case.case_id!r}"
+                    )
+            if any(
+                getattr(case, field_name) is None
+                or getattr(baseline_case, field_name) is None
+                for field_name in binding_identity_fields
+            ):
+                raise RecommendationBenchmarkError(
+                    "Recommendation baseline lacks an independently verified"
+                    " engine binding for schema-v5 case"
+                    f" {case.case_id!r}"
+                )
+            if any(
+                getattr(baseline_case, field_name)
+                != getattr(case, field_name)
+                for field_name in binding_identity_fields
+            ):
+                raise RecommendationBenchmarkError(
+                    "Recommendation baseline engine binding identity does not"
+                    f" match the current report for case {case.case_id!r}"
+                )
 
 
 def format_recommendation_benchmark_report(
@@ -733,51 +2449,57 @@ def format_recommendation_benchmark_report(
         "Recommendation benchmark",
         f"Dataset: {report.dataset_name}",
         f"Reference: {_reference_source_label(report.reference_source)}",
-        f"Provider: {report.provider}",
-        (
-            f"Cases: {report.completed_cases}/{report.total_cases} completed"
-            f" ({report.failed_cases} failed)"
-        ),
-        (
-            f"Action agreement: {report.action_correct}/{report.action_evaluated}"
-            f" ({report.action_accuracy:.1%})"
-        ),
-        _optional_ratio(
-            "Line agreement",
-            report.line_correct,
-            report.line_evaluated,
-            report.line_accuracy,
-        ),
-        _coverage_metric(
-            "Line evaluation coverage",
-            report.line_evaluated,
-            report.completed_cases,
-            report.line_coverage,
-        ),
-        _optional_metric(
-            "Average policy distance",
-            report.average_policy_distance,
-            report.policy_evaluated_cases,
-        ),
-        _coverage_metric(
-            "Policy evaluation coverage",
-            report.policy_evaluated_cases,
-            report.completed_cases,
-            report.policy_coverage,
-        ),
-        _optional_metric(
-            "Average reference EV loss",
-            report.average_reference_ev_loss_bb,
-            report.ev_evaluated_cases,
-            suffix=" BB",
-        ),
-        _coverage_metric(
-            "EV evaluation coverage",
-            report.ev_evaluated_cases,
-            report.completed_cases,
-            report.ev_coverage,
-        ),
     ]
+    if report.grading_reference is not None:
+        _append_grading_reference(lines, report.grading_reference)
+    lines.extend(
+        [
+            f"Provider: {report.provider}",
+            (
+                f"Cases: {report.completed_cases}/{report.total_cases} completed"
+                f" ({report.failed_cases} failed)"
+            ),
+            (
+                f"Action agreement: {report.action_correct}/{report.action_evaluated}"
+                f" ({report.action_accuracy:.1%})"
+            ),
+            _optional_ratio(
+                "Line agreement",
+                report.line_correct,
+                report.line_evaluated,
+                report.line_accuracy,
+            ),
+            _coverage_metric(
+                "Line evaluation coverage",
+                report.line_evaluated,
+                report.completed_cases,
+                report.line_coverage,
+            ),
+            _optional_metric(
+                "Average policy distance",
+                report.average_policy_distance,
+                report.policy_evaluated_cases,
+            ),
+            _coverage_metric(
+                "Policy evaluation coverage",
+                report.policy_evaluated_cases,
+                report.completed_cases,
+                report.policy_coverage,
+            ),
+            _optional_metric(
+                "Average reference EV loss",
+                report.average_reference_ev_loss_bb,
+                report.ev_evaluated_cases,
+                suffix=" BB",
+            ),
+            _coverage_metric(
+                "EV evaluation coverage",
+                report.ev_evaluated_cases,
+                report.completed_cases,
+                report.ev_coverage,
+            ),
+        ]
+    )
     if report.conditioning_expected_cases:
         lines.extend(
             [
@@ -847,21 +2569,229 @@ def format_recommendation_benchmark_report(
     return "\n".join(lines)
 
 
+class _ProviderGradingContextBindingDeclaration(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    route_id: EvidenceRevision
+    engine_id: EvidenceRevision
+    engine_revision: EvidenceRevision
+    configuration_sha256: Sha256Digest
+    binding_revision: EvidenceRevision
+    context: RecommendationGradingContext
+
+
+@dataclass(frozen=True)
+class _VerifiedProviderGradingContextBinding:
+    route_id: str
+    engine_id: str
+    engine_revision: str
+    configuration_sha256: str
+    binding_revision: str
+    context: dict[str, object]
+    context_sha256: str
+    attestation_sha256: str
+
+
+def _grading_context_payload_sha256(context: dict[str, object]) -> str:
+    payload = json.dumps(
+        context,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _provider_grading_context_attestation_sha256(
+    provider_name: str,
+    binding: _ProviderGradingContextBindingDeclaration,
+    context: dict[str, object],
+) -> str:
+    normalized = {
+        "schema": "poker-hero-provider-grading-context-attestation/v1",
+        "provider": provider_name,
+        "route_id": binding.route_id,
+        "engine_id": binding.engine_id,
+        "engine_revision": binding.engine_revision,
+        "configuration_sha256": binding.configuration_sha256,
+        "binding_revision": binding.binding_revision,
+        "context": context,
+    }
+    payload = json.dumps(
+        normalized,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _snapshot_provider_grading_context_bindings(
+    provider: RecommendationProvider,
+) -> tuple[_VerifiedProviderGradingContextBinding, ...]:
+    bindings_for = getattr(provider, "grading_context_bindings", None)
+    if not callable(bindings_for):
+        raise ValueError(
+            f"Provider {provider.name!r} does not declare a configured schema-v5"
+            " grading-context binding catalog"
+        )
+    bindings = bindings_for()
+    if bindings is None:
+        raise ValueError(
+            f"Provider {provider.name!r} does not bind its engine to schema-v5"
+            " structural, economic, and utility context"
+        )
+    try:
+        raw_bindings = tuple(bindings)
+    except TypeError as exc:
+        raise ValueError(
+            f"Provider {provider.name!r} returned an invalid grading-context"
+            " binding catalog"
+        ) from exc
+    if not raw_bindings:
+        raise ValueError(
+            f"Provider {provider.name!r} returned an empty grading-context"
+            " binding catalog"
+        )
+
+    verified: list[_VerifiedProviderGradingContextBinding] = []
+    for index, raw_binding in enumerate(raw_bindings):
+        if not isinstance(raw_binding, ProviderGradingContextBinding):
+            raise ValueError(
+                f"Provider {provider.name!r} returned an invalid grading-context"
+                f" binding at index {index}"
+            )
+        try:
+            declaration_payload = json.dumps(
+                {
+                    "route_id": raw_binding.route_id,
+                    "engine_id": raw_binding.engine_id,
+                    "engine_revision": raw_binding.engine_revision,
+                    "configuration_sha256": raw_binding.configuration_sha256,
+                    "binding_revision": raw_binding.binding_revision,
+                    "context": dict(raw_binding.context),
+                },
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            raw_declaration = json.loads(declaration_payload)
+            declaration = (
+                _ProviderGradingContextBindingDeclaration.model_validate_json(
+                    declaration_payload
+                )
+            )
+            context = _canonical_grading_context_payload(declaration.context)
+            _require_exact_json_shape(
+                raw_declaration["context"],
+                context,
+                path="context",
+                subject="Provider grading context",
+            )
+        except (TypeError, ValueError, ValidationError) as exc:
+            detail = (
+                exc.errors(include_url=False)[0]["msg"]
+                if isinstance(exc, ValidationError)
+                else str(exc) or exc.__class__.__name__
+            )
+            raise ValueError(
+                f"Provider {provider.name!r} returned an invalid grading-context"
+                f" binding at index {index}: {detail}"
+            ) from exc
+        context_sha256 = _grading_context_payload_sha256(context)
+        verified.append(
+            _VerifiedProviderGradingContextBinding(
+                route_id=declaration.route_id,
+                engine_id=declaration.engine_id,
+                engine_revision=declaration.engine_revision,
+                configuration_sha256=declaration.configuration_sha256,
+                binding_revision=declaration.binding_revision,
+                context=context,
+                context_sha256=context_sha256,
+                attestation_sha256=(
+                    _provider_grading_context_attestation_sha256(
+                        provider.name,
+                        declaration,
+                        context,
+                    )
+                ),
+            )
+        )
+    route_ids = [binding.route_id for binding in verified]
+    if len(route_ids) != len(set(route_ids)):
+        raise ValueError(
+            f"Provider {provider.name!r} grading-context route IDs must be unique"
+        )
+    return tuple(verified)
+
+
 def _run_case(
     case: RecommendationBenchmarkCase,
     dataset: RecommendationBenchmarkDataset,
     provider: RecommendationProvider,
+    grading_context_bindings: tuple[
+        _VerifiedProviderGradingContextBinding, ...
+    ] | None = None,
+    grading_context_binding_error: str | None = None,
+    dataset_snapshot_error: str | None = None,
 ) -> RecommendationBenchmarkCaseResult:
+    grading_context_binding: _VerifiedProviderGradingContextBinding | None = None
     try:
+        if dataset_snapshot_error is not None:
+            raise ValueError(dataset_snapshot_error)
+        if dataset.schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION:
+            if dataset.grading_reference is None:
+                raise ValueError("Schema version 5 requires grading reference evidence")
+            _validate_case_within_grading_coverage(
+                case,
+                dataset.grading_reference.coverage,
+                dataset.grading_reference.economic_model,
+                dataset.grading_reference.utility_model,
+            )
+            if grading_context_binding_error is not None:
+                raise ValueError(grading_context_binding_error)
+            if grading_context_bindings is None:
+                raise ValueError(
+                    f"Provider {provider.name!r} does not declare a configured"
+                    " schema-v5 grading-context binding catalog"
+                )
+            grading_context_binding = _verified_provider_grading_context_binding(
+                provider,
+                case.state,
+                grading_context_bindings,
+            )
+        inspection_state = RecommendationBenchmarkState.model_validate_json(
+            case.state.model_dump_json()
+        )
         missing = missing_required_fields(
-            case.state,
-            provider.required_fields_for(case.state),
+            inspection_state,
+            provider.required_fields_for(inspection_state),
         )
         if missing:
             raise ValueError(f"Missing required fields: {', '.join(missing)}")
-        result = provider.recommend(
-            RecommendationRequest(state=case.state, provider=provider.name)
+        execution_state = RecommendationBenchmarkState.model_validate_json(
+            case.state.model_dump_json()
         )
+        execution_state_payload = execution_state.model_dump(mode="json")
+        execution_state_sha256 = _grading_context_payload_sha256(
+            execution_state_payload
+        )
+        if dataset.schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION:
+            request: RecommendationRequest = RecommendationBenchmarkRequest(
+                state=execution_state,
+                provider=provider.name,
+            )
+        else:
+            request = RecommendationRequest(
+                state=CanonicalState.model_validate(
+                    _canonical_decision_state_payload(execution_state)
+                ),
+                provider=provider.name,
+            )
+        result = provider.recommend(request)
     except ProviderConfigurationError:
         raise
     except Exception as exc:
@@ -875,6 +2805,118 @@ def _run_case(
             expected_range_conditioning=case.expected_range_conditioning,
             expected_range_source=case.expected_range_source,
         )
+
+    if grading_context_binding is not None:
+        request_context_error: str | None = None
+        try:
+            retained_execution_state = (
+                RecommendationBenchmarkState.model_validate_json(
+                    request.state.model_dump_json()
+                )
+            )
+            retained_execution_state_payload = retained_execution_state.model_dump(
+                mode="json"
+            )
+            retained_execution_state_sha256 = _grading_context_payload_sha256(
+                retained_execution_state_payload
+            )
+            if retained_execution_state_payload != execution_state_payload:
+                request_context_error = (
+                    f"Provider {provider.name!r} mutated schema-v5 execution state"
+                    f" from {execution_state_sha256}"
+                    f" to {retained_execution_state_sha256}"
+                )
+            executed_context = recommendation_grading_context_payload(
+                retained_execution_state
+            )
+            executed_context_sha256 = _grading_context_payload_sha256(
+                executed_context
+            )
+            if (
+                request_context_error is None
+                and (
+                    executed_context_sha256
+                    != grading_context_binding.context_sha256
+                    or executed_context != grading_context_binding.context
+                )
+            ):
+                request_context_error = (
+                    f"Provider {provider.name!r} mutated schema-v5 request context"
+                    f" from bound route {grading_context_binding.context_sha256}"
+                    f" to {executed_context_sha256}"
+                )
+        except Exception as exc:
+            request_context_error = (
+                f"Provider {provider.name!r} left schema-v5 execution state"
+                f" invalid after execution: {str(exc) or exc.__class__.__name__}"
+            )
+        if request_context_error is not None:
+            raw = result.raw
+            runtime_engine_value = raw.get("engine")
+            runtime_fallback_value = raw.get("fallback_reason")
+            return _schema_five_runtime_result_error(
+                case,
+                grading_context_binding,
+                error=request_context_error,
+                engine=(
+                    runtime_engine_value
+                    if isinstance(runtime_engine_value, str)
+                    else None
+                ),
+                fallback_reason=_nonempty_string(runtime_fallback_value),
+            )
+    raw = result.raw
+    if grading_context_binding is not None:
+        runtime_engine_value = raw.get("engine")
+        runtime_engine = (
+            runtime_engine_value
+            if isinstance(runtime_engine_value, str)
+            else None
+        )
+        fallback_present = "fallback_reason" in raw
+        runtime_fallback_value = raw.get("fallback_reason")
+        runtime_fallback_reason = _nonempty_string(runtime_fallback_value)
+        audit_fallback_reason = (
+            runtime_fallback_reason
+            if runtime_fallback_reason is not None
+            else (
+                runtime_fallback_value
+                if isinstance(runtime_fallback_value, str)
+                else None
+            )
+        )
+        trust_error: str | None = None
+        if runtime_engine != grading_context_binding.engine_id:
+            trust_error = (
+                f"Provider {provider.name!r} schema-v5 result engine"
+                f" {runtime_engine_value!r} does not exactly match configured"
+                " grading-context engine"
+                f" {grading_context_binding.engine_id!r}"
+            )
+        elif fallback_present and runtime_fallback_reason is None:
+            trust_error = (
+                f"Provider {provider.name!r} schema-v5 result contains invalid"
+                " fallback_reason metadata; omit it when no fallback occurred"
+            )
+        elif runtime_fallback_reason is not None:
+            trust_error = (
+                f"Provider {provider.name!r} schema-v5 result from bound engine"
+                f" {grading_context_binding.engine_id!r} reported fallback:"
+                f" {runtime_fallback_reason}"
+            )
+        if trust_error is not None:
+            return _schema_five_runtime_result_error(
+                case,
+                grading_context_binding,
+                error=trust_error,
+                engine=runtime_engine,
+                fallback_reason=audit_fallback_reason,
+            )
+        engine = runtime_engine
+        fallback_reason = None
+    else:
+        engine = _nonempty_string(raw.get("engine"))
+        fallback_reason = _nonempty_string(raw.get("fallback_reason"))
 
     supported_lines = [
         line
@@ -909,9 +2951,6 @@ def _run_case(
         if line_evaluated
         else None
     )
-    raw = result.raw
-    engine = _nonempty_string(raw.get("engine"))
-    fallback_reason = _nonempty_string(raw.get("fallback_reason"))
     range_conditioning_status = _range_conditioning_status(
         raw.get("range_conditioning")
     )
@@ -950,6 +2989,41 @@ def _run_case(
         ),
         engine=engine,
         fallback_reason=fallback_reason,
+        grading_context_sha256=(
+            grading_context_binding.context_sha256
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_attestation_sha256=(
+            grading_context_binding.attestation_sha256
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_route_id=(
+            grading_context_binding.route_id
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_engine_id=(
+            grading_context_binding.engine_id
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_engine_revision=(
+            grading_context_binding.engine_revision
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_configuration_sha256=(
+            grading_context_binding.configuration_sha256
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_binding_revision=(
+            grading_context_binding.binding_revision
+            if grading_context_binding is not None
+            else None
+        ),
         expected_range_conditioning=case.expected_range_conditioning,
         range_conditioning_status=range_conditioning_status,
         range_conditioning_match=range_conditioning_match,
@@ -957,6 +3031,62 @@ def _run_case(
         range_source=range_source,
         range_source_match=range_source_match,
     )
+
+
+def _schema_five_runtime_result_error(
+    case: RecommendationBenchmarkCase,
+    binding: _VerifiedProviderGradingContextBinding,
+    *,
+    error: str,
+    engine: str | None,
+    fallback_reason: str | None,
+) -> RecommendationBenchmarkCaseResult:
+    return RecommendationBenchmarkCaseResult(
+        case_id=case.id,
+        description=case.description,
+        street=case.state.street,
+        tags=case.tags,
+        status="error",
+        error=error,
+        engine=engine,
+        fallback_reason=fallback_reason,
+        grading_context_sha256=binding.context_sha256,
+        grading_context_attestation_sha256=binding.attestation_sha256,
+        grading_context_route_id=binding.route_id,
+        grading_context_engine_id=binding.engine_id,
+        grading_context_engine_revision=binding.engine_revision,
+        grading_context_configuration_sha256=binding.configuration_sha256,
+        grading_context_binding_revision=binding.binding_revision,
+        expected_range_conditioning=case.expected_range_conditioning,
+        expected_range_source=case.expected_range_source,
+    )
+
+
+def _verified_provider_grading_context_binding(
+    provider: RecommendationProvider,
+    state: RecommendationBenchmarkState,
+    bindings: tuple[_VerifiedProviderGradingContextBinding, ...],
+) -> _VerifiedProviderGradingContextBinding:
+    expected_context = recommendation_grading_context_payload(state)
+    expected_sha256 = _grading_context_payload_sha256(expected_context)
+    matching = [
+        binding
+        for binding in bindings
+        if binding.context_sha256 == expected_sha256
+        and binding.context == expected_context
+    ]
+    if not matching:
+        raise ValueError(
+            f"Provider {provider.name!r} has no configured grading-context route"
+            f" matching case context {expected_sha256}"
+        )
+    if len(matching) > 1:
+        route_ids = ", ".join(repr(binding.route_id) for binding in matching)
+        raise ValueError(
+            f"Provider {provider.name!r} has ambiguous configured grading-context"
+            f" routes for case context {expected_sha256}: {route_ids}"
+        )
+    return matching[0]
 
 
 def _policy_distance(
@@ -1159,6 +3289,66 @@ def _reference_source_label(
     if source is None:
         return "not recorded"
     return f"{source.name} {source.version}" if source.version else source.name
+
+
+def _append_grading_reference(
+    lines: list[str],
+    reference: RecommendationGradingReference,
+) -> None:
+    table_coverage = "; ".join(
+        f"{table.dealt_in_count}-handed"
+        " ("
+        + ", ".join(
+            f"{position.display_label}[action={position.action_index},"
+            f"button-distance={position.button_distance}]"
+            for position in sorted(
+                table.structural_positions,
+                key=lambda item: item.action_index,
+            )
+        )
+        + ")"
+        for table in reference.coverage.table_configurations
+    )
+    stack_coverage = ", ".join(
+        f"{depth:g}" for depth in reference.coverage.effective_stack_depths_bb
+    )
+    convergence = "; ".join(
+        f"{item.metric} {item.observed:g} {item.unit}"
+        f" {'<=' if item.comparison == 'at_most' else '>='}"
+        f" {item.threshold:g} after {item.iterations} iteration(s)"
+        for item in reference.convergence_evidence
+    )
+    rights = reference.rights_evidence
+    lines.extend(
+        [
+            "Reference revisions:"
+            f" reference={reference.reference_revision},"
+            f" policy={reference.policy_revision},"
+            f" tolerance={reference.tolerance_revision}",
+            "Reference artifacts:"
+            f" source={reference.source_artifact_sha256},"
+            f" configuration={reference.source_configuration_sha256},"
+            f" policy={reference.policy_artifact_sha256}",
+            f"Table coverage: {table_coverage}; stacks {stack_coverage} BB;"
+            f" streets {', '.join(reference.coverage.streets)}",
+            "Economic model:"
+            f" {reference.economic_model.kind}/"
+            f"{reference.economic_model.name}"
+            f" ({reference.economic_model.revision});"
+            f" configuration={reference.economic_model.configuration_sha256}",
+            "Utility model:"
+            f" {reference.utility_model.name}"
+            f" ({reference.utility_model.revision});"
+            f" configuration={reference.utility_model.configuration_sha256};"
+            f" EV unit={reference.ev_unit}",
+            "Rights evidence:"
+            f" {rights.basis}/{rights.delivery_mode};"
+            f" grants={','.join(rights.grants)};"
+            f" pointer={rights.evidence_pointer};"
+            f" sha256={rights.evidence_sha256}",
+            f"Convergence evidence: {convergence}",
+        ]
+    )
 
 
 def _append_breakdowns(
@@ -1428,6 +3618,14 @@ def _argument_parser() -> argparse.ArgumentParser:
         help="Fail when the corpus does not identify its independent reference source",
     )
     parser.add_argument(
+        "--require-grading-reference",
+        action="store_true",
+        help=(
+            "Fail unless the corpus records complete schema-v5 grading-reference"
+            " provenance and gate evidence"
+        ),
+    )
+    parser.add_argument(
         "--baseline-report",
         type=Path,
         help="Compare with a prior --json report for the same provider and corpus",
@@ -1592,6 +3790,8 @@ def _threshold_failures(
         failures.append(f"Benchmark has {report.failed_cases} failed case(s)")
     if args.require_reference_source and report.reference_source is None:
         failures.append("Benchmark reference source is not recorded")
+    if args.require_grading_reference and report.grading_reference is None:
+        failures.append("Benchmark grading reference evidence is not recorded")
     if (
         args.minimum_action_accuracy is not None
         and report.action_accuracy < args.minimum_action_accuracy

@@ -1,4 +1,5 @@
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Mapping, Protocol, Sequence
 
 from app.domain.poker import CanonicalState
 from app.domain.recommendations import RecommendationRequest, RecommendationResult
@@ -16,6 +17,23 @@ class ProviderInputError(ProviderError):
     pass
 
 
+@dataclass(frozen=True)
+class ProviderGradingContextBinding:
+    """Provider-configured route context that the selected engine consumes.
+
+    The context is raw so the benchmark can validate and fingerprint it without
+    trusting a provider-computed digest. Providers must derive the complete
+    catalog from immutable adapter/engine configuration before seeing a case.
+    """
+
+    route_id: str
+    engine_id: str
+    engine_revision: str
+    configuration_sha256: str
+    binding_revision: str
+    context: Mapping[str, object]
+
+
 class RecommendationProvider(Protocol):
     name: str
     required_fields: list[str]
@@ -24,6 +42,15 @@ class RecommendationProvider(Protocol):
         raise NotImplementedError
 
     def recommend(self, request: RecommendationRequest) -> RecommendationResult:
+        raise NotImplementedError
+
+
+class GradingContextBoundRecommendationProvider(Protocol):
+    def grading_context_bindings(
+        self,
+    ) -> Sequence[ProviderGradingContextBinding] | None:
+        """Return the engine's configured schema-v5 route catalog, if supported."""
+
         raise NotImplementedError
 
 

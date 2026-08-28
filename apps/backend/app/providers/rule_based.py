@@ -12,6 +12,7 @@ from app.domain.recommendations import (
     RecommendationRequest,
     RecommendationResult,
 )
+from app.providers.base import ProviderGradingContextBinding
 
 RANK_VALUE = {
     "2": 2,
@@ -88,6 +89,11 @@ class RuleBasedTrainingProvider:
 
     def required_fields_for(self, state: CanonicalState) -> list[str]:
         return self.required_fields
+
+    def grading_context_bindings(
+        self,
+    ) -> list[ProviderGradingContextBinding] | None:
+        return None
 
     def recommend(self, request: RecommendationRequest) -> RecommendationResult:
         state = request.state

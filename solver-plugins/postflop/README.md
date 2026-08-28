@@ -43,3 +43,10 @@ ranges can still be conditioned by a complete reviewed line.
 
 The plugin and its combined work are distributed under AGPL-3.0-or-later. See
 the upstream repository and `Cargo.lock` for dependency details.
+
+The Rust stdin contract does not currently consume Poker Hero's schema-v5
+grading-reference structural, economic, or utility configuration. The backend
+therefore rejects schema-v5 benchmark cases for `local_solver` before launching
+this binary. Adding JSON fields without using them is insufficient: future
+mastery-gradeable routing must consume the complete context and expose an
+immutable configured binding that the benchmark verifies and records.

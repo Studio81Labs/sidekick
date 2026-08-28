@@ -165,6 +165,44 @@ training adapters import those primitives directly. The same domain owns
 detected parser state, parser evidence, and canonical user-approved state plus
 their cross-field wager and history validation.
 
+The Phase 0 V2 import contracts live separately under
+`app/domain/imported_hands`. They define immutable hand-history source evidence,
+site-agnostic detected and approved revisions, exact dealt-in-ring positions,
+action-origin evidence, explicit per-player/big-blind/unknown ante schemes,
+re-import conflicts, lifecycle/deletion tombstones, and a pure
+pot-reconciliation oracle. Omitted ante mode is canonicalized as unknown; a
+positive unknown mode remains reviewable but blocks decision extraction, while
+zero ante requires no poster mode and ignores retained poster labels in the
+source-location-independent re-import fingerprint. Complete actions with
+missing results or award-only pot evidence remain indeterminate, and extraction
+requires a passing zero-discrepancy comparison against an independent source
+total. Decision extraction proves that independence from the active detection's non-empty,
+stated-pot-scoped raw field evidence or from a value-changing correction on the
+active canonical revision; decimal formatting alone is not a value change.
+Numeric agreement without that provenance remains
+reviewable but is not extractable. Cash extraction treats either explicit rake
+or a positive difference between stated gross and net totals as material rake
+evidence. Zero schedules accept only zero deductions; nonzero schedules fail
+closed until their calculation semantics are modeled. Tournament extraction
+treats identified
+`remaining_stacks` as the same hand-start snapshot
+and absolute tournament-chip unit as the dealt-in seats' `starting_stack`
+values, and binds each pair exactly; unrelated remaining field players may
+coexist. The aggregate exposes only voluntary actions from its active approved
+revision for later decision extraction. Activation, extraction, and restore
+preflight all verify canonical raw-source lineage: a transition to another
+retained source requires a resolved conflict that binds the preserved canonical
+source and selects the new one, while same-source corrections remain ordinary
+revisions. Every additional materially distinct retained raw source must also
+remain covered by a retained conflict, even before detection or approval. Because
+nested audit collections remain mutable while a transition is assembled, every
+aggregate serialization, extraction, and restore comparison first rebuilds and
+validates a complete snapshot; an invalid graph cannot be persisted or exposed
+as learning evidence. Conflict resolutions are retained audit events, so a
+deletion request must be ordered after them before deletion can proceed. These
+contracts are not yet connected to V1 routes or file-backed storage, so they do
+not make the hosted screenshot workflow a V2 player-data path.
+
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, benchmarks, and
 training aggregation import those contracts directly.
@@ -438,6 +476,62 @@ Version-4 postflop cases may additionally require the exact `raw.range_source`
 selected by the provider. The benchmark validates that value against the
 configured and contextual source registry, then reports independent agreement
 and evidence coverage with optional CI thresholds for both.
+Version-5 corpora require a grading-reference evidence envelope with immutable
+source/policy/tolerance revisions and digests, exact dealt-in structural
+positions, stack/street coverage, economic and utility models, an EV unit,
+delivery-specific rights evidence, and passing convergence measurements. The
+case state repeats the exact normalized economic and utility configurations,
+which are fingerprinted and revalidated before execution. Schema-v5 evaluation
+snapshots each provider's no-argument configured binding catalog once before any
+case execution. The benchmark canonicalizes and hashes the raw configured
+contexts itself. Each context contains the complete provider-visible canonical
+decision state—cards, board, pot, wager and stack amounts, player counts,
+positions, opener and action context, current and completed action histories,
+street, and approval state—plus structural actor mapping, economics, and utility.
+Trusted schema-v5 cases require exactly two distinct hero hole cards and the
+street's exact board cardinality independently of provider-required fields or
+route-shape matching.
+Catalog JSON must match the benchmark-generated recursive shape exactly. Every
+canonical decision-state null, empty, and default-valued key remains explicit;
+the surrounding structural, economic, and utility objects must mirror the
+benchmark-generated field presence. Unknown or omitted required keys at any
+nested object fail before provider execution instead of being dropped or filled.
+Exactly one route must match. The economic route identity includes the exact
+blind denominations, ante amount, and canonical ante posting mode; a positive
+ante with an omitted or unknown poster scheme fails before route matching. The
+corpus and its fingerprint are snapshotted before provider hooks, and the report
+retains the declared schema version. A structurally invalid dataset snapshot
+fails without calling the catalog, required-field inspection, or provider. A
+separately serialized and revalidated dataset-level trust snapshot plus a shared
+validation pass over corpus-wide case rules prevents a non-serializable nested
+case from masking a schema-version, tagged/range expectation, or grading-evidence
+mutation. After those global rules pass, a non-serializable nested case fails
+before its own case-scoped hooks while valid cases continue from the deep
+snapshot; the report omits the unavailable corpus fingerprint and cannot be an
+attested baseline. Mutating a v5 corpus's version or removing its grading
+reference cannot select legacy execution or baseline behavior.
+Required-field inspection and execution receive separate validated state copies,
+and the complete execution copy must remain byte-for-byte canonically equivalent
+to its pre-call snapshot after the provider returns. The selected route context
+is then revalidated independently. Reports retain the case-context and
+attestation digests, route ID, engine ID and immutable revision,
+configuration/artifact digest, and adapter binding revision; schema-v5 baselines
+compare all of those identities. A case-aware callback or recommendation
+response cannot establish this binding. After
+provider execution and before any scoring, the benchmark also requires
+the result's canonical `raw.engine` to equal the selected binding's engine ID
+exactly and rejects every present fallback marker, including malformed metadata.
+Rejected results are case errors: they retain runtime and intended-binding audit
+identity but omit recommendations, scores, policy/EV values, and actual
+range-conditioning/source evidence. Completed schema-v5 baselines must preserve
+the same runtime-engine attestation and cannot contain a fallback. Older report
+shapes remain readable but cannot serve as unattested schema-v5 baselines.
+Current built-in providers return no binding because their
+Python/Rust/HTTP engine contracts do not consume and attest the complete
+context, so they fail closed before their execution boundary. The CLI can
+require the evidence envelope, but declarations and artifact pointers are not
+themselves source approval; production route matching and real retained evidence
+remain Phase 0 gate work.
 Reports also carry a SHA-256 fingerprint over normalized scoring inputs and
 reference provenance. The CLI can load a full prior JSON report for the same
 provider and fingerprint, display aggregate deltas, and gate direction-aware

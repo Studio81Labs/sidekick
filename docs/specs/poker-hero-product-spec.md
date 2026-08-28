@@ -256,14 +256,25 @@ shape includes at minimum:
 
 - Hand id, site, source hand timestamp (with source timezone/offset when
   available), stable source-session/file identity and ordering, import
-  provenance, game type, stakes, table size, blinds/antes. Missing source time
-  remains explicitly unknown; ingestion time must not stand in for play time in
-  recency, session, or proof-of-learning calculations.
+  provenance, game type, stakes, table size, blinds/antes, and whether a
+  positive ante is posted per player or by the big blind for the table. An ante
+  scheme that the source semantics do not prove, including an omitted scheme on
+  a positive ante, remains explicitly unknown and is not ready for decision
+  extraction. A confirmed zero ante needs no poster scheme, so retained poster
+  labels do not distinguish otherwise identical detections during re-import.
+  Missing source time remains explicitly unknown; ingestion time must not stand
+  in for play time in recency, session, or proof-of-learning calculations.
 - Economic context when supplied: for cash games, currency and the applicable
   rake/drop schedule and cap; for tournaments, tournament identity/type and
   stage, payout/paid-place structure, players remaining, relevant remaining
   stacks, bounty format/values, and any other ICM inputs. Missing economic fields
-  remain explicitly unknown rather than inferred.
+  remain explicitly unknown rather than inferred. Tournament seat
+  `remaining_stacks` entries used for current-hand extraction are the same
+  hand-start stack snapshot as the seats' `starting_stack` values. Both use
+  absolute tournament chips, not currency or BB. Before decision extraction,
+  every dealt-in player with a known seat stack must have an exactly equal
+  Decimal remaining-stack entry; additional off-table field players remain
+  valid.
 - Button seat.
 - Seats: for each, seat number, starting stack, and participation status
   (including dealt-in and sitting-out/not-dealt states). Each dealt-in player
@@ -293,7 +304,25 @@ decision, grade, mastery sample, or drill. Import attempts and source-file
 provenance may be appended for audit without multiplying learning data. If the
 same stable identity arrives with materially different source or detected
 content, both inputs are preserved as a conflict for explicit user resolution;
-neither silently overwrites the active approved revision or counts twice.
+neither silently overwrites the active approved revision or counts twice. An
+additional materially distinct retained raw source remains covered by a
+retained conflict whose scope includes another retained source, even before it
+has a detection or participates in a canonical-source switch. An
+approved revision may become active from a different retained raw source only
+after a `resolved_use_source` conflict binds the prior canonical source and
+explicitly selects the new source. Same-source corrections and reapprovals stay
+ordinary canonical revisions and do not require a conflict.
+Every persistence, extraction, and restore boundary revalidates the complete
+aggregate graph from a fresh snapshot. Nested in-memory edits cannot bypass
+checksums, corrections, chronology, conflicts, or source-evidence invariants.
+Every audit-retaining lifecycle freshness marker advances through all retained
+imports, detections, and approvals. This covers active, pending-review,
+withdrawn, and rejected records; a deletion-pending request must occur after
+that evidence and its lifecycle marker must reach the request. Resolving any
+retained conflict also advances freshness to at least the resolution time so
+backup/restore ordering cannot rank newer evidence by stale lifecycle state. A
+deletion request must occur at or after every retained conflict resolution so
+the request covers the complete audit record it will remove.
 
 **Correctness oracle:** re-derive the pot from the action stream and reconcile
 against the file's stated pot (accounting for rake, uncalled bets, side pots).
@@ -301,6 +330,38 @@ Independently-computed pot == stated pot is a per-hand pass/fail that validates
 the action/amount parse without manual eyeballing. It is necessary but not
 sufficient: a wrong button, hero identity, card, timestamp, or participation
 status can reconcile the pot and still corrupt grading.
+
+A complete action stream is not its own independent pot oracle. Missing results,
+an absent stated-pot summary, a net total without the rake needed to recover a
+like-for-like gross total, or awards without a stated comparable pot remain
+reviewable but reconcile as indeterminate. Decision extraction requires a
+passing reconciliation with zero discrepancy against an independent source
+total; awards may corroborate that total but cannot replace it when gross versus
+net semantics are unresolved. A stated comparator counts as independent only
+when every value in at least one complete comparison route has non-empty raw
+field evidence scoped to the stated-pot summary, or the active canonical
+revision contains a semantically value-changing correction that audits that exact value.
+Missing comparator provenance remains reviewable but blocks decision extraction.
+
+Pot reconciliation remains an amount-only oracle and does not infer a site's
+cash-rake formula from percentage, cap, and fixed-drop values. Decision
+extraction separately checks any stated cash rake against the approved schedule.
+An all-zero schedule permits only stated rake zero. If stated rake is present and
+any schedule component is nonzero, extraction fails closed until the canonical
+economics contract declares the calculation basis, cap/drop ordering and
+applicability, and rounding policy required to derive an exact allowed value.
+When stated rake is absent but stated gross and net totals differ, their
+difference is material rake evidence and follows the same fail-closed schedule
+gate. An absent stated rake preserves gross-only reconciliation and extraction
+behavior only when no gross-to-net deduction is stated; tournament economics do
+not use this cash-rake gate.
+
+An uncalled return closes a betting round only when it exactly removes the
+actor's unique unmatched live commitment after every other actionable opponent
+has folded, responded, or gone all-in. Folded and all-in commitments still set
+the matched floor; dead antes do not. An unresolved return remains reviewable
+but cannot authorize a later street, results, or learning extraction, and no
+same-street action may follow it.
 
 **Approval boundary:** raw history, detected output, confidences, warnings,
 reconciliation evidence, corrections, and final approved state remain separate
@@ -457,12 +518,17 @@ ceiling on learning quality, so it is treated as first-class.
   defense, squeeze, cold-call, short-stack) with explicit table-size, structural
   position, stack-depth, sizing, economic, and mixed-policy boundaries. V1's
   routing/context extraction may be reused only where independently validated;
-  its threshold policy must not be relabeled `solved`.
+  its threshold policy must not be relabeled `solved`. Structured history is
+  authoritative: any supplied opener position or size must match its first raise
+  exactly, while a nonempty call-only/limp-only history carries neither opener
+  field.
 - **Heads-up postflop** — potentially mastery-gradeable only when the reviewed
   hand resolves an exact supported line against a benchmarked solved-tree
   revision **and** all required root inputs are verified: effective stack,
   players/relative position, pot and action history, board, and ranges derived
-  and conditioned from complete prior-street evidence. Any 100-BB stack
+  and conditioned from complete prior-street evidence. Schema-v5 grading
+  requires the full completed postflop prefix: turn includes flop, and river
+  includes flop plus turn. Any 100-BB stack
   assumption, configured/default range, ambiguous player mapping, incomplete
   prior street, or approximate/skipped conditioning makes the current result
   `heuristic`, even if the current-street line exists.
@@ -470,8 +536,15 @@ ceiling on learning quality, so it is treated as first-class.
   the largest gap and covers a large share of real hands.
 
 Coverage also includes game economics. A solved route declares the cash rake
-model or tournament chip-EV/ICM/bounty context it assumes and the canonical
-fields required to match it. Cash hands with an unknown or different material
+model or tournament chip-EV/ICM/bounty context it assumes, the exact blind/ante
+level, ante poster scheme, and units used to convert canonical BB amounts, and
+the canonical fields required to match it. Tournament grading maps table actors
+to the identified remaining-stack and bounty entries rather than assuming
+reserved player names. The ante poster scheme is part of the hashed economic
+route identity: a positive ante must identify either per-player or big-blind
+posting, while omitted or unknown posting is ungradeable rather than being
+silently treated as the legacy per-player default.
+Cash hands with an unknown or different material
 rake structure and tournament hands lacking the payout, field, stack, or bounty
 state required by the reference are heuristic/ungraded for mastery. A generic
 chip-EV chart must never be presented as solved ICM or bounty-aware policy.
@@ -515,6 +588,45 @@ Solved eligibility also requires evidence that every route-critical canonical
 input matches the reference. A provider fallback or default for effective stack,
 range, position, action history, board conditioning, or economic context is an
 assumption, not verification, and forces the result to `heuristic`/ungraded.
+For benchmark schema v5, that evidence must be matched against an independently
+configured provider route catalog captured before the provider sees any case.
+Poker Hero canonicalizes and hashes the raw configured route context itself and
+retains the selected route, engine revision, configuration artifact, and adapter
+binding identities. A provider-computed echo of case input is not an attestation;
+missing, ambiguous, or changed bindings fail closed before grading.
+Every schema-v5 case also requires exactly two distinct hero hole cards and the
+exact board cardinality for its street; provider-declared required fields and an
+exact-shape route binding cannot substitute for this semantic completeness.
+The bound context includes every canonical decision-state field exposed to the
+provider—cards, board, pot, wagers, stacks, players, positions, opener/action
+context, and current/completed action histories—plus structural actor mapping,
+economics, and utility. Range selection is bound through these exact derivation
+inputs until a future canonical contract supplies explicit ranges. The raw
+catalog declaration must retain the benchmark's exact recursive JSON shape,
+including every canonical decision-state null, empty, and default-valued key;
+surrounding objects mirror the benchmark-generated field presence, and omitted
+or unknown required keys fail closed before provider execution.
+The benchmark fingerprints an isolated corpus snapshot before provider hooks,
+uses separate validated state copies for readiness inspection and execution, and
+rejects any retained execution-state mutation before reading runtime trust
+metadata or scoring the result. A structurally invalid dataset snapshot fails
+before the binding catalog, required-field inspection, or provider is called. A
+separately serialized and revalidated dataset-level trust snapshot plus a shared
+validation pass over corpus-wide case rules prevents a non-serializable nested
+case from masking a schema-version, tagged/range expectation, or grading-evidence
+mutation. Once those global rules pass, a non-serializable nested case fails in
+isolation before its case-scoped provider hooks; unrelated valid cases continue
+from the deep snapshot, and the report omits the unprovable corpus fingerprint
+so it cannot become an attested baseline. The declared schema version remains in
+the report and controls this trust boundary: a version-5 corpus whose version is
+mutated or whose evidence envelope becomes invalid or missing cannot downgrade
+itself to version-4 execution or baseline rules.
+After execution, a version-5 benchmark case completes only when the provider
+reports the exact engine selected by that binding and no fallback metadata. A
+missing, malformed, or different runtime engine and every explicit fallback are
+case failures, retain only route/result audit identity, and contribute no policy,
+EV, range-conditioning, or range-source evidence. Versions 1 through 4 retain
+their diagnostic fallback scoring behavior.
 
 Active mastery for one concept/coverage band uses one pinned reference-policy
 revision. A new chart, solved tree, economic model, or support tolerance is

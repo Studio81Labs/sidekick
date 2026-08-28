@@ -16,5 +16,7 @@ The structural migration is tracked in the
 The proposed Studio81 Labs repository, CI, and PWA convergence is tracked in
 the [portfolio alignment plan](./specs/studio81-portfolio-alignment-plan.md).
 
-Reference formats include the
-[recommendation benchmark corpus](./reference/recommendation-benchmark.md).
+Reference material includes the
+[recommendation benchmark corpus](./reference/recommendation-benchmark.md) and
+the open Phase 0
+[V2 grading reference source assessment](./reference/v2-grading-reference-assessment.md).
