@@ -178,10 +178,14 @@ zero-discrepancy comparison against an independent source total. Tournament
 extraction treats identified `remaining_stacks` as the same hand-start snapshot
 and absolute tournament-chip unit as the dealt-in seats' `starting_stack`
 values, and binds each pair exactly; unrelated remaining field players may
-coexist. The aggregate exposes only voluntary actions
-from its active approved revision for later decision extraction. These contracts
-are not yet connected to V1 routes or file-backed storage, so they do not make
-the hosted screenshot workflow a V2 player-data path.
+coexist. The aggregate exposes only voluntary actions from its active approved
+revision for later decision extraction. Activation, extraction, and restore
+preflight all verify canonical raw-source lineage: a transition to another
+retained source requires a resolved conflict that binds the preserved canonical
+source and selects the new one, while same-source corrections remain ordinary
+revisions. These contracts are not yet connected to V1 routes or file-backed
+storage, so they do not make the hosted screenshot workflow a V2 player-data
+path.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, benchmarks, and

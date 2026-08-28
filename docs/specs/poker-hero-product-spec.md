@@ -303,7 +303,11 @@ decision, grade, mastery sample, or drill. Import attempts and source-file
 provenance may be appended for audit without multiplying learning data. If the
 same stable identity arrives with materially different source or detected
 content, both inputs are preserved as a conflict for explicit user resolution;
-neither silently overwrites the active approved revision or counts twice.
+neither silently overwrites the active approved revision or counts twice. An
+approved revision may become active from a different retained raw source only
+after a `resolved_use_source` conflict binds the prior canonical source and
+explicitly selects the new source. Same-source corrections and reapprovals stay
+ordinary canonical revisions and do not require a conflict.
 Every audit-retaining lifecycle freshness marker advances through all retained
 imports, detections, and approvals. This covers active, pending-review,
 withdrawn, and rejected records; a deletion-pending request must occur after

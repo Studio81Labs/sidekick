@@ -2365,6 +2365,16 @@ class ImportedHandRecord(ImportedHandModel):
                     raise ValueError(
                         "active canonical revision must use the selected conflict source"
                     )
+            if not _canonical_source_changes_are_resolved(
+                conflicts=self.conflicts,
+                detection_by_id=detection_by_id,
+                revisions=self.canonical_revisions,
+                lifecycle_changed_at=self.lifecycle.changed_at,
+            ):
+                raise ValueError(
+                    "activating a canonical raw-source change requires an"
+                    " explicitly resolved conflict selecting the new source"
+                )
 
         if self.lifecycle.status == "pending_review":
             latest_event = _latest_retained_audit_event(self)
@@ -2423,6 +2433,8 @@ class ImportedHandRecord(ImportedHandModel):
     @property
     def active_state_for_extraction(self) -> ImportedHandState | None:
         if not self.lifecycle.learning_eligible:
+            return None
+        if not _record_conflict_resolution_is_valid(self):
             return None
         revision = self.lifecycle.active_canonical_revision
         if revision is None:
@@ -2793,6 +2805,56 @@ def _validate_conflict_resolution_chronology(
         )
 
 
+def _canonical_source_changes_are_resolved(
+    *,
+    conflicts: list[ImportConflict],
+    detection_by_id: dict[str, DetectedImportedHand],
+    revisions: list[CanonicalHandRevision],
+    lifecycle_changed_at: datetime,
+) -> bool:
+    """Require each canonical raw-source transition to be explicitly selected."""
+
+    authorized_transitions: set[tuple[str, str]] = set()
+    for conflict in conflicts:
+        if (
+            conflict.status != "resolved_use_source"
+            or conflict.selected_raw_source_id is None
+            or conflict.resolved_at is None
+            or lifecycle_changed_at < conflict.resolved_at
+        ):
+            continue
+        preserved_source_id = _conflict_preserved_source_id(
+            conflict,
+            detection_by_id=detection_by_id,
+            revisions=revisions,
+        )
+        if preserved_source_id is None:
+            continue
+        selected_source_id = conflict.selected_raw_source_id
+        if not {preserved_source_id, selected_source_id}.issubset(
+            conflict.raw_source_ids
+        ):
+            continue
+        authorized_transitions.add(
+            (preserved_source_id, selected_source_id)
+        )
+
+    previous_source_id: str | None = None
+    for revision in revisions:
+        detected = detection_by_id.get(revision.detection_id)
+        if detected is None:
+            return False
+        source_id = detected.raw_source_id
+        if (
+            previous_source_id is not None
+            and source_id != previous_source_id
+            and (previous_source_id, source_id) not in authorized_transitions
+        ):
+            return False
+        previous_source_id = source_id
+    return True
+
+
 def _record_conflict_resolution_is_valid(
     record: ImportedHandRecord,
 ) -> bool:
@@ -2800,13 +2862,30 @@ def _record_conflict_resolution_is_valid(
     detection_by_id = {
         detected.detection_id: detected for detected in record.detections
     }
+    conflict_active_sources: dict[str, str] = {}
     try:
+        for expected_revision, revision in enumerate(
+            record.canonical_revisions,
+            start=1,
+        ):
+            if revision.revision != expected_revision:
+                return False
+            detected = detection_by_id.get(revision.detection_id)
+            if (
+                detected is None
+                or detected.raw_source_id not in raw_by_id
+                or revision.state.chronology.source_file_id
+                != detected.raw_source_id
+            ):
+                return False
         for conflict in record.conflicts:
             preserved_source_id = _conflict_preserved_source_id(
                 conflict,
                 detection_by_id=detection_by_id,
                 revisions=record.canonical_revisions,
             )
+            if preserved_source_id is not None:
+                conflict_active_sources[conflict.conflict_id] = preserved_source_id
             _validate_resolved_keep_active_source(
                 conflict,
                 preserved_source_id=preserved_source_id,
@@ -2818,6 +2897,43 @@ def _record_conflict_resolution_is_valid(
                 revisions=record.canonical_revisions,
                 lifecycle_changed_at=record.lifecycle.changed_at,
             )
+        active = record.lifecycle.active_canonical_revision
+        if active is not None:
+            if (
+                not isinstance(active, int)
+                or isinstance(active, bool)
+                or active < 1
+                or active > len(record.canonical_revisions)
+                or active != len(record.canonical_revisions)
+            ):
+                return False
+            active_revision = record.canonical_revisions[active - 1]
+            active_detection = detection_by_id.get(active_revision.detection_id)
+            if active_detection is None:
+                return False
+            active_source_id = active_detection.raw_source_id
+            for conflict in record.conflicts:
+                if conflict.status == "unresolved":
+                    preserved_source_id = conflict_active_sources.get(
+                        conflict.conflict_id
+                    )
+                    if (
+                        preserved_source_id is None
+                        or active_source_id != preserved_source_id
+                    ):
+                        return False
+                elif (
+                    active_source_id in conflict.raw_source_ids
+                    and active_source_id != conflict.selected_raw_source_id
+                ):
+                    return False
+            if not _canonical_source_changes_are_resolved(
+                conflicts=record.conflicts,
+                detection_by_id=detection_by_id,
+                revisions=record.canonical_revisions,
+                lifecycle_changed_at=record.lifecycle.changed_at,
+            ):
+                return False
     except (AttributeError, IndexError, KeyError, TypeError, ValueError):
         return False
     return True

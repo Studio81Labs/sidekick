@@ -155,6 +155,25 @@ def detected(state: ImportedHandState | None = None) -> DetectedImportedHand:
     )
 
 
+def detected_for_source(
+    raw_source_id: str,
+    *,
+    hero_player_id: str | None = None,
+) -> DetectedImportedHand:
+    payload = hand_state(hero_player_id=hero_player_id).model_dump()
+    payload["chronology"] = chronology(raw_source_id).model_dump()
+    state = ImportedHandState.model_validate(payload)
+    return DetectedImportedHand(
+        detection_id=f"detection-{raw_source_id}",
+        raw_source_id=raw_source_id,
+        detector_id="pokerstars",
+        detector_version="1.0.0",
+        detected_at=NOW,
+        state=state,
+        content_sha256=imported_hand_state_sha256(state),
+    )
+
+
 def revision() -> CanonicalHandRevision:
     return CanonicalHandRevision(
         revision=1,
@@ -1620,6 +1639,490 @@ def test_unresolved_conflict_without_a_prior_revision_cannot_activate_a_source()
                 "changed_at": NOW,
             },
         )
+
+
+def canonical_source_switch_record(
+    *,
+    conflicts: list[dict[str, object]],
+    extra_source_ids: tuple[str, ...] = (),
+) -> ImportedHandRecord:
+    file_1_detection = detected_for_source("file-1", hero_player_id="hero")
+    file_2_detection = detected_for_source("file-2", hero_player_id="villain")
+    extra_detections = [
+        detected_for_source(source_id) for source_id in extra_source_ids
+    ]
+    return ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(raw_source_id="file-1", raw_text="source one\n"),
+            raw_source(raw_source_id="file-2", raw_text="source two\n"),
+            *[
+                raw_source(
+                    raw_source_id=source_id,
+                    raw_text=f"source {source_id}\n",
+                )
+                for source_id in extra_source_ids
+            ],
+        ],
+        detections=[file_1_detection, file_2_detection, *extra_detections],
+        conflicts=conflicts,
+        canonical_revisions=[
+            {
+                "revision": 1,
+                "detection_id": file_1_detection.detection_id,
+                "approved_at": NOW,
+                "state": file_1_detection.state,
+            },
+            {
+                "revision": 2,
+                "detection_id": file_2_detection.detection_id,
+                "approved_at": NOW,
+                "state": file_2_detection.state,
+            },
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 2,
+            "changed_at": NOW,
+        },
+    )
+
+
+def resolved_source_switch_conflict() -> dict[str, object]:
+    return {
+        "conflict_id": "conflict-1",
+        "raw_source_ids": ["file-1", "file-2"],
+        "detected_ids": [],
+        "active_canonical_revision_at_creation": 1,
+        "status": "resolved_use_source",
+        "selected_raw_source_id": "file-2",
+        "resolved_at": NOW,
+    }
+
+
+def test_active_canonical_source_change_requires_an_explicit_conflict() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="canonical raw-source change requires an explicitly resolved conflict",
+    ):
+        canonical_source_switch_record(conflicts=[])
+
+
+def test_resolved_conflict_can_activate_its_selected_new_source() -> None:
+    record = canonical_source_switch_record(
+        conflicts=[resolved_source_switch_conflict()]
+    )
+
+    assert record.active_state_for_extraction == detected_for_source(
+        "file-2", hero_player_id="villain"
+    ).state
+
+
+def test_unresolved_conflict_cannot_authorize_a_canonical_source_change() -> None:
+    conflict = resolved_source_switch_conflict()
+    conflict.update(
+        status="unresolved",
+        selected_raw_source_id=None,
+        resolved_at=None,
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="unresolved conflict cannot replace the preserved active source",
+    ):
+        canonical_source_switch_record(conflicts=[conflict])
+
+
+def test_irrelevant_resolved_conflict_cannot_authorize_another_source_change() -> None:
+    conflict = {
+        "conflict_id": "conflict-1",
+        "raw_source_ids": ["file-1", "file-3"],
+        "detected_ids": ["detection-file-1", "detection-file-3"],
+        "active_canonical_revision_at_creation": 1,
+        "status": "resolved_use_source",
+        "selected_raw_source_id": "file-3",
+        "resolved_at": NOW,
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="canonical raw-source change requires an explicitly resolved conflict",
+    ):
+        canonical_source_switch_record(
+            conflicts=[conflict],
+            extra_source_ids=("file-3",),
+        )
+
+
+def test_source_change_conflict_must_bind_the_preserved_source_identity() -> None:
+    conflict = resolved_source_switch_conflict()
+    conflict["active_canonical_revision_at_creation"] = None
+
+    with pytest.raises(
+        ValidationError,
+        match="canonical raw-source change requires an explicitly resolved conflict",
+    ):
+        canonical_source_switch_record(conflicts=[conflict])
+
+
+def test_same_source_canonical_revision_does_not_require_a_conflict() -> None:
+    source_detection = detected_for_source("file-1", hero_player_id="hero")
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[source_detection],
+        canonical_revisions=[
+            {
+                "revision": revision_number,
+                "detection_id": source_detection.detection_id,
+                "approved_at": NOW,
+                "state": source_detection.state,
+            }
+            for revision_number in (1, 2)
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 2,
+            "changed_at": NOW,
+        },
+    )
+
+    assert record.active_state_for_extraction == source_detection.state
+
+
+def test_unresolved_candidate_source_can_remain_review_only_while_old_source_is_active(
+) -> None:
+    file_1_detection = detected_for_source("file-1", hero_player_id="hero")
+    file_2_detection = detected_for_source("file-2", hero_player_id="villain")
+    conflict = resolved_source_switch_conflict()
+    conflict.update(
+        status="unresolved",
+        selected_raw_source_id=None,
+        resolved_at=None,
+    )
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(raw_source_id="file-1", raw_text="source one\n"),
+            raw_source(raw_source_id="file-2", raw_text="source two\n"),
+        ],
+        detections=[file_1_detection, file_2_detection],
+        conflicts=[conflict],
+        canonical_revisions=[
+            {
+                "revision": 1,
+                "detection_id": file_1_detection.detection_id,
+                "approved_at": NOW,
+                "state": file_1_detection.state,
+            }
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+    assert record.active_state_for_extraction == file_1_detection.state
+
+
+def test_each_multi_hop_source_change_requires_its_own_resolved_conflict() -> None:
+    detections = [
+        detected_for_source(source_id, hero_player_id="hero")
+        for source_id in ("file-1", "file-2", "file-3")
+    ]
+    conflicts = [
+        resolved_source_switch_conflict(),
+        {
+            "conflict_id": "conflict-2",
+            "raw_source_ids": ["file-2", "file-3"],
+            "detected_ids": [],
+            "active_canonical_revision_at_creation": 2,
+            "status": "resolved_use_source",
+            "selected_raw_source_id": "file-3",
+            "resolved_at": NOW,
+        },
+    ]
+    payload = {
+        "identity": IDENTITY,
+        "raw_sources": [
+            raw_source(
+                raw_source_id=f"file-{index}",
+                raw_text=f"source {index}\n",
+            )
+            for index in (1, 2, 3)
+        ],
+        "detections": detections,
+        "conflicts": conflicts,
+        "canonical_revisions": [
+            {
+                "revision": index,
+                "detection_id": detection.detection_id,
+                "approved_at": NOW,
+                "state": detection.state,
+            }
+            for index, detection in enumerate(detections, start=1)
+        ],
+        "lifecycle": {
+            "status": "active",
+            "active_canonical_revision": 3,
+            "changed_at": NOW,
+        },
+    }
+
+    record = ImportedHandRecord.model_validate(payload)
+    assert record.active_state_for_extraction == detections[2].state
+    for retained_conflict in conflicts:
+        with pytest.raises(
+            ValidationError,
+            match="canonical raw-source change requires an explicitly resolved conflict",
+        ):
+            ImportedHandRecord.model_validate(
+                {
+                    **payload,
+                    "conflicts": [retained_conflict],
+                }
+            )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ["remove", "unresolve", "select_old_source", "stale_resolution"],
+)
+def test_unsafe_conflict_copy_cannot_expose_a_source_switched_revision(
+    mutation: str,
+) -> None:
+    record = canonical_source_switch_record(
+        conflicts=[resolved_source_switch_conflict()]
+    )
+    conflict = record.conflicts[0]
+    if mutation == "remove":
+        conflicts = []
+    elif mutation == "unresolve":
+        conflicts = [
+            conflict.model_copy(
+                update={
+                    "status": "unresolved",
+                    "selected_raw_source_id": None,
+                    "resolved_at": None,
+                }
+            )
+        ]
+    elif mutation == "stale_resolution":
+        conflicts = [
+            conflict.model_copy(
+                update={"resolved_at": NOW - timedelta(microseconds=1)}
+            )
+        ]
+    else:
+        conflicts = [
+            conflict.model_copy(update={"selected_raw_source_id": "file-1"})
+        ]
+    unsafe_record = record.model_copy(update={"conflicts": conflicts})
+
+    assert unsafe_record.active_state_for_extraction is None
+    assert unsafe_record.active_hero_actions_for_extraction == []
+    with pytest.raises(ValidationError):
+        ImportedHandRecord.model_validate(unsafe_record.model_dump(mode="python"))
+
+
+def test_unsafe_selected_source_copy_cannot_extract_without_a_source_transition(
+) -> None:
+    file_1_detection = detected_for_source("file-1", hero_player_id="hero")
+    file_2_detection = detected_for_source("file-2", hero_player_id="villain")
+    conflict = resolved_source_switch_conflict()
+    conflict["selected_raw_source_id"] = "file-1"
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(raw_source_id="file-1", raw_text="source one\n"),
+            raw_source(raw_source_id="file-2", raw_text="source two\n"),
+        ],
+        detections=[file_1_detection, file_2_detection],
+        conflicts=[conflict],
+        canonical_revisions=[
+            {
+                "revision": 1,
+                "detection_id": file_1_detection.detection_id,
+                "approved_at": NOW,
+                "state": file_1_detection.state,
+            }
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+    unsafe_conflict = record.conflicts[0].model_copy(
+        update={"selected_raw_source_id": "file-2"}
+    )
+    unsafe_record = record.model_copy(update={"conflicts": [unsafe_conflict]})
+
+    assert record.active_state_for_extraction == file_1_detection.state
+    assert unsafe_record.active_state_for_extraction is None
+    assert unsafe_record.active_hero_actions_for_extraction == []
+
+
+def review_only_source_restore_pair(
+) -> tuple[ImportedHandRecord, ImportedHandRecord, ImportedHandState]:
+    file_1_detection = detected_for_source("file-1", hero_player_id="hero")
+    file_2_detection = detected_for_source("file-2", hero_player_id="villain")
+    conflict = resolved_source_switch_conflict()
+    conflict.update(
+        status="unresolved",
+        selected_raw_source_id=None,
+        resolved_at=None,
+    )
+    first_revision = {
+        "revision": 1,
+        "detection_id": file_1_detection.detection_id,
+        "approved_at": NOW,
+        "state": file_1_detection.state,
+    }
+    current = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source(raw_source_id="file-1", raw_text="source one\n")],
+        detections=[file_1_detection],
+        canonical_revisions=[first_revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+    candidate = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            current.raw_sources[0],
+            raw_source(raw_source_id="file-2", raw_text="source two\n"),
+        ],
+        detections=[file_1_detection, file_2_detection],
+        conflicts=[conflict],
+        canonical_revisions=[
+            first_revision,
+            {
+                **first_revision,
+                "revision": 2,
+            },
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 2,
+            "changed_at": NOW + timedelta(minutes=1),
+        },
+    )
+    return current, candidate, file_2_detection.state
+
+
+def test_unsafe_canonical_source_binding_copy_cannot_extract_or_restore() -> None:
+    current, candidate, review_only_state = review_only_source_restore_pair()
+    unsafe_latest = candidate.canonical_revisions[-1].model_copy(
+        update={"state": review_only_state}
+    )
+    unsafe_candidate = candidate.model_copy(
+        update={
+            "canonical_revisions": [
+                candidate.canonical_revisions[0],
+                unsafe_latest,
+            ]
+        }
+    )
+
+    assert unsafe_candidate.active_state_for_extraction is None
+    assert unsafe_candidate.active_hero_actions_for_extraction == []
+    assert (
+        classify_restore(current, unsafe_candidate).kind
+        == "conflict_merge_required"
+    )
+    with pytest.raises(
+        ValidationError,
+        match="source_file_id must match its detected raw source",
+    ):
+        ImportedHandRecord.model_validate(
+            unsafe_candidate.model_dump(mode="python")
+        )
+
+
+def test_unsafe_nonlatest_active_pointer_copy_cannot_extract_or_restore() -> None:
+    current, candidate, _ = review_only_source_restore_pair()
+    unsafe_candidate = candidate.model_copy(
+        update={
+            "lifecycle": candidate.lifecycle.model_copy(
+                update={"active_canonical_revision": 1}
+            )
+        }
+    )
+
+    assert unsafe_candidate.active_state_for_extraction is None
+    assert unsafe_candidate.active_hero_actions_for_extraction == []
+    assert (
+        classify_restore(current, unsafe_candidate).kind
+        == "conflict_merge_required"
+    )
+    with pytest.raises(
+        ValidationError,
+        match="active pointer must select the latest canonical revision",
+    ):
+        ImportedHandRecord.model_validate(
+            unsafe_candidate.model_dump(mode="python")
+        )
+
+
+def source_switch_restore_pair() -> tuple[ImportedHandRecord, ImportedHandRecord]:
+    initial_candidate = canonical_source_switch_record(
+        conflicts=[resolved_source_switch_conflict()]
+    )
+    candidate = ImportedHandRecord.model_validate(
+        {
+            **initial_candidate.model_dump(mode="python"),
+            "lifecycle": {
+                **initial_candidate.lifecycle.model_dump(mode="python"),
+                "changed_at": NOW + timedelta(minutes=1),
+            },
+        }
+    )
+    current = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=candidate.raw_sources[:1],
+        detections=candidate.detections[:1],
+        canonical_revisions=candidate.canonical_revisions[:1],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+    return current, candidate
+
+
+def test_restore_allows_a_resolved_canonical_source_extension() -> None:
+    current, candidate = source_switch_restore_pair()
+
+    assert classify_restore(current, candidate).kind == "allow"
+
+
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+@pytest.mark.parametrize("mutation", ["missing", "select_old_source"])
+def test_restore_rejects_unsafe_source_switch_conflict_copies(
+    invalid_side: str,
+    mutation: str,
+) -> None:
+    current, valid = source_switch_restore_pair()
+    conflicts = []
+    if mutation == "select_old_source":
+        conflicts = [
+            valid.conflicts[0].model_copy(
+                update={"selected_raw_source_id": "file-1"}
+            )
+        ]
+    invalid = valid.model_copy(update={"conflicts": conflicts})
+    if invalid_side == "current":
+        current, candidate = invalid, valid
+    else:
+        candidate = invalid
+
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
 
 
 @pytest.mark.parametrize("participation", ["sitting_out", "not_dealt"])
