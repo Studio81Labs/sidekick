@@ -79,7 +79,45 @@ def hand(
             "net_total": Decimal(stated_net) if stated_net is not None else None,
             "gross_pots": [Decimal(value) for value in (gross_pots or [])],
         }
-    return ImportedHandState(
+    results = (
+        HandResults.model_validate(
+            {
+                "stated_pot": stated,
+                "awards": [
+                    {
+                        "player_id": player_id,
+                        "amount": (
+                            Decimal(amount) if amount is not None else None
+                        ),
+                        "pot_index": pot_index,
+                        "evidence": [evidence()],
+                    }
+                    for player_id, amount, pot_index in (awards or [])
+                ],
+                "players": [
+                    {
+                        "player_id": player_id,
+                        "total_collected": (
+                            Decimal(total_collected)
+                            if total_collected is not None
+                            else None
+                        ),
+                        "net_result": (
+                            Decimal(net_result)
+                            if net_result is not None
+                            else None
+                        ),
+                    }
+                    for player_id, total_collected, net_result in (
+                        player_results or []
+                    )
+                ],
+            }
+        )
+        if include_results
+        else None
+    )
+    state = ImportedHandState(
         identity={"site": "pokerstars", "source_hand_id": "123"},
         chronology={"source_file_id": "file-1"},
         game={
@@ -124,38 +162,32 @@ def hand(
             for index, player_id in enumerate(seat_player_ids, start=1)
         ],
         streets=streets,
-        results=(
-            {
-                "stated_pot": stated,
-                "awards": [
-                    {
-                        "player_id": player_id,
-                        "amount": Decimal(amount) if amount is not None else None,
-                        "pot_index": pot_index,
-                        "evidence": [evidence()],
-                    }
-                    for player_id, amount, pot_index in (awards or [])
-                ],
-                "players": [
-                    {
-                        "player_id": player_id,
-                        "total_collected": (
-                            Decimal(total_collected)
-                            if total_collected is not None
-                            else None
-                        ),
-                        "net_result": (
-                            Decimal(net_result)
-                            if net_result is not None
-                            else None
-                        ),
-                    }
-                    for player_id, total_collected, net_result in (player_results or [])
-                ],
-            }
-            if include_results
-            else None
-        ),
+        results=None,
+    )
+    if results is None:
+        return state
+    return state.model_copy(update={"results": results})
+
+
+def inject_unvalidated_awards(
+    state: ImportedHandState,
+    awards: list[tuple[str, str | None, int | None]],
+) -> ImportedHandState:
+    """Exercise pot-oracle defenses behind aggregate model validation."""
+
+    assert state.results is not None
+    results_payload = state.results.model_dump()
+    results_payload["awards"] = [
+        {
+            "player_id": player_id,
+            "amount": Decimal(amount) if amount is not None else None,
+            "pot_index": pot_index,
+            "evidence": [evidence()],
+        }
+        for player_id, amount, pot_index in awards
+    ]
+    return state.model_copy(
+        update={"results": HandResults.model_validate(results_payload)}
     )
 
 
@@ -777,8 +809,8 @@ def test_unindexed_award_recipient_must_be_eligible_for_a_derived_pot() -> None:
         ],
         stated_gross="2",
         stated_net="2",
-        awards=[("p2", "2", None)],
     )
+    state = inject_unvalidated_awards(state, [("p2", "2", None)])
 
     result = reconcile_pot(state)
 
@@ -805,7 +837,10 @@ def test_duplicate_unindexed_ineligibility_is_reported_once_per_recipient() -> N
         ],
         stated_gross="2",
         stated_net="2",
-        awards=[("p2", "1", None), ("p2", "1", None)],
+    )
+    state = inject_unvalidated_awards(
+        state,
+        [("p2", "1", None), ("p2", "1", None)],
     )
 
     result = reconcile_pot(state)

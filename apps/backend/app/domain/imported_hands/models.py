@@ -728,6 +728,10 @@ class ImportedHandState(ImportedHandModel):
             and self.game.blinds.ante > 0
             else ()
         )
+        configured_straddle_required = (
+            clockwise_action_order is not None
+            and self.game.blinds.straddle is not None
+        )
         seen_ante_posts: set[str] = set()
         seen_straddle_players: set[str] = set()
         seen_structural_blind_posts: set[str] = set()
@@ -751,6 +755,7 @@ class ImportedHandState(ImportedHandModel):
 
         inferred_stack_exhausted_players: set[str] = set()
         committed_pot_before_street: Decimal | None = Decimal(0)
+        final_street_betting_complete = False
         for street_index, street in enumerate(self.streets):
             if fold_end is not None:
                 raise ValueError("a later street is not allowed after folds end the hand")
@@ -907,6 +912,11 @@ class ImportedHandState(ImportedHandModel):
                             "a preflop table decision requires all configured"
                             " structural blind posts first; missing "
                             + ", ".join(missing_blind_posts)
+                        )
+                    if configured_straddle_required and not seen_straddle_players:
+                        raise ValueError(
+                            "a preflop table decision requires a configured"
+                            " post_straddle first"
                         )
                 if (
                     clockwise_action_order is not None
@@ -1729,6 +1739,11 @@ class ImportedHandState(ImportedHandModel):
                         " structural blind posts; missing "
                         + ", ".join(missing_blind_posts)
                     )
+                if configured_straddle_required and not seen_straddle_players:
+                    raise ValueError(
+                        "the preflop street cannot end before a configured"
+                        " post_straddle"
+                    )
             closes_known_round = (
                 street_index < len(self.streets) - 1
                 or (
@@ -1752,6 +1767,24 @@ class ImportedHandState(ImportedHandModel):
                     and live_commitments[sole_actionable_player] >= current_wager
                 )
             )
+            observed_action_round_closed = (
+                current_wager is not None
+                and all(
+                    acted_wager_by_player.get(player_id) == current_wager
+                    for player_id in actionable_players
+                )
+            )
+            if street_index == len(self.streets) - 1:
+                final_street_betting_complete = (
+                    fold_end is not None
+                    or round_closed_by_return
+                    or all_in_action_complete
+                    or observed_action_round_closed
+                    or (
+                        known_action_orders is not None
+                        and known_action_round_closed
+                    )
+                )
             if (
                 closes_known_round
                 and known_action_orders is not None
@@ -1849,6 +1882,30 @@ class ImportedHandState(ImportedHandModel):
                     "showdown participants and award recipients cannot be explicitly"
                     " sitting out or not dealt"
                 )
+            folded_players = {
+                player_id
+                for player_id, (reason, _) in terminal_actors.items()
+                if reason == "folded"
+            }
+            folded_result_players = showdown_and_award_players.intersection(
+                folded_players
+            )
+            if folded_result_players:
+                raise ValueError(
+                    "folded players cannot appear in showdown or receive pot"
+                    " awards: " + ", ".join(sorted(folded_result_players))
+                )
+            if fold_end is None:
+                if self.streets[-1].street != "river":
+                    raise ValueError(
+                        "results require the hand to reach a completed river or"
+                        " end by folds"
+                    )
+                if not final_street_betting_complete:
+                    raise ValueError(
+                        "results require completed river betting or a fold-ended"
+                        " terminal hand"
+                    )
 
         boards = [street.board_cards for street in self.streets]
         previous_known_board: list[Card] | None = None
@@ -1868,33 +1925,6 @@ class ImportedHandState(ImportedHandModel):
             raise ValueError("hero and board cards must be unique")
         _validate_showdown_cards(self)
 
-        dealt = [seat for seat in self.seats if seat.participation == "dealt_in"]
-        positioned = [seat.position for seat in dealt if seat.position is not None]
-        if positioned:
-            if any(
-                position.dealt_in_player_count != len(dealt)
-                for position in positioned
-            ):
-                raise ValueError(
-                    "position dealt_in_player_count must match the actual dealt-in ring"
-                )
-            for attribute in ("button_distance", "action_index", "display_label"):
-                values = [getattr(position, attribute) for position in positioned]
-                if len(values) != len(set(values)):
-                    raise ValueError(
-                        "supplied structural positions must have unique button"
-                        " distances, action indexes, and display labels"
-                    )
-
-        if self.button_seat is not None:
-            button = next(seat for seat in self.seats if seat.seat_number == self.button_seat)
-            if button.participation == "dealt_in" and len(dealt) >= 2:
-                expected = derive_structural_positions(self.seats, self.button_seat)
-                for seat in self.seats:
-                    if seat.position is not None and seat.position != expected.get(seat.seat_number):
-                        raise ValueError(
-                            f"seat {seat.seat_number} structural position does not match the dealt-in ring"
-                        )
         return self
 
 
@@ -2112,6 +2142,13 @@ class ImportedHandRecord(ImportedHandModel):
         for detected in self.detections:
             if detected.raw_source_id not in raw_ids:
                 raise ValueError("detected hand must reference a retained raw source")
+            detected_raw_source = raw_by_id[detected.raw_source_id]
+            if detected.detected_at < detected_raw_source.provenance.imported_at:
+                raise ValueError(
+                    f"detection {detected.detection_id} detected_at cannot"
+                    f" precede referenced raw source {detected.raw_source_id}"
+                    " imported_at"
+                )
             if detected.state.identity != self.identity:
                 raise ValueError("detected hand must share the stable hand identity")
             for item in _detected_source_evidence(detected):
@@ -2248,6 +2285,18 @@ class ImportedHandRecord(ImportedHandModel):
                     "deletion_pending lifecycle changed_at cannot precede deletion"
                     " request requested_at"
                 )
+            for raw in self.raw_sources:
+                if deletion_request.requested_at < raw.provenance.imported_at:
+                    raise ValueError(
+                        "deletion request requested_at cannot precede retained"
+                        f" raw source {raw.raw_source_id} imported_at"
+                    )
+            for detected in self.detections:
+                if deletion_request.requested_at < detected.detected_at:
+                    raise ValueError(
+                        "deletion request requested_at cannot precede retained"
+                        f" detection {detected.detection_id} detected_at"
+                    )
             if revisions:
                 latest_approved_at = self.canonical_revisions[-1].approved_at
                 if self.lifecycle.changed_at < latest_approved_at:
@@ -2277,9 +2326,10 @@ class ImportedHandRecord(ImportedHandModel):
 
         Forced, client-automatic, and unresolved actions remain in the canonical
         audit stream but cannot become learning decision points. Player-selected
-        decisions require a fully resolved, derivable dealt-in seat ring, two
-        approved hero cards, and the complete cumulative board for their street.
-        Wagers also require an approved chip representation before extraction.
+        decisions require a fully resolved, derivable dealt-in seat ring, known
+        starting stacks for every dealt-in player, two approved hero cards, and
+        the complete cumulative board for their street. Wagers also require an
+        approved chip representation before extraction.
         """
 
         state = self.active_state_for_extraction
@@ -2293,6 +2343,11 @@ class ImportedHandRecord(ImportedHandModel):
         if hero.participation != "dealt_in":
             return []
         if any(seat.participation == "unknown" for seat in state.seats):
+            return []
+        if any(
+            seat.participation == "dealt_in" and seat.starting_stack is None
+            for seat in state.seats
+        ):
             return []
         if _known_action_orders(state.seats, state.button_seat) is None:
             return []
@@ -2571,27 +2626,79 @@ def derive_structural_positions(
     }
 
 
+def _known_structural_positions(
+    seats: list[ImportedSeat],
+    button_seat: int | None,
+) -> dict[int, StructuralPosition] | None:
+    """Validate positions and resolve an exact dealt-in ring when possible."""
+
+    dealt = [seat for seat in seats if seat.participation == "dealt_in"]
+    positioned = [seat.position for seat in dealt if seat.position is not None]
+    if positioned:
+        if any(
+            position.dealt_in_player_count != len(dealt)
+            for position in positioned
+        ):
+            raise ValueError(
+                "position dealt_in_player_count must match the actual dealt-in ring"
+            )
+        for attribute in ("button_distance", "action_index", "display_label"):
+            values = [getattr(position, attribute) for position in positioned]
+            if len(values) != len(set(values)):
+                raise ValueError(
+                    "supplied structural positions must have unique button"
+                    " distances, action indexes, and display labels"
+                )
+
+    if (
+        len(dealt) < 2
+        or any(seat.participation == "unknown" for seat in seats)
+    ):
+        return None
+
+    resolved_button_seat = button_seat
+    if resolved_button_seat is not None:
+        button = next(
+            (seat for seat in dealt if seat.seat_number == resolved_button_seat),
+            None,
+        )
+        if button is None:
+            return None
+    else:
+        if len(positioned) != len(dealt):
+            return None
+        inferred_buttons = [
+            seat
+            for seat in dealt
+            if seat.position is not None and seat.position.button_distance == 0
+        ]
+        if len(inferred_buttons) != 1:
+            return None
+        resolved_button_seat = inferred_buttons[0].seat_number
+
+    derived = derive_structural_positions(seats, resolved_button_seat)
+    for seat in dealt:
+        if (
+            seat.position is not None
+            and seat.position != derived[seat.seat_number]
+        ):
+            raise ValueError(
+                f"seat {seat.seat_number} structural position does not match"
+                " the dealt-in ring"
+            )
+    return derived
+
+
 def _known_action_orders(
     seats: list[ImportedSeat],
     button_seat: int | None,
 ) -> tuple[list[str], list[str]] | None:
     """Return exact clockwise and initial preflop orders when the ring is known."""
 
-    if button_seat is None or any(
-        seat.participation == "unknown" for seat in seats
-    ):
+    derived = _known_structural_positions(seats, button_seat)
+    if derived is None:
         return None
     dealt = [seat for seat in seats if seat.participation == "dealt_in"]
-    button = next(
-        (seat for seat in dealt if seat.seat_number == button_seat),
-        None,
-    )
-    if (
-        button is None
-        or len(dealt) < 2
-    ):
-        return None
-    derived = derive_structural_positions(seats, button_seat)
     clockwise = [
         seat.player_id
         for seat in sorted(
