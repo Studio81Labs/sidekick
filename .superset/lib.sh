@@ -38,3 +38,11 @@ ensure_node() {
   export PATH
   node_ok "$WANTED_NODE"
 }
+
+# solver_fallback_enabled <backend dir> <venv python>: "yes" or "no", read
+# through the backend's own settings loader (environment plus the .env file
+# in the backend dir), so it reflects what the backend will actually do.
+solver_fallback_enabled() {
+  (cd "$1" && "$2" -c 'from app.config import get_settings; print("yes" if get_settings().postflop_solver_fallback_enabled else "no")' 2>/dev/null) \
+    || echo yes
+}

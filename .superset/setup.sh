@@ -70,6 +70,28 @@ VENV_PY="$BACKEND_DIR/.venv/bin/python"
   --no-deps --no-build-isolation "$BACKEND_DIR"
 "$VENV_PY" -m pip check
 
+# --- Local env files ----------------------------------------------------------
+step "Preparing local env files"
+# copy_local <relative path> [example relative path]
+# Keeps an existing file, else copies the main checkout's copy, else the example.
+copy_local() {
+  rel=$1
+  example=${2:-}
+  if [ -e "$ROOT_DIR/$rel" ]; then
+    echo "keeping   $rel"
+  elif [ "$MAIN_DIR" != "$ROOT_DIR" ] && [ -f "$MAIN_DIR/$rel" ]; then
+    cp "$MAIN_DIR/$rel" "$ROOT_DIR/$rel"
+    echo "copied    $rel (from main checkout)"
+  elif [ -n "$example" ] && [ -f "$ROOT_DIR/$example" ]; then
+    cp "$ROOT_DIR/$example" "$ROOT_DIR/$rel"
+    echo "created   $rel (from $example)"
+  fi
+}
+copy_local apps/backend/.env apps/backend/.env.example
+copy_local apps/backend/.mcp.env
+copy_local apps/pwa/.env.local
+copy_local apps/pwa/.dev.vars
+
 # --- Rust solver (best-effort) -----------------------------------------------
 step "Building the postflop solver"
 SOLVER_STAMP="$SOLVER_DIR/target/release/.poker-hero-solver-tree"
@@ -121,33 +143,17 @@ else
   fi
   if [ ! -x "$SOLVER_BIN" ]; then
     warn "cargo not found: skipping the postflop solver build."
-    warn "The backend still runs; recommendations use the built-in fallback"
-    warn "(POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED=true). Install Rust 1.85+"
-    warn "(https://rustup.rs) and re-run ./.superset/setup.sh to enable the solver."
+    # Env files are in place by now, so this is the backend's effective setting.
+    if [ "$(solver_fallback_enabled "$BACKEND_DIR" "$VENV_PY")" = yes ]; then
+      warn "The backend still runs; recommendations use the built-in fallback"
+      warn "(POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED=true)."
+    else
+      warn "POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED is false, so postflop"
+      warn "recommendations will fail until the solver is built."
+    fi
+    warn "Install Rust 1.85+ (https://rustup.rs) and re-run ./.superset/setup.sh to enable it."
   fi
 fi
-
-# --- Local env files ----------------------------------------------------------
-step "Preparing local env files"
-# copy_local <relative path> [example relative path]
-# Keeps an existing file, else copies the main checkout's copy, else the example.
-copy_local() {
-  rel=$1
-  example=${2:-}
-  if [ -e "$ROOT_DIR/$rel" ]; then
-    echo "keeping   $rel"
-  elif [ "$MAIN_DIR" != "$ROOT_DIR" ] && [ -f "$MAIN_DIR/$rel" ]; then
-    cp "$MAIN_DIR/$rel" "$ROOT_DIR/$rel"
-    echo "copied    $rel (from main checkout)"
-  elif [ -n "$example" ] && [ -f "$ROOT_DIR/$example" ]; then
-    cp "$ROOT_DIR/$example" "$ROOT_DIR/$rel"
-    echo "created   $rel (from $example)"
-  fi
-}
-copy_local apps/backend/.env apps/backend/.env.example
-copy_local apps/backend/.mcp.env
-copy_local apps/pwa/.env.local
-copy_local apps/pwa/.dev.vars
 
 step "Workspace ready"
 echo "Use the Run button (./.superset/run.sh) to start the API and PWA together,"

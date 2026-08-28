@@ -208,14 +208,8 @@ PWA_PID=$!
 printf '\nPoker Hero dev servers  [%s]\n' "$(basename "$ROOT_DIR")"
 printf '  PWA  %s\n' "$PWA_URL"
 printf '  API  %s   (OpenAPI docs: %s/docs)\n' "$BACKEND_URL" "$BACKEND_URL"
-# solver_fallback_enabled: whether the backend will really fall back, read
-# through the app's own settings loader (environment plus apps/backend/.env).
-solver_fallback_enabled() {
-  (cd "$BACKEND_DIR" && "$VENV_PY" -c 'from app.config import get_settings; print("yes" if get_settings().postflop_solver_fallback_enabled else "no")' 2>/dev/null) \
-    || echo yes
-}
 if [ "$SOLVER_STATUS" != ok ]; then
-  if [ "$(solver_fallback_enabled)" = yes ]; then
+  if [ "$(solver_fallback_enabled "$BACKEND_DIR" "$VENV_PY")" = yes ]; then
     outcome="using the recommendation fallback"
   else
     outcome="POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED is false, so postflop recommendations will fail"
