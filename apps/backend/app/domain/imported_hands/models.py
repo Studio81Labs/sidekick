@@ -99,6 +99,7 @@ _FORCED_ACTIONS = {
     "post_straddle",
     "uncalled_return",
 }
+_TABLE_ACTIONS = {"fold", "check", "bet", "call", "raise"}
 _FORCED_POST_FIELDS = {
     "post_ante": "ante",
     "post_small_blind": "small_blind",
@@ -523,7 +524,7 @@ class ImportedAction(ImportedHandModel):
     @property
     def is_player_decision(self) -> bool:
         return (
-            self.action_type in {"fold", "check", "bet", "call", "raise"}
+            self.action_type in _TABLE_ACTIONS
             and self.origin.kind == "player_selected"
         )
 
@@ -665,7 +666,9 @@ class ImportedHandState(ImportedHandModel):
             for seat in self.seats
             if seat.participation in {"dealt_in", "unknown"}
         }
+        actionable_players = set(live_players)
         fold_end: tuple[StreetName, str] | None = None
+        betting_closed_by_all_ins = False
         enforce_full_raise_increment = self.game.betting_limit in {
             "no_limit",
             "pot_limit",
@@ -673,6 +676,12 @@ class ImportedHandState(ImportedHandModel):
         cumulative_commitments: dict[str, Decimal | None] = {
             player_id: Decimal(0) for player_id in player_ids
         }
+        known_action_orders = _known_action_orders(self.seats, self.button_seat)
+        if known_action_orders is None:
+            clockwise_action_order = None
+            preflop_action_order = None
+        else:
+            clockwise_action_order, preflop_action_order = known_action_orders
         inferred_stack_exhausted_players: set[str] = set()
         committed_pot_before_street: Decimal | None = Decimal(0)
         for street_index, street in enumerate(self.streets):
@@ -690,11 +699,30 @@ class ImportedHandState(ImportedHandModel):
             nominal_bring_in = Decimal(0)
             last_full_wager_increment = self.game.blinds.big_blind
             round_closed_by_return = False
+            pending_action_players: set[str] | None = None
+            next_action_player: str | None = None
+            known_action_round_closed = False
+            last_preflop_straddler: str | None = None
+            table_decision_seen = False
             for action in street.actions:
                 if round_closed_by_return:
                     raise ValueError(
                         "an action cannot follow an uncalled return on the same street"
                     )
+                sole_actionable_player = (
+                    _sole_actionable_player_with_only_all_in_opponents(
+                        live_players,
+                        actionable_players,
+                    )
+                )
+                if (
+                    not betting_closed_by_all_ins
+                    and sole_actionable_player is not None
+                    and current_wager is not None
+                    and live_commitments[sole_actionable_player] is not None
+                    and live_commitments[sole_actionable_player] >= current_wager
+                ):
+                    betting_closed_by_all_ins = True
                 pot_before_action = (
                     committed_pot_before_street
                     + sum(
@@ -748,6 +776,63 @@ class ImportedHandState(ImportedHandModel):
                         raise ValueError(
                             "an actor cannot act after folding or going all-in"
                         )
+                if (
+                    betting_closed_by_all_ins
+                    and action.action_type in _TABLE_ACTIONS
+                ):
+                    raise ValueError(
+                        "a table decision is not allowed after every"
+                        " pot-eligible opponent is all-in and action is complete"
+                    )
+                if (
+                    sole_actionable_player == action.actor_id
+                    and action.action_type in _TABLE_ACTIONS
+                    and action.action_type in {"bet", "raise"}
+                ):
+                    raise ValueError(
+                        "a bet or raise is not allowed when no"
+                        " opponent can respond"
+                    )
+                if (
+                    clockwise_action_order is not None
+                    and preflop_action_order is not None
+                    and action.action_type in _TABLE_ACTIONS
+                ):
+                    if known_action_round_closed:
+                        raise ValueError(
+                            "a table decision is not allowed after the known action"
+                            " round is complete"
+                        )
+                    if pending_action_players is None:
+                        pending_action_players = set(actionable_players)
+                        if street.street == "preflop":
+                            if last_preflop_straddler is None:
+                                next_action_player = next(
+                                    (
+                                        player_id
+                                        for player_id in preflop_action_order
+                                        if player_id in pending_action_players
+                                    ),
+                                    None,
+                                )
+                            else:
+                                next_action_player = _next_clockwise_player(
+                                    clockwise_action_order,
+                                    last_preflop_straddler,
+                                    pending_action_players,
+                                )
+                        else:
+                            next_action_player = _next_clockwise_player(
+                                clockwise_action_order,
+                                clockwise_action_order[0],
+                                pending_action_players,
+                            )
+                    if action.actor_id != next_action_player:
+                        raise ValueError(
+                            "an action is out of turn for the known dealt-in seat"
+                            f" ring; expected {next_action_player}, got"
+                            f" {action.actor_id}"
+                        )
                 actor_commitment = street_commitments[action.actor_id]
                 actor_live_commitment = live_commitments[action.actor_id]
                 resolved_commitment = _known_action_total(
@@ -781,6 +866,11 @@ class ImportedHandState(ImportedHandModel):
                 if forced_post_field is not None:
                     if street.street != "preflop":
                         raise ValueError("forced blind and ante posts must be preflop")
+                    if table_decision_seen:
+                        raise ValueError(
+                            "a forced blind, ante, or straddle post cannot follow"
+                            " a table decision"
+                        )
                     configured_post_amount = getattr(
                         self.game.blinds,
                         forced_post_field,
@@ -941,17 +1031,26 @@ class ImportedHandState(ImportedHandModel):
                     terminal_actors[action.actor_id] = ("folded", street.street)
                     inferred_stack_exhausted_players.discard(action.actor_id)
                     live_players.discard(action.actor_id)
+                    actionable_players.discard(action.actor_id)
                     if len(live_players) == 1:
                         fold_end = (street.street, next(iter(live_players)))
                 elif action.all_in:
                     terminal_actors[action.actor_id] = ("all_in", street.street)
                     inferred_stack_exhausted_players.discard(action.actor_id)
+                    actionable_players.discard(action.actor_id)
                 elif known_stack_exhausted:
                     terminal_actors[action.actor_id] = ("all_in", street.street)
                     inferred_stack_exhausted_players.add(action.actor_id)
+                    actionable_players.discard(action.actor_id)
                 elif action.actor_id in inferred_stack_exhausted_players:
                     terminal_actors.pop(action.actor_id, None)
                     inferred_stack_exhausted_players.discard(action.actor_id)
+                    actionable_players.add(action.actor_id)
+                    # A return can restore chips to a player whose all-in state
+                    # was inferred only from their prior known commitment. The
+                    # hand-wide betting closure must be reconsidered with that
+                    # player actionable again.
+                    betting_closed_by_all_ins = False
                 cumulative_commitments[action.actor_id] = (
                     resolved_cumulative_commitment
                 )
@@ -1052,6 +1151,63 @@ class ImportedHandState(ImportedHandModel):
                     reopen_increment_by_player[action.actor_id] = (
                         last_full_wager_increment
                     )
+                sole_actionable_player = (
+                    _sole_actionable_player_with_only_all_in_opponents(
+                        live_players,
+                        actionable_players,
+                    )
+                )
+                if (
+                    sole_actionable_player is not None
+                    and current_wager is not None
+                    and live_commitments[sole_actionable_player] is not None
+                    and live_commitments[sole_actionable_player] >= current_wager
+                ):
+                    betting_closed_by_all_ins = True
+                if (
+                    clockwise_action_order is not None
+                    and preflop_action_order is not None
+                ):
+                    if (
+                        street.street == "preflop"
+                        and pending_action_players is None
+                        and action.action_type == "post_straddle"
+                    ):
+                        last_preflop_straddler = action.actor_id
+                    if action.action_type in _TABLE_ACTIONS:
+                        if action.action_type in {"bet", "raise"}:
+                            pending_action_players = set(actionable_players)
+                            pending_action_players.discard(action.actor_id)
+                        else:
+                            assert pending_action_players is not None
+                            pending_action_players.discard(action.actor_id)
+                            pending_action_players.intersection_update(
+                                actionable_players
+                            )
+                        if pending_action_players:
+                            next_action_player = _next_clockwise_player(
+                                clockwise_action_order,
+                                action.actor_id,
+                                pending_action_players,
+                            )
+                        else:
+                            next_action_player = None
+                            known_action_round_closed = True
+                    elif pending_action_players is not None:
+                        pending_action_players.intersection_update(
+                            actionable_players
+                        )
+                        if not pending_action_players:
+                            next_action_player = None
+                            known_action_round_closed = True
+                        elif next_action_player not in pending_action_players:
+                            next_action_player = _next_clockwise_player(
+                                clockwise_action_order,
+                                action.actor_id,
+                                pending_action_players,
+                            )
+                if action.action_type in _TABLE_ACTIONS:
+                    table_decision_seen = True
             closes_known_round = (
                 street_index < len(self.streets) - 1
                 or (
@@ -1059,6 +1215,33 @@ class ImportedHandState(ImportedHandModel):
                     and self.results is not None
                 )
             )
+            sole_actionable_player = (
+                _sole_actionable_player_with_only_all_in_opponents(
+                    live_players,
+                    actionable_players,
+                )
+            )
+            all_in_action_complete = (
+                betting_closed_by_all_ins
+                or not actionable_players
+                or (
+                    sole_actionable_player is not None
+                    and current_wager is not None
+                    and live_commitments[sole_actionable_player] is not None
+                    and live_commitments[sole_actionable_player] >= current_wager
+                )
+            )
+            if (
+                closes_known_round
+                and known_action_orders is not None
+                and not known_action_round_closed
+                and fold_end is None
+                and not round_closed_by_return
+                and not all_in_action_complete
+            ):
+                raise ValueError(
+                    "a street cannot end before the known action round is complete"
+                )
             if closes_known_round and current_wager is not None:
                 for seat in self.seats:
                     if (
@@ -1759,6 +1942,60 @@ def derive_structural_positions(
     }
 
 
+def _known_action_orders(
+    seats: list[ImportedSeat],
+    button_seat: int | None,
+) -> tuple[list[str], list[str]] | None:
+    """Return exact clockwise and initial preflop orders when the ring is known."""
+
+    if button_seat is None or any(
+        seat.participation == "unknown" for seat in seats
+    ):
+        return None
+    dealt = [seat for seat in seats if seat.participation == "dealt_in"]
+    button = next(
+        (seat for seat in dealt if seat.seat_number == button_seat),
+        None,
+    )
+    if (
+        button is None
+        or len(dealt) < 2
+        or any(seat.position is None for seat in dealt)
+    ):
+        return None
+    derived = derive_structural_positions(seats, button_seat)
+    clockwise = [
+        seat.player_id
+        for seat in sorted(
+            dealt,
+            key=lambda seat: derived[seat.seat_number].button_distance,
+        )
+    ]
+    preflop = [
+        seat.player_id
+        for seat in sorted(
+            dealt,
+            key=lambda seat: derived[seat.seat_number].action_index,
+        )
+    ]
+    return clockwise, preflop
+
+
+def _next_clockwise_player(
+    clockwise_order: list[str],
+    after_player: str,
+    candidates: set[str],
+) -> str | None:
+    """Return the next candidate clockwise after a known ring member."""
+
+    start = clockwise_order.index(after_player)
+    for offset in range(1, len(clockwise_order) + 1):
+        player_id = clockwise_order[(start + offset) % len(clockwise_order)]
+        if player_id in candidates:
+            return player_id
+    return None
+
+
 def structural_position_labels(count: int) -> list[str]:
     """Return the table-size-specific label at each button distance."""
 
@@ -1819,6 +2056,20 @@ def _known_live_action_total(
     if action.action_type == "uncalled_return":
         return prior_live_commitment - action.amount
     return prior_live_commitment + action.amount
+
+
+def _sole_actionable_player_with_only_all_in_opponents(
+    live_players: set[str],
+    actionable_players: set[str],
+) -> str | None:
+    """Return the sole player with chips when every live opponent is all-in."""
+
+    if len(actionable_players) != 1:
+        return None
+    sole_player = next(iter(actionable_players))
+    if not live_players.difference({sole_player}):
+        return None
+    return sole_player
 
 
 def _validate_unique(items: list[Any], attribute: str, label: str) -> None:

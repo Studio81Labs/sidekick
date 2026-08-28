@@ -352,14 +352,74 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
         reconciled_player_collections.values(), Decimal(0)
     )
     if not contributions_incomplete:
-        eligible_players = {
-            player_id for pot in pots for player_id in pot.eligible_players
+        eligible_totals_by_player = {
+            player_id: sum(
+                (
+                    pot.amount
+                    for pot in pots
+                    if player_id in pot.eligible_players
+                ),
+                Decimal(0),
+            )
+            for player_id in contributions
         }
+        individually_over_capacity: set[str] = set()
         for player_id, collection in reconciled_player_collections.items():
-            if collection > 0 and player_id not in eligible_players:
+            eligible_total = eligible_totals_by_player[player_id]
+            if collection <= eligible_total:
+                continue
+            individually_over_capacity.add(player_id)
+            if eligible_total == 0:
                 errors.append(
                     f"player result {player_id} has positive collection {collection}"
                     " but is not eligible for any derived pot"
+                )
+            else:
+                errors.append(
+                    f"player result {player_id} collection {collection} exceeds"
+                    f" eligible derived pots {eligible_total}"
+                )
+        highest_eligible_pot_by_player = {
+            player_id: max(
+                (
+                    pot.pot_index
+                    for pot in pots
+                    if player_id in pot.eligible_players
+                ),
+                default=None,
+            )
+            for player_id in contributions
+        }
+        # Derived eligibility rings only shrink as layer indexes rise. Players
+        # capped at a lower ring must share the capacity through that layer.
+        cumulative_capacity = Decimal(0)
+        for pot in pots[:-1]:
+            cumulative_capacity += pot.amount
+            capacity_limited_collections = {
+                player_id: collection
+                for player_id, collection in reconciled_player_collections.items()
+                if collection > 0
+                and (
+                    highest_eligible_pot_by_player[player_id] is not None
+                    and highest_eligible_pot_by_player[player_id] <= pot.pot_index
+                )
+            }
+            if (
+                not capacity_limited_collections
+                or individually_over_capacity.intersection(
+                    capacity_limited_collections
+                )
+            ):
+                continue
+            limited_total = sum(
+                capacity_limited_collections.values(), Decimal(0)
+            )
+            if limited_total > cumulative_capacity:
+                errors.append(
+                    f"known player collections {limited_total} for players"
+                    f" {', '.join(sorted(capacity_limited_collections))} exceed shared"
+                    f" eligible pot capacity {cumulative_capacity} through pot index"
+                    f" {pot.pot_index}"
                 )
     if (
         collection_ceiling is not None

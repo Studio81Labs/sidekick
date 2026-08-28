@@ -59,8 +59,9 @@ def hand(
     starting_stacks: dict[str, str | None] | None = None,
     participations: dict[str, str] | None = None,
     include_results: bool = True,
+    player_ids: list[str] | None = None,
 ) -> ImportedHandState:
-    player_ids = ["p1", "p2", "p3"]
+    seat_player_ids = player_ids or ["p1", "p2", "p3"]
     represented_player_ids = {
         action_payload["actor_id"]
         for street in streets
@@ -83,7 +84,7 @@ def hand(
         chronology={"source_file_id": "file-1"},
         game={
             "betting_limit": "no_limit",
-            "table_size": 3,
+            "table_size": len(seat_player_ids),
             "blinds": {
                 "small_blind": Decimal("0.5"),
                 "big_blind": Decimal("1"),
@@ -120,7 +121,7 @@ def hand(
                     )
                 ),
             }
-            for index, player_id in enumerate(player_ids, start=1)
+            for index, player_id in enumerate(seat_player_ids, start=1)
         ],
         streets=streets,
         results=(
@@ -930,6 +931,145 @@ def test_implied_player_collection_requires_derived_pot_eligibility() -> None:
         " for any derived pot" in error
         for error in result.errors
     )
+
+
+@pytest.mark.parametrize(
+    (
+        "player_id",
+        "total_collected",
+        "net_result",
+        "expected_status",
+        "expected_eligible_total",
+    ),
+    [
+        ("p1", "25", "20", "fail", "15"),
+        ("p1", None, "20", "fail", "15"),
+        ("p1", "15", "10", "pass", None),
+        ("p2", "25", "15", "pass", None),
+    ],
+)
+def test_player_result_collection_cannot_exceed_eligible_pot_layers(
+    player_id: str,
+    total_collected: str | None,
+    net_result: str,
+    expected_status: str,
+    expected_eligible_total: str | None,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5"),
+                    action(1, "p2", "call", amount="5", total="5"),
+                    action(2, "p3", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p2", "bet", amount="5", total="5"),
+                    action(1, "p3", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="25",
+        stated_net="25",
+        gross_pots=["15", "10"],
+        player_results=[(player_id, total_collected, net_result)],
+        starting_stacks={"p1": "5", "p2": "10", "p3": "10"},
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    capacity_errors = [
+        error
+        for error in result.errors
+        if "player result" in error and "eligible derived pots" in error
+    ]
+    if expected_eligible_total is None:
+        assert capacity_errors == []
+    else:
+        collection = (
+            Decimal(total_collected)
+            if total_collected is not None
+            else Decimal(net_result) + result.contributions[player_id]
+        )
+        assert capacity_errors == [
+            f"player result {player_id} collection {collection} exceeds"
+            f" eligible derived pots {expected_eligible_total}"
+        ]
+
+
+@pytest.mark.parametrize(
+    ("include_totals", "collections", "expected_status"),
+    [
+        (True, ("15", "15", "0", "0"), "fail"),
+        (False, ("15", "15", "0", "0"), "fail"),
+        (True, ("10", "10", "10", "0"), "pass"),
+        (True, ("0", "0", "30", "0"), "pass"),
+    ],
+)
+def test_player_results_share_cumulative_eligible_pot_capacity(
+    include_totals: bool,
+    collections: tuple[str, str, str, str],
+    expected_status: str,
+) -> None:
+    contributions = {
+        "p1": Decimal("5"),
+        "p2": Decimal("5"),
+        "p3": Decimal("10"),
+        "p4": Decimal("10"),
+    }
+    player_results = [
+        (
+            player_id,
+            collection if include_totals else None,
+            str(Decimal(collection) - contributions[player_id]),
+        )
+        for player_id, collection in zip(contributions, collections, strict=True)
+    ]
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5", all_in=True),
+                    action(1, "p2", "call", amount="5", total="5", all_in=True),
+                    action(2, "p3", "call", amount="5", total="5"),
+                    action(3, "p4", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p3", "bet", amount="5", total="5"),
+                    action(1, "p4", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="30",
+        stated_net="30",
+        gross_pots=["20", "10"],
+        player_results=player_results,
+        starting_stacks={"p1": "5", "p2": "5", "p3": "10", "p4": "10"},
+        player_ids=["p1", "p2", "p3", "p4"],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    shared_capacity_errors = [
+        error for error in result.errors if "shared eligible pot capacity" in error
+    ]
+    if expected_status == "fail":
+        assert shared_capacity_errors == [
+            "known player collections 30 for players p1, p2 exceed shared"
+            " eligible pot capacity 20 through pot index 0"
+        ]
+    else:
+        assert shared_capacity_errors == []
 
 
 @pytest.mark.parametrize(
