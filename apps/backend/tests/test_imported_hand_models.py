@@ -1342,6 +1342,24 @@ def test_active_revision_must_use_the_selected_conflict_source(status: str) -> N
 
     file_1_detection = source_detection("file-1")
     file_2_detection = source_detection("file-2")
+    revisions = []
+    if status == "resolved_keep_active":
+        revisions.append(
+            {
+                "revision": 1,
+                "detection_id": "detection-file-1",
+                "approved_at": NOW,
+                "state": file_1_detection.state,
+            }
+        )
+    revisions.append(
+        {
+            "revision": len(revisions) + 1,
+            "detection_id": "detection-file-2",
+            "approved_at": NOW,
+            "state": file_2_detection.state,
+        }
+    )
 
     with pytest.raises(ValidationError, match="use the selected conflict source"):
         ImportedHandRecord(
@@ -1356,23 +1374,18 @@ def test_active_revision_must_use_the_selected_conflict_source(status: str) -> N
                     "conflict_id": "conflict-1",
                     "raw_source_ids": ["file-1", "file-2"],
                     "detected_ids": ["detection-file-1", "detection-file-2"],
-                    "active_canonical_revision_at_creation": None,
+                    "active_canonical_revision_at_creation": (
+                        1 if status == "resolved_keep_active" else None
+                    ),
                     "status": status,
                     "selected_raw_source_id": "file-1",
                     "resolved_at": NOW,
                 }
             ],
-            canonical_revisions=[
-                {
-                    "revision": 1,
-                    "detection_id": "detection-file-2",
-                    "approved_at": NOW,
-                    "state": file_2_detection.state,
-                }
-            ],
+            canonical_revisions=revisions,
             lifecycle={
                 "status": "active",
-                "active_canonical_revision": 1,
+                "active_canonical_revision": len(revisions),
                 "changed_at": NOW,
             },
         )
@@ -12052,6 +12065,7 @@ def conflict_chronology_record(
     conflict_detected_ids: tuple[str, ...] | None = None,
     approved_at: datetime | None = None,
     status: str = "resolved_use_source",
+    selected_raw_source_id: str | None = None,
     resolved_at: datetime | None = NOW,
 ) -> ImportedHandRecord:
     retained = [
@@ -12081,7 +12095,9 @@ def conflict_chronology_record(
     }
     if status != "unresolved":
         conflict.update(
-            selected_raw_source_id=conflict_raw_source_ids[0],
+            selected_raw_source_id=(
+                selected_raw_source_id or conflict_raw_source_ids[0]
+            ),
             resolved_at=resolved_at,
         )
     revisions = (
@@ -12107,6 +12123,43 @@ def conflict_chronology_record(
             "changed_at": NOW + timedelta(days=1),
         },
     )
+
+
+def test_resolved_keep_active_requires_a_preserved_revision() -> None:
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "resolved_keep_active conflict requires"
+            " active_canonical_revision_at_creation"
+        ),
+    ):
+        conflict_chronology_record(
+            status="resolved_keep_active",
+            approved_at=None,
+        )
+
+
+def test_resolved_keep_active_must_select_the_preserved_revision_source() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="selected source must match the preserved active revision source",
+    ):
+        conflict_chronology_record(
+            status="resolved_keep_active",
+            approved_at=NOW,
+            selected_raw_source_id="file-2",
+        )
+
+
+def test_resolved_keep_active_accepts_the_preserved_revision_source() -> None:
+    record = conflict_chronology_record(
+        status="resolved_keep_active",
+        approved_at=NOW,
+        selected_raw_source_id="file-1",
+    )
+
+    assert record.conflicts[0].selected_raw_source_id == "file-1"
+    assert record.conflicts[0].active_canonical_revision_at_creation == 1
 
 
 @pytest.mark.parametrize("latest_event", ["raw_import", "detection", "approval"])
@@ -12300,6 +12353,65 @@ def test_restore_rejects_unsafe_nonchronological_conflict_copies(
             ),
         }
     )
+
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+@pytest.mark.parametrize("invalid_resolution", ["missing_revision", "wrong_source"])
+def test_restore_rejects_unsafe_resolved_keep_active_copies(
+    invalid_side: str,
+    invalid_resolution: str,
+) -> None:
+    if invalid_side == "candidate":
+        current = conflict_chronology_record(
+            status="unresolved",
+            approved_at=(NOW if invalid_resolution == "wrong_source" else None),
+            resolved_at=None,
+        )
+        invalid_conflict = current.conflicts[0].model_copy(
+            update={
+                "status": "resolved_keep_active",
+                "selected_raw_source_id": (
+                    "file-2" if invalid_resolution == "wrong_source" else "file-1"
+                ),
+                "resolved_at": NOW,
+            }
+        )
+        candidate = current.model_copy(
+            update={
+                "conflicts": [invalid_conflict],
+                "lifecycle": current.lifecycle.model_copy(
+                    update={
+                        "changed_at": current.lifecycle.changed_at
+                        + timedelta(minutes=1)
+                    }
+                ),
+            }
+        )
+    else:
+        valid = conflict_chronology_record(
+            status="resolved_keep_active",
+            approved_at=NOW,
+        )
+        invalid_conflict = valid.conflicts[0].model_copy(
+            update=(
+                {"active_canonical_revision_at_creation": None}
+                if invalid_resolution == "missing_revision"
+                else {"selected_raw_source_id": "file-2"}
+            )
+        )
+        current = valid.model_copy(update={"conflicts": [invalid_conflict]})
+        candidate = current.model_copy(
+            update={
+                "lifecycle": current.lifecycle.model_copy(
+                    update={
+                        "changed_at": current.lifecycle.changed_at
+                        + timedelta(minutes=1)
+                    }
+                )
+            }
+        )
 
     assert classify_restore(current, candidate).kind == "conflict_merge_required"
 

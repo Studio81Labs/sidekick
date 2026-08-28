@@ -2249,24 +2249,17 @@ class ImportedHandRecord(ImportedHandModel):
 
         conflict_active_sources: dict[str, str] = {}
         for conflict in self.conflicts:
-            preserved_revision = conflict.active_canonical_revision_at_creation
-            if preserved_revision is not None:
-                if preserved_revision > len(self.canonical_revisions):
-                    raise ValueError(
-                        "conflict active revision must reference a retained"
-                        " canonical revision"
-                    )
-                preserved_detection_id = self.canonical_revisions[
-                    preserved_revision - 1
-                ].detection_id
-                preserved_source_id = detection_by_id[
-                    preserved_detection_id
-                ].raw_source_id
-                if preserved_source_id not in conflict.raw_source_ids:
-                    raise ValueError(
-                        "conflict active revision source must belong to the conflict"
-                    )
+            preserved_source_id = _conflict_preserved_source_id(
+                conflict,
+                detection_by_id=detection_by_id,
+                revisions=self.canonical_revisions,
+            )
+            if preserved_source_id is not None:
                 conflict_active_sources[conflict.conflict_id] = preserved_source_id
+            _validate_resolved_keep_active_source(
+                conflict,
+                preserved_source_id=preserved_source_id,
+            )
             _validate_conflict_resolution_chronology(
                 conflict,
                 raw_by_id=raw_by_id,
@@ -2473,7 +2466,7 @@ def classify_restore(
     """Guard one persisted record slot against resurrection by an old backup."""
 
     if not all(
-        _record_conflict_resolution_chronology_is_valid(record)
+        _record_conflict_resolution_is_valid(record)
         and _record_pending_review_revision_chronology_is_valid(record)
         for record in (current, candidate)
     ):
@@ -2644,6 +2637,55 @@ def _latest_conflict_referenced_event_at(
     return max(referenced_events)
 
 
+def _conflict_preserved_source_id(
+    conflict: ImportConflict,
+    *,
+    detection_by_id: dict[str, DetectedImportedHand],
+    revisions: list[CanonicalHandRevision],
+) -> str | None:
+    preserved_revision = conflict.active_canonical_revision_at_creation
+    if preserved_revision is None:
+        return None
+    if (
+        not isinstance(preserved_revision, int)
+        or isinstance(preserved_revision, bool)
+        or preserved_revision < 1
+        or preserved_revision > len(revisions)
+    ):
+        raise ValueError(
+            "conflict active revision must reference a retained canonical revision"
+        )
+    preserved_detection_id = revisions[preserved_revision - 1].detection_id
+    preserved_detection = detection_by_id.get(preserved_detection_id)
+    if preserved_detection is None:
+        raise ValueError(
+            "conflict active revision must reference a retained canonical revision"
+        )
+    preserved_source_id = preserved_detection.raw_source_id
+    if preserved_source_id not in conflict.raw_source_ids:
+        raise ValueError("conflict active revision source must belong to the conflict")
+    return preserved_source_id
+
+
+def _validate_resolved_keep_active_source(
+    conflict: ImportConflict,
+    *,
+    preserved_source_id: str | None,
+) -> None:
+    if conflict.status != "resolved_keep_active":
+        return
+    if preserved_source_id is None:
+        raise ValueError(
+            "resolved_keep_active conflict requires"
+            " active_canonical_revision_at_creation"
+        )
+    if conflict.selected_raw_source_id != preserved_source_id:
+        raise ValueError(
+            "resolved_keep_active conflict selected source must match the"
+            " preserved active revision source"
+        )
+
+
 def _validate_conflict_resolution_chronology(
     conflict: ImportConflict,
     *,
@@ -2670,7 +2712,7 @@ def _validate_conflict_resolution_chronology(
         )
 
 
-def _record_conflict_resolution_chronology_is_valid(
+def _record_conflict_resolution_is_valid(
     record: ImportedHandRecord,
 ) -> bool:
     raw_by_id = {raw.raw_source_id: raw for raw in record.raw_sources}
@@ -2679,13 +2721,22 @@ def _record_conflict_resolution_chronology_is_valid(
     }
     try:
         for conflict in record.conflicts:
+            preserved_source_id = _conflict_preserved_source_id(
+                conflict,
+                detection_by_id=detection_by_id,
+                revisions=record.canonical_revisions,
+            )
+            _validate_resolved_keep_active_source(
+                conflict,
+                preserved_source_id=preserved_source_id,
+            )
             _validate_conflict_resolution_chronology(
                 conflict,
                 raw_by_id=raw_by_id,
                 detection_by_id=detection_by_id,
                 revisions=record.canonical_revisions,
             )
-    except (IndexError, KeyError, ValueError):
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
         return False
     return True
 
