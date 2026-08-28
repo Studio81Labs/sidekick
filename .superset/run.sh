@@ -133,8 +133,9 @@ PWA_URL="http://localhost:$PWA_PORT"
 # current, otherwise a deliberately absent path so the backend's fallback
 # engine runs and the reason shows up in its responses. A binary is current
 # when setup stamped it with the tree hash of a clean tree that is still
-# checked out, or when nothing under solver-plugins/postflop (directories
-# included, so deletions count; target/ excluded) is newer than it.
+# checked out (and the binary has not been rebuilt since the stamp), or when
+# nothing under solver-plugins/postflop (directories included, so deletions
+# count; target/ excluded) is newer than it.
 SOLVER_BIN="$SOLVER_BIN_DIR/poker-postflop-solver"
 SOLVER_SRC="$ROOT_DIR/solver-plugins/postflop"
 SOLVER_STAMP="$SOLVER_BIN_DIR/.poker-hero-solver-tree"
@@ -142,6 +143,7 @@ solver_status() {
   [ -x "$SOLVER_BIN" ] || { echo missing; return; }
   tree=$(git -C "$ROOT_DIR" rev-parse "HEAD:solver-plugins/postflop" 2>/dev/null || true)
   if [ -n "$tree" ] && [ "$(cat "$SOLVER_STAMP" 2>/dev/null)" = "$tree" ] \
+    && [ -z "$(find "$SOLVER_BIN" -newer "$SOLVER_STAMP" 2>/dev/null)" ] \
     && [ -z "$(git -C "$ROOT_DIR" status --porcelain -- solver-plugins/postflop)" ]; then
     echo ok
   elif [ -z "$(find "$SOLVER_SRC" -name target -prune -o -newer "$SOLVER_BIN" -print 2>/dev/null \
