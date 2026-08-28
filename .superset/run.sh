@@ -26,6 +26,13 @@ PORT_CLAIMS="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/poker-hero-dev-ports-$(id -u)"
 [ -x "$VENV_PY" ] || { echo "Backend virtualenv missing; run ./.superset/setup.sh first" >&2; exit 1; }
 [ -x "$VITE_BIN" ] || { echo "PWA dependencies missing; run ./.superset/setup.sh first" >&2; exit 1; }
 
+# The Run pane may not load the interactive shell rc either, and the vite
+# launcher resolves `node` from PATH, so pick Node the same way setup does.
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+. "$ROOT_DIR/.superset/lib.sh"
+ensure_node "$ROOT_DIR" \
+  || { echo "Node.js $WANTED_NODE+ is required, found $(node_found) (see .nvmrc)" >&2; exit 1; }
+
 # pick_ports <preferred>...: prints one free port per argument (the preferred
 # one, or the next free above it). Each port is recorded in $PORT_CLAIMS as a
 # file named after the port holding this script's PID; claims of dead processes

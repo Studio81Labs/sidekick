@@ -34,27 +34,10 @@ fi
 MAIN_DIR=$(CDPATH='' cd -- "$MAIN_DIR" && pwd -P)
 
 # --- Toolchain ---------------------------------------------------------------
-# The setup terminal may not load the interactive shell rc, so expose the usual
-# per-user tool locations (pnpm standalone, rustup, nvm) before probing.
-PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-
-# Node major required by .nvmrc (package.json engines: node >=24).
-WANTED_NODE=$(sed -n '1s/^v\{0,1\}\([0-9][0-9]*\).*/\1/p' "$ROOT_DIR/.nvmrc" 2>/dev/null)
-WANTED_NODE=${WANTED_NODE:-24}
-node_ok() {
-  command -v node >/dev/null 2>&1 || return 1
-  major=$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\).*/\1/p')
-  [ "${major:-0}" -ge "$WANTED_NODE" ] 2>/dev/null
-}
-# A missing or too-old node on PATH is overridden by the matching nvm install.
-if ! node_ok; then
-  for candidate in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v"$WANTED_NODE".*/bin; do
-    [ -x "$candidate/node" ] && PATH="$candidate:$PATH"
-  done
-fi
-export PATH
-
-node_ok || fail "Node.js $WANTED_NODE+ is required, found $(node --version 2>/dev/null || echo none) (see .nvmrc)"
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+. "$ROOT_DIR/.superset/lib.sh"
+ensure_node "$ROOT_DIR" \
+  || fail "Node.js $WANTED_NODE+ is required, found $(node_found) (see .nvmrc)"
 command -v pnpm >/dev/null 2>&1 || fail "pnpm 11+ is required"
 
 PYTHON_BIN="${POKER_PYTHON:-}"
