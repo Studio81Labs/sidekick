@@ -129,7 +129,7 @@ was evaluated and disappears from the current run, the case fails explicitly.
       "kind": "cash",
       "name": "heads-up-no-rake-example",
       "revision": "economics-example-1",
-      "configuration_sha256": "01231c714c30e3102e02ab401fb43ca90180075db5cd0f28be13e0622d92acd5",
+      "configuration_sha256": "9b062ae00db7e6f2c58f44a3a015ab85e13af32141ebcf8a0cbb47973d5927d2",
       "configuration": {
         "kind": "cash",
         "currency": "USD",
@@ -139,6 +139,13 @@ was evaluated and disappears from the current run, the case fails explicitly.
           "fixed_drop": 0,
           "description": null
         }
+      },
+      "blind_level": {
+        "state_amount_unit": "bb",
+        "denomination_unit": "currency",
+        "small_blind": 0.5,
+        "big_blind": 1,
+        "ante": 0
       }
     },
     "utility_model": {
@@ -205,7 +212,7 @@ was evaluated and disappears from the current run, the case fails explicitly.
           "kind": "cash",
           "name": "heads-up-no-rake-example",
           "revision": "economics-example-1",
-          "configuration_sha256": "01231c714c30e3102e02ab401fb43ca90180075db5cd0f28be13e0622d92acd5",
+          "configuration_sha256": "9b062ae00db7e6f2c58f44a3a015ab85e13af32141ebcf8a0cbb47973d5927d2",
           "configuration": {
             "kind": "cash",
             "currency": "USD",
@@ -215,6 +222,13 @@ was evaluated and disappears from the current run, the case fails explicitly.
               "fixed_drop": 0,
               "description": null
             }
+          },
+          "blind_level": {
+            "state_amount_unit": "bb",
+            "denomination_unit": "currency",
+            "small_blind": 0.5,
+            "big_blind": 1,
+            "ante": 0
           }
         },
         "utility_model": {
@@ -311,13 +325,30 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   configuration SHA-256 must all match. Both locations include the complete
   structured configuration; the loader normalizes it, sorts tournament payouts,
   stacks, and bounties by their stable keys, recomputes its canonical JSON
-  SHA-256, and requires exact normalized case/reference equality. Cash requires
-  explicit currency plus rake percentage, cap, and fixed drop, using zero rather
-  than omission for no-rake/no-drop. Tournament configuration requires type,
+  SHA-256, and requires exact normalized case/reference equality. The economic
+  model also declares the exact blind level used to convert canonical state
+  amounts from `bb`: positive small- and big-blind denominations, an explicit
+  nonnegative ante (`0` means no ante), and either `currency` or
+  `tournament_chips` denomination units. Cash must use currency units and
+  tournaments must use chip units. Blind values participate in the normalized
+  economic digest, the dataset fingerprint, and the provider grading-context
+  digest, so a fixed currency rake cap cannot be reused across different cash
+  stakes and tournament chip stacks cannot be reused across blind levels. Cash
+  requires explicit currency plus rake percentage, cap, and fixed drop, using
+  zero rather than omission for no-rake/no-drop. Tournament configuration requires type,
   stage, currency, paid places, players remaining, contiguous payouts, every
   remaining stack, complete ICM inputs, a bounty format, and every bounty value.
   A non-bounty tournament uses an explicit non-bounty format and zero values, not
-  missing fields. Missing economics and an explicit `kind: "unknown"` fail the
+  missing fields. Each tournament case additionally maps every exact structural
+  seat label to one unique dealt-in player ID and lists the unique active player
+  IDs. The hero ID must occupy `hero_structural_position`; the selected opponent
+  must be active; the active set must be a dealt-in subset whose size equals
+  `players_in_hand`; and a heads-up active set must be exactly hero plus opponent.
+  Every dealt-in ID must occur in the tournament's remaining-stack and bounty
+  collections. Visible hero and opponent BB stacks, multiplied by the declared
+  chip big blind, must exactly match those identified tournament stack entries.
+  Tournament rosters may contain additional players who are not dealt into this
+  table. Missing economics and an explicit `kind: "unknown"` fail the
   version-5 gate rather than inheriting the corpus declaration. A corpus with
   multiple economic strata must separate them into independently identified
   grading references. Every version-5 case also repeats the complete utility

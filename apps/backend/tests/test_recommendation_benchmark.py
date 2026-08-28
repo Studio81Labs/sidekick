@@ -31,6 +31,7 @@ from app.recommendation_benchmark import (
     RecommendationBenchmarkError,
     RecommendationBenchmarkReport,
     RecommendationBenchmarkState,
+    RecommendationEconomicBlindLevel,
     RecommendationReferenceLine,
     benchmark_recommendation_file,
     format_recommendation_benchmark_report,
@@ -253,21 +254,57 @@ def tournament_economic_configuration(
     )
 
 
+def three_player_tournament_economic_configuration() -> TournamentEconomics:
+    values = tournament_economic_configuration().model_dump(mode="python")
+    values["players_remaining"] = 3
+    values["remaining_stacks"].append(
+        {"player_id": "third", "stack": Decimal("4000")}
+    )
+    values["bounties"].append(
+        {"player_id": "third", "value": Decimal("10")}
+    )
+    return TournamentEconomics.model_validate(values)
+
+
 def case_economic_model_evidence(
     *,
     name: str = "heads-up-no-rake",
     revision: str = "economics-1",
     configuration: CashEconomics | TournamentEconomics | None = None,
     configuration_sha256: str | None = None,
+    blind_level: RecommendationEconomicBlindLevel | dict[str, object] | None = None,
 ) -> dict[str, object]:
     economic_configuration = configuration or cash_economic_configuration()
+    if blind_level is None:
+        blind_level = {
+            "state_amount_unit": "bb",
+            "denomination_unit": (
+                "currency"
+                if isinstance(economic_configuration, CashEconomics)
+                else "tournament_chips"
+            ),
+            "small_blind": Decimal("0.5")
+            if isinstance(economic_configuration, CashEconomics)
+            else Decimal("50"),
+            "big_blind": Decimal("1")
+            if isinstance(economic_configuration, CashEconomics)
+            else Decimal("100"),
+            "ante": Decimal("0"),
+        }
+    validated_blind_level = RecommendationEconomicBlindLevel.model_validate(
+        blind_level
+    )
     return {
         "kind": economic_configuration.kind,
         "name": name,
         "revision": revision,
         "configuration_sha256": configuration_sha256
-        or recommendation_economic_configuration_sha256(economic_configuration),
+        or recommendation_economic_configuration_sha256(
+            economic_configuration,
+            validated_blind_level,
+        ),
         "configuration": economic_configuration,
+        "blind_level": validated_blind_level,
     }
 
 
@@ -436,26 +473,134 @@ def covered_big_blind_case_for_table(
     )
 
 
-def tournament_benchmark_dataset(
-    configuration: TournamentEconomics,
+def bind_tournament_case_state(
+    case: RecommendationBenchmarkCase,
+    economic_model: dict[str, object],
+) -> RecommendationBenchmarkCase:
+    state_payload = case.state.model_dump()
+    state_payload.update(
+        {
+            "economic_model": economic_model,
+            "hero_player_id": "hero",
+            "opponent_player_id": "villain",
+            "dealt_in_player_ids_by_position": {
+                "BTN/SB": "hero",
+                "BB": "villain",
+            },
+            "active_player_ids": ["hero", "villain"],
+            "hero_stack": 50.0,
+            "opponent_stack": 30.0,
+            "effective_stack": 30.0,
+        }
+    )
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+    return case
+
+
+def cash_benchmark_dataset_with_blind_level(
+    *,
+    small_blind: str,
+    big_blind: str,
+    ante: str = "0",
 ) -> RecommendationBenchmarkDataset:
     economic_model = case_economic_model_evidence(
-        configuration=configuration,
-        name="final-table-icm-with-bounties",
-        revision="tournament-economics-7",
+        blind_level={
+            "state_amount_unit": "bb",
+            "denomination_unit": "currency",
+            "small_blind": Decimal(small_blind),
+            "big_blind": Decimal(big_blind),
+            "ante": Decimal(ante),
+        }
     )
     case = covered_preflop_case().model_copy(deep=True)
-    state_payload = case.state.model_dump()
-    state_payload["economic_model"] = economic_model
-    case.state = RecommendationBenchmarkState.model_validate(state_payload)
-    case.reference_lines[0].ev_bb = None
-    reference = grading_reference_evidence(ev_unit="utility")
+    case.state = RecommendationBenchmarkState.model_validate(
+        {
+            **case.state.model_dump(),
+            "economic_model": economic_model,
+        }
+    )
+    reference = grading_reference_evidence()
     reference["economic_model"] = economic_model
     return benchmark_dataset(
         [case],
         schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
         reference_source={"name": "Independent solver export"},
         grading_reference=reference,
+    )
+
+
+def tournament_benchmark_dataset(
+    configuration: TournamentEconomics,
+    *,
+    hero_player_id: str = "hero",
+    opponent_player_id: str = "villain",
+    small_blind: str = "50",
+    big_blind: str = "100",
+) -> RecommendationBenchmarkDataset:
+    economic_model = case_economic_model_evidence(
+        configuration=configuration,
+        name="final-table-icm-with-bounties",
+        revision="tournament-economics-7",
+        blind_level={
+            "state_amount_unit": "bb",
+            "denomination_unit": "tournament_chips",
+            "small_blind": Decimal(small_blind),
+            "big_blind": Decimal(big_blind),
+            "ante": Decimal("0"),
+        },
+    )
+    case = bind_tournament_case_state(
+        covered_preflop_case().model_copy(deep=True),
+        economic_model,
+    )
+    stack_by_player_id = {
+        stack.player_id: stack.stack for stack in configuration.remaining_stacks
+    }
+    hero_stack_bb = stack_by_player_id[hero_player_id] / Decimal(big_blind)
+    opponent_stack_bb = stack_by_player_id[opponent_player_id] / Decimal(big_blind)
+    effective_stack_bb = min(hero_stack_bb, opponent_stack_bb)
+    case.state = case.state.model_copy(
+        update={
+            "hero_player_id": hero_player_id,
+            "opponent_player_id": opponent_player_id,
+            "dealt_in_player_ids_by_position": {
+                "BTN/SB": hero_player_id,
+                "BB": opponent_player_id,
+            },
+            "active_player_ids": [hero_player_id, opponent_player_id],
+            "hero_stack": float(hero_stack_bb),
+            "opponent_stack": float(opponent_stack_bb),
+            "effective_stack": float(effective_stack_bb),
+        }
+    )
+    case.reference_lines[0].ev_bb = None
+    reference = grading_reference_evidence(ev_unit="utility")
+    reference["economic_model"] = economic_model
+    if float(effective_stack_bb) not in reference["coverage"][
+        "effective_stack_depths_bb"
+    ]:
+        reference["coverage"]["effective_stack_depths_bb"].append(
+            float(effective_stack_bb)
+        )
+    return benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=reference,
+    )
+
+
+def revalidate_tournament_case_with_state_updates(
+    **state_updates: object,
+) -> RecommendationBenchmarkDataset:
+    baseline = tournament_benchmark_dataset(tournament_economic_configuration())
+    case = baseline.cases[0].model_copy(deep=True)
+    case.state = case.state.model_copy(update=state_updates, deep=True)
+    return benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source=baseline.reference_source,
+        grading_reference=baseline.grading_reference,
     )
 
 
@@ -1053,13 +1198,14 @@ def test_schema_five_accepts_an_exact_tournament_economic_model_binding() -> Non
         name="final-table-icm-with-bounties",
         revision="tournament-economics-7",
     )
-    case = covered_preflop_case().model_copy(deep=True)
-    state_payload = case.state.model_dump()
-    state_payload["economic_model"] = tournament_model
-    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+    case = bind_tournament_case_state(
+        covered_preflop_case().model_copy(deep=True),
+        tournament_model,
+    )
     case.reference_lines[0].ev_bb = None
     reference = grading_reference_evidence(ev_unit="utility")
     reference["economic_model"] = tournament_model
+    reference["coverage"]["effective_stack_depths_bb"].append(30.0)
 
     dataset = benchmark_dataset(
         [case],
@@ -1070,6 +1216,256 @@ def test_schema_five_accepts_an_exact_tournament_economic_model_binding() -> Non
 
     assert dataset.cases[0].state.economic_model is not None
     assert dataset.cases[0].state.economic_model.kind == "tournament"
+
+
+@pytest.mark.parametrize(
+    ("state_updates", "message"),
+    [
+        ({"hero_player_id": None}, "require hero_player_id"),
+        ({"opponent_player_id": None}, "require opponent_player_id"),
+        (
+            {"dealt_in_player_ids_by_position": None},
+            "require dealt_in_player_ids_by_position",
+        ),
+        ({"active_player_ids": None}, "require active_player_ids"),
+        (
+            {"dealt_in_player_ids_by_position": {"BTN/SB": "hero"}},
+            "must map every exact structural position",
+        ),
+        (
+            {
+                "hero_player_id": "villain",
+                "opponent_player_id": "hero",
+            },
+            "hero_player_id does not match",
+        ),
+        (
+            {"active_player_ids": ["hero"]},
+            "active_player_ids count must equal players_in_hand",
+        ),
+        (
+            {"active_player_ids": ["hero", "off-table"]},
+            "active_player_ids must be a subset",
+        ),
+        (
+            {
+                "opponent_player_id": "off-table",
+                "dealt_in_player_ids_by_position": {
+                    "BTN/SB": "hero",
+                    "BB": "off-table",
+                },
+                "active_player_ids": ["hero", "off-table"],
+            },
+            "dealt-in player 'off-table' is absent from tournament remaining_stacks",
+        ),
+        ({"hero_stack": 49.0}, "hero_stack 49 BB does not match"),
+    ],
+)
+def test_schema_five_rejects_incomplete_or_inconsistent_tournament_actor_mapping(
+    state_updates: dict[str, object],
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        revalidate_tournament_case_with_state_updates(**state_updates)
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value", "message"),
+    [
+        (
+            "dealt_in_player_ids_by_position",
+            {"BTN/SB": "hero", "BB": "hero"},
+            "Dealt-in player identities must be unique",
+        ),
+        (
+            "active_player_ids",
+            ["hero", "hero"],
+            "Active player identities must be unique",
+        ),
+    ],
+)
+def test_tournament_actor_collections_reject_duplicate_identities(
+    field_name: str,
+    value: object,
+    message: str,
+) -> None:
+    baseline = tournament_benchmark_dataset(tournament_economic_configuration())
+    state_payload = baseline.cases[0].state.model_dump(mode="python")
+    state_payload[field_name] = value
+
+    with pytest.raises(ValidationError, match=message):
+        RecommendationBenchmarkState.model_validate(state_payload)
+
+
+@pytest.mark.parametrize(
+    ("players_in_hand", "active_player_ids"),
+    [
+        (3, ["hero", "third", "villain"]),
+        (2, ["hero", "villain"]),
+    ],
+)
+def test_schema_five_accepts_multiway_tournament_actor_mapping(
+    players_in_hand: int,
+    active_player_ids: list[str],
+) -> None:
+    configuration = three_player_tournament_economic_configuration()
+    economic_model = case_economic_model_evidence(
+        configuration=configuration,
+        name="three-handed-final-table",
+        revision="tournament-economics-9",
+    )
+    table = reference_table_configuration(3)
+    case = benchmark_case(
+        "three-handed-tournament",
+        [reference_line("check")],
+        street="preflop",
+        board_cards=[],
+        effective_stack=30.0,
+        players_in_hand=players_in_hand,
+        hero_position="button",
+        hero_stack=50.0,
+        opponent_stack=30.0,
+        economic_model=economic_model,
+        hero_structural_position={
+            "dealt_in_player_count": 3,
+            **table["structural_positions"][0],
+        },
+        hero_player_id="hero",
+        opponent_player_id="villain",
+        dealt_in_player_ids_by_position={
+            "BTN": "hero",
+            "SB": "third",
+            "BB": "villain",
+        },
+        active_player_ids=active_player_ids,
+    )
+    reference = grading_reference_for_table_counts(3)
+    reference["economic_model"] = economic_model
+    reference["coverage"]["effective_stack_depths_bb"].append(30.0)
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=reference,
+    )
+
+    assert dataset.cases[0].state.active_player_ids == active_player_ids
+
+
+def test_tournament_actor_ids_accept_the_full_economic_identifier_alphabet() -> None:
+    configuration_values = tournament_economic_configuration().model_dump(
+        mode="python"
+    )
+    configuration_values["remaining_stacks"][0]["player_id"] = "hero@example/+1"
+    configuration_values["bounties"][0]["player_id"] = "hero@example/+1"
+    configuration = TournamentEconomics.model_validate(configuration_values)
+    validated = tournament_benchmark_dataset(
+        configuration,
+        hero_player_id="hero@example/+1",
+    )
+
+    assert validated.cases[0].state.hero_player_id == "hero@example/+1"
+
+
+def test_tournament_actor_context_reaches_provider_and_changes_fingerprints() -> None:
+    baseline = tournament_benchmark_dataset(tournament_economic_configuration())
+    swapped = baseline.model_copy(deep=True)
+    swapped_case = swapped.cases[0]
+    swapped_case.state = swapped_case.state.model_copy(
+        update={
+            "hero_player_id": "villain",
+            "opponent_player_id": "hero",
+            "dealt_in_player_ids_by_position": {
+                "BTN/SB": "villain",
+                "BB": "hero",
+            },
+            "active_player_ids": ["villain", "hero"],
+            "hero_stack": 30.0,
+            "opponent_stack": 50.0,
+        }
+    )
+    swapped = RecommendationBenchmarkDataset.model_validate(
+        swapped.model_dump(mode="python", by_alias=True)
+    )
+
+    assert recommendation_dataset_fingerprint(
+        swapped
+    ) != recommendation_dataset_fingerprint(baseline)
+    assert recommendation_grading_context_sha256(
+        swapped.cases[0].state
+    ) != recommendation_grading_context_sha256(baseline.cases[0].state)
+    provider = SequenceProvider([recommendation("check")])
+    run_recommendation_benchmark(baseline, provider)
+    routed_state = provider.requests[0].state
+    assert isinstance(routed_state, RecommendationBenchmarkState)
+    assert routed_state.hero_player_id == "hero"
+    assert routed_state.dealt_in_player_ids_by_position == {
+        "BTN/SB": "hero",
+        "BB": "villain",
+    }
+    assert routed_state.active_player_ids == ["hero", "villain"]
+    assert routed_state.economic_model is not None
+    assert routed_state.economic_model.blind_level is not None
+    assert routed_state.economic_model.blind_level.big_blind == Decimal("100")
+
+
+def test_unsafe_tournament_economics_revalidates_complete_bounty_entries() -> None:
+    baseline = tournament_benchmark_dataset(tournament_economic_configuration())
+    assert baseline.grading_reference is not None
+    case = baseline.cases[0].model_copy(deep=True)
+    case_model = case.state.economic_model
+    assert case_model is not None and case_model.kind == "tournament"
+    configuration = case_model.configuration.model_copy(deep=True)
+    configuration = configuration.model_copy(
+        update={
+            "bounties": [
+                bounty
+                for bounty in configuration.bounties
+                if bounty.player_id != "hero"
+            ]
+        }
+    )
+    assert case_model.blind_level is not None
+    configuration_sha256 = recommendation_economic_configuration_sha256(
+        configuration,
+        case_model.blind_level,
+    )
+    unsafe_economic_model = case_model.model_copy(
+        update={
+            "configuration": configuration,
+            "configuration_sha256": configuration_sha256,
+        }
+    )
+    case.state = case.state.model_copy(
+        update={"economic_model": unsafe_economic_model}
+    )
+    reference = baseline.grading_reference.model_copy(
+        update={"economic_model": unsafe_economic_model}
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="complete bounty ICM inputs require one bounty per player",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source=baseline.reference_source,
+            grading_reference=reference,
+        )
+
+
+def test_unsafe_tournament_actor_mutation_fails_before_provider_execution() -> None:
+    dataset = tournament_benchmark_dataset(tournament_economic_configuration())
+    dataset.cases[0].state.hero_player_id = "off-table"
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.cases[0].status == "error"
+    assert "hero_player_id does not match" in (report.cases[0].error or "")
+    assert len(provider.outcomes) == 1
 
 
 def test_economic_model_rejects_material_config_mutation_with_stale_digest() -> None:
@@ -1084,6 +1480,320 @@ def test_economic_model_rejects_material_config_mutation_with_stale_digest() -> 
         match="configuration_sha256 must match its normalized route-critical",
     ):
         RecommendationBenchmarkState.model_validate({"economic_model": payload})
+
+
+@pytest.mark.parametrize("target", ["case", "grading-reference"])
+def test_schema_five_requires_blind_level_on_case_and_reference(
+    target: str,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    assert case.state.economic_model is not None
+    legacy_case_model = case.state.economic_model.model_copy(
+        update={
+            "blind_level": None,
+            "configuration_sha256": recommendation_economic_configuration_sha256(
+                case.state.economic_model.configuration
+            ),
+        }
+    )
+    reference = grading_reference_evidence()
+    if target == "case":
+        case.state = case.state.model_copy(
+            update={"economic_model": legacy_case_model}
+        )
+    else:
+        reference_model = case_economic_model_evidence()
+        reference_model.pop("blind_level")
+        reference_model["configuration_sha256"] = (
+            recommendation_economic_configuration_sha256(
+                reference_model["configuration"]
+            )
+        )
+        reference["economic_model"] = reference_model
+
+    with pytest.raises(ValidationError, match=f"{target} economic_model requires.*blind_level"):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=reference,
+        )
+
+
+@pytest.mark.parametrize(
+    ("configuration", "denomination_unit", "model_kind"),
+    [
+        (cash_economic_configuration(), "tournament_chips", "cash"),
+        (tournament_economic_configuration(), "currency", "tournament"),
+    ],
+)
+def test_economic_model_rejects_blind_units_from_the_other_game_kind(
+    configuration: CashEconomics | TournamentEconomics,
+    denomination_unit: str,
+    model_kind: str,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match=f"{model_kind} economic model requires blind denominations",
+    ):
+        RecommendationBenchmarkState.model_validate(
+            {
+                "economic_model": case_economic_model_evidence(
+                    configuration=configuration,
+                    blind_level={
+                        "state_amount_unit": "bb",
+                        "denomination_unit": denomination_unit,
+                        "small_blind": Decimal("1"),
+                        "big_blind": Decimal("2"),
+                        "ante": Decimal("0"),
+                    },
+                )
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "blind_level",
+    [
+        {
+            "denomination_unit": "currency",
+            "small_blind": Decimal("0.5"),
+            "big_blind": Decimal("1"),
+            "ante": Decimal("0"),
+        },
+        {
+            "state_amount_unit": "bb",
+            "denomination_unit": "currency",
+            "small_blind": Decimal("0.5"),
+            "big_blind": Decimal("1"),
+        },
+        {
+            "state_amount_unit": "bb",
+            "denomination_unit": "currency",
+            "small_blind": Decimal("0"),
+            "big_blind": Decimal("1"),
+            "ante": Decimal("0"),
+        },
+        {
+            "state_amount_unit": "bb",
+            "denomination_unit": "currency",
+            "small_blind": Decimal("2"),
+            "big_blind": Decimal("1"),
+            "ante": Decimal("0"),
+        },
+    ],
+)
+def test_blind_level_rejects_missing_nonpositive_or_reversed_values(
+    blind_level: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        RecommendationEconomicBlindLevel.model_validate(blind_level)
+
+
+def test_blind_level_mutation_with_stale_economic_digest_is_rejected() -> None:
+    payload = case_economic_model_evidence()
+    blind_level = payload["blind_level"]
+    assert isinstance(blind_level, RecommendationEconomicBlindLevel)
+    blind_level.big_blind = Decimal("2")
+
+    with pytest.raises(
+        ValidationError,
+        match="configuration_sha256 must match its normalized route-critical",
+    ):
+        RecommendationBenchmarkState.model_validate({"economic_model": payload})
+
+
+def test_unsafe_reversed_case_blinds_fail_before_provider_execution() -> None:
+    dataset = cash_benchmark_dataset_with_blind_level(
+        small_blind="0.5",
+        big_blind="1",
+    )
+    case = dataset.cases[0]
+    economic_model = case.state.economic_model
+    assert economic_model is not None and economic_model.blind_level is not None
+    unsafe_blind_level = economic_model.blind_level.model_copy(
+        update={
+            "small_blind": Decimal("2"),
+            "big_blind": Decimal("1"),
+        }
+    )
+    unsafe_economic_model = economic_model.model_copy(
+        update={
+            "blind_level": unsafe_blind_level,
+            "configuration_sha256": recommendation_economic_configuration_sha256(
+                economic_model.configuration,
+                unsafe_blind_level,
+            ),
+        }
+    )
+    case.state = case.state.model_copy(
+        update={"economic_model": unsafe_economic_model}
+    )
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.cases[0].status == "error"
+    assert "Small blind cannot exceed the big blind" in (
+        report.cases[0].error or ""
+    )
+    assert len(provider.outcomes) == 1
+
+
+def test_unsafe_wrong_reference_blind_unit_fails_before_provider_execution() -> None:
+    dataset = cash_benchmark_dataset_with_blind_level(
+        small_blind="0.5",
+        big_blind="1",
+    )
+    assert dataset.grading_reference is not None
+    economic_model = dataset.grading_reference.economic_model
+    assert economic_model.blind_level is not None
+    unsafe_blind_level = economic_model.blind_level.model_copy(
+        update={"denomination_unit": "tournament_chips"}
+    )
+    unsafe_economic_model = economic_model.model_copy(
+        update={
+            "blind_level": unsafe_blind_level,
+            "configuration_sha256": recommendation_economic_configuration_sha256(
+                economic_model.configuration,
+                unsafe_blind_level,
+            ),
+        }
+    )
+    dataset.grading_reference = dataset.grading_reference.model_copy(
+        update={"economic_model": unsafe_economic_model}
+    )
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.cases[0].status == "error"
+    assert "cash economic model requires blind denominations in currency" in (
+        report.cases[0].error or ""
+    )
+    assert len(provider.outcomes) == 1
+
+
+def test_blind_level_hash_normalizes_decimal_representation() -> None:
+    configuration = cash_economic_configuration()
+    concise = RecommendationEconomicBlindLevel.model_validate(
+        {
+            "state_amount_unit": "bb",
+            "denomination_unit": "currency",
+            "small_blind": Decimal("0.5"),
+            "big_blind": Decimal("1"),
+            "ante": Decimal("0"),
+        }
+    )
+    padded = RecommendationEconomicBlindLevel.model_validate(
+        {
+            "state_amount_unit": "bb",
+            "denomination_unit": "currency",
+            "small_blind": Decimal("0.5000"),
+            "big_blind": Decimal("1.00"),
+            "ante": Decimal("0.000"),
+        }
+    )
+
+    assert recommendation_economic_configuration_sha256(
+        configuration,
+        concise,
+    ) == recommendation_economic_configuration_sha256(configuration, padded)
+
+
+def test_blind_decimal_spellings_have_equal_fingerprints_and_are_comparable() -> None:
+    concise = cash_benchmark_dataset_with_blind_level(
+        small_blind="0.5",
+        big_blind="1",
+    )
+    padded = cash_benchmark_dataset_with_blind_level(
+        small_blind="0.5000",
+        big_blind="1.00",
+    )
+
+    assert recommendation_dataset_fingerprint(
+        padded
+    ) == recommendation_dataset_fingerprint(concise)
+    concise_report = run_recommendation_benchmark(
+        concise,
+        SequenceProvider([recommendation("check")]),
+    )
+    padded_report = run_recommendation_benchmark(
+        padded,
+        SequenceProvider([recommendation("check")]),
+    )
+    validate_comparable_recommendation_baseline(padded_report, concise_report)
+
+
+def test_blind_denominations_change_fingerprint_and_baseline_comparability() -> None:
+    one_two = cash_benchmark_dataset_with_blind_level(
+        small_blind="1",
+        big_blind="2",
+    )
+    five_ten = cash_benchmark_dataset_with_blind_level(
+        small_blind="5",
+        big_blind="10",
+    )
+
+    assert recommendation_dataset_fingerprint(
+        one_two
+    ) != recommendation_dataset_fingerprint(five_ten)
+    one_two_report = run_recommendation_benchmark(
+        one_two,
+        SequenceProvider([recommendation("check")]),
+    )
+    five_ten_report = run_recommendation_benchmark(
+        five_ten,
+        SequenceProvider([recommendation("check")]),
+    )
+    with pytest.raises(RecommendationBenchmarkError, match="baseline corpus does not match"):
+        validate_comparable_recommendation_baseline(
+            five_ten_report,
+            one_two_report,
+        )
+
+
+def test_ante_changes_the_hashed_economic_context_and_dataset_fingerprint() -> None:
+    no_ante = cash_benchmark_dataset_with_blind_level(
+        small_blind="1",
+        big_blind="2",
+    )
+    with_ante = cash_benchmark_dataset_with_blind_level(
+        small_blind="1",
+        big_blind="2",
+        ante="0.25",
+    )
+    no_ante_model = no_ante.cases[0].state.economic_model
+    with_ante_model = with_ante.cases[0].state.economic_model
+    assert no_ante_model is not None and with_ante_model is not None
+
+    assert (
+        no_ante_model.configuration_sha256
+        != with_ante_model.configuration_sha256
+    )
+    assert recommendation_dataset_fingerprint(
+        no_ante
+    ) != recommendation_dataset_fingerprint(with_ante)
+
+
+def test_tournament_blind_level_changes_stack_conversion_and_fingerprint() -> None:
+    configuration = tournament_economic_configuration()
+    twenty_five_fifty = tournament_benchmark_dataset(
+        configuration,
+        small_blind="25",
+        big_blind="50",
+    )
+    one_two_hundred = tournament_benchmark_dataset(
+        configuration,
+        small_blind="100",
+        big_blind="200",
+    )
+
+    assert twenty_five_fifty.cases[0].state.hero_stack == 100.0
+    assert one_two_hundred.cases[0].state.hero_stack == 25.0
+    assert recommendation_dataset_fingerprint(
+        twenty_five_fifty
+    ) != recommendation_dataset_fingerprint(one_two_hundred)
 
 
 def test_economic_model_digest_normalizes_equivalent_decimal_representations() -> None:
@@ -1158,19 +1868,21 @@ def test_schema_five_normalizes_tournament_economic_collection_order() -> None:
         "name": "final-table-icm-with-bounties",
         "revision": "tournament-economics-7",
     }
-    case = covered_preflop_case().model_copy(deep=True)
-    state_payload = case.state.model_dump()
-    state_payload["economic_model"] = case_economic_model_evidence(
+    case_model = case_economic_model_evidence(
         configuration=case_configuration,
         **model_values,
     )
-    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+    case = bind_tournament_case_state(
+        covered_preflop_case().model_copy(deep=True),
+        case_model,
+    )
     case.reference_lines[0].ev_bb = None
     reference = grading_reference_evidence(ev_unit="utility")
     reference["economic_model"] = case_economic_model_evidence(
         configuration=reference_configuration,
         **model_values,
     )
+    reference["coverage"]["effective_stack_depths_bb"].append(30.0)
 
     dataset = benchmark_dataset(
         [case],
@@ -1202,10 +1914,21 @@ def test_fingerprint_normalizes_case_and_reference_tournament_collection_order(
         configuration.payouts.reverse()
         configuration.remaining_stacks.reverse()
         configuration.bounties.reverse()
+    active_player_ids = reordered.cases[0].state.active_player_ids
+    assert active_player_ids is not None
+    active_player_ids.reverse()
+    dealt_in_mapping = reordered.cases[0].state.dealt_in_player_ids_by_position
+    assert dealt_in_mapping is not None
+    reordered.cases[0].state.dealt_in_player_ids_by_position = dict(
+        reversed(list(dealt_in_mapping.items()))
+    )
 
     assert recommendation_dataset_fingerprint(
         reordered
     ) == recommendation_dataset_fingerprint(baseline)
+    assert recommendation_grading_context_sha256(
+        reordered.cases[0].state
+    ) == recommendation_grading_context_sha256(baseline.cases[0].state)
     baseline_report = run_recommendation_benchmark(
         baseline,
         SequenceProvider([recommendation("check")]),
@@ -1266,13 +1989,14 @@ def test_schema_five_accepts_explicit_no_bounty_tournament_economics() -> None:
         name="final-table-icm-no-bounties",
         revision="tournament-economics-8",
     )
-    case = covered_preflop_case().model_copy(deep=True)
-    state_payload = case.state.model_dump()
-    state_payload["economic_model"] = tournament_model
-    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+    case = bind_tournament_case_state(
+        covered_preflop_case().model_copy(deep=True),
+        tournament_model,
+    )
     case.reference_lines[0].ev_bb = None
     reference = grading_reference_evidence(ev_unit="utility")
     reference["economic_model"] = tournament_model
+    reference["coverage"]["effective_stack_depths_bb"].append(30.0)
 
     dataset = benchmark_dataset(
         [case],
@@ -2180,6 +2904,37 @@ def test_legacy_schema_versions_do_not_enforce_economic_model_binding(
     dataset = benchmark_dataset([case], schema_version=schema_version)
 
     assert dataset.schema_version == schema_version
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schema_versions_preserve_economics_without_blinds_or_actor_ids(
+    schema_version: int,
+) -> None:
+    configuration = cash_economic_configuration()
+    legacy_economic_model = case_economic_model_evidence()
+    legacy_economic_model.pop("blind_level")
+    legacy_economic_model["configuration_sha256"] = (
+        recommendation_economic_configuration_sha256(configuration)
+    )
+    legacy_economic_model["configuration"] = configuration
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state = RecommendationBenchmarkState.model_validate(
+        {
+            **case.state.model_dump(),
+            "economic_model": legacy_economic_model,
+        }
+    )
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+    serialized_state = dataset.model_dump(mode="json", by_alias=True)["cases"][
+        0
+    ]["state"]
+
+    assert "blind_level" not in serialized_state["economic_model"]
+    assert "hero_player_id" not in serialized_state
+    assert "opponent_player_id" not in serialized_state
+    assert "dealt_in_player_ids_by_position" not in serialized_state
+    assert "active_player_ids" not in serialized_state
 
 
 @pytest.mark.parametrize("schema_version", [1, 2, 3, 4])

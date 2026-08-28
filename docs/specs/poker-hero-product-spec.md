@@ -470,8 +470,11 @@ ceiling on learning quality, so it is treated as first-class.
   the largest gap and covers a large share of real hands.
 
 Coverage also includes game economics. A solved route declares the cash rake
-model or tournament chip-EV/ICM/bounty context it assumes and the canonical
-fields required to match it. Cash hands with an unknown or different material
+model or tournament chip-EV/ICM/bounty context it assumes, the exact blind/ante
+level and units used to convert canonical BB amounts, and the canonical fields
+required to match it. Tournament grading maps table actors to the identified
+remaining-stack and bounty entries rather than assuming reserved player names.
+Cash hands with an unknown or different material
 rake structure and tournament hands lacking the payout, field, stack, or bounty
 state required by the reference are heuristic/ungraded for mastery. A generic
 chip-EV chart must never be presented as solved ICM or bounty-aware policy.

@@ -14,6 +14,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    StringConstraints,
     ValidationError,
     field_validator,
     model_validator,
@@ -123,6 +124,24 @@ PositiveInteger = Annotated[int, Field(ge=1, strict=True)]
 NonNegativeFiniteNumber = Annotated[
     float,
     Field(ge=0, allow_inf_nan=False, strict=True),
+]
+PositiveDecimal = Annotated[
+    Decimal,
+    Field(gt=0, allow_inf_nan=False),
+]
+NonNegativeDecimal = Annotated[
+    Decimal,
+    Field(ge=0, allow_inf_nan=False),
+]
+BenchmarkActorId = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=160,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/+\-]*$",
+        strict=True,
+    ),
 ]
 
 
@@ -331,6 +350,22 @@ RecommendationEconomicConfiguration = Annotated[
 ]
 
 
+class RecommendationEconomicBlindLevel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    state_amount_unit: Literal["bb"]
+    denomination_unit: Literal["currency", "tournament_chips"]
+    small_blind: PositiveDecimal
+    big_blind: PositiveDecimal
+    ante: NonNegativeDecimal
+
+    @model_validator(mode="after")
+    def validate_denominations(self) -> Self:
+        if self.small_blind > self.big_blind:
+            raise ValueError("Small blind cannot exceed the big blind")
+        return self
+
+
 def _normalized_economic_value(value: object) -> object:
     if isinstance(value, Decimal):
         if value == 0:
@@ -370,9 +405,20 @@ def _normalized_economic_configuration(
 
 def recommendation_economic_configuration_sha256(
     configuration: RecommendationEconomicConfiguration,
+    blind_level: RecommendationEconomicBlindLevel | None = None,
 ) -> str:
+    normalized_configuration = _normalized_economic_configuration(configuration)
+    normalized_context: object = normalized_configuration
+    if blind_level is not None:
+        normalized_context = {
+            "schema": "poker-hero-recommendation-economic-context/v2",
+            "configuration": normalized_configuration,
+            "blind_level": _normalized_economic_value(
+                blind_level.model_dump(mode="python")
+            ),
+        }
     payload = json.dumps(
-        _normalized_economic_configuration(configuration),
+        normalized_context,
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
@@ -427,6 +473,10 @@ class RecommendationEconomicModel(BaseModel):
     revision: EvidenceRevision
     configuration_sha256: Sha256Digest
     configuration: RecommendationEconomicConfiguration
+    blind_level: RecommendationEconomicBlindLevel | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_configuration(self) -> Self:
@@ -451,8 +501,18 @@ class RecommendationEconomicModel(BaseModel):
                 "A no-bounty economic configuration requires explicit zero bounty"
                 " values for every remaining player"
             )
+        if self.blind_level is not None:
+            expected_unit = (
+                "currency" if self.kind == "cash" else "tournament_chips"
+            )
+            if self.blind_level.denomination_unit != expected_unit:
+                raise ValueError(
+                    f"A {self.kind} economic model requires blind denominations"
+                    f" in {expected_unit} units"
+                )
         expected_sha256 = recommendation_economic_configuration_sha256(
-            self.configuration
+            self.configuration,
+            self.blind_level,
         )
         if self.configuration_sha256 != expected_sha256:
             raise ValueError(
@@ -543,11 +603,53 @@ class RecommendationBenchmarkState(CanonicalState):
     model_config = ConfigDict(extra="forbid")
 
     hero_structural_position: StructuralPosition | None = None
+    hero_player_id: BenchmarkActorId | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    opponent_player_id: BenchmarkActorId | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    dealt_in_player_ids_by_position: dict[
+        StructuralPositionLabel, BenchmarkActorId
+    ] | None = Field(
+        default=None,
+        min_length=2,
+        max_length=10,
+        exclude_if=lambda value: value is None,
+    )
+    active_player_ids: list[BenchmarkActorId] | None = Field(
+        default=None,
+        min_length=2,
+        max_length=10,
+        exclude_if=lambda value: value is None,
+    )
     economic_model: RecommendationCaseEconomicModel | None = None
     utility_model: RecommendationUtilityModel | None = Field(
         default=None,
         exclude_if=lambda value: value is None,
     )
+
+    @model_validator(mode="after")
+    def validate_actor_identities(self) -> Self:
+        if (
+            self.hero_player_id is not None
+            and self.opponent_player_id is not None
+            and self.hero_player_id == self.opponent_player_id
+        ):
+            raise ValueError("Hero and opponent player identities must be distinct")
+        if self.dealt_in_player_ids_by_position is not None:
+            dealt_in_player_ids = list(
+                self.dealt_in_player_ids_by_position.values()
+            )
+            if len(dealt_in_player_ids) != len(set(dealt_in_player_ids)):
+                raise ValueError("Dealt-in player identities must be unique")
+        if self.active_player_ids is not None and len(
+            self.active_player_ids
+        ) != len(set(self.active_player_ids)):
+            raise ValueError("Active player identities must be unique")
+        return self
 
 
 class RecommendationBenchmarkRequest(RecommendationRequest):
@@ -564,6 +666,8 @@ def recommendation_grading_context_sha256(
     economic_model = state.economic_model
     if not isinstance(economic_model, RecommendationEconomicModel):
         raise ValueError("A grading context requires an exact economic model")
+    if economic_model.blind_level is None:
+        raise ValueError("A grading context requires an exact economic blind level")
     utility_model = state.utility_model
     if utility_model is None:
         raise ValueError("A grading context requires an exact utility model")
@@ -571,8 +675,20 @@ def recommendation_grading_context_sha256(
     if structural_position is None:
         raise ValueError("A grading context requires an exact structural position")
     normalized = {
-        "schema": "poker-hero-recommendation-grading-context/v1",
+        "schema": "poker-hero-recommendation-grading-context/v2",
         "hero_structural_position": structural_position.model_dump(mode="json"),
+        "hero_player_id": state.hero_player_id,
+        "opponent_player_id": state.opponent_player_id,
+        "dealt_in_player_ids_by_position": (
+            dict(sorted(state.dealt_in_player_ids_by_position.items()))
+            if state.dealt_in_player_ids_by_position is not None
+            else None
+        ),
+        "active_player_ids": (
+            sorted(state.active_player_ids)
+            if state.active_player_ids is not None
+            else None
+        ),
         "economic_model": {
             "kind": economic_model.kind,
             "name": economic_model.name,
@@ -580,6 +696,9 @@ def recommendation_grading_context_sha256(
             "configuration_sha256": economic_model.configuration_sha256,
             "configuration": _normalized_economic_configuration(
                 economic_model.configuration
+            ),
+            "blind_level": _normalized_economic_value(
+                economic_model.blind_level.model_dump(mode="python")
             ),
         },
         "utility_model": {
@@ -873,6 +992,154 @@ class RecommendationBenchmarkDataset(BaseModel):
         return self
 
 
+def _validate_case_actor_economics(
+    case: RecommendationBenchmarkCase,
+    economic_model: RecommendationEconomicModel,
+    table_configuration: RecommendationReferenceTableConfiguration,
+) -> None:
+    state = case.state
+    if not isinstance(economic_model.configuration, TournamentEconomics):
+        if any(
+            value is not None
+            for value in (
+                state.hero_player_id,
+                state.opponent_player_id,
+                state.dealt_in_player_ids_by_position,
+                state.active_player_ids,
+            )
+        ):
+            raise ValueError(
+                f"Case {case.id} actor identities are only valid for tournament"
+                " economic models"
+            )
+        return
+
+    if state.hero_player_id is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require hero_player_id"
+        )
+    if state.opponent_player_id is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require opponent_player_id"
+        )
+    if state.dealt_in_player_ids_by_position is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require"
+            " dealt_in_player_ids_by_position"
+        )
+    if state.active_player_ids is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require active_player_ids"
+        )
+    if economic_model.blind_level is None:
+        raise ValueError(
+            f"Case {case.id} tournament economics require an exact blind_level"
+        )
+    if state.hero_player_id == state.opponent_player_id:
+        raise ValueError(
+            f"Case {case.id} hero and opponent player identities must be distinct"
+        )
+    dealt_in_values = list(state.dealt_in_player_ids_by_position.values())
+    if len(dealt_in_values) != len(set(dealt_in_values)):
+        raise ValueError(
+            f"Case {case.id} dealt-in player identities must be unique"
+        )
+    if len(state.active_player_ids) != len(set(state.active_player_ids)):
+        raise ValueError(
+            f"Case {case.id} active player identities must be unique"
+        )
+
+    expected_position_labels = {
+        position.display_label
+        for position in table_configuration.structural_positions
+    }
+    actual_position_labels = set(state.dealt_in_player_ids_by_position)
+    if actual_position_labels != expected_position_labels:
+        raise ValueError(
+            f"Case {case.id} dealt_in_player_ids_by_position must map every exact"
+            " structural position in its table configuration"
+        )
+    structural_position = state.hero_structural_position
+    if structural_position is None:
+        raise ValueError(
+            f"Case {case.id} tournament actor mapping requires a structural position"
+        )
+    if (
+        state.dealt_in_player_ids_by_position[structural_position.display_label]
+        != state.hero_player_id
+    ):
+        raise ValueError(
+            f"Case {case.id} hero_player_id does not match the player mapped to"
+            f" hero structural position {structural_position.display_label!r}"
+        )
+
+    dealt_in_player_ids = set(state.dealt_in_player_ids_by_position.values())
+    active_player_ids = set(state.active_player_ids)
+    if not active_player_ids <= dealt_in_player_ids:
+        raise ValueError(
+            f"Case {case.id} active_player_ids must be a subset of dealt-in players"
+        )
+    if state.players_in_hand is None or len(active_player_ids) != state.players_in_hand:
+        raise ValueError(
+            f"Case {case.id} active_player_ids count must equal players_in_hand"
+        )
+    if state.hero_player_id not in active_player_ids:
+        raise ValueError(
+            f"Case {case.id} active_player_ids must include hero_player_id"
+        )
+    if state.opponent_player_id not in active_player_ids:
+        raise ValueError(
+            f"Case {case.id} opponent_player_id must identify an active player"
+        )
+    if state.players_in_hand == 2 and active_player_ids != {
+        state.hero_player_id,
+        state.opponent_player_id,
+    }:
+        raise ValueError(
+            f"Case {case.id} heads-up active_player_ids must be exactly the hero"
+            " and opponent identities"
+        )
+
+    stack_by_player = {
+        stack.player_id: stack.stack
+        for stack in economic_model.configuration.remaining_stacks
+    }
+    bounty_player_ids = {
+        bounty.player_id for bounty in economic_model.configuration.bounties
+    }
+    for player_id in dealt_in_player_ids:
+        if player_id not in stack_by_player:
+            raise ValueError(
+                f"Case {case.id} dealt-in player {player_id!r} is absent from"
+                " tournament remaining_stacks"
+            )
+        if player_id not in bounty_player_ids:
+            raise ValueError(
+                f"Case {case.id} dealt-in player {player_id!r} is absent from"
+                " tournament bounties"
+            )
+
+    for role, player_id, visible_stack in (
+        ("hero", state.hero_player_id, state.hero_stack),
+        ("opponent", state.opponent_player_id, state.opponent_stack),
+    ):
+        if visible_stack is None:
+            raise ValueError(
+                f"Case {case.id} tournament economics require {role}_stack"
+            )
+        configured_stack = stack_by_player[player_id]
+        expected_stack = Decimal(str(visible_stack)) * (
+            economic_model.blind_level.big_blind
+        )
+        if expected_stack != configured_stack:
+            raise ValueError(
+                f"Case {case.id} {role}_stack {visible_stack:g} BB does not match"
+                f" tournament remaining_stacks value {configured_stack}"
+                f" {economic_model.blind_level.denomination_unit} at big blind"
+                f" {economic_model.blind_level.big_blind}"
+            )
+
+
 def _validate_case_within_grading_coverage(
     case: RecommendationBenchmarkCase,
     coverage: RecommendationReferenceCoverage,
@@ -894,15 +1161,35 @@ def _validate_case_within_grading_coverage(
         ("case", case_economic_model),
         ("grading-reference", economic_model),
     ):
+        try:
+            RecommendationEconomicModel.model_validate(
+                model.model_dump(mode="python")
+            )
+        except ValidationError as exc:
+            raise ValueError(
+                f"Case {case.id} {model_label} economic_model is invalid: {exc}"
+            ) from exc
+        if model.blind_level is None:
+            raise ValueError(
+                f"Case {case.id} {model_label} economic_model requires an exact"
+                " blind_level for grading coverage"
+            )
         actual_sha256 = recommendation_economic_configuration_sha256(
-            model.configuration
+            model.configuration,
+            model.blind_level,
         )
         if model.configuration_sha256 != actual_sha256:
             raise ValueError(
                 f"Case {case.id} {model_label} economic_model configuration was"
                 " modified without updating its normalized configuration_sha256"
             )
-    for field_name in ("kind", "name", "revision", "configuration_sha256"):
+    for field_name in (
+        "kind",
+        "name",
+        "revision",
+        "configuration_sha256",
+        "blind_level",
+    ):
         case_value = getattr(case_economic_model, field_name)
         reference_value = getattr(economic_model, field_name)
         if case_value != reference_value:
@@ -1106,6 +1393,11 @@ def _validate_case_within_grading_coverage(
         raise ValueError(
             f"Case {case.id} players_in_hand must be between 2 and its dealt-in count"
         )
+    _validate_case_actor_economics(
+        case,
+        case_economic_model,
+        table_configuration,
+    )
     if state.street != "preflop" and state.players_in_hand == 2:
         compatible_opponent_positions = {
             legacy_position
@@ -1259,6 +1551,9 @@ def recommendation_dataset_fingerprint(
                 sort_keys=True,
             ),
         )
+        active_player_ids = case["state"].get("active_player_ids")
+        if isinstance(active_player_ids, list):
+            case["state"]["active_player_ids"] = sorted(active_player_ids)
         case_economic_model = source_case.state.economic_model
         if isinstance(case_economic_model, RecommendationEconomicModel):
             case["state"]["economic_model"]["configuration"] = (
@@ -1266,6 +1561,12 @@ def recommendation_dataset_fingerprint(
                     case_economic_model.configuration
                 )
             )
+            if case_economic_model.blind_level is not None:
+                case["state"]["economic_model"]["blind_level"] = (
+                    _normalized_economic_value(
+                        case_economic_model.blind_level.model_dump(mode="python")
+                    )
+                )
         case_utility_model = source_case.state.utility_model
         if case_utility_model is not None:
             case["state"]["utility_model"]["configuration"] = (
@@ -1286,6 +1587,15 @@ def recommendation_dataset_fingerprint(
                 dataset.grading_reference.economic_model.configuration
             )
         )
+        reference_blind_level = (
+            dataset.grading_reference.economic_model.blind_level
+        )
+        if reference_blind_level is not None:
+            grading_reference["economic_model"]["blind_level"] = (
+                _normalized_economic_value(
+                    reference_blind_level.model_dump(mode="python")
+                )
+            )
         grading_reference["utility_model"]["configuration"] = (
             _normalized_utility_configuration(
                 dataset.grading_reference.utility_model.configuration
