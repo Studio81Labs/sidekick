@@ -451,9 +451,11 @@ Version-5 corpora require a grading-reference evidence envelope with immutable
 source/policy/tolerance revisions and digests, exact dealt-in structural
 positions, stack/street coverage, economic and utility models, an EV unit,
 delivery-specific rights evidence, and passing convergence measurements. The
-CLI can require that envelope, but its declarations and artifact pointers are
-not themselves source approval; production route matching and real retained
-evidence remain Phase 0 gate work.
+case state repeats the exact normalized economic and utility configurations,
+which are fingerprinted, revalidated, and preserved through the provider request
+boundary before execution. The CLI can require that envelope, but its
+declarations and artifact pointers are not themselves source approval;
+production route matching and real retained evidence remain Phase 0 gate work.
 Reports also carry a SHA-256 fingerprint over normalized scoring inputs and
 reference provenance. The CLI can load a full prior JSON report for the same
 provider and fingerprint, display aggregate deltas, and gate direction-aware

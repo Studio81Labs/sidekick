@@ -1895,6 +1895,35 @@ class ImportedHandState(ImportedHandModel):
                     "folded players cannot appear in showdown or receive pot"
                     " awards: " + ", ".join(sorted(folded_result_players))
                 )
+            for player_result in self.results.players:
+                if player_result.player_id not in folded_players:
+                    continue
+                if (
+                    player_result.total_collected is not None
+                    and player_result.total_collected > 0
+                ):
+                    raise ValueError(
+                        f"folded player {player_result.player_id} cannot report"
+                        " positive total_collected"
+                    )
+                exact_contribution = cumulative_commitments[
+                    player_result.player_id
+                ]
+                if (
+                    player_result.total_collected is None
+                    and player_result.net_result is not None
+                    and exact_contribution is not None
+                ):
+                    implied_collection = (
+                        player_result.net_result + exact_contribution
+                    )
+                    if implied_collection > 0:
+                        raise ValueError(
+                            f"folded player {player_result.player_id} net_result"
+                            f" implies positive collection {implied_collection}"
+                            " from exact contribution"
+                            f" {exact_contribution}"
+                        )
             if fold_end is None:
                 if self.streets[-1].street != "river":
                     raise ValueError(
@@ -2336,6 +2365,8 @@ class ImportedHandRecord(ImportedHandModel):
         if state is None or state.hero_player_id is None:
             return []
         if state.game.betting_limit not in {"no_limit", "pot_limit"}:
+            return []
+        if not _economics_ready_for_extraction(state.game.economics):
             return []
         hero = next(
             seat for seat in state.seats if seat.player_id == state.hero_player_id
@@ -2997,6 +3028,49 @@ def _known_live_action_total(
     return prior_live_commitment + action.amount
 
 
+def _economics_ready_for_extraction(economics: Economics) -> bool:
+    """Require the exact route-critical strategy economics without defaults."""
+
+    if isinstance(economics, UnknownEconomics):
+        return False
+    if isinstance(economics, CashEconomics):
+        return (
+            economics.currency is not None
+            and economics.rake is not None
+            and all(
+                getattr(economics.rake, field_name) is not None
+                for field_name in ("percentage", "cap", "fixed_drop")
+            )
+        )
+    if not economics.icm_inputs_complete:
+        return False
+    required_route_context = (
+        economics.tournament_type,
+        economics.stage,
+        economics.currency,
+        economics.paid_places,
+        economics.players_remaining,
+        economics.bounty_format,
+        economics.payouts,
+        economics.remaining_stacks,
+        economics.bounties,
+    )
+    if any(value is None or value == [] for value in required_route_context):
+        return False
+    if any(
+        stack.stack is None or stack.stack <= 0
+        for stack in economics.remaining_stacks
+    ):
+        return False
+    if any(bounty.value is None for bounty in economics.bounties):
+        return False
+    if economics.bounty_format == "none" and any(
+        bounty.value != 0 for bounty in economics.bounties
+    ):
+        return False
+    return True
+
+
 def _hero_actions_ready_for_extraction(
     state: ImportedHandState,
 ) -> list[ImportedAction]:
@@ -3051,8 +3125,13 @@ def _hero_actions_ready_for_extraction(
                 commitment is not None
                 for commitment in live_commitments.values()
             )
-            selected_wager_is_resolved = not (
+            selected_chip_action_is_resolved = not (
                 action.action_type in {"bet", "raise"}
+                and action.amount is None
+                and action.total_committed is None
+            ) and not (
+                action.action_type == "call"
+                and action.all_in
                 and action.amount is None
                 and action.total_committed is None
             )
@@ -3064,7 +3143,7 @@ def _hero_actions_ready_for_extraction(
                 and current_wager is not None
                 and exact_commitment_context
                 and exact_live_context
-                and selected_wager_is_resolved
+                and selected_chip_action_is_resolved
             ):
                 extracted.append(action)
 

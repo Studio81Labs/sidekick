@@ -35,6 +35,7 @@ from app.recommendation_benchmark import (
     main,
     recommendation_dataset_fingerprint,
     recommendation_economic_configuration_sha256,
+    recommendation_utility_configuration_sha256,
     run_recommendation_benchmark,
     validate_comparable_recommendation_baseline,
 )
@@ -46,6 +47,7 @@ class SequenceProvider:
 
     def __init__(self, outcomes: list[RecommendationResult | Exception]) -> None:
         self.outcomes = list(outcomes)
+        self.requests: list[RecommendationRequest] = []
 
     def required_fields_for(
         self,
@@ -54,6 +56,7 @@ class SequenceProvider:
         return self.required_fields
 
     def recommend(self, request: RecommendationRequest) -> RecommendationResult:
+        self.requests.append(request)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
@@ -75,6 +78,7 @@ def benchmark_state(**overrides: object) -> RecommendationBenchmarkState:
         "effective_stack": 100.0,
         "players_in_hand": 2,
         "hero_position": "button",
+        "utility_model": case_utility_model_evidence(),
     }
     values.update(overrides)
     return RecommendationBenchmarkState.model_validate(values)
@@ -253,6 +257,25 @@ def case_economic_model_evidence(
     }
 
 
+def case_utility_model_evidence(
+    *,
+    name: str = "cash-expected-value",
+    revision: str = "utility-1",
+    configuration: dict[str, Any] | None = None,
+    configuration_sha256: str | None = None,
+) -> dict[str, object]:
+    utility_configuration = configuration or {
+        "objective": "cash_expected_value"
+    }
+    return {
+        "name": name,
+        "revision": revision,
+        "configuration_sha256": configuration_sha256
+        or recommendation_utility_configuration_sha256(utility_configuration),
+        "configuration": utility_configuration,
+    }
+
+
 def grading_reference_evidence(
     *,
     ev_unit: str = "bb",
@@ -292,11 +315,7 @@ def grading_reference_evidence(
             "streets": ["preflop"],
         },
         "economic_model": case_economic_model_evidence(),
-        "utility_model": {
-            "name": "cash-expected-value",
-            "revision": "utility-1",
-            "configuration_sha256": "5" * 64,
-        },
+        "utility_model": case_utility_model_evidence(),
         "ev_unit": ev_unit,
         "rights_evidence": {
             "basis": "licensed",
@@ -509,6 +528,196 @@ def test_schema_five_propagates_grading_reference_and_fingerprints_evidence() ->
     assert "EV unit=bb" in formatted
     assert "licensed/shipped_static_lookup" in formatted
     assert "exploitability 0.01 bb_per_100 <= 0.02" in formatted
+
+
+@pytest.mark.parametrize(
+    ("utility_model", "message"),
+    [
+        (None, "requires a utility_model"),
+        (
+            case_utility_model_evidence(name="tournament-icm"),
+            "utility_model.name 'tournament-icm'.*declared.*'cash-expected-value'",
+        ),
+        (
+            case_utility_model_evidence(revision="utility-2"),
+            "utility_model.revision 'utility-2'.*declared.*'utility-1'",
+        ),
+        (
+            case_utility_model_evidence(
+                configuration={"objective": "tournament_icm"}
+            ),
+            "utility_model.configuration_sha256.*does not match declared",
+        ),
+    ],
+)
+def test_schema_five_requires_each_case_to_match_the_declared_utility_model(
+    utility_model: dict[str, object] | None,
+    message: str,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload["utility_model"] = utility_model
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+
+    with pytest.raises(ValidationError, match=message):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+
+
+def test_utility_model_rejects_material_config_mutation_with_stale_digest() -> None:
+    payload = case_utility_model_evidence()
+    configuration = payload["configuration"]
+    assert isinstance(configuration, dict)
+    configuration["risk_adjustment"] = "icm"
+
+    with pytest.raises(
+        ValidationError,
+        match="configuration_sha256 must match its normalized route-critical",
+    ):
+        RecommendationBenchmarkState.model_validate({"utility_model": payload})
+
+
+def test_utility_configuration_hash_normalizes_json_object_and_number_forms(
+) -> None:
+    concise = {
+        "objective": "cash_expected_value",
+        "parameters": {"weight": 1, "offset": 0},
+    }
+    reordered = {
+        "parameters": {"offset": -0.0, "weight": 1.0},
+        "objective": "cash_expected_value",
+    }
+
+    assert recommendation_utility_configuration_sha256(
+        concise
+    ) == recommendation_utility_configuration_sha256(reordered)
+
+
+def test_schema_five_routes_exact_utility_context_to_the_provider() -> None:
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 1
+    request_state = provider.requests[0].model_dump(mode="json")["state"]
+    assert request_state["utility_model"] == (
+        dataset.cases[0].state.utility_model.model_dump(mode="json")
+    )
+    assert request_state["economic_model"] is not None
+    assert request_state["hero_structural_position"] is not None
+
+
+def test_schema_five_revalidates_utility_binding_before_provider_execution() -> None:
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    utility_model = dataset.cases[0].state.utility_model
+    assert utility_model is not None
+    utility_model.name = "mutated-after-load"
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "utility_model.name" in report.cases[0].error
+    assert provider.requests == []
+    assert len(provider.outcomes) == 1
+
+
+def test_schema_five_utility_mismatch_fails_before_file_provider_execution(
+    tmp_path: Path,
+) -> None:
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    payload = dataset.model_dump(mode="json", by_alias=True)
+    payload["cases"][0]["state"]["utility_model"]["configuration"][
+        "objective"
+    ] = "tournament_icm"
+    path = tmp_path / "mismatched-utility-model.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    provider = SequenceProvider([recommendation("check")])
+
+    with pytest.raises(RecommendationBenchmarkError, match="utility_model"):
+        benchmark_recommendation_file(
+            path,
+            Settings(data_dir=tmp_path / "unused"),
+            provider,
+        )
+
+    assert provider.requests == []
+    assert len(provider.outcomes) == 1
+
+
+def test_utility_binding_is_fingerprinted_and_order_normalized() -> None:
+    baseline = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    reordered = baseline.model_copy(deep=True)
+    changed = baseline.model_copy(deep=True)
+    assert reordered.grading_reference is not None
+    reordered_models = (
+        reordered.grading_reference.utility_model,
+        reordered.cases[0].state.utility_model,
+    )
+    for model in reordered_models:
+        assert model is not None
+        model.configuration = dict(reversed(model.configuration.items()))
+
+    assert changed.grading_reference is not None
+    changed_models = (
+        changed.grading_reference.utility_model,
+        changed.cases[0].state.utility_model,
+    )
+    for model in changed_models:
+        assert model is not None
+        model.configuration["risk_adjustment"] = "none"
+        model.configuration_sha256 = recommendation_utility_configuration_sha256(
+            model.configuration
+        )
+
+    assert recommendation_dataset_fingerprint(
+        reordered
+    ) == recommendation_dataset_fingerprint(baseline)
+    assert recommendation_dataset_fingerprint(
+        changed
+    ) != recommendation_dataset_fingerprint(baseline)
+    baseline_report = run_recommendation_benchmark(
+        baseline,
+        SequenceProvider([recommendation("check")]),
+    )
+    changed_report = run_recommendation_benchmark(
+        changed,
+        SequenceProvider([recommendation("check")]),
+    )
+    with pytest.raises(
+        RecommendationBenchmarkError,
+        match="baseline corpus does not match",
+    ):
+        validate_comparable_recommendation_baseline(
+            changed_report,
+            baseline_report,
+        )
 
 
 @pytest.mark.parametrize(
@@ -1383,6 +1592,24 @@ def test_legacy_schema_versions_do_not_enforce_economic_model_binding(
     dataset = benchmark_dataset([case], schema_version=schema_version)
 
     assert dataset.schema_version == schema_version
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schema_versions_may_omit_utility_model_without_serialization_drift(
+    schema_version: int,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload.pop("utility_model")
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+    serialized_state = dataset.model_dump(mode="json", by_alias=True)["cases"][
+        0
+    ]["state"]
+
+    assert dataset.cases[0].state.utility_model is None
+    assert "utility_model" not in serialized_state
 
 
 @pytest.mark.parametrize(

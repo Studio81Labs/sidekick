@@ -13,6 +13,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     ValidationError,
     field_validator,
     model_validator,
@@ -473,11 +474,47 @@ RecommendationCaseEconomicModel = Annotated[
 ]
 
 
-class RecommendationBenchmarkState(CanonicalState):
-    model_config = ConfigDict(extra="forbid")
+def _normalized_utility_value(value: object) -> object:
+    if isinstance(value, bool) or value is None or isinstance(value, (int, str)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("Utility model configuration numbers must be finite")
+        if value == 0:
+            return 0
+        if value.is_integer():
+            return int(value)
+        return value
+    if isinstance(value, dict):
+        return {
+            str(key): _normalized_utility_value(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalized_utility_value(item) for item in value]
+    raise ValueError("Utility model configuration must contain only JSON values")
 
-    hero_structural_position: StructuralPosition | None = None
-    economic_model: RecommendationCaseEconomicModel | None = None
+
+def _normalized_utility_configuration(
+    configuration: dict[str, JsonValue],
+) -> dict[str, object]:
+    return cast(
+        dict[str, object],
+        _normalized_utility_value(configuration),
+    )
+
+
+def recommendation_utility_configuration_sha256(
+    configuration: dict[str, JsonValue],
+) -> str:
+    payload = json.dumps(
+        _normalized_utility_configuration(configuration),
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
 
 
 class RecommendationUtilityModel(BaseModel):
@@ -486,6 +523,36 @@ class RecommendationUtilityModel(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     revision: EvidenceRevision
     configuration_sha256: Sha256Digest
+    configuration: dict[str, JsonValue] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_configuration(self) -> Self:
+        expected_sha256 = recommendation_utility_configuration_sha256(
+            self.configuration
+        )
+        if self.configuration_sha256 != expected_sha256:
+            raise ValueError(
+                "Utility model configuration_sha256 must match its normalized"
+                " route-critical configuration"
+            )
+        return self
+
+
+class RecommendationBenchmarkState(CanonicalState):
+    model_config = ConfigDict(extra="forbid")
+
+    hero_structural_position: StructuralPosition | None = None
+    economic_model: RecommendationCaseEconomicModel | None = None
+    utility_model: RecommendationUtilityModel | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+
+
+class RecommendationBenchmarkRequest(RecommendationRequest):
+    """Preserve benchmark-only route context at the provider boundary."""
+
+    state: RecommendationBenchmarkState
 
 
 class RecommendationRightsEvidence(BaseModel):
@@ -718,6 +785,7 @@ class RecommendationBenchmarkDataset(BaseModel):
                     case,
                     self.grading_reference.coverage,
                     self.grading_reference.economic_model,
+                    self.grading_reference.utility_model,
                 )
         case_ids = [case.id for case in self.cases]
         if len(case_ids) != len(set(case_ids)):
@@ -764,6 +832,7 @@ def _validate_case_within_grading_coverage(
     case: RecommendationBenchmarkCase,
     coverage: RecommendationReferenceCoverage,
     economic_model: RecommendationEconomicModel,
+    utility_model: RecommendationUtilityModel,
 ) -> None:
     state = case.state
     case_economic_model = state.economic_model
@@ -801,6 +870,38 @@ def _validate_case_within_grading_coverage(
     ) != _normalized_economic_configuration(economic_model.configuration):
         raise ValueError(
             f"Case {case.id} economic_model.configuration does not match the"
+            " declared grading-reference route-critical configuration"
+        )
+    case_utility_model = state.utility_model
+    if case_utility_model is None:
+        raise ValueError(
+            f"Case {case.id} requires a utility_model for grading coverage"
+        )
+    for model_label, model in (
+        ("case", case_utility_model),
+        ("grading-reference", utility_model),
+    ):
+        actual_sha256 = recommendation_utility_configuration_sha256(
+            model.configuration
+        )
+        if model.configuration_sha256 != actual_sha256:
+            raise ValueError(
+                f"Case {case.id} {model_label} utility_model configuration was"
+                " modified without updating its normalized configuration_sha256"
+            )
+    for field_name in ("name", "revision", "configuration_sha256"):
+        case_value = getattr(case_utility_model, field_name)
+        reference_value = getattr(utility_model, field_name)
+        if case_value != reference_value:
+            raise ValueError(
+                f"Case {case.id} utility_model.{field_name} {case_value!r} does not"
+                f" match declared grading-reference value {reference_value!r}"
+            )
+    if _normalized_utility_configuration(
+        case_utility_model.configuration
+    ) != _normalized_utility_configuration(utility_model.configuration):
+        raise ValueError(
+            f"Case {case.id} utility_model.configuration does not match the"
             " declared grading-reference route-critical configuration"
         )
     if state.street is None or state.street not in coverage.streets:
@@ -1075,6 +1176,13 @@ def recommendation_dataset_fingerprint(
                     case_economic_model.configuration
                 )
             )
+        case_utility_model = source_case.state.utility_model
+        if case_utility_model is not None:
+            case["state"]["utility_model"]["configuration"] = (
+                _normalized_utility_configuration(
+                    case_utility_model.configuration
+                )
+            )
     normalized["cases"] = sorted(
         normalized["cases"],
         key=lambda case: case["id"],
@@ -1086,6 +1194,11 @@ def recommendation_dataset_fingerprint(
         grading_reference["economic_model"]["configuration"] = (
             _normalized_economic_configuration(
                 dataset.grading_reference.economic_model.configuration
+            )
+        )
+        grading_reference["utility_model"]["configuration"] = (
+            _normalized_utility_configuration(
+                dataset.grading_reference.utility_model.configuration
             )
         )
         coverage = grading_reference["coverage"]
@@ -1519,6 +1632,13 @@ def _run_case(
     provider: RecommendationProvider,
 ) -> RecommendationBenchmarkCaseResult:
     try:
+        if dataset.grading_reference is not None:
+            _validate_case_within_grading_coverage(
+                case,
+                dataset.grading_reference.coverage,
+                dataset.grading_reference.economic_model,
+                dataset.grading_reference.utility_model,
+            )
         missing = missing_required_fields(
             case.state,
             provider.required_fields_for(case.state),
@@ -1526,7 +1646,10 @@ def _run_case(
         if missing:
             raise ValueError(f"Missing required fields: {', '.join(missing)}")
         result = provider.recommend(
-            RecommendationRequest(state=case.state, provider=provider.name)
+            RecommendationBenchmarkRequest(
+                state=case.state,
+                provider=provider.name,
+            )
         )
     except ProviderConfigurationError:
         raise

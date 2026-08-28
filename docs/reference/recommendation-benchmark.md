@@ -144,7 +144,10 @@ was evaluated and disappears from the current run, the case fails explicitly.
     "utility_model": {
       "name": "cash-expected-value-example",
       "revision": "utility-example-1",
-      "configuration_sha256": "5555555555555555555555555555555555555555555555555555555555555555"
+      "configuration_sha256": "50f3e560b11eab10744e3e08a737be9af14490bce947ecdb94a1cf8081ae966d",
+      "configuration": {
+        "objective": "cash_expected_value"
+      }
     },
     "ev_unit": "bb",
     "rights_evidence": {
@@ -212,6 +215,14 @@ was evaluated and disappears from the current run, the case fails explicitly.
               "fixed_drop": 0,
               "description": null
             }
+          }
+        },
+        "utility_model": {
+          "name": "cash-expected-value-example",
+          "revision": "utility-example-1",
+          "configuration_sha256": "50f3e560b11eab10744e3e08a737be9af14490bce947ecdb94a1cf8081ae966d",
+          "configuration": {
+            "objective": "cash_expected_value"
           }
         },
         "hero_structural_position": {
@@ -309,8 +320,17 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   missing fields. Missing economics and an explicit `kind: "unknown"` fail the
   version-5 gate rather than inheriting the corpus declaration. A corpus with
   multiple economic strata must separate them into independently identified
-  grading references. Until recommendation providers consume structural position
-  directly, the legacy `hero_position` route must agree exactly: `BTN/SB` and
+  grading references. Every version-5 case also repeats the complete utility
+  model identity and its non-empty, source-defined route configuration. The
+  loader normalizes JSON object keys and integral numeric forms, recomputes the
+  canonical configuration SHA-256, and requires the case name, immutable
+  revision, digest, and normalized configuration to match `grading_reference`
+  exactly. These benchmark-only economics, structural-position, and utility
+  fields are preserved in the request sent to the selected provider; a mismatch
+  fails before provider execution. Versions 1 through 4 may omit utility context
+  and retain their prior serialized shape. Until recommendation providers
+  consume structural position directly, the legacy `hero_position` route must
+  agree exactly: `BTN/SB` and
   `BTN` route as `button`, `SB` as `small_blind`, `BB` as `big_blind`, `UTG` as
   `utg`, `HJ` as `hijack`, and `CO` as `cutoff`. Table-specific full-ring labels
   such as `UTG+1`, `LJ`, and combined `*/LJ` labels have no exact legacy route;

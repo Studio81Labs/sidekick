@@ -120,6 +120,18 @@ def hand_state(*, hero_player_id: str | None = None) -> ImportedHandState:
     )
 
 
+def complete_cash_economics() -> dict[str, object]:
+    return {
+        "kind": "cash",
+        "currency": "USD",
+        "rake": {
+            "percentage": Decimal("0.05"),
+            "cap": Decimal("3"),
+            "fixed_drop": Decimal(0),
+        },
+    }
+
+
 def detected(state: ImportedHandState | None = None) -> DetectedImportedHand:
     detected_state = state or hand_state()
     return DetectedImportedHand(
@@ -311,6 +323,30 @@ def complete_tournament_economics() -> dict[str, object]:
         ],
         "icm_inputs_complete": True,
     }
+
+
+def complete_route_tournament_economics(
+    *, bounty_format: str = "none",
+) -> dict[str, object]:
+    economics = complete_tournament_economics()
+    economics["kind"] = "tournament"
+    economics["bounty_format"] = bounty_format
+    economics["bounties"] = [
+        {
+            "player_id": player_id,
+            "value": (
+                Decimal(0)
+                if bounty_format == "none"
+                else Decimal(value)
+            ),
+        }
+        for player_id, value in (
+            ("hero", "25"),
+            ("villain", "10"),
+            ("third-player", "5"),
+        )
+    ]
+    return economics
 
 
 def test_complete_icm_inputs_require_concrete_values_and_coherent_coverage() -> None:
@@ -8764,6 +8800,222 @@ def test_folded_player_may_retain_a_noncollecting_player_result() -> None:
     assert state.results.players[0].total_collected == Decimal(0)
 
 
+def test_folded_player_cannot_report_positive_total_collected() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "hero", "fold", total=Decimal(0)),
+            ],
+        }
+    ]
+    payload["results"] = {
+        "players": [
+            {
+                "player_id": "hero",
+                "total_collected": Decimal("0.01"),
+                "net_result": None,
+            }
+        ]
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match="folded player hero cannot report positive total_collected",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_folded_player_cannot_report_positive_net_with_exact_contribution(
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "hero", "fold", total=Decimal(0)),
+            ],
+        }
+    ]
+    payload["results"] = {
+        "players": [
+            {
+                "player_id": "hero",
+                "total_collected": None,
+                "net_result": Decimal("0.01"),
+            }
+        ]
+    }
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "folded player hero net_result implies positive collection 0.01"
+            " from exact contribution 0"
+        ),
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_folded_positive_net_remains_reviewable_with_unknown_contribution(
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(0, "post_ante"),
+                wager_action(1, "hero", "fold", total=None),
+            ],
+        }
+    ]
+    payload["results"] = {
+        "players": [
+            {
+                "player_id": "hero",
+                "total_collected": None,
+                "net_result": Decimal("0.01"),
+            }
+        ]
+    }
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is not None
+    assert state.results.players[0].net_result == Decimal("0.01")
+
+
+@pytest.mark.parametrize("net_result", [Decimal("0"), Decimal("-1")])
+def test_folded_nonpositive_net_result_remains_auditable(
+    net_result: Decimal,
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "hero", "fold", total=Decimal(0)),
+            ],
+        }
+    ]
+    payload["results"] = {
+        "players": [
+            {
+                "player_id": "hero",
+                "total_collected": None,
+                "net_result": net_result,
+            }
+        ]
+    }
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is not None
+    assert state.results.players[0].net_result == net_result
+
+
+@pytest.mark.parametrize("net_result", [Decimal("0"), Decimal("-0.5")])
+def test_folded_net_result_cannot_imply_collection_after_a_contribution(
+    net_result: Decimal,
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_ante",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(1, "hero", "fold", total=Decimal("1")),
+            ],
+        }
+    ]
+    payload["results"] = {
+        "players": [
+            {
+                "player_id": "hero",
+                "total_collected": None,
+                "net_result": net_result,
+            }
+        ]
+    }
+
+    implied_collection = net_result + Decimal("1")
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "folded player hero net_result implies positive collection"
+            f" {implied_collection} from exact contribution 1"
+        ),
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("net_result", [Decimal("-1"), Decimal("-2")])
+def test_folded_net_result_accepts_zero_or_negative_implied_collection(
+    net_result: Decimal,
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_ante",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(1, "hero", "fold", total=Decimal("1")),
+            ],
+        }
+    ]
+    payload["results"] = {
+        "players": [
+            {
+                "player_id": "hero",
+                "total_collected": None,
+                "net_result": net_result,
+            }
+        ]
+    }
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is not None
+    assert state.results.players[0].net_result == net_result
+
+
+def test_nonfolded_winner_may_report_a_positive_player_result() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "hero", "fold", total=Decimal(0)),
+            ],
+        }
+    ]
+    payload["results"] = {
+        "players": [
+            {
+                "player_id": "villain",
+                "total_collected": Decimal("1"),
+                "net_result": Decimal("1"),
+            }
+        ]
+    }
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.results is not None
+    assert state.results.players[0].player_id == "villain"
+
+
 def test_all_in_player_remains_eligible_for_showdown_and_award_results() -> None:
     payload = hand_state().model_dump()
     payload["seats"][0]["starting_stack"] = Decimal("1")
@@ -8808,12 +9060,20 @@ def test_all_in_player_remains_eligible_for_showdown_and_award_results() -> None
                 "evidence": [evidence()],
             }
         ],
+        "players": [
+            {
+                "player_id": "hero",
+                "total_collected": Decimal("2"),
+                "net_result": Decimal("1"),
+            }
+        ],
     }
 
     state = ImportedHandState.model_validate(payload)
 
     assert state.results is not None
     assert state.results.awards[0].player_id == "hero"
+    assert state.results.players[0].net_result == Decimal("1")
 
 
 @pytest.mark.parametrize("participation", ["sitting_out", "not_dealt"])
@@ -9178,6 +9438,7 @@ def test_extraction_returns_only_voluntary_hero_actions_from_supported_approval(
         },
     }
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["game"]["economics"] = complete_cash_economics()
     state_payload["button_seat"] = 1
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
@@ -9260,6 +9521,7 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
         )
     )
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["game"]["economics"] = complete_cash_economics()
     state_payload["button_seat"] = 1 if action_type == "bet" else 2
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
@@ -9296,6 +9558,7 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
 def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
 ) -> None:
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["game"]["economics"] = complete_cash_economics()
     state_payload["button_seat"] = 2
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
@@ -9344,6 +9607,127 @@ def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
     ] == ["call"]
 
 
+@pytest.mark.parametrize(
+    "starting_stack",
+    [Decimal("1"), Decimal("2"), Decimal("100")],
+)
+def test_extraction_withholds_a_fieldless_all_in_call_even_with_a_known_target(
+    starting_stack: Decimal,
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["button_seat"] = 2
+    payload["seats"][0]["starting_stack"] = starting_stack
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(1, "hero", "call", all_in=True),
+            ],
+        }
+    ]
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert state.streets[0].actions[-1].all_in is True
+    assert record.active_hero_actions_for_extraction == []
+
+
+@pytest.mark.parametrize(
+    ("amount", "total"),
+    [
+        (Decimal("1"), None),
+        (None, Decimal("1")),
+        (Decimal("1"), Decimal("1")),
+    ],
+)
+def test_extraction_keeps_a_proven_known_stack_all_in_call(
+    amount: Decimal | None,
+    total: Decimal | None,
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["button_seat"] = 2
+    payload["seats"][0]["starting_stack"] = Decimal("1")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=amount,
+                    total=total,
+                    all_in=True,
+                ),
+            ],
+        }
+    ]
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["call"]
+
+
+@pytest.mark.parametrize(
+    ("amount", "total"),
+    [
+        (None, None),
+        (Decimal("1"), None),
+        (None, Decimal("1")),
+    ],
+)
+def test_unknown_stack_all_in_call_evidence_remains_reviewable_not_extractable(
+    amount: Decimal | None,
+    total: Decimal | None,
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["button_seat"] = 2
+    payload["seats"][0]["starting_stack"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=amount,
+                    total=total,
+                    all_in=True,
+                ),
+            ],
+        }
+    ]
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert state.streets[0].actions[-1].all_in is True
+    assert record.active_hero_actions_for_extraction == []
+
+
 def extraction_record_for_streets(
     streets: list[dict[str, object]],
     *,
@@ -9351,6 +9735,7 @@ def extraction_record_for_streets(
     button_seat: int | None = 1,
 ) -> ImportedHandRecord:
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["game"]["economics"] = complete_cash_economics()
     state_payload["button_seat"] = button_seat
     state_payload["hero_cards"] = (
         [
@@ -9414,6 +9799,7 @@ def automatic_action(
 
 def extraction_ready_state_payload() -> dict[str, object]:
     payload = hand_state(hero_player_id="hero").model_dump()
+    payload["game"]["economics"] = complete_cash_economics()
     payload["button_seat"] = 1
     payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
@@ -9430,6 +9816,155 @@ def extraction_ready_state_payload() -> dict[str, object]:
         }
     ]
     return payload
+
+
+@pytest.mark.parametrize(
+    "economics",
+    [
+        {"kind": "unknown", "reason": "source omitted economics"},
+        {
+            "kind": "cash",
+            "currency": None,
+            "rake": {
+                "percentage": Decimal("0.05"),
+                "cap": Decimal("3"),
+                "fixed_drop": Decimal(0),
+            },
+        },
+        {"kind": "cash", "currency": "USD", "rake": None},
+        {
+            "kind": "cash",
+            "currency": "USD",
+            "rake": {
+                "percentage": Decimal("0.05"),
+                "cap": None,
+                "fixed_drop": Decimal(0),
+            },
+        },
+        {
+            "kind": "cash",
+            "currency": "USD",
+            "rake": {
+                "percentage": None,
+                "cap": Decimal("3"),
+                "fixed_drop": Decimal(0),
+            },
+        },
+        {
+            "kind": "cash",
+            "currency": "USD",
+            "rake": {
+                "percentage": Decimal("0.05"),
+                "cap": Decimal("3"),
+                "fixed_drop": None,
+            },
+        },
+    ],
+)
+def test_incomplete_cash_economics_remains_reviewable_but_not_extractable(
+    economics: dict[str, object],
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["economics"] = economics
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_explicit_zero_cash_rake_components_are_complete_for_extraction() -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["economics"] = {
+        "kind": "cash",
+        "currency": "USD",
+        "rake": {
+            "percentage": Decimal(0),
+            "cap": Decimal(0),
+            "fixed_drop": Decimal(0),
+        },
+    }
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+@pytest.mark.parametrize("bounty_format", ["none", "progressive-knockout"])
+def test_complete_tournament_utility_context_is_extractable(
+    bounty_format: str,
+) -> None:
+    payload = extraction_ready_state_payload()
+    economics = complete_route_tournament_economics(
+        bounty_format=bounty_format
+    )
+    economics["tournament_id"] = None
+    payload["game"]["economics"] = economics
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+@pytest.mark.parametrize(
+    "missing_field",
+    [
+        "tournament_type",
+        "stage",
+        "currency",
+        "paid_places",
+        "players_remaining",
+        "payouts",
+        "remaining_stacks",
+        "bounty_format",
+        "bounties",
+        "icm_inputs_complete",
+    ],
+)
+def test_incomplete_tournament_utility_context_is_not_extractable(
+    missing_field: str,
+) -> None:
+    payload = extraction_ready_state_payload()
+    economics = complete_route_tournament_economics()
+    if missing_field in {
+        "paid_places",
+        "players_remaining",
+        "payouts",
+        "remaining_stacks",
+        "bounties",
+    }:
+        economics[missing_field] = (
+            []
+            if missing_field in {"payouts", "remaining_stacks", "bounties"}
+            else None
+        )
+        economics["icm_inputs_complete"] = False
+    elif missing_field == "icm_inputs_complete":
+        economics[missing_field] = False
+    else:
+        economics[missing_field] = None
+    payload["game"]["economics"] = economics
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_no_bounty_route_requires_explicit_zero_bounty_values() -> None:
+    payload = extraction_ready_state_payload()
+    economics = complete_route_tournament_economics()
+    economics["bounties"][0]["value"] = Decimal("1")
+    payload["game"]["economics"] = economics
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert state.game.economics.kind == "tournament"
+    assert record.active_hero_actions_for_extraction == []
 
 
 def test_extraction_withholds_a_known_hero_when_any_participation_is_unknown(
