@@ -7,8 +7,10 @@
 # defaults (API 8000, PWA 5173) are used when free; otherwise the next free ports
 # are taken. Ports are claimed under a lock in a per-user directory so workspaces
 # started at the same moment cannot collide, and CORS plus the PWA's API URL are
-# wired to the chosen ports automatically (a custom POKER_CORS_ORIGINS in
-# apps/backend/.env is not used here; run `pnpm backend:dev` for that).
+# wired to the chosen ports automatically, and the backend is pointed at this
+# worktree's solver binary explicitly (a custom POKER_CORS_ORIGINS or
+# POKER_POSTFLOP_SOLVER_COMMAND in apps/backend/.env is not used here; run
+# `pnpm backend:dev` for those).
 # Preferred ports can be overridden with POKER_BACKEND_PORT / POKER_PWA_PORT.
 set -eu
 
@@ -126,21 +128,38 @@ PWA_PORT=${ports##* }
 BACKEND_URL="http://localhost:$BACKEND_PORT"
 PWA_URL="http://localhost:$PWA_PORT"
 
-# The solver binary goes on the backend's PATH only when it is at least as new
-# as its sources (src/, Cargo.toml, Cargo.lock); otherwise the backend's
-# fallback engine is used and a rebuild is suggested, so a stale binary never
-# masquerades as the current code.
+# Solver selection. The backend is told exactly which solver to run, as an
+# absolute path rather than a PATH lookup: this worktree's binary when it is
+# current, otherwise a deliberately absent path so the backend's fallback
+# engine runs and the reason shows up in its responses. A binary is current
+# when setup stamped it with the tree hash of a clean tree that is still
+# checked out, or when nothing under solver-plugins/postflop (directories
+# included, so deletions count; target/ excluded) is newer than it.
 SOLVER_BIN="$SOLVER_BIN_DIR/poker-postflop-solver"
 SOLVER_SRC="$ROOT_DIR/solver-plugins/postflop"
-SOLVER_STATUS=missing
-if [ -x "$SOLVER_BIN" ]; then
-  if [ -z "$(find "$SOLVER_SRC/src" "$SOLVER_SRC/Cargo.toml" "$SOLVER_SRC/Cargo.lock" \
-        -newer "$SOLVER_BIN" 2>/dev/null | head -n 1)" ]; then
-    SOLVER_STATUS=ok
+SOLVER_STAMP="$SOLVER_BIN_DIR/.poker-hero-solver-tree"
+solver_status() {
+  [ -x "$SOLVER_BIN" ] || { echo missing; return; }
+  tree=$(git -C "$ROOT_DIR" rev-parse "HEAD:solver-plugins/postflop" 2>/dev/null || true)
+  if [ -n "$tree" ] && [ "$(cat "$SOLVER_STAMP" 2>/dev/null)" = "$tree" ] \
+    && [ -z "$(git -C "$ROOT_DIR" status --porcelain -- solver-plugins/postflop)" ]; then
+    echo ok
+  elif [ -z "$(find "$SOLVER_SRC" -name target -prune -o -newer "$SOLVER_BIN" -print 2>/dev/null \
+        | head -n 1)" ]; then
+    echo ok
   else
-    SOLVER_STATUS=stale
+    echo stale
   fi
+}
+SOLVER_STATUS=$(solver_status)
+if [ "$SOLVER_STATUS" = ok ]; then
+  SOLVER_COMMAND=$SOLVER_BIN
+else
+  SOLVER_COMMAND="$SOLVER_BIN.$SOLVER_STATUS"  # does not exist: forces the fallback
 fi
+# The setting is parsed with shlex, so single-quote it (paths may contain spaces).
+# shellcheck disable=SC2089  # the quotes are meant literally, for shlex
+SOLVER_COMMAND_QUOTED="'$(printf '%s' "$SOLVER_COMMAND" | sed "s/'/'\\\\''/g")'"
 
 BACKEND_PID=""
 PWA_PID=""
@@ -159,13 +178,15 @@ cleanup() {
 }
 trap cleanup EXIT HUP INT TERM
 
-# Backend, as in `pnpm backend:dev` (solver on PATH, run from apps/backend so
-# .env and the data/ directory resolve). CORS follows the PWA port.
+# Backend, as in `pnpm backend:dev` (run from apps/backend so .env and the
+# data/ directory resolve); CORS follows the PWA port and the solver command
+# is pinned as decided above.
 (
   cd "$BACKEND_DIR" || exit 1
-  [ "$SOLVER_STATUS" = ok ] && PATH="$SOLVER_BIN_DIR:$PATH"
   POKER_CORS_ORIGINS=$(printf '["http://localhost:%s","http://127.0.0.1:%s"]' "$PWA_PORT" "$PWA_PORT")
-  export PATH POKER_CORS_ORIGINS
+  POKER_POSTFLOP_SOLVER_COMMAND=$SOLVER_COMMAND_QUOTED
+  # shellcheck disable=SC2090  # see SOLVER_COMMAND_QUOTED
+  export POKER_CORS_ORIGINS POKER_POSTFLOP_SOLVER_COMMAND
   exec "$VENV_PY" -m uvicorn app.main:app --reload --host localhost --port "$BACKEND_PORT"
 ) &
 BACKEND_PID=$!
