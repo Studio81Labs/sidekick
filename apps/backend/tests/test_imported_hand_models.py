@@ -4777,6 +4777,255 @@ def test_active_record_enforces_user_corrections_and_round_trips() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "pointers",
+    [
+        ("/seats/0", "/seats/0/display_name"),
+        ("/seats/0/display_name", "/seats/0"),
+    ],
+)
+def test_canonical_revision_rejects_overlapping_correction_paths(
+    pointers: tuple[str, str],
+) -> None:
+    detected_state = hand_state()
+    detected_seat = detected_state.model_dump(mode="json")["seats"][0]
+    approved_seat = {**detected_seat, "display_name": "Hero"}
+    values_by_pointer = {
+        "/seats/0": (detected_seat, approved_seat),
+        "/seats/0/display_name": (None, "Hero"),
+    }
+
+    with pytest.raises(ValidationError, match="overlapping fields"):
+        CanonicalHandRevision(
+            revision=1,
+            detection_id="detection-1",
+            approved_at=NOW,
+            state=detected_state,
+            corrections=[
+                UserCorrection(
+                    field_pointer=pointer,
+                    detected_value=values_by_pointer[pointer][0],
+                    approved_value=values_by_pointer[pointer][1],
+                    corrected_at=NOW,
+                )
+                for pointer in pointers
+            ],
+        )
+
+
+def test_canonical_revision_still_rejects_duplicate_correction_paths() -> None:
+    correction = UserCorrection(
+        field_pointer="/hero_player_id",
+        detected_value=None,
+        approved_value="hero",
+        corrected_at=NOW,
+    )
+
+    with pytest.raises(ValidationError, match="same field twice"):
+        CanonicalHandRevision(
+            revision=1,
+            detection_id="detection-1",
+            approved_at=NOW,
+            state=hand_state(hero_player_id="hero"),
+            corrections=[correction, correction],
+        )
+
+
+def test_non_overlapping_corrections_apply_to_the_approved_copy() -> None:
+    approved_payload = hand_state().model_dump()
+    approved_payload["hero_player_id"] = "hero"
+    approved_payload["seats"][0]["display_name"] = "Hero"
+    approved_state = ImportedHandState.model_validate(approved_payload)
+    approved_revision = CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW,
+        state=approved_state,
+        corrections=[
+            UserCorrection(
+                field_pointer="/hero_player_id",
+                detected_value=None,
+                approved_value="hero",
+                corrected_at=NOW,
+            ),
+            UserCorrection(
+                field_pointer="/seats/0/display_name",
+                detected_value=None,
+                approved_value="Hero",
+                corrected_at=NOW,
+            ),
+        ],
+    )
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected()],
+        canonical_revisions=[approved_revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+    assert record.active_state_for_extraction == approved_state
+
+
+def test_each_correction_detected_value_uses_the_immutable_detection() -> None:
+    detected_state = hand_state()
+    detected_seat = detected_state.model_dump(mode="json")["seats"][0]
+    intermediate_seat = {**detected_seat, "display_name": "H"}
+    approved_payload = detected_state.model_dump()
+    approved_payload["seats"][0]["display_name"] = "Hero"
+    approved_state = ImportedHandState.model_validate(approved_payload)
+    unsafe_revision = CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW,
+        state=approved_state,
+    ).model_copy(
+        update={
+            "corrections": [
+                UserCorrection(
+                    field_pointer="/seats/0",
+                    detected_value=detected_seat,
+                    approved_value=intermediate_seat,
+                    corrected_at=NOW,
+                ),
+                UserCorrection(
+                    field_pointer="/seats/0/display_name",
+                    detected_value="H",
+                    approved_value="Hero",
+                    corrected_at=NOW,
+                ),
+            ]
+        }
+    )
+
+    unsafe_record = ImportedHandRecord.model_construct(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected(detected_state)],
+        conflicts=[],
+        canonical_revisions=[unsafe_revision],
+        lifecycle=ImportedHandLifecycle(
+            status="active",
+            active_canonical_revision=1,
+            changed_at=NOW,
+        ),
+        deletion_receipt=None,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="detected_value does not match /seats/0/display_name",
+    ):
+        unsafe_record.validate_aggregate()
+
+
+@pytest.mark.parametrize("wrong_detected_value", [True, 1.0])
+def test_correction_detected_value_uses_strict_json_scalar_types(
+    wrong_detected_value: bool | float,
+) -> None:
+    unchanged_revision = CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW,
+        state=hand_state(),
+        corrections=[
+            UserCorrection(
+                field_pointer="/button_seat",
+                detected_value=wrong_detected_value,
+                approved_value=1,
+                corrected_at=NOW,
+            )
+        ],
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="detected_value does not match /button_seat",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[unchanged_revision],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+@pytest.mark.parametrize("wrong_approved_value", [True, 1.0])
+def test_approved_copy_uses_strict_json_scalar_types(
+    wrong_approved_value: bool | float,
+) -> None:
+    mismatched_revision = CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW,
+        state=hand_state(),
+        corrections=[
+            UserCorrection(
+                field_pointer="/button_seat",
+                detected_value=1,
+                approved_value=wrong_approved_value,
+                corrected_at=NOW,
+            )
+        ],
+    )
+
+    with pytest.raises(ValidationError, match="only through corrections"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[mismatched_revision],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+def test_approved_copy_uses_strict_json_types_recursively() -> None:
+    detected_state = hand_state()
+    detected_seat = detected_state.model_dump(mode="json")["seats"][0]
+    wrongly_typed_seat = {**detected_seat, "seat_number": True}
+    mismatched_revision = CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW,
+        state=detected_state,
+        corrections=[
+            UserCorrection(
+                field_pointer="/seats/0",
+                detected_value=detected_seat,
+                approved_value=wrongly_typed_seat,
+                corrected_at=NOW,
+            )
+        ],
+    )
+
+    with pytest.raises(ValidationError, match="only through corrections"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected(detected_state)],
+            canonical_revisions=[mismatched_revision],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
 @pytest.mark.parametrize("token", ["-1", "+1", "01", "1.0", "-"])
 def test_correction_paths_reject_noncanonical_array_indices(token: str) -> None:
     invalid_revision = CanonicalHandRevision(

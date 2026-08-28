@@ -144,9 +144,16 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
     stated_net = stated.net_total if stated is not None else None
     awards = hand.results.awards if hand.results is not None else []
     contributions_incomplete = incomplete
+    has_unknown_awards = any(award.amount is None for award in awards)
+    has_global_unknown_demand = contributions_incomplete and has_unknown_awards
+    local_positive_demand_errors: list[str] = []
+    known_awarded_total = sum(
+        (award.amount for award in awards if award.amount is not None),
+        Decimal(0),
+    )
     awarded_total: Decimal | None = None
     if awards:
-        if any(award.amount is None for award in awards):
+        if has_unknown_awards:
             warnings.append("one or more pot awards have an unknown amount")
             incomplete = True
         else:
@@ -162,7 +169,13 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
         elif not contributions_incomplete:
             awards_by_pot: dict[int, Decimal] = {}
             concrete_awards_by_player: dict[str, Decimal] = {}
+            concrete_unindexed_awards_by_player: dict[str, Decimal] = {}
             recipients_with_concrete_unindexed_awards: set[str] = set()
+            unknown_unindexed_recipients: set[str] = set()
+            unknown_indexed_recipients: set[tuple[str, int]] = set()
+            ineligible_unindexed_recipients: set[str] = set()
+            ineligible_indexed_recipients: set[tuple[str, int]] = set()
+            nonexistent_pot_indexes: set[int] = set()
             for award in awards:
                 if award.amount is not None:
                     concrete_awards_by_player[award.player_id] = (
@@ -172,29 +185,50 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                 if award.pot_index is None:
                     if award.amount is not None:
                         recipients_with_concrete_unindexed_awards.add(award.player_id)
+                        concrete_unindexed_awards_by_player[award.player_id] = (
+                            concrete_unindexed_awards_by_player.get(
+                                award.player_id, Decimal(0)
+                            )
+                            + award.amount
+                        )
+                    else:
+                        unknown_unindexed_recipients.add(award.player_id)
                     if not any(
                         award.player_id in pot.eligible_players for pot in pots
                     ):
-                        errors.append(
-                            f"unindexed pot award recipient {award.player_id} is not"
-                            " eligible for any derived pot"
-                        )
+                        ineligible_unindexed_recipients.add(award.player_id)
                     continue
                 if award.pot_index >= len(pots):
-                    errors.append(
-                        f"pot award references nonexistent pot index {award.pot_index}"
-                    )
+                    nonexistent_pot_indexes.add(award.pot_index)
                     continue
                 if award.player_id not in pots[award.pot_index].eligible_players:
-                    errors.append(
-                        f"pot award recipient {award.player_id} is not eligible for"
-                        f" pot index {award.pot_index}"
+                    ineligible_indexed_recipients.add(
+                        (award.player_id, award.pot_index)
                     )
                 if award.amount is not None:
                     awards_by_pot[award.pot_index] = (
                         awards_by_pot.get(award.pot_index, Decimal(0))
                         + award.amount
                     )
+                else:
+                    unknown_indexed_recipients.add(
+                        (award.player_id, award.pot_index)
+                    )
+            for pot_index in sorted(nonexistent_pot_indexes):
+                errors.append(
+                    f"pot award references nonexistent pot index {pot_index}"
+                )
+            for player_id in sorted(ineligible_unindexed_recipients):
+                errors.append(
+                    f"unindexed pot award recipient {player_id} is not eligible"
+                    " for any derived pot"
+                )
+            for player_id, pot_index in sorted(ineligible_indexed_recipients):
+                errors.append(
+                    f"pot award recipient {player_id} is not eligible for pot index"
+                    f" {pot_index}"
+                )
+            award_recipients_over_capacity: set[str] = set()
             for player_id in sorted(recipients_with_concrete_unindexed_awards):
                 eligible_total = sum(
                     (
@@ -206,12 +240,78 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                 )
                 concrete_total = concrete_awards_by_player[player_id]
                 if eligible_total > 0 and concrete_total > eligible_total:
+                    award_recipients_over_capacity.add(player_id)
                     errors.append(
                         f"concrete awards {concrete_total} to {player_id} exceed"
                         f" eligible derived pots {eligible_total}"
                     )
+            residual_capacities = {
+                pot.pot_index: max(
+                    pot.amount - awards_by_pot.get(pot.pot_index, Decimal(0)),
+                    Decimal(0),
+                )
+                for pot in pots
+            }
+            valid_unknown_indexed_pots = {
+                pot_index
+                for player_id, pot_index in unknown_indexed_recipients
+                if (player_id, pot_index) not in ineligible_indexed_recipients
+            }
+            exact_residual_failed_pots = {
+                pot_index
+                for pot_index in valid_unknown_indexed_pots
+                if residual_capacities[pot_index] <= 0
+            }
+            for pot_index in sorted(exact_residual_failed_pots):
+                local_positive_demand_errors.append(
+                    "unknown indexed pot awards require positive residual"
+                    f" capacity at pot index {pot_index}"
+                )
+            positive_demand_cutoffs = (
+                valid_unknown_indexed_pots - exact_residual_failed_pots
+            )
+            valid_unknown_unindexed_recipients: set[str] = set()
+            for player_id in unknown_unindexed_recipients:
+                if player_id in ineligible_unindexed_recipients:
+                    continue
+                valid_unknown_unindexed_recipients.add(player_id)
+                highest_eligible_pot = max(
+                    (
+                        pot.pot_index
+                        for pot in pots
+                        if player_id in pot.eligible_players
+                    ),
+                    default=None,
+                )
+                if highest_eligible_pot is not None:
+                    positive_demand_cutoffs.add(highest_eligible_pot)
+            has_global_unknown_demand = bool(
+                valid_unknown_indexed_pots
+                or valid_unknown_unindexed_recipients
+            )
+            errors.extend(
+                _shared_layer_capacity_errors(
+                    concrete_unindexed_awards_by_player,
+                    pots,
+                    subject="concrete unindexed awards",
+                    pot_capacities=residual_capacities,
+                    skip_players=award_recipients_over_capacity,
+                    include_final_layer=True,
+                )
+            )
+            local_positive_demand_errors.extend(
+                _positive_demand_capacity_errors(
+                    concrete_unindexed_awards_by_player,
+                    pots,
+                    pot_capacities=residual_capacities,
+                    skip_players=award_recipients_over_capacity,
+                    demand_cutoffs=positive_demand_cutoffs,
+                )
+            )
+            overfilled_indexed_pots: set[int] = set()
             for pot_index, indexed_total in awards_by_pot.items():
                 if pot_index < len(pots) and indexed_total > pots[pot_index].amount:
+                    overfilled_indexed_pots.add(pot_index)
                     errors.append(
                         f"indexed awards {indexed_total} exceed gross pot"
                         f" {pots[pot_index].amount} at index {pot_index}"
@@ -229,7 +329,10 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
             if all_awards_indexed and zero_rake:
                 for pot in pots:
                     indexed_total = awards_by_pot.get(pot.pot_index, Decimal(0))
-                    if indexed_total != pot.amount:
+                    if (
+                        indexed_total != pot.amount
+                        and pot.pot_index not in overfilled_indexed_pots
+                    ):
                         errors.append(
                             f"indexed awards {indexed_total} do not match pot"
                             f" {pot.amount} at index {pot.pot_index}"
@@ -283,6 +386,32 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
             errors.append(
                 f"aggregate pot awards {awarded_total} exceed known gross pot {known_gross}"
             )
+    known_award_ceiling = (
+        expected_awards if expected_awards is not None else known_gross
+    )
+    suppress_local_positive_demand_errors = False
+    if (
+        has_unknown_awards
+        and known_award_ceiling is not None
+        and known_awarded_total > known_award_ceiling
+    ):
+        errors.append(
+            f"known concrete pot awards {known_awarded_total} exceed known"
+            f" distributable pot {known_award_ceiling}"
+        )
+        suppress_local_positive_demand_errors = True
+    elif (
+        has_global_unknown_demand
+        and known_award_ceiling is not None
+        and known_awarded_total == known_award_ceiling
+    ):
+        errors.append(
+            "unknown pot awards require positive residual below known"
+            f" distributable pot {known_award_ceiling}"
+        )
+        suppress_local_positive_demand_errors = True
+    if not suppress_local_positive_demand_errors:
+        errors.extend(local_positive_demand_errors)
 
     player_results = hand.results.players if hand.results is not None else []
     award_entries_by_player: dict[str, list[Decimal | None]] = {}
@@ -379,48 +508,14 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                     f"player result {player_id} collection {collection} exceeds"
                     f" eligible derived pots {eligible_total}"
                 )
-        highest_eligible_pot_by_player = {
-            player_id: max(
-                (
-                    pot.pot_index
-                    for pot in pots
-                    if player_id in pot.eligible_players
-                ),
-                default=None,
+        errors.extend(
+            _shared_layer_capacity_errors(
+                reconciled_player_collections,
+                pots,
+                subject="known player collections",
+                skip_players=individually_over_capacity,
             )
-            for player_id in contributions
-        }
-        # Derived eligibility rings only shrink as layer indexes rise. Players
-        # capped at a lower ring must share the capacity through that layer.
-        cumulative_capacity = Decimal(0)
-        for pot in pots[:-1]:
-            cumulative_capacity += pot.amount
-            capacity_limited_collections = {
-                player_id: collection
-                for player_id, collection in reconciled_player_collections.items()
-                if collection > 0
-                and (
-                    highest_eligible_pot_by_player[player_id] is not None
-                    and highest_eligible_pot_by_player[player_id] <= pot.pot_index
-                )
-            }
-            if (
-                not capacity_limited_collections
-                or individually_over_capacity.intersection(
-                    capacity_limited_collections
-                )
-            ):
-                continue
-            limited_total = sum(
-                capacity_limited_collections.values(), Decimal(0)
-            )
-            if limited_total > cumulative_capacity:
-                errors.append(
-                    f"known player collections {limited_total} for players"
-                    f" {', '.join(sorted(capacity_limited_collections))} exceed shared"
-                    f" eligible pot capacity {cumulative_capacity} through pot index"
-                    f" {pot.pot_index}"
-                )
+        )
     if (
         collection_ceiling is not None
         and known_player_collections > collection_ceiling
@@ -428,6 +523,21 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
         errors.append(
             f"known player collections {known_player_collections} exceed known"
             f" distributable pot {collection_ceiling}"
+        )
+    contributing_players = {
+        player_id
+        for player_id, contribution in contributions.items()
+        if contribution > 0
+    }
+    if (
+        not contributions_incomplete
+        and expected_awards is not None
+        and contributing_players.issubset(reconciled_player_collections)
+        and known_player_collections < expected_awards
+    ):
+        errors.append(
+            f"complete player result collections {known_player_collections} do not"
+            f" match distributable pot {expected_awards}"
         )
 
     if stated is not None and stated.gross_pots and derived_gross is not None:
@@ -542,6 +652,111 @@ def _build_pot_layers(
             pot_floor = level
         previous = level
     return pots
+
+
+def _shared_layer_capacity_errors(
+    amounts_by_player: dict[str, Decimal],
+    pots: list[PotLayer],
+    *,
+    subject: str,
+    pot_capacities: dict[int, Decimal] | None = None,
+    skip_players: set[str] | None = None,
+    include_final_layer: bool = False,
+) -> list[str]:
+    """Bound unassigned amounts within nested derived-pot eligibility rings."""
+
+    highest_eligible_pot_by_player = {
+        player_id: max(
+            (
+                pot.pot_index
+                for pot in pots
+                if player_id in pot.eligible_players
+            ),
+            default=None,
+        )
+        for player_id in amounts_by_player
+    }
+    skipped = skip_players or set()
+    capacities = pot_capacities or {
+        pot.pot_index: pot.amount for pot in pots
+    }
+    errors: list[str] = []
+    # Derived eligibility rings only shrink as layer indexes rise. Players
+    # capped at a lower ring must share the capacity through that layer.
+    cumulative_capacity = Decimal(0)
+    capacity_layers = pots if include_final_layer else pots[:-1]
+    for pot in capacity_layers:
+        cumulative_capacity += capacities[pot.pot_index]
+        capacity_limited_amounts = {
+            player_id: amount
+            for player_id, amount in amounts_by_player.items()
+            if amount > 0
+            and player_id not in skipped
+            and (
+                highest_eligible_pot_by_player[player_id] is not None
+                and highest_eligible_pot_by_player[player_id] <= pot.pot_index
+            )
+        }
+        if not capacity_limited_amounts:
+            continue
+        limited_total = sum(capacity_limited_amounts.values(), Decimal(0))
+        if limited_total > cumulative_capacity:
+            errors.append(
+                f"{subject} {limited_total} for players"
+                f" {', '.join(sorted(capacity_limited_amounts))} exceed shared"
+                f" eligible pot capacity {cumulative_capacity} through pot index"
+                f" {pot.pot_index}"
+            )
+    return errors
+
+
+def _positive_demand_capacity_errors(
+    amounts_by_player: dict[str, Decimal],
+    pots: list[PotLayer],
+    *,
+    pot_capacities: dict[int, Decimal],
+    skip_players: set[str],
+    demand_cutoffs: set[int],
+) -> list[str]:
+    """Require strict nested-layer slack for valid unknown award amounts."""
+
+    if not demand_cutoffs:
+        return []
+    highest_eligible_pot_by_player = {
+        player_id: max(
+            (
+                pot.pot_index
+                for pot in pots
+                if player_id in pot.eligible_players
+            ),
+            default=None,
+        )
+        for player_id in amounts_by_player
+    }
+    errors: list[str] = []
+    cumulative_capacity = Decimal(0)
+    for pot in pots:
+        cumulative_capacity += pot_capacities[pot.pot_index]
+        if not any(cutoff <= pot.pot_index for cutoff in demand_cutoffs):
+            continue
+        capacity_limited_amounts = {
+            player_id: amount
+            for player_id, amount in amounts_by_player.items()
+            if amount > 0
+            and player_id not in skip_players
+            and (
+                highest_eligible_pot_by_player[player_id] is not None
+                and highest_eligible_pot_by_player[player_id] <= pot.pot_index
+            )
+        }
+        limited_total = sum(capacity_limited_amounts.values(), Decimal(0))
+        if limited_total >= cumulative_capacity:
+            errors.append(
+                "unknown pot awards require positive residual beyond concrete"
+                f" unindexed awards {limited_total} within shared eligible pot"
+                f" capacity {cumulative_capacity} through pot index {pot.pot_index}"
+            )
+    return errors
 
 
 def _stated_gross(stated: StatedPotSummary | None) -> Decimal | None:

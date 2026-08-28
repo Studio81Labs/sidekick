@@ -636,6 +636,31 @@ def test_indexed_award_must_reference_an_existing_pot() -> None:
     assert any("nonexistent pot index 1" in error for error in result.errors)
 
 
+def test_duplicate_nonexistent_pot_indexes_are_reported_once() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", "1", 1), ("p2", None, 1)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert [
+        error for error in result.errors if "nonexistent pot index 1" in error
+    ] == ["pot award references nonexistent pot index 1"]
+
+
 def test_indexed_award_recipient_must_be_eligible_for_the_pot_layer() -> None:
     state = hand(
         [
@@ -668,6 +693,42 @@ def test_indexed_award_recipient_must_be_eligible_for_the_pot_layer() -> None:
     assert any("p1 is not eligible for pot index 1" in error for error in result.errors)
 
 
+def test_duplicate_indexed_ineligibility_is_reported_once_per_recipient_and_pot(
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="20", total="20", all_in=True),
+                    action(1, "p2", "call", amount="20", total="20"),
+                    action(2, "p3", "call", amount="20", total="20"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p2", "bet", amount="30", total="30", all_in=True),
+                    action(1, "p3", "call", amount="30", total="30"),
+                ],
+            },
+        ],
+        stated_gross="120",
+        stated_net="120",
+        gross_pots=["60", "60"],
+        awards=[("p1", "60", 0), ("p1", "30", 1), ("p1", "30", 1)],
+        starting_stacks={"p1": "20", "p2": "50"},
+    )
+
+    result = reconcile_pot(state)
+
+    assert [
+        error
+        for error in result.errors
+        if "p1 is not eligible for pot index 1" in error
+    ] == ["pot award recipient p1 is not eligible for pot index 1"]
+
+
 def test_unindexed_award_recipient_must_be_eligible_for_a_derived_pot() -> None:
     state = hand(
         [
@@ -694,6 +755,35 @@ def test_unindexed_award_recipient_must_be_eligible_for_a_derived_pot() -> None:
         in error
         for error in result.errors
     )
+
+
+def test_duplicate_unindexed_ineligibility_is_reported_once_per_recipient() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "fold", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p2", "1", None), ("p2", "1", None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert [
+        error
+        for error in result.errors
+        if "unindexed pot award recipient p2" in error
+    ] == [
+        "unindexed pot award recipient p2 is not eligible for any derived pot"
+    ]
 
 
 @pytest.mark.parametrize(
@@ -750,6 +840,317 @@ def test_unindexed_awards_cannot_exceed_recipient_eligible_pot_layers(
         ]
 
 
+@pytest.mark.parametrize(
+    ("awards", "expected_status"),
+    [
+        ([("p1", "15", None), ("p2", "15", None)], "fail"),
+        (
+            [("p1", "10", None), ("p2", "10", None), ("p3", "10", None)],
+            "pass",
+        ),
+        ([("p3", "30", None)], "pass"),
+    ],
+)
+def test_unindexed_awards_share_cumulative_eligible_pot_capacity(
+    awards: list[tuple[str, str | None, int | None]],
+    expected_status: str,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5", all_in=True),
+                    action(1, "p2", "call", amount="5", total="5", all_in=True),
+                    action(2, "p3", "call", amount="5", total="5"),
+                    action(3, "p4", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p3", "bet", amount="5", total="5"),
+                    action(1, "p4", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="30",
+        stated_net="30",
+        gross_pots=["20", "10"],
+        awards=awards,
+        starting_stacks={"p1": "5", "p2": "5", "p3": "10", "p4": "10"},
+        player_ids=["p1", "p2", "p3", "p4"],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    shared_capacity_errors = [
+        error for error in result.errors if "shared eligible pot capacity" in error
+    ]
+    if expected_status == "fail":
+        assert shared_capacity_errors == [
+            "concrete unindexed awards 30 for players p1, p2 exceed shared"
+            " eligible pot capacity 20 through pot index 0"
+        ]
+    else:
+        assert shared_capacity_errors == []
+
+
+@pytest.mark.parametrize(
+    ("awards", "expected_status", "expected_capacity"),
+    [
+        ([("p3", "20", 0), ("p1", "10", None)], "fail", "0"),
+        (
+            [("p3", "10", 0), ("p3", "10", 1), ("p1", "10", None)],
+            "pass",
+            None,
+        ),
+    ],
+)
+def test_unindexed_awards_share_capacity_remaining_after_indexed_awards(
+    awards: list[tuple[str, str | None, int | None]],
+    expected_status: str,
+    expected_capacity: str | None,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5", all_in=True),
+                    action(1, "p2", "call", amount="5", total="5", all_in=True),
+                    action(2, "p3", "call", amount="5", total="5"),
+                    action(3, "p4", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p3", "bet", amount="5", total="5"),
+                    action(1, "p4", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="30",
+        stated_net="30",
+        gross_pots=["20", "10"],
+        awards=awards,
+        starting_stacks={"p1": "5", "p2": "5", "p3": "10", "p4": "10"},
+        player_ids=["p1", "p2", "p3", "p4"],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    shared_capacity_errors = [
+        error for error in result.errors if "shared eligible pot capacity" in error
+    ]
+    if expected_capacity is None:
+        assert shared_capacity_errors == []
+    else:
+        assert shared_capacity_errors == [
+            "concrete unindexed awards 10 for players p1 exceed shared"
+            f" eligible pot capacity {expected_capacity} through pot index 0"
+        ]
+
+
+def test_exact_indexed_residual_failure_does_not_repeat_as_prefix_failure() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5", all_in=True),
+                    action(1, "p2", "call", amount="5", total="5", all_in=True),
+                    action(2, "p3", "call", amount="5", total="5"),
+                    action(3, "p4", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p3", "bet", amount="5", total="5"),
+                    action(1, "p4", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="30",
+        stated_net="30",
+        gross_pots=["20", "10"],
+        awards=[("p3", "20", 0), ("p1", None, 0)],
+        starting_stacks={"p1": "5", "p2": "5", "p3": "10", "p4": "10"},
+        player_ids=["p1", "p2", "p3", "p4"],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert [
+        error
+        for error in result.errors
+        if "unknown indexed pot awards require positive residual" in error
+    ] == [
+        "unknown indexed pot awards require positive residual capacity at pot index 0"
+    ]
+    assert not any(
+        "positive residual beyond concrete" in error for error in result.errors
+    )
+
+
+@pytest.mark.parametrize(
+    ("awards", "expected_status", "expected_cutoff"),
+    [
+        ([('p3', '20', 0), ('p1', None, None)], "fail", 0),
+        ([('p3', '19.5', 0), ('p1', None, None)], "indeterminate", None),
+        (
+            [('p1', '10', None), ('p2', '10', None), ('p1', None, None)],
+            "fail",
+            0,
+        ),
+        (
+            [('p1', '10', None), ('p2', '10', None), ('p3', None, None)],
+            "indeterminate",
+            None,
+        ),
+    ],
+)
+def test_unknown_unindexed_awards_require_reachable_nested_capacity(
+    awards: list[tuple[str, str | None, int | None]],
+    expected_status: str,
+    expected_cutoff: int | None,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5", all_in=True),
+                    action(1, "p2", "call", amount="5", total="5", all_in=True),
+                    action(2, "p3", "call", amount="5", total="5"),
+                    action(3, "p4", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p3", "bet", amount="5", total="5"),
+                    action(1, "p4", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="30",
+        stated_net="30",
+        gross_pots=["20", "10"],
+        awards=awards,
+        starting_stacks={"p1": "5", "p2": "5", "p3": "10", "p4": "10"},
+        player_ids=["p1", "p2", "p3", "p4"],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    positive_residual_errors = [
+        error
+        for error in result.errors
+        if "unknown pot awards require positive residual beyond" in error
+    ]
+    if expected_cutoff is None:
+        assert positive_residual_errors == []
+        assert result.errors == []
+    else:
+        assert len(positive_residual_errors) == 1
+        assert positive_residual_errors[0].endswith(
+            f"through pot index {expected_cutoff}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("awards", "expected_status", "expected_cutoff"),
+    [
+        (
+            [('p1', '10', None), ('p2', '10', None), ('p3', None, 0)],
+            "fail",
+            0,
+        ),
+        (
+            [('p1', '9.5', None), ('p2', '10', None), ('p3', None, 0)],
+            "indeterminate",
+            None,
+        ),
+        (
+            [
+                ('p1', '10', None),
+                ('p2', '10', None),
+                ('p3', '10', None),
+                ('p4', None, 1),
+            ],
+            "fail",
+            None,
+        ),
+        (
+            [
+                ('p1', '10', None),
+                ('p2', '10', None),
+                ('p3', '9.5', None),
+                ('p4', None, 1),
+            ],
+            "indeterminate",
+            None,
+        ),
+    ],
+)
+def test_unknown_indexed_awards_participate_in_prefix_and_final_capacity(
+    awards: list[tuple[str, str | None, int | None]],
+    expected_status: str,
+    expected_cutoff: int | None,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="5", total="5", all_in=True),
+                    action(1, "p2", "call", amount="5", total="5", all_in=True),
+                    action(2, "p3", "call", amount="5", total="5"),
+                    action(3, "p4", "call", amount="5", total="5"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    action(0, "p3", "bet", amount="5", total="5"),
+                    action(1, "p4", "call", amount="5", total="5"),
+                ],
+            },
+        ],
+        stated_gross="30",
+        stated_net="30",
+        gross_pots=["20", "10"],
+        awards=awards,
+        starting_stacks={"p1": "5", "p2": "5", "p3": "10", "p4": "10"},
+        player_ids=["p1", "p2", "p3", "p4"],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    positive_residual_errors = [
+        error
+        for error in result.errors
+        if "unknown pot awards require positive residual beyond" in error
+    ]
+    if expected_cutoff is None:
+        assert positive_residual_errors == []
+        if expected_status == "indeterminate":
+            assert result.errors == []
+    else:
+        assert any(
+            error.endswith(f"through pot index {expected_cutoff}")
+            for error in positive_residual_errors
+        )
+
+
 def test_unknown_unindexed_award_amount_keeps_recipient_capacity_reviewable() -> None:
     state = hand(
         [
@@ -782,6 +1183,191 @@ def test_unknown_unindexed_award_amount_keeps_recipient_capacity_reviewable() ->
     assert not any("eligible derived pots" in error for error in result.errors)
 
 
+@pytest.mark.parametrize(
+    ("rake", "stated_net", "known_total", "ceiling"),
+    [("0.5", "1.5", "1.5", "1.5"), (None, None, "2", "2")],
+)
+def test_unknown_award_requires_positive_global_net_or_gross_residual(
+    rake: str | None,
+    stated_net: str | None,
+    known_total: str,
+    ceiling: str,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        rake=rake,
+        stated_net=stated_net,
+        awards=[("p1", known_total, 0), ("p2", None, None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert (
+        f"unknown pot awards require positive residual below known distributable pot"
+        f" {ceiling}"
+    ) in result.errors
+
+
+@pytest.mark.parametrize(
+    ("known_indexed", "expected_status"),
+    [("2", "fail"), ("1.5", "indeterminate")],
+)
+def test_unknown_indexed_award_requires_positive_exact_pot_residual(
+    known_indexed: str,
+    expected_status: str,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", known_indexed, 0), ("p2", None, 0)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    exact_residual_errors = [
+        error
+        for error in result.errors
+        if "unknown indexed pot awards require positive residual capacity" in error
+    ]
+    if expected_status == "fail":
+        assert exact_residual_errors == []
+        assert (
+            "unknown pot awards require positive residual below known"
+            " distributable pot 2"
+        ) in result.errors
+        assert not any(
+            "positive residual beyond concrete" in error
+            for error in result.errors
+        )
+    else:
+        assert exact_residual_errors == []
+        assert result.errors == []
+
+
+@pytest.mark.parametrize(
+    ("rake", "stated_net", "awards", "known_total", "ceiling"),
+    [
+        (
+            "0.5",
+            "1.5",
+            [("p1", "1", 0), ("p2", "0.75", None), ("p1", None, None)],
+            "1.75",
+            "1.5",
+        ),
+        (
+            None,
+            None,
+            [("p1", "1.5", None), ("p2", "1", None), ("p1", None, None)],
+            "2.5",
+            "2",
+        ),
+    ],
+)
+def test_known_award_subtotal_cannot_exceed_distributable_net_or_gross(
+    rake: str | None,
+    stated_net: str | None,
+    awards: list[tuple[str, str | None, int | None]],
+    known_total: str,
+    ceiling: str,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        rake=rake,
+        stated_net=stated_net,
+        awards=awards,
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any(
+        f"known concrete pot awards {known_total} exceed known distributable pot"
+        f" {ceiling}" in error
+        for error in result.errors
+    )
+
+
+@pytest.mark.parametrize(
+    ("unindexed_amount", "expected_status", "expected_residual"),
+    [("0.75", "fail", "0.5"), ("0.25", "indeterminate", None)],
+)
+def test_unindexed_awards_share_final_capacity_remaining_after_indexed_awards(
+    unindexed_amount: str,
+    expected_status: str,
+    expected_residual: str | None,
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[
+            ("p1", "1.5", 0),
+            ("p2", unindexed_amount, None),
+            ("p1", None, None),
+        ],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    shared_capacity_errors = [
+        error for error in result.errors if "shared eligible pot capacity" in error
+    ]
+    if expected_residual is None:
+        assert shared_capacity_errors == []
+        assert result.errors == []
+    else:
+        assert shared_capacity_errors == [
+            f"concrete unindexed awards {unindexed_amount} for players p2 exceed"
+            f" shared eligible pot capacity {expected_residual} through pot index 0"
+        ]
+
+
 def test_incomplete_contributions_keep_unindexed_award_capacity_reviewable() -> None:
     state = hand(
         [
@@ -803,6 +1389,35 @@ def test_incomplete_contributions_keep_unindexed_award_capacity_reviewable() -> 
 
     assert result.status == "indeterminate"
     assert not any("eligible derived pots" in error for error in result.errors)
+
+
+def test_incomplete_contributions_preserve_unknown_global_positive_demand() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", "2", None), ("p2", None, None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert [
+        error
+        for error in result.errors
+        if "unknown pot awards require positive residual" in error
+    ] == [
+        "unknown pot awards require positive residual below known distributable pot 2"
+    ]
 
 
 def test_aggregate_awards_cannot_exceed_a_known_gross_pot() -> None:
@@ -856,6 +1471,145 @@ def test_player_collections_cannot_exceed_the_distributable_pot() -> None:
     assert any(
         "known player collections 100 exceed known distributable pot 2" in error
         for error in result.errors
+    )
+
+
+@pytest.mark.parametrize(
+    ("include_totals", "collections", "rake", "stated_net", "expected_status"),
+    [
+        (True, ("1", "0"), "0", "2", "fail"),
+        (False, ("1", "0"), "0", "2", "fail"),
+        (True, ("1", "1"), "0", "2", "pass"),
+        (True, ("1.5", "0"), "0.5", "1.5", "pass"),
+    ],
+)
+def test_complete_player_results_must_distribute_the_net_pot(
+    include_totals: bool,
+    collections: tuple[str, str],
+    rake: str,
+    stated_net: str,
+    expected_status: str,
+) -> None:
+    contributions = {"p1": Decimal("1"), "p2": Decimal("1")}
+    player_results = [
+        (
+            player_id,
+            collection if include_totals else None,
+            str(Decimal(collection) - contributions[player_id]),
+        )
+        for player_id, collection in zip(contributions, collections, strict=True)
+    ]
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        rake=rake,
+        stated_net=stated_net,
+        player_results=player_results,
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    distribution_errors = [
+        error
+        for error in result.errors
+        if "complete player result collections" in error
+    ]
+    if expected_status == "fail":
+        expected_collection = "1" if include_totals else "1.0"
+        assert distribution_errors == [
+            f"complete player result collections {expected_collection} do not"
+            " match distributable pot 2"
+        ]
+    else:
+        assert distribution_errors == []
+
+
+def test_partial_player_results_do_not_assert_complete_distribution() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        player_results=[("p1", "1", "0")],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "pass"
+    assert not any(
+        "complete player result collections" in error for error in result.errors
+    )
+
+
+def test_incomplete_contributions_do_not_assert_complete_result_distribution() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        player_results=[("p1", "1", None), ("p2", "0", None)],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "indeterminate"
+    assert not any(
+        "complete player result collections" in error for error in result.errors
+    )
+
+
+def test_unknown_distributable_net_does_not_assert_complete_result_distribution(
+) -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "post_small_blind", amount="0.5", total="0.5"),
+                    action(1, "p2", "post_big_blind", amount="1", total="1"),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "check", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        rake=None,
+        player_results=[("p1", "1", "0"), ("p2", "0", "-1")],
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == "pass"
+    assert not any(
+        "complete player result collections" in error for error in result.errors
     )
 
 
@@ -1322,4 +2076,7 @@ def test_zero_rake_indexed_awards_must_reconcile_each_pot_layer() -> None:
 
     assert result.status == "fail"
     assert any("indexed awards 70 exceed gross pot 60" in error for error in result.errors)
+    assert not any(
+        "indexed awards 70 do not match pot 60" in error for error in result.errors
+    )
     assert any("indexed awards 50 do not match pot 60" in error for error in result.errors)

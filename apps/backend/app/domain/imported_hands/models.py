@@ -1458,8 +1458,7 @@ class CanonicalHandRevision(ImportedHandModel):
     @model_validator(mode="after")
     def validate_unique_corrections(self) -> Self:
         pointers = [correction.field_pointer for correction in self.corrections]
-        if len(pointers) != len(set(pointers)):
-            raise ValueError("one canonical revision cannot correct the same field twice")
+        _validate_non_overlapping_correction_pointers(pointers)
         return self
 
 
@@ -2214,18 +2213,60 @@ def _pointer_list_index(token: str, length: int, pointer: str) -> int:
     return index
 
 
+def _validate_non_overlapping_correction_pointers(pointers: list[str]) -> None:
+    if len(pointers) != len(set(pointers)):
+        raise ValueError("one canonical revision cannot correct the same field twice")
+    token_paths = [(pointer, _pointer_tokens(pointer)) for pointer in pointers]
+    for index, (pointer, tokens) in enumerate(token_paths):
+        for other_pointer, other_tokens in token_paths[index + 1 :]:
+            shared_length = min(len(tokens), len(other_tokens))
+            if tokens[:shared_length] == other_tokens[:shared_length]:
+                raise ValueError(
+                    "one canonical revision cannot correct overlapping fields:"
+                    f" {pointer} and {other_pointer}"
+                )
+
+
+def _json_values_equal(left: JsonValue, right: JsonValue) -> bool:
+    """Compare JSON values without Python's boolean/number coercion."""
+
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        assert isinstance(right, dict)
+        return left.keys() == right.keys() and all(
+            _json_values_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list):
+        assert isinstance(right, list)
+        return len(left) == len(right) and all(
+            _json_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right, strict=True)
+        )
+    return left == right
+
+
 def _validate_corrections_win(
     detected: DetectedImportedHand,
     revision: CanonicalHandRevision,
 ) -> None:
-    expected = json.loads(detected.state.model_dump_json())
+    detected_json = detected.state.model_dump_json()
+    detected_document = json.loads(detected_json)
     for correction in revision.corrections:
-        detected_value = _pointer_get(expected, correction.field_pointer)
-        if detected_value != correction.detected_value:
+        detected_value = _pointer_get(
+            detected_document,
+            correction.field_pointer,
+        )
+        if not _json_values_equal(detected_value, correction.detected_value):
             raise ValueError(
                 f"correction detected_value does not match {correction.field_pointer}"
             )
+    _validate_non_overlapping_correction_pointers(
+        [correction.field_pointer for correction in revision.corrections]
+    )
+    expected = json.loads(detected_json)
+    for correction in revision.corrections:
         _pointer_set(expected, correction.field_pointer, correction.approved_value)
     approved = json.loads(revision.state.model_dump_json())
-    if expected != approved:
+    if not _json_values_equal(expected, approved):
         raise ValueError("canonical state may differ from detection only through corrections")
