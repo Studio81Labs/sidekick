@@ -21,19 +21,38 @@ node_found() {
   node --version 2>/dev/null || echo none
 }
 
+# nvm_node_bin <major>: the bin directory of the best nvm-managed Node that
+# satisfies "at least <major>": the newest install of exactly that major (the
+# .nvmrc choice) when there is one, else the newest compatible higher major.
+nvm_node_bin() {
+  for dir in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v*/bin; do
+    [ -x "$dir/node" ] || continue
+    ver=${dir%/bin}
+    ver=${ver##*/v}
+    major=${ver%%.*}
+    rest=${ver#*.}
+    minor=${rest%%.*}
+    patch=${rest#*.}
+    patch=${patch%%[!0-9]*}
+    case "$major$minor$patch" in *[!0-9]* | '') continue ;; esac
+    [ "$major" -ge "$1" ] || continue
+    if [ "$major" -eq "$1" ]; then rank=1; else rank=0; fi
+    printf '%d %d %s\n' "$rank" "$((major * 1000000 + minor * 1000 + patch))" "$dir"
+  done | sort -k1,1nr -k2,2nr | head -n 1 | cut -d' ' -f3-
+}
+
 # ensure_node <root>: Superset's setup and Run processes may not load the
 # interactive shell rc, so make the usual per-user tool locations (pnpm
 # standalone, rustup) reachable — appended, so they never shadow a suitable
-# tool already on PATH — and, when node is missing or too old, prepend the nvm
-# install matching .nvmrc. Exports PATH and sets WANTED_NODE; fails when node
-# is still unsuitable.
+# tool already on PATH — and, when node is missing or too old, prepend the
+# best compatible nvm install. Exports PATH and sets WANTED_NODE; fails when
+# node is still unsuitable.
 ensure_node() {
   WANTED_NODE=$(wanted_node_major "$1")
   PATH="$PATH:$HOME/.local/bin:$HOME/.cargo/bin"
   if ! node_ok "$WANTED_NODE"; then
-    for candidate in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v"$WANTED_NODE".*/bin; do
-      [ -x "$candidate/node" ] && PATH="$candidate:$PATH"
-    done
+    nvm_bin=$(nvm_node_bin "$WANTED_NODE")
+    [ -n "$nvm_bin" ] && PATH="$nvm_bin:$PATH"
   fi
   export PATH
   node_ok "$WANTED_NODE"
