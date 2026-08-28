@@ -1586,6 +1586,18 @@ def validate_comparable_recommendation_baseline(
         raise RecommendationBenchmarkError(
             "Recommendation baseline cases do not match the benchmark dataset"
         )
+    if report.grading_reference is not None or baseline.grading_reference is not None:
+        baseline_by_id = {case.case_id: case for case in baseline.cases}
+        for case in report.cases:
+            baseline_case = baseline_by_id[case.case_id]
+            if (
+                baseline_case.grading_context_binding_revision
+                != case.grading_context_binding_revision
+            ):
+                raise RecommendationBenchmarkError(
+                    "Recommendation baseline engine binding revision does not"
+                    f" match the current report for case {case.case_id!r}"
+                )
 
 
 def format_recommendation_benchmark_report(

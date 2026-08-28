@@ -2394,6 +2394,8 @@ class ImportedHandRecord(ImportedHandModel):
             return []
         if not _economics_ready_for_extraction(state.game.economics):
             return []
+        if not _pot_reconciliation_ready_for_extraction(state):
+            return []
         hero = next(
             seat for seat in state.seats if seat.player_id == state.hero_player_id
         )
@@ -3192,6 +3194,15 @@ def _terminal_hand_ready_for_extraction(state: ImportedHandState) -> bool:
     except ValidationError:
         return False
     return True
+
+
+def _pot_reconciliation_ready_for_extraction(state: ImportedHandState) -> bool:
+    """Require the amount oracle to prove the approved pot exactly."""
+
+    # pot imports these model contracts, so keep the reverse dependency local.
+    from app.domain.imported_hands.pot import reconcile_pot
+
+    return reconcile_pot(state).status == "pass"
 
 
 def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:

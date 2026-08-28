@@ -939,6 +939,60 @@ def test_utility_binding_is_fingerprinted_and_order_normalized() -> None:
 
 
 @pytest.mark.parametrize(
+    "baseline_binding_revision",
+    [None, "test-sequence-provider:v2"],
+)
+def test_schema_five_baseline_requires_the_same_engine_binding_revision(
+    baseline_binding_revision: str | None,
+) -> None:
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    report = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider([recommendation("check")]),
+    )
+    baseline = report.model_copy(deep=True)
+    baseline.cases[0] = baseline.cases[0].model_copy(
+        update={
+            "grading_context_binding_revision": baseline_binding_revision,
+        }
+    )
+
+    with pytest.raises(
+        RecommendationBenchmarkError,
+        match=(
+            "baseline engine binding revision does not match the current report"
+            " for case 'covered-preflop'"
+        ),
+    ):
+        validate_comparable_recommendation_baseline(report, baseline)
+
+
+def test_legacy_baseline_ignores_engine_binding_revision_metadata() -> None:
+    dataset = benchmark_dataset(
+        [benchmark_case("legacy", [reference_line("check")])],
+        schema_version=4,
+    )
+    report = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider([recommendation("check")]),
+    )
+    baseline = report.model_copy(deep=True)
+    report.cases[0] = report.cases[0].model_copy(
+        update={"grading_context_binding_revision": "legacy-provider:v2"}
+    )
+    baseline.cases[0] = baseline.cases[0].model_copy(
+        update={"grading_context_binding_revision": "legacy-provider:v1"}
+    )
+
+    validate_comparable_recommendation_baseline(report, baseline)
+
+
+@pytest.mark.parametrize(
     ("economic_model", "message"),
     [
         (None, "requires an economic_model"),

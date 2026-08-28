@@ -32,6 +32,7 @@ from app.domain.imported_hands import (
     classify_restore,
     derive_structural_positions,
     imported_hand_state_sha256,
+    reconcile_pot,
     structural_position_labels,
 )
 
@@ -8499,6 +8500,7 @@ def test_valid_amount_only_return_preserves_prior_wager_extraction() -> None:
             }
         ],
         configured_blinds=True,
+        stated_gross=Decimal("2"),
     )
 
     assert [
@@ -9509,6 +9511,9 @@ def test_extraction_returns_only_voluntary_hero_actions_from_supported_approval(
         {"rank": "K", "suit": "diamonds"},
     ]
     state_payload["game"]["betting_limit"] = betting_limit
+    state_payload["results"] = {
+        "stated_pot": {"gross_total": Decimal("2")},
+    }
     state_payload["streets"] = [
         {
             "street": "preflop",
@@ -9632,6 +9637,11 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
         {"rank": "A", "suit": "hearts"},
         {"rank": "K", "suit": "diamonds"},
     ]
+    state_payload["results"] = {
+        "stated_pot": {
+            "gross_total": Decimal("4" if action_type == "raise" else "2")
+        },
+    }
     state_payload["streets"] = [
         {
             "street": "preflop",
@@ -9701,6 +9711,9 @@ def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
         {"rank": "A", "suit": "hearts"},
         {"rank": "K", "suit": "diamonds"},
     ]
+    state_payload["results"] = {
+        "stated_pot": {"gross_total": Decimal("4")},
+    }
     state_payload["streets"] = [
         {
             "street": "preflop",
@@ -9755,9 +9768,7 @@ def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
         },
     )
 
-    assert [
-        action.action_type for action in record.active_hero_actions_for_extraction
-    ] == ["call"]
+    assert record.active_hero_actions_for_extraction == []
 
 
 @pytest.mark.parametrize(
@@ -9772,6 +9783,7 @@ def test_extraction_withholds_a_fieldless_all_in_call_even_with_a_known_target(
     payload["seats"][0]["starting_stack"] = starting_stack
     payload["game"]["blinds"]["small_blind"] = None
     payload["game"]["blinds"]["big_blind"] = None
+    payload["results"] = None
     payload["streets"] = [
         {
             "street": "preflop",
@@ -9809,6 +9821,9 @@ def test_extraction_keeps_a_proven_known_stack_all_in_call(
     payload = extraction_ready_state_payload()
     payload["button_seat"] = 2
     payload["seats"][0]["starting_stack"] = Decimal("2")
+    payload["results"] = {
+        "stated_pot": {"gross_total": Decimal("4")},
+    }
     payload["streets"] = [
         {
             "street": "preflop",
@@ -9873,6 +9888,7 @@ def test_unknown_stack_all_in_call_evidence_remains_reviewable_not_extractable(
     payload["seats"][0]["starting_stack"] = None
     payload["game"]["blinds"]["small_blind"] = None
     payload["game"]["blinds"]["big_blind"] = None
+    payload["results"] = None
     payload["streets"] = [
         {
             "street": "preflop",
@@ -9908,6 +9924,7 @@ def extraction_record_for_streets(
     hero_cards: list[dict[str, str]] | None = None,
     button_seat: int | None = 1,
     configured_blinds: bool = False,
+    stated_gross: Decimal | None = None,
 ) -> ImportedHandRecord:
     state_payload = hand_state(hero_player_id="hero").model_dump()
     state_payload["game"]["economics"] = complete_cash_economics()
@@ -9923,6 +9940,10 @@ def extraction_record_for_streets(
     if button_seat is not None and not configured_blinds:
         state_payload["game"]["blinds"]["small_blind"] = None
         state_payload["game"]["blinds"]["big_blind"] = None
+    if stated_gross is not None:
+        state_payload["results"] = {
+            "stated_pot": {"gross_total": stated_gross},
+        }
     state_payload["streets"] = streets
     state = ImportedHandState.model_validate(state_payload)
     return extraction_record_for_state(state)
@@ -9980,6 +10001,9 @@ def extraction_ready_state_payload() -> dict[str, object]:
         {"rank": "A", "suit": "hearts"},
         {"rank": "K", "suit": "diamonds"},
     ]
+    payload["results"] = {
+        "stated_pot": {"gross_total": Decimal("2")},
+    }
     payload["streets"] = [
         {
             "street": "preflop",
@@ -10112,6 +10136,80 @@ def test_extraction_fails_closed_for_unsafe_blind_copies(
         update={"canonical_revisions": [unsafe_revision]}
     )
 
+    assert unsafe_record.active_hero_actions_for_extraction == []
+
+
+def test_extraction_accepts_a_passing_gross_only_pot_reconciliation() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["call"]
+
+
+@pytest.mark.parametrize(
+    ("pot_evidence", "expected_status"),
+    [
+        ("mismatched_stated_total", "fail"),
+        ("missing_stated_total", "indeterminate"),
+        ("unknown_award", "indeterminate"),
+        ("unresolved_contribution", "indeterminate"),
+    ],
+)
+def test_extraction_withholds_failed_or_indeterminate_pot_reconciliation(
+    pot_evidence: str,
+    expected_status: str,
+) -> None:
+    payload = extraction_ready_state_payload()
+    if pot_evidence == "mismatched_stated_total":
+        payload["results"]["stated_pot"]["gross_total"] = Decimal("3")
+    elif pot_evidence == "missing_stated_total":
+        payload["results"] = {}
+    elif pot_evidence == "unknown_award":
+        payload["results"]["awards"] = [
+            {
+                "player_id": "hero",
+                "amount": None,
+                "pot_index": 0,
+                "evidence": [evidence()],
+            }
+        ]
+    else:
+        preflop_actions = payload["streets"][0]["actions"]
+        for action in preflop_actions:
+            action["sequence"] += 1
+        preflop_actions.insert(0, forced_post(0, "post_ante"))
+
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == expected_status
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_extraction_rechecks_pot_reconciliation_for_unsafe_revision_copies() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    record = extraction_record_for_state(state)
+    assert reconcile_pot(state).status == "pass"
+
+    assert state.results is not None
+    unsafe_results = state.results.model_copy(
+        update={
+            "stated_pot": StatedPotSummary(gross_total=Decimal("3")),
+        }
+    )
+    unsafe_state = state.model_copy(update={"results": unsafe_results})
+    unsafe_revision = record.canonical_revisions[0].model_copy(
+        update={"state": unsafe_state}
+    )
+    unsafe_record = record.model_copy(
+        update={"canonical_revisions": [unsafe_revision]}
+    )
+
+    assert reconcile_pot(unsafe_state).status == "fail"
     assert unsafe_record.active_hero_actions_for_extraction == []
 
 
@@ -10277,6 +10375,7 @@ def test_extraction_withholds_a_known_hero_when_any_participation_is_unknown(
             "position": None,
         }
     )
+    payload["results"] = None
     state = ImportedHandState.model_validate(payload)
     record = extraction_record_for_state(state)
 
@@ -10375,6 +10474,7 @@ def test_extraction_withholds_a_ring_with_fewer_than_two_dealt_players() -> None
     payload = extraction_ready_state_payload()
     payload["seats"][1]["participation"] = "not_dealt"
     payload["streets"] = [{"street": "preflop", "actions": []}]
+    payload["results"] = None
     state = ImportedHandState.model_validate(payload)
     record = extraction_record_for_state(state)
 
@@ -10507,6 +10607,7 @@ def test_extraction_requires_the_complete_cumulative_board_for_each_street(
         streets,
         button_seat=2,
         configured_blinds=True,
+        stated_gross=Decimal("2"),
     )
 
     assert bool(record.active_hero_actions_for_extraction) is is_extractable
@@ -10559,6 +10660,7 @@ def test_incomplete_later_board_does_not_suppress_an_earlier_ready_action() -> N
             },
         ],
         configured_blinds=True,
+        stated_gross=Decimal("2"),
     )
 
     extracted = record.active_hero_actions_for_extraction
@@ -10616,6 +10718,7 @@ def test_complete_cumulative_board_restores_later_street_extraction() -> None:
         ],
         button_seat=2,
         configured_blinds=True,
+        stated_gross=Decimal("2"),
     )
 
     assert [
@@ -10719,7 +10822,8 @@ def test_extraction_withholds_later_street_decisions_after_an_unknown_pot(
     assert record.active_hero_actions_for_extraction == []
 
 
-def test_extraction_preserves_a_ready_decision_before_unresolved_evidence() -> None:
+def test_extraction_withholds_a_ready_decision_when_later_pot_evidence_is_unresolved(
+) -> None:
     record = extraction_record_for_streets(
         [
             {
@@ -10754,12 +10858,10 @@ def test_extraction_preserves_a_ready_decision_before_unresolved_evidence() -> N
         configured_blinds=True,
     )
 
-    assert [
-        action.action_type for action in record.active_hero_actions_for_extraction
-    ] == ["call"]
+    assert record.active_hero_actions_for_extraction == []
 
 
-def test_dual_wager_fields_can_resolve_its_unknown_prior_for_extraction() -> None:
+def test_extraction_withholds_dual_wager_fields_after_unknown_pot_evidence() -> None:
     record = extraction_record_for_streets(
         [
             {
@@ -10804,12 +10906,10 @@ def test_dual_wager_fields_can_resolve_its_unknown_prior_for_extraction() -> Non
         configured_blinds=True,
     )
 
-    assert [
-        action.action_type for action in record.active_hero_actions_for_extraction
-    ] == ["raise"]
+    assert record.active_hero_actions_for_extraction == []
 
 
-def test_exact_resolution_restores_same_and_later_street_extraction() -> None:
+def test_extraction_withholds_after_any_unresolved_prior_pot_evidence() -> None:
     record = extraction_record_for_streets(
         [
             {
@@ -10856,9 +10956,7 @@ def test_exact_resolution_restores_same_and_later_street_extraction() -> None:
         configured_blinds=True,
     )
 
-    assert [
-        action.action_type for action in record.active_hero_actions_for_extraction
-    ] == ["call", "check"]
+    assert record.active_hero_actions_for_extraction == []
 
 
 @pytest.mark.parametrize("betting_limit", ["fixed_limit", "unknown"])
