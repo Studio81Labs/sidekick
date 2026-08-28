@@ -4332,6 +4332,104 @@ def test_ante_plus_blind_cumulative_total_accepts_the_configured_increment() -> 
     assert state.streets[0].actions[-1].total_committed == Decimal("0.6")
 
 
+def test_action_amount_and_total_must_reconcile_with_the_prior_commitment() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("3"),
+                )
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="conflict with prior commitment 0"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_ante_and_blind_dual_fields_use_the_cumulative_street_total() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_ante",
+                    amount=Decimal("0.1"),
+                    total=Decimal("0.1"),
+                ),
+                forced_post(
+                    1,
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="conflict with prior commitment 0.1"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_uncalled_return_dual_fields_subtract_from_the_prior_commitment() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(1, "villain", "fold", total=Decimal(0)),
+                forced_post(
+                    2,
+                    "uncalled_return",
+                    amount=Decimal("1"),
+                    total=Decimal(0),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="conflict with prior commitment 2"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_dual_fields_remain_reviewable_when_the_prior_commitment_is_unknown() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(0, "post_ante"),
+                forced_post(
+                    1,
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("0.5")
+
+
 def test_short_forced_post_accepts_known_stack_exhaustion_after_an_ante() -> None:
     payload = hand_state().model_dump()
     payload["game"]["blinds"]["ante"] = Decimal("0.2")
@@ -5271,6 +5369,62 @@ def test_correction_paths_reject_noncanonical_array_indices(token: str) -> None:
             lifecycle={
                 "status": "active",
                 "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+def test_approval_cannot_precede_its_referenced_detection() -> None:
+    future_detection = detected().model_copy(
+        update={"detected_at": NOW + timedelta(microseconds=1)}
+    )
+    approval = CanonicalHandRevision(
+        revision=1,
+        detection_id=future_detection.detection_id,
+        approved_at=NOW,
+        state=hand_state(),
+    )
+
+    with pytest.raises(ValidationError, match="cannot precede referenced detection"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[future_detection],
+            canonical_revisions=[approval],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+def test_successive_approval_timestamps_cannot_move_backward() -> None:
+    first = CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW + timedelta(minutes=2),
+        state=hand_state(),
+    )
+    second = CanonicalHandRevision(
+        revision=2,
+        detection_id="detection-1",
+        approved_at=NOW + timedelta(minutes=1),
+        state=hand_state(),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="revision 2 approved_at cannot precede canonical revision 1 approved_at",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[first, second],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 2,
                 "changed_at": NOW,
             },
         )

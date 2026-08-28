@@ -572,7 +572,7 @@ def test_amount_total_disagreement_and_award_mismatch_are_explicit_failures() ->
             {
                 "street": "preflop",
                 "actions": [
-                    action(0, "p1", "post_ante", amount="0.5", total="1"),
+                    action(0, "p1", "post_ante", amount="0.5", total="0.5"),
                     action(1, "p2", "post_ante", amount="0.5", total="0.5"),
                 ],
             }
@@ -581,6 +581,13 @@ def test_amount_total_disagreement_and_award_mismatch_are_explicit_failures() ->
         stated_net="1",
         awards=[("p1", "0.5", 0)],
     )
+    unsafe_action = state.streets[0].actions[0].model_copy(
+        update={"total_committed": Decimal("1")}
+    )
+    unsafe_street = state.streets[0].model_copy(
+        update={"actions": [unsafe_action, *state.streets[0].actions[1:]]}
+    )
+    state = state.model_copy(update={"streets": [unsafe_street]})
 
     result = reconcile_pot(state)
 

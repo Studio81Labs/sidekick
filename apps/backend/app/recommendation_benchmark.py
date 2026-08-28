@@ -730,6 +730,33 @@ def _validate_case_within_grading_coverage(
         raise ValueError(
             f"Case {case.id} players_in_hand must be between 2 and its dealt-in count"
         )
+    if state.street != "preflop" and state.players_in_hand == 2:
+        compatible_opponent_positions = {
+            legacy_position
+            for position in table_configuration.structural_positions
+            if not (
+                position.action_index == structural_position.action_index
+                and position.button_distance == structural_position.button_distance
+                and position.display_label == structural_position.display_label
+            )
+            if (
+                legacy_position := LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL.get(
+                    position.display_label
+                )
+            )
+            is not None
+        }
+        routed_opponent_position = normalize_position(state.opponent_position)
+        if routed_opponent_position not in compatible_opponent_positions:
+            expected_positions = ", ".join(
+                repr(position) for position in sorted(compatible_opponent_positions)
+            )
+            raise ValueError(
+                f"Case {case.id} opponent_position {state.opponent_position!r} routes"
+                f" to {routed_opponent_position!r}, but heads-up postflop structural"
+                f" coverage requires a distinct exact seat routed as one of:"
+                f" {expected_positions}"
+            )
 
 
 class RecommendationBenchmarkCaseResult(BaseModel):

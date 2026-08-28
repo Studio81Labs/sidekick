@@ -147,6 +147,23 @@ def covered_preflop_case(
     )
 
 
+def covered_heads_up_postflop_case(
+    case_id: str = "covered-heads-up-postflop",
+    **state_overrides: object,
+) -> RecommendationBenchmarkCase:
+    values: dict[str, object] = {
+        "opponent_position": "big_blind",
+        "hero_structural_position": {
+            "dealt_in_player_count": 2,
+            "action_index": 0,
+            "button_distance": 0,
+            "display_label": "BTN/SB",
+        },
+    }
+    values.update(state_overrides)
+    return benchmark_case(case_id, [reference_line("check")], **values)
+
+
 def grading_reference_evidence(
     *,
     ev_unit: str = "bb",
@@ -248,6 +265,14 @@ def grading_reference_for_table_counts(*dealt_in_counts: int) -> dict[str, Any]:
     evidence["coverage"]["table_configurations"] = [
         reference_table_configuration(count) for count in dealt_in_counts
     ]
+    return evidence
+
+
+def postflop_grading_reference_for_table_counts(
+    *dealt_in_counts: int,
+) -> dict[str, Any]:
+    evidence = grading_reference_for_table_counts(*dealt_in_counts)
+    evidence["coverage"]["streets"] = ["flop", "turn", "river"]
     return evidence
 
 
@@ -741,6 +766,143 @@ def test_schema_five_route_mismatch_fails_before_provider_execution(
         )
 
     assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize(
+    ("hero_position", "button_distance", "display_label", "opponent_position"),
+    [
+        ("dealer", 0, "BTN/SB", "BB"),
+        ("button", 0, "BTN/SB", "big blind"),
+        ("big_blind", 1, "BB", "dealer"),
+        ("BB", 1, "BB", "btn"),
+    ],
+)
+def test_schema_five_accepts_the_remaining_heads_up_postflop_structural_seat(
+    hero_position: str,
+    button_distance: int,
+    display_label: str,
+    opponent_position: str,
+) -> None:
+    case = covered_heads_up_postflop_case(
+        hero_position=hero_position,
+        opponent_position=opponent_position,
+        hero_structural_position={
+            "dealt_in_player_count": 2,
+            "action_index": button_distance,
+            "button_distance": button_distance,
+            "display_label": display_label,
+        },
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=postflop_grading_reference_for_table_counts(2),
+    )
+
+    assert dataset.cases[0].state.opponent_position == opponent_position
+
+
+@pytest.mark.parametrize(
+    "opponent_position",
+    ["button", "dealer", "small_blind", "cutoff", "ip", "", None],
+)
+def test_schema_five_rejects_an_incompatible_heads_up_postflop_opponent_route(
+    opponent_position: str | None,
+) -> None:
+    case = covered_heads_up_postflop_case(opponent_position=opponent_position)
+
+    with pytest.raises(
+        ValidationError,
+        match=r"opponent_position .*heads-up postflop structural coverage.*big_blind",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=postflop_grading_reference_for_table_counts(2),
+        )
+
+
+@pytest.mark.parametrize(
+    ("opponent_position", "valid"),
+    [
+        ("small blind", True),
+        ("BB", True),
+        ("under the gun", True),
+        ("middle position", True),
+        ("co", True),
+        ("button", False),
+        ("ip", False),
+    ],
+)
+def test_schema_five_heads_up_postflop_opponent_routes_use_distinct_covered_seats(
+    opponent_position: str,
+    valid: bool,
+) -> None:
+    table = reference_table_configuration(6)
+    case = covered_heads_up_postflop_case(
+        hero_structural_position={
+            "dealt_in_player_count": 6,
+            **table["structural_positions"][0],
+        },
+        opponent_position=opponent_position,
+    )
+
+    if valid:
+        dataset = benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=postflop_grading_reference_for_table_counts(6),
+        )
+        assert dataset.cases[0].state.opponent_position == opponent_position
+    else:
+        with pytest.raises(ValidationError, match="opponent_position .*distinct exact seat"):
+            benchmark_dataset(
+                [case],
+                schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+                reference_source={"name": "Independent solver export"},
+                grading_reference=postflop_grading_reference_for_table_counts(6),
+            )
+
+
+def test_schema_five_opponent_route_mismatch_fails_before_provider_execution(
+    tmp_path: Path,
+) -> None:
+    dataset = benchmark_dataset(
+        [covered_heads_up_postflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=postflop_grading_reference_for_table_counts(2),
+    )
+    payload = dataset.model_dump(mode="json", by_alias=True)
+    payload["cases"][0]["state"]["opponent_position"] = "button"
+    path = tmp_path / "mismatched-opponent-route.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    provider = SequenceProvider([recommendation("check")])
+
+    with pytest.raises(RecommendationBenchmarkError, match="opponent_position"):
+        benchmark_recommendation_file(
+            path,
+            Settings(data_dir=tmp_path / "unused"),
+            provider,
+        )
+
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schema_versions_do_not_enforce_postflop_opponent_routing(
+    schema_version: int,
+) -> None:
+    case = covered_heads_up_postflop_case(opponent_position="button")
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+
+    assert dataset.schema_version == schema_version
+    assert dataset.cases[0].state.opponent_position == "button"
 
 
 @pytest.mark.parametrize(

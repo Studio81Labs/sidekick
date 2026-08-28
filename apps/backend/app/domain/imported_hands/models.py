@@ -1616,10 +1616,25 @@ class ImportedHandRecord(ImportedHandModel):
         revisions = [revision.revision for revision in self.canonical_revisions]
         if revisions != list(range(1, len(revisions) + 1)):
             raise ValueError("canonical revisions must be monotonic and contiguous from one")
+        previous_revision: CanonicalHandRevision | None = None
         for revision in self.canonical_revisions:
             detected = detection_by_id.get(revision.detection_id)
             if detected is None:
                 raise ValueError("canonical revision must reference a retained detection")
+            if revision.approved_at < detected.detected_at:
+                raise ValueError(
+                    f"canonical revision {revision.revision} approved_at cannot"
+                    f" precede referenced detection {detected.detection_id} detected_at"
+                )
+            if (
+                previous_revision is not None
+                and revision.approved_at < previous_revision.approved_at
+            ):
+                raise ValueError(
+                    f"canonical revision {revision.revision} approved_at cannot"
+                    f" precede canonical revision {previous_revision.revision} approved_at"
+                )
+            previous_revision = revision
             if revision.state.identity != self.identity:
                 raise ValueError("canonical revision must share the stable hand identity")
             if revision.state.chronology.source_file_id != detected.raw_source_id:
@@ -2039,6 +2054,21 @@ def _known_action_total(
 ) -> Decimal | None:
     if action.action_type in {"fold", "check"}:
         return prior if prior is not None else action.total_committed
+    if (
+        prior is not None
+        and action.amount is not None
+        and action.total_committed is not None
+    ):
+        expected_total = (
+            prior - action.amount
+            if action.action_type == "uncalled_return"
+            else prior + action.amount
+        )
+        if action.total_committed != expected_total:
+            raise ValueError(
+                f"{action.action_type} amount {action.amount} and total_committed"
+                f" {action.total_committed} conflict with prior commitment {prior}"
+            )
     if action.total_committed is not None:
         return action.total_committed
     if action.amount is None or prior is None:

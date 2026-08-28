@@ -275,6 +275,12 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   `utg`, `HJ` as `hijack`, and `CO` as `cutoff`. Table-specific full-ring labels
   such as `UTG+1`, `LJ`, and combined `*/LJ` labels have no exact legacy route;
   version-5 corpora are rejected instead of coercing them into a nearby policy.
+  For heads-up postflop cases, `opponent_position` must likewise route to a
+  distinct exactly representable seat in the same covered table configuration.
+  At a two-handed table, that requires `BB` opposite `BTN/SB` and `BTN/SB`
+  opposite `BB`; larger dealt-in tables may name any other exactly represented
+  surviving seat. Relative-only, duplicate, missing, and uncovered opponent
+  routes are rejected before provider execution.
   Versions 1 through 4 retain their legacy behavior. Canonical nine-handed
   positions are `BTN`, `SB`, `BB`, `UTG`, `UTG+1`, `UTG+2`, `LJ`, `HJ`, and
   `CO`; ten-handed adds the distinct `UTG+3` seat before `LJ`. The economic and
