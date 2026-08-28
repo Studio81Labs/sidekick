@@ -205,11 +205,25 @@ PWA_PID=$!
 printf '\nPoker Hero dev servers  [%s]\n' "$(basename "$ROOT_DIR")"
 printf '  PWA  %s\n' "$PWA_URL"
 printf '  API  %s   (OpenAPI docs: %s/docs)\n' "$BACKEND_URL" "$BACKEND_URL"
-case $SOLVER_STATUS in
-  missing) printf '  note: postflop solver binary not built; using the recommendation fallback\n' ;;
-  stale) printf '  note: postflop solver binary is older than its sources; using the recommendation fallback\n'
-         printf '        (rebuild with ./.superset/setup.sh, or cargo build --release in solver-plugins/postflop)\n' ;;
-esac
+# solver_fallback_enabled: whether the backend will really fall back, read
+# through the app's own settings loader (environment plus apps/backend/.env).
+solver_fallback_enabled() {
+  (cd "$BACKEND_DIR" && "$VENV_PY" -c 'from app.config import get_settings; print("yes" if get_settings().postflop_solver_fallback_enabled else "no")' 2>/dev/null) \
+    || echo yes
+}
+if [ "$SOLVER_STATUS" != ok ]; then
+  if [ "$(solver_fallback_enabled)" = yes ]; then
+    outcome="using the recommendation fallback"
+  else
+    outcome="POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED is false, so postflop recommendations will fail"
+  fi
+  case $SOLVER_STATUS in
+    missing) printf '  note: postflop solver binary not built; %s\n' "$outcome"
+             printf '        (build it with ./.superset/setup.sh once Rust is installed)\n' ;;
+    stale) printf '  note: postflop solver binary is older than its sources; %s\n' "$outcome"
+           printf '        (rebuild with ./.superset/setup.sh, or cargo build --release in solver-plugins/postflop)\n' ;;
+  esac
+fi
 printf 'Ctrl-C stops both.\n\n'
 
 # Wait for either server to exit; the trap then stops the other one.

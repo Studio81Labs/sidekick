@@ -22,13 +22,14 @@ node_found() {
 }
 
 # ensure_node <root>: Superset's setup and Run processes may not load the
-# interactive shell rc, so expose the usual per-user tool locations (pnpm
-# standalone, rustup) and, when node is missing or too old, prepend the nvm
+# interactive shell rc, so make the usual per-user tool locations (pnpm
+# standalone, rustup) reachable — appended, so they never shadow a suitable
+# tool already on PATH — and, when node is missing or too old, prepend the nvm
 # install matching .nvmrc. Exports PATH and sets WANTED_NODE; fails when node
 # is still unsuitable.
 ensure_node() {
   WANTED_NODE=$(wanted_node_major "$1")
-  PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+  PATH="$PATH:$HOME/.local/bin:$HOME/.cargo/bin"
   if ! node_ok "$WANTED_NODE"; then
     for candidate in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v"$WANTED_NODE".*/bin; do
       [ -x "$candidate/node" ] && PATH="$candidate:$PATH"
