@@ -38,7 +38,7 @@ MAIN_DIR=$(CDPATH='' cd -- "$MAIN_DIR" && pwd -P)
 . "$ROOT_DIR/.superset/lib.sh"
 ensure_node "$ROOT_DIR" \
   || fail "Node.js $WANTED_NODE+ is required, found $(node_found) (see .nvmrc)"
-command -v pnpm >/dev/null 2>&1 || fail "pnpm 11+ is required"
+ensure_pnpm || fail "pnpm 11+ is required (not on PATH, and none found beside an nvm-managed node)"
 
 PYTHON_BIN="${POKER_PYTHON:-}"
 if [ -z "$PYTHON_BIN" ]; then

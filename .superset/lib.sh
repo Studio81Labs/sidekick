@@ -21,12 +21,13 @@ node_found() {
   node --version 2>/dev/null || echo none
 }
 
-# nvm_node_bin <major>: the bin directory of the best nvm-managed Node that
-# satisfies "at least <major>": the newest install of exactly that major (the
-# .nvmrc choice) when there is one, else the newest compatible higher major.
-nvm_node_bin() {
+# nvm_bin_dir <major> <executable>: the bin directory of the best nvm-managed
+# Node install (at least <major>) that contains <executable>: the newest
+# install of exactly that major (the .nvmrc choice) when there is one, else
+# the newest compatible higher major.
+nvm_bin_dir() {
   for dir in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v*/bin; do
-    [ -x "$dir/node" ] || continue
+    [ -x "$dir/$2" ] || continue
     ver=${dir%/bin}
     ver=${ver##*/v}
     major=${ver%%.*}
@@ -51,11 +52,25 @@ ensure_node() {
   WANTED_NODE=$(wanted_node_major "$1")
   PATH="$PATH:$HOME/.local/bin:$HOME/.cargo/bin"
   if ! node_ok "$WANTED_NODE"; then
-    nvm_bin=$(nvm_node_bin "$WANTED_NODE")
+    nvm_bin=$(nvm_bin_dir "$WANTED_NODE" node)
     [ -n "$nvm_bin" ] && PATH="$nvm_bin:$PATH"
   fi
   export PATH
   node_ok "$WANTED_NODE"
+}
+
+# ensure_pnpm: when pnpm is not on PATH, look for one installed beside an
+# nvm-managed Node (a global install or corepack shim), preferring installs
+# compatible with WANTED_NODE, and append that directory — appended, so its
+# node never shadows the node already chosen. Fails when none is found.
+ensure_pnpm() {
+  command -v pnpm >/dev/null 2>&1 && return 0
+  pnpm_bin=$(nvm_bin_dir "${WANTED_NODE:-0}" pnpm)
+  [ -n "$pnpm_bin" ] || pnpm_bin=$(nvm_bin_dir 0 pnpm)
+  [ -n "$pnpm_bin" ] || return 1
+  PATH="$PATH:$pnpm_bin"
+  export PATH
+  command -v pnpm >/dev/null 2>&1
 }
 
 # solver_fallback_enabled <backend dir> <venv python>: prints "yes" or "no",
