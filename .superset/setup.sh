@@ -156,5 +156,8 @@ else
 fi
 
 step "Workspace ready"
-echo "Use the Run button (./.superset/run.sh) to start the API and PWA together,"
-echo "or run 'pnpm backend:dev' and 'pnpm pwa:dev' in separate terminals."
+echo "Use the Run button (./.superset/run.sh) to start the API and PWA together;"
+echo "it uses the postflop solver binary only while it matches the current sources."
+echo "The manual 'pnpm backend:dev' puts whatever is in solver-plugins/postflop/target/release"
+echo "on PATH unconditionally, so re-run ./.superset/setup.sh after changing the solver"
+echo "before using it ('pnpm pwa:dev' is unaffected)."
