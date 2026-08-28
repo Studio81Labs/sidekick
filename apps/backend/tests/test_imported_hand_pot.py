@@ -610,7 +610,16 @@ def test_commitments_cannot_exceed_a_known_starting_stack() -> None:
         stated_gross="40",
         stated_net="40",
         awards=[("p1", "40", 0)],
-        starting_stack="10",
+        starting_stack="20",
+    )
+    unsafe_seats = [
+        seat.model_copy(update={"starting_stack": Decimal("10")})
+        if seat.player_id in {"p1", "p2"}
+        else seat
+        for seat in state.seats
+    ]
+    state = state.model_copy(
+        update={"seats": unsafe_seats},
     )
 
     result = reconcile_pot(state)

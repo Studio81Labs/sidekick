@@ -685,6 +685,9 @@ class ImportedHandState(ImportedHandModel):
         cumulative_commitments: dict[str, Decimal | None] = {
             player_id: Decimal(0) for player_id in player_ids
         }
+        cumulative_commitment_lower_bounds: dict[str, Decimal] = {
+            player_id: Decimal(0) for player_id in player_ids
+        }
         known_action_orders = _known_action_orders(self.seats, self.button_seat)
         if known_action_orders is None:
             clockwise_action_order = None
@@ -700,13 +703,36 @@ class ImportedHandState(ImportedHandModel):
                     1 if len(clockwise_action_order) == 2 else 2
                 ],
             }
+        required_structural_blind_posts = tuple(
+            action_type
+            for action_type in ("post_small_blind", "post_big_blind")
+            if action_type in expected_blind_actors
+            and getattr(self.game.blinds, _FORCED_POST_FIELDS[action_type]) is not None
+        )
         seen_structural_blind_posts: set[str] = set()
+        forced_stack_exhausted_players: set[str] = set()
+
+        def missing_structural_blind_posts() -> list[str]:
+            return [
+                action_type
+                for action_type in required_structural_blind_posts
+                if action_type not in seen_structural_blind_posts
+                and expected_blind_actors[action_type]
+                not in forced_stack_exhausted_players
+            ]
+
         inferred_stack_exhausted_players: set[str] = set()
         committed_pot_before_street: Decimal | None = Decimal(0)
         for street_index, street in enumerate(self.streets):
             if fold_end is not None:
                 raise ValueError("a later street is not allowed after folds end the hand")
+            cumulative_lower_bounds_before_street = dict(
+                cumulative_commitment_lower_bounds
+            )
             street_commitments: dict[str, Decimal | None] = {
+                player_id: Decimal(0) for player_id in player_ids
+            }
+            street_commitment_lower_bounds: dict[str, Decimal] = {
                 player_id: Decimal(0) for player_id in player_ids
             }
             live_commitments: dict[str, Decimal | None] = {
@@ -813,6 +839,17 @@ class ImportedHandState(ImportedHandModel):
                         " opponent can respond"
                     )
                 if (
+                    street.street == "preflop"
+                    and action.action_type in _TABLE_ACTIONS
+                ):
+                    missing_blind_posts = missing_structural_blind_posts()
+                    if missing_blind_posts:
+                        raise ValueError(
+                            "a preflop table decision requires all configured"
+                            " structural blind posts first; missing "
+                            + ", ".join(missing_blind_posts)
+                        )
+                if (
                     clockwise_action_order is not None
                     and preflop_action_order is not None
                     and action.action_type in _TABLE_ACTIONS
@@ -875,6 +912,16 @@ class ImportedHandState(ImportedHandModel):
                     and resolved_commitment is not None
                     and actor_commitment is not None
                     else None
+                )
+                resolved_street_commitment_lower_bound = (
+                    _action_street_commitment_lower_bound(
+                        action,
+                        street_commitment_lower_bounds[action.actor_id],
+                    )
+                )
+                resolved_cumulative_commitment_lower_bound = (
+                    cumulative_lower_bounds_before_street[action.actor_id]
+                    + resolved_street_commitment_lower_bound
                 )
                 posted_amount: Decimal | None = None
                 configured_post_amount: Decimal | None = None
@@ -1064,12 +1111,78 @@ class ImportedHandState(ImportedHandModel):
                             f" legal maximum {maximum_wager_addition} from pot"
                             f" {pot_before_action} and call {call_amount}"
                         )
-                known_stack_exhausted = (
+                if (
                     actor_seat.starting_stack is not None
                     and resolved_cumulative_commitment is not None
-                    and resolved_cumulative_commitment
-                    == actor_seat.starting_stack
+                    and resolved_cumulative_commitment > actor_seat.starting_stack
+                ):
+                    raise ValueError(
+                        f"{action.actor_id} cumulative commitment"
+                        f" {resolved_cumulative_commitment} exceeds known starting"
+                        f" stack {actor_seat.starting_stack}"
+                    )
+                if (
+                    actor_seat.starting_stack is not None
+                    and resolved_commitment is not None
+                    and resolved_commitment > actor_seat.starting_stack
+                ):
+                    raise ValueError(
+                        f"{action.actor_id} street commitment"
+                        f" {resolved_commitment} exceeds known starting"
+                        f" stack {actor_seat.starting_stack}"
+                    )
+                if (
+                    actor_seat.starting_stack is not None
+                    and action.action_type in _CHIP_ACTIONS - {"uncalled_return"}
+                    and action.amount is not None
+                    and action.amount > actor_seat.starting_stack
+                ):
+                    raise ValueError(
+                        f"{action.actor_id} chip action amount {action.amount}"
+                        f" exceeds known starting stack {actor_seat.starting_stack}"
+                    )
+                if (
+                    actor_seat.starting_stack is not None
+                    and resolved_cumulative_commitment_lower_bound
+                    > actor_seat.starting_stack
+                ):
+                    raise ValueError(
+                        f"{action.actor_id} cumulative commitment lower bound"
+                        f" {resolved_cumulative_commitment_lower_bound} exceeds"
+                        f" known starting stack {actor_seat.starting_stack}"
+                    )
+                known_stack_exhausted = (
+                    actor_seat.starting_stack is not None
+                    and (
+                        resolved_cumulative_commitment == actor_seat.starting_stack
+                        or (
+                            street.street == "preflop"
+                            and resolved_commitment == actor_seat.starting_stack
+                        )
+                    )
                 )
+                positive_forced_commitment_evidence = any(
+                    value is not None and value > 0
+                    for value in (
+                        resolved_cumulative_commitment,
+                        resolved_commitment,
+                        action.amount,
+                    )
+                )
+                if action.action_type == "uncalled_return":
+                    forced_stack_exhausted_players.discard(action.actor_id)
+                elif (
+                    action.action_type == "post_ante"
+                    and (
+                        known_stack_exhausted
+                        or (
+                            actor_seat.starting_stack is None
+                            and action.all_in
+                            and positive_forced_commitment_evidence
+                        )
+                    )
+                ):
+                    forced_stack_exhausted_players.add(action.actor_id)
                 if action.action_type == "fold":
                     terminal_actors[action.actor_id] = ("folded", street.street)
                     inferred_stack_exhausted_players.discard(action.actor_id)
@@ -1097,7 +1210,13 @@ class ImportedHandState(ImportedHandModel):
                 cumulative_commitments[action.actor_id] = (
                     resolved_cumulative_commitment
                 )
+                cumulative_commitment_lower_bounds[action.actor_id] = (
+                    resolved_cumulative_commitment_lower_bound
+                )
                 street_commitments[action.actor_id] = resolved_commitment
+                street_commitment_lower_bounds[action.actor_id] = (
+                    resolved_street_commitment_lower_bound
+                )
                 live_commitments[action.actor_id] = resolved_live_commitment
                 if action.action_type in {"post_big_blind", "post_straddle"}:
                     full_live_post = (
@@ -1251,6 +1370,14 @@ class ImportedHandState(ImportedHandModel):
                             )
                 if action.action_type in _TABLE_ACTIONS:
                     table_decision_seen = True
+            if street.street == "preflop":
+                missing_blind_posts = missing_structural_blind_posts()
+                if missing_blind_posts:
+                    raise ValueError(
+                        "the preflop street cannot end before all configured"
+                        " structural blind posts; missing "
+                        + ", ".join(missing_blind_posts)
+                    )
             closes_known_round = (
                 street_index < len(self.streets) - 1
                 or (
@@ -1738,8 +1865,14 @@ class ImportedHandRecord(ImportedHandModel):
                         "active canonical revision must use the selected conflict source"
                     )
 
-        if self.lifecycle.status in {"withdrawn", "rejected"} and not revisions:
-            raise ValueError("withdrawal/rejection audit requires a canonical revision")
+        if self.lifecycle.status in {"withdrawn", "rejected"}:
+            if not revisions:
+                raise ValueError("withdrawal/rejection audit requires a canonical revision")
+            if self.lifecycle.changed_at < self.canonical_revisions[-1].approved_at:
+                raise ValueError(
+                    "withdrawn/rejected lifecycle changed_at cannot precede the"
+                    " latest canonical revision approved_at"
+                )
         return self
 
     @property
@@ -1762,7 +1895,7 @@ class ImportedHandRecord(ImportedHandModel):
         state = self.active_state_for_extraction
         if state is None or state.hero_player_id is None:
             return []
-        if state.game.betting_limit == "fixed_limit":
+        if state.game.betting_limit not in {"no_limit", "pot_limit"}:
             return []
         hero = next(
             seat for seat in state.seats if seat.player_id == state.hero_player_id
@@ -2108,7 +2241,17 @@ def _known_action_total(
     prior: Decimal | None,
 ) -> Decimal | None:
     if action.action_type in {"fold", "check"}:
-        return prior if prior is not None else action.total_committed
+        if prior is None:
+            return action.total_committed
+        if (
+            action.total_committed is not None
+            and action.total_committed != prior
+        ):
+            raise ValueError(
+                f"{action.action_type} total_committed"
+                f" {action.total_committed} conflicts with prior commitment {prior}"
+            )
+        return prior
     if (
         prior is not None
         and action.amount is not None
@@ -2131,6 +2274,43 @@ def _known_action_total(
     if action.action_type == "uncalled_return":
         return prior - action.amount
     return prior + action.amount
+
+
+def _action_street_commitment_lower_bound(
+    action: ImportedAction,
+    prior: Decimal,
+) -> Decimal:
+    """Preserve provable commitment even when an exact prior is unknown."""
+
+    if action.action_type == "uncalled_return":
+        if action.amount is None:
+            return (
+                action.total_committed
+                if action.total_committed is not None
+                else Decimal(0)
+            )
+        amount_bound = max(prior - action.amount, Decimal(0))
+        if action.total_committed is not None:
+            if action.total_committed < amount_bound:
+                raise ValueError(
+                    f"{action.action_type} total_committed"
+                    f" {action.total_committed} is below provable street"
+                    f" commitment lower bound {amount_bound}"
+                )
+            return action.total_committed
+        return amount_bound
+
+    amount_bound = prior
+    if action.action_type in _CHIP_ACTIONS and action.amount is not None:
+        amount_bound += action.amount
+    if action.total_committed is None:
+        return amount_bound
+    if action.total_committed < amount_bound:
+        raise ValueError(
+            f"{action.action_type} total_committed {action.total_committed}"
+            f" is below provable street commitment lower bound {amount_bound}"
+        )
+    return action.total_committed
 
 
 def _known_live_action_total(
