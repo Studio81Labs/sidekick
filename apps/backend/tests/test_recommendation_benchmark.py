@@ -36,6 +36,7 @@ from app.recommendation_benchmark import (
     recommendation_dataset_fingerprint,
     recommendation_economic_configuration_sha256,
     run_recommendation_benchmark,
+    validate_comparable_recommendation_baseline,
 )
 
 
@@ -359,6 +360,29 @@ def postflop_grading_reference_for_table_counts(
     return evidence
 
 
+def tournament_benchmark_dataset(
+    configuration: TournamentEconomics,
+) -> RecommendationBenchmarkDataset:
+    economic_model = case_economic_model_evidence(
+        configuration=configuration,
+        name="final-table-icm-with-bounties",
+        revision="tournament-economics-7",
+    )
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload["economic_model"] = economic_model
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+    case.reference_lines[0].ev_bb = None
+    reference = grading_reference_evidence(ev_unit="utility")
+    reference["economic_model"] = economic_model
+    return benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=reference,
+    )
+
+
 def recommendation(
     action: str,
     *,
@@ -675,6 +699,66 @@ def test_schema_five_normalizes_tournament_economic_collection_order() -> None:
     )
 
     assert dataset.cases[0].state.economic_model is not None
+
+
+def test_fingerprint_normalizes_case_and_reference_tournament_collection_order(
+) -> None:
+    baseline = tournament_benchmark_dataset(tournament_economic_configuration())
+    reordered = baseline.model_copy(deep=True)
+    assert reordered.grading_reference is not None
+    reordered_reference = reordered.grading_reference.economic_model.configuration
+    reordered_case_model = reordered.cases[0].state.economic_model
+    assert isinstance(reordered_reference, TournamentEconomics)
+    assert (
+        reordered_case_model is not None
+        and reordered_case_model.kind == "tournament"
+    )
+    assert isinstance(reordered_case_model.configuration, TournamentEconomics)
+    for configuration in (
+        reordered_reference,
+        reordered_case_model.configuration,
+    ):
+        configuration.payouts.reverse()
+        configuration.remaining_stacks.reverse()
+        configuration.bounties.reverse()
+
+    assert recommendation_dataset_fingerprint(
+        reordered
+    ) == recommendation_dataset_fingerprint(baseline)
+    baseline_report = run_recommendation_benchmark(
+        baseline,
+        SequenceProvider([recommendation("check")]),
+    )
+    reordered_report = run_recommendation_benchmark(
+        reordered,
+        SequenceProvider([recommendation("check")]),
+    )
+    validate_comparable_recommendation_baseline(reordered_report, baseline_report)
+
+
+def test_fingerprint_and_comparability_track_material_tournament_economic_changes(
+) -> None:
+    baseline = tournament_benchmark_dataset(tournament_economic_configuration())
+    changed_configuration = tournament_economic_configuration()
+    changed_configuration.bounties[0].value = Decimal("26")
+    changed = tournament_benchmark_dataset(changed_configuration)
+
+    assert recommendation_dataset_fingerprint(
+        changed
+    ) != recommendation_dataset_fingerprint(baseline)
+    baseline_report = run_recommendation_benchmark(
+        baseline,
+        SequenceProvider([recommendation("check")]),
+    )
+    changed_report = run_recommendation_benchmark(
+        changed,
+        SequenceProvider([recommendation("check")]),
+    )
+    with pytest.raises(
+        RecommendationBenchmarkError,
+        match="baseline corpus does not match",
+    ):
+        validate_comparable_recommendation_baseline(changed_report, baseline_report)
 
 
 def test_economic_configuration_hash_normalizes_decimal_representation() -> None:

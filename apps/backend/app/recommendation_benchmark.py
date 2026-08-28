@@ -1056,7 +1056,7 @@ def recommendation_dataset_fingerprint(
 ) -> str:
     normalized = dataset.model_dump(mode="json", by_alias=True)
     normalized.pop("name", None)
-    for case in normalized["cases"]:
+    for source_case, case in zip(dataset.cases, normalized["cases"], strict=True):
         case.pop("description", None)
         case["tags"] = sorted(case["tags"])
         case["reference_lines"] = sorted(
@@ -1068,12 +1068,26 @@ def recommendation_dataset_fingerprint(
                 sort_keys=True,
             ),
         )
+        case_economic_model = source_case.state.economic_model
+        if isinstance(case_economic_model, RecommendationEconomicModel):
+            case["state"]["economic_model"]["configuration"] = (
+                _normalized_economic_configuration(
+                    case_economic_model.configuration
+                )
+            )
     normalized["cases"] = sorted(
         normalized["cases"],
         key=lambda case: case["id"],
     )
     grading_reference = normalized.get("grading_reference")
     if isinstance(grading_reference, dict):
+        if dataset.grading_reference is None:
+            raise ValueError("Normalized grading reference is missing its source model")
+        grading_reference["economic_model"]["configuration"] = (
+            _normalized_economic_configuration(
+                dataset.grading_reference.economic_model.configuration
+            )
+        )
         coverage = grading_reference["coverage"]
         coverage["table_configurations"] = sorted(
             coverage["table_configurations"],

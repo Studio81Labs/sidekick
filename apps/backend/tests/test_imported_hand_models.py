@@ -4322,6 +4322,268 @@ def test_forced_post_must_match_its_configured_amount(action_type: str) -> None:
         ImportedHandState.model_validate(payload)
 
 
+@pytest.mark.parametrize(
+    ("action_type", "actor_id", "expected_actor", "amount"),
+    [
+        ("post_small_blind", "hero", "villain", Decimal("0.5")),
+        ("post_big_blind", "villain", "third-player", Decimal("1")),
+    ],
+)
+def test_known_ring_binds_forced_blinds_to_their_structural_seats(
+    action_type: str,
+    actor_id: str,
+    expected_actor: str,
+    amount: Decimal,
+) -> None:
+    payload = positioned_wager_payload()
+    for seat in payload["seats"]:
+        seat["position"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    actor_id,
+                    action_type,
+                    amount=amount,
+                    total=amount,
+                )
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"structural .* blind seat {expected_actor}; got {actor_id}",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_heads_up_button_and_big_blind_may_post_their_structural_blinds() -> None:
+    payload = hand_state().model_dump()
+    payload["button_seat"] = 1
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert [action.actor_id for action in state.streets[0].actions] == [
+        "hero",
+        "villain",
+    ]
+
+
+def test_partial_positions_accept_valid_multiway_structural_blind_posts() -> None:
+    payload = positioned_wager_payload()
+    payload["seats"][0]["position"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert [action.actor_id for action in state.streets[0].actions] == [
+        "villain",
+        "third-player",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("action_type", "actor_id", "amount"),
+    [
+        ("post_small_blind", "villain", Decimal("0.5")),
+        ("post_big_blind", "third-player", Decimal("1")),
+    ],
+)
+def test_known_ring_rejects_duplicate_structural_blind_posts(
+    action_type: str,
+    actor_id: str,
+    amount: Decimal,
+) -> None:
+    payload = positioned_wager_payload()
+    for seat in payload["seats"]:
+        seat["position"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    actor_id,
+                    action_type,
+                    amount=amount,
+                    total=amount,
+                ),
+                wager_action(
+                    1,
+                    actor_id,
+                    action_type,
+                    amount=amount,
+                    total=amount * 2,
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"{action_type} may occur only once",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_known_ring_duplicate_blind_still_rejects_the_wrong_actor_first() -> None:
+    payload = positioned_wager_payload()
+    for seat in payload["seats"]:
+        seat["position"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="structural small blind seat villain; got hero",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "unknown_structure",
+    ["missing_button", "unknown_button_participation", "dead_button"],
+)
+def test_blind_actor_binding_remains_reviewable_when_the_ring_is_unknown(
+    unknown_structure: str,
+) -> None:
+    payload = positioned_wager_payload()
+    for seat in payload["seats"]:
+        seat["position"] = None
+    if unknown_structure == "missing_button":
+        payload["button_seat"] = None
+        small_blind_actor = "hero"
+        big_blind_actor = "villain"
+    elif unknown_structure == "unknown_button_participation":
+        payload["seats"][0]["participation"] = "unknown"
+        small_blind_actor = "hero"
+        big_blind_actor = "villain"
+    else:
+        payload["seats"][0]["participation"] = "not_dealt"
+        small_blind_actor = "third-player"
+        big_blind_actor = "villain"
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    small_blind_actor,
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    big_blind_actor,
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert len(state.streets[0].actions) == 2
+
+
+def test_duplicate_blind_posts_remain_reviewable_when_the_ring_is_unknown() -> None:
+    payload = positioned_wager_payload()
+    payload["button_seat"] = None
+    for seat in payload["seats"]:
+        seat["position"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert len(state.streets[0].actions) == 2
+
+
 def test_total_only_forced_post_uses_the_increment_after_an_ante() -> None:
     payload = hand_state().model_dump()
     payload["game"]["blinds"]["ante"] = Decimal("0.1")
@@ -5472,6 +5734,69 @@ def test_successive_approval_timestamps_cannot_move_backward() -> None:
                 "changed_at": NOW,
             },
         )
+
+
+def test_active_lifecycle_cannot_precede_its_selected_approval() -> None:
+    approval = revision().model_copy(
+        update={"approved_at": NOW + timedelta(microseconds=1)}
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="active lifecycle changed_at cannot precede.*approved_at",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[approval],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+@pytest.mark.parametrize("offset", [timedelta(0), timedelta(microseconds=1)])
+def test_active_lifecycle_accepts_equal_or_later_selected_approval_time(
+    offset: timedelta,
+) -> None:
+    approved_at = NOW + timedelta(minutes=1)
+    approval = revision().model_copy(update={"approved_at": approved_at})
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected()],
+        canonical_revisions=[approval],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved_at + offset,
+        },
+    )
+
+    assert record.lifecycle.changed_at == approved_at + offset
+
+
+@pytest.mark.parametrize("status", ["pending_review", "withdrawn", "rejected"])
+def test_inactive_lifecycle_timestamp_does_not_order_canonical_approval(
+    status: str,
+) -> None:
+    approval = revision().model_copy(
+        update={"approved_at": NOW + timedelta(microseconds=1)}
+    )
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected()],
+        canonical_revisions=[approval],
+        lifecycle={"status": status, "changed_at": NOW},
+    )
+
+    assert record.lifecycle.status == status
 
 
 def test_reapproval_revisions_are_monotonic_and_latest_only_is_active() -> None:

@@ -689,8 +689,18 @@ class ImportedHandState(ImportedHandModel):
         if known_action_orders is None:
             clockwise_action_order = None
             preflop_action_order = None
+            expected_blind_actors: dict[str, str] = {}
         else:
             clockwise_action_order, preflop_action_order = known_action_orders
+            expected_blind_actors = {
+                "post_small_blind": clockwise_action_order[
+                    0 if len(clockwise_action_order) == 2 else 1
+                ],
+                "post_big_blind": clockwise_action_order[
+                    1 if len(clockwise_action_order) == 2 else 2
+                ],
+            }
+        seen_structural_blind_posts: set[str] = set()
         inferred_stack_exhausted_players: set[str] = set()
         committed_pot_before_street: Decimal | None = Decimal(0)
         for street_index, street in enumerate(self.streets):
@@ -880,6 +890,30 @@ class ImportedHandState(ImportedHandModel):
                             "a forced blind, ante, or straddle post cannot follow"
                             " a table decision"
                         )
+                    expected_blind_actor = expected_blind_actors.get(
+                        action.action_type
+                    )
+                    if (
+                        expected_blind_actor is not None
+                        and action.actor_id != expected_blind_actor
+                    ):
+                        blind_name = (
+                            "small blind"
+                            if action.action_type == "post_small_blind"
+                            else "big blind"
+                        )
+                        raise ValueError(
+                            f"{action.action_type} must come from the structural"
+                            f" {blind_name} seat {expected_blind_actor}; got"
+                            f" {action.actor_id}"
+                        )
+                    if expected_blind_actor is not None:
+                        if action.action_type in seen_structural_blind_posts:
+                            raise ValueError(
+                                f"{action.action_type} may occur only once for the"
+                                " known dealt-in seat ring"
+                            )
+                        seen_structural_blind_posts.add(action.action_type)
                     configured_post_amount = getattr(
                         self.game.blinds,
                         forced_post_field,
@@ -1673,6 +1707,11 @@ class ImportedHandRecord(ImportedHandModel):
             if not revisions or active != revisions[-1]:
                 raise ValueError("the active pointer must select the latest canonical revision")
             active_revision = self.canonical_revisions[active - 1]
+            if self.lifecycle.changed_at < active_revision.approved_at:
+                raise ValueError(
+                    "active lifecycle changed_at cannot precede the selected"
+                    " canonical revision approved_at"
+                )
             active_source_id = detection_by_id[
                 active_revision.detection_id
             ].raw_source_id
