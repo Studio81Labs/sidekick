@@ -14,6 +14,7 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    ModelWrapValidatorHandler,
     StringConstraints,
     ValidationError,
     field_validator,
@@ -22,6 +23,7 @@ from pydantic import (
 
 from app.config import Settings, get_settings
 from app.domain.imported_hands import (
+    AnteMode,
     CashEconomics,
     StructuralPosition,
     TournamentEconomics,
@@ -363,6 +365,10 @@ class RecommendationEconomicBlindLevel(BaseModel):
     small_blind: PositiveDecimal
     big_blind: PositiveDecimal
     ante: NonNegativeDecimal
+    ante_mode: AnteMode | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_denominations(self) -> Self:
@@ -663,14 +669,125 @@ class RecommendationBenchmarkRequest(RecommendationRequest):
     state: RecommendationBenchmarkState
 
 
+class RecommendationGradingDecisionState(CanonicalState):
+    """Lossless provider-visible state required in configured route catalogs."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="wrap")
+    @classmethod
+    def require_exact_canonical_shape(
+        cls,
+        value: object,
+        handler: ModelWrapValidatorHandler[Self],
+    ) -> Self:
+        if not isinstance(value, dict):
+            return handler(value)
+        expected_fields = set(CanonicalState.model_fields)
+        supplied_fields = set(value)
+        missing = sorted(expected_fields - supplied_fields)
+        extras = sorted(supplied_fields - expected_fields)
+        if missing or extras:
+            differences = []
+            if missing:
+                differences.append(
+                    f"decision_state missing fields: {', '.join(missing)}"
+                )
+            if extras:
+                differences.append(
+                    f"decision_state unknown fields: {', '.join(extras)}"
+                )
+            raise ValueError(
+                "Grading decision state must declare the canonical JSON shape"
+                f" exactly ({'; '.join(differences)})"
+            )
+        validated = handler(value)
+        _require_exact_json_shape(
+            value,
+            _canonical_decision_state_payload(validated),
+            path="decision_state",
+            subject="Grading decision state",
+        )
+        return validated
+
+
+def _json_shape_differences(
+    declared: object,
+    canonical: object,
+    *,
+    path: str,
+) -> list[str]:
+    if isinstance(canonical, dict):
+        if not isinstance(declared, dict):
+            return [f"{path} must be an object"]
+        differences: list[str] = []
+        declared_keys = set(declared)
+        canonical_keys = set(canonical)
+        missing = sorted(canonical_keys - declared_keys)
+        extras = sorted(declared_keys - canonical_keys)
+        if missing:
+            differences.append(f"{path} missing fields: {', '.join(missing)}")
+        if extras:
+            differences.append(f"{path} unknown fields: {', '.join(extras)}")
+        for key in sorted(declared_keys & canonical_keys):
+            differences.extend(
+                _json_shape_differences(
+                    declared[key],
+                    canonical[key],
+                    path=f"{path}.{key}",
+                )
+            )
+        return differences
+    if isinstance(canonical, list):
+        if not isinstance(declared, list):
+            return [f"{path} must be an array"]
+        differences = []
+        if len(declared) != len(canonical):
+            differences.append(
+                f"{path} must contain exactly {len(canonical)} items"
+            )
+        for index, (declared_item, canonical_item) in enumerate(
+            zip(declared, canonical, strict=False)
+        ):
+            differences.extend(
+                _json_shape_differences(
+                    declared_item,
+                    canonical_item,
+                    path=f"{path}[{index}]",
+                )
+            )
+        return differences
+    return []
+
+
+def _require_exact_json_shape(
+    declared: object,
+    canonical: object,
+    *,
+    path: str,
+    subject: str,
+) -> None:
+    differences = _json_shape_differences(
+        declared,
+        canonical,
+        path=path,
+    )
+    if differences:
+        raise ValueError(
+            f"{subject} must declare the canonical JSON shape exactly"
+            f" ({'; '.join(differences)})"
+        )
+
+
 class RecommendationGradingContext(BaseModel):
     """Canonical route context independently compared with provider configuration."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     context_schema: Literal[
-        "poker-hero-recommendation-grading-context/v3"
+        "poker-hero-recommendation-grading-context/v4"
     ] = Field(alias="schema")
+    decision_state: RecommendationGradingDecisionState
     street: Street
     effective_stack_bb: PositiveDecimal
     players_in_hand: DealtInCount
@@ -705,14 +822,46 @@ class RecommendationGradingContext(BaseModel):
         return self
 
 
+def _canonical_decision_state_payload(
+    state: CanonicalState,
+) -> dict[str, object]:
+    """Serialize every field available to a recommendation provider."""
+
+    payload = state.model_dump(
+        mode="json",
+        include=set(CanonicalState.model_fields),
+        exclude_none=False,
+    )
+    # This field has an empty-value serialization exclusion on the domain model,
+    # but empty history is still route-critical evidence rather than absence from
+    # the provider contract.
+    payload["completed_postflop_streets"] = [
+        history.model_dump(mode="json")
+        for history in state.completed_postflop_streets
+    ]
+    return payload
+
+
 def _canonical_grading_context_payload(
     context: RecommendationGradingContext,
 ) -> dict[str, object]:
     economic_model = context.economic_model
     if economic_model.blind_level is None:
         raise ValueError("A grading context requires an exact economic blind level")
+    if (
+        economic_model.blind_level.ante > 0
+        and economic_model.blind_level.ante_mode
+        not in {"per_player", "big_blind"}
+    ):
+        raise ValueError(
+            "A grading context with a positive ante requires a known ante"
+            " posting mode"
+        )
     return {
         "schema": context.context_schema,
+        "decision_state": _canonical_decision_state_payload(
+            context.decision_state
+        ),
         "street": context.street,
         "effective_stack_bb": _normalized_economic_value(
             context.effective_stack_bb
@@ -778,8 +927,12 @@ def recommendation_grading_context_payload(
         raise ValueError("A grading context requires an exact effective stack")
     if state.players_in_hand is None:
         raise ValueError("A grading context requires an exact active-player count")
+    decision_state = RecommendationGradingDecisionState.model_validate(
+        _canonical_decision_state_payload(state)
+    )
     context = RecommendationGradingContext(
-        context_schema="poker-hero-recommendation-grading-context/v3",
+        context_schema="poker-hero-recommendation-grading-context/v4",
+        decision_state=decision_state,
         street=state.street,
         effective_stack_bb=Decimal(str(state.effective_stack)),
         players_in_hand=state.players_in_hand,
@@ -1294,6 +1447,15 @@ def _validate_case_within_grading_coverage(
             raise ValueError(
                 f"Case {case.id} {model_label} economic_model requires an exact"
                 " blind_level for grading coverage"
+            )
+        if (
+            model.blind_level.ante > 0
+            and model.blind_level.ante_mode
+            not in {"per_player", "big_blind"}
+        ):
+            raise ValueError(
+                f"Case {case.id} {model_label} economic_model with a positive"
+                " ante requires a known ante posting mode for grading coverage"
             )
         actual_sha256 = recommendation_economic_configuration_sha256(
             model.configuration,
@@ -2458,10 +2620,18 @@ def _snapshot_provider_grading_context_bindings(
                 separators=(",", ":"),
                 sort_keys=True,
             )
+            raw_declaration = json.loads(declaration_payload)
             declaration = (
                 _ProviderGradingContextBindingDeclaration.model_validate_json(
                     declaration_payload
                 )
+            )
+            context = _canonical_grading_context_payload(declaration.context)
+            _require_exact_json_shape(
+                raw_declaration["context"],
+                context,
+                path="context",
+                subject="Provider grading context",
             )
         except (TypeError, ValueError, ValidationError) as exc:
             detail = (
@@ -2473,7 +2643,6 @@ def _snapshot_provider_grading_context_bindings(
                 f"Provider {provider.name!r} returned an invalid grading-context"
                 f" binding at index {index}: {detail}"
             ) from exc
-        context = _canonical_grading_context_payload(declaration.context)
         context_sha256 = _grading_context_payload_sha256(context)
         verified.append(
             _VerifiedProviderGradingContextBinding(

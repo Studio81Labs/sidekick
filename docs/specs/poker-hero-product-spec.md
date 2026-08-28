@@ -258,7 +258,9 @@ shape includes at minimum:
   available), stable source-session/file identity and ordering, import
   provenance, game type, stakes, table size, blinds/antes, and whether a
   positive ante is posted per player or by the big blind for the table. An ante
-  scheme that the source semantics do not prove remains explicitly unknown.
+  scheme that the source semantics do not prove, including an omitted scheme on
+  a positive ante, remains explicitly unknown and is not ready for decision
+  extraction. A confirmed zero ante needs no poster scheme.
   Missing source time remains explicitly unknown; ingestion time must not stand
   in for play time in recency, session, or proof-of-learning calculations.
 - Economic context when supplied: for cash games, currency and the applicable
@@ -504,7 +506,10 @@ model or tournament chip-EV/ICM/bounty context it assumes, the exact blind/ante
 level, ante poster scheme, and units used to convert canonical BB amounts, and
 the canonical fields required to match it. Tournament grading maps table actors
 to the identified remaining-stack and bounty entries rather than assuming
-reserved player names.
+reserved player names. The ante poster scheme is part of the hashed economic
+route identity: a positive ante must identify either per-player or big-blind
+posting, while omitted or unknown posting is ungradeable rather than being
+silently treated as the legacy per-player default.
 Cash hands with an unknown or different material
 rake structure and tournament hands lacking the payout, field, stack, or bounty
 state required by the reference are heuristic/ungraded for mastery. A generic
@@ -555,6 +560,15 @@ Poker Hero canonicalizes and hashes the raw configured route context itself and
 retains the selected route, engine revision, configuration artifact, and adapter
 binding identities. A provider-computed echo of case input is not an attestation;
 missing, ambiguous, or changed bindings fail closed before grading.
+The bound context includes every canonical decision-state field exposed to the
+provider—cards, board, pot, wagers, stacks, players, positions, opener/action
+context, and current/completed action histories—plus structural actor mapping,
+economics, and utility. Range selection is bound through these exact derivation
+inputs until a future canonical contract supplies explicit ranges. The raw
+catalog declaration must retain the benchmark's exact recursive JSON shape,
+including every canonical decision-state null, empty, and default-valued key;
+surrounding objects mirror the benchmark-generated field presence, and omitted
+or unknown required keys fail closed before provider execution.
 The benchmark fingerprints an isolated corpus snapshot before provider hooks,
 uses separate validated state copies for readiness inspection and execution, and
 rejects any retained execution-state mutation before reading runtime trust

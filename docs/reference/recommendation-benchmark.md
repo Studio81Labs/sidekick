@@ -334,11 +334,18 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   model also declares the exact blind level used to convert canonical state
   amounts from `bb`: positive small- and big-blind denominations, an explicit
   nonnegative ante (`0` means no ante), and either `currency` or
-  `tournament_chips` denomination units. Cash must use currency units and
-  tournaments must use chip units. Blind values participate in the normalized
-  economic digest, the dataset fingerprint, and the provider grading-context
-  digest, so a fixed currency rake cap cannot be reused across different cash
-  stakes and tournament chip stacks cannot be reused across blind levels. Cash
+  `tournament_chips` denomination units. A positive ante also requires the
+  canonical posting mode, `per_player` or `big_blind`; an omitted or `unknown`
+  posting mode fails closed for schema-v5 grading and route construction.
+  Historical version-1 through version-4 corpora may still load and run with
+  that unresolved evidence under their legacy, unattested behavior. Blind
+  values and the posting mode participate in
+  the normalized economic digest, the dataset fingerprint, and the provider
+  grading-context digest, so equal ante amounts with different poster schemes
+  cannot share a route identity. Cash must use currency units and tournaments
+  must use chip units, so a fixed currency rake cap cannot be reused across
+  different cash stakes and tournament chip stacks cannot be reused across
+  blind levels. Cash
   requires explicit currency plus rake percentage, cap, and fixed drop, using
   zero rather than omission for no-rake/no-drop. Tournament configuration requires type,
   stage, currency, paid places, players remaining, contiguous payouts, every
@@ -372,8 +379,18 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   configured context plus a stable route ID, engine ID, immutable engine
   revision, configuration/artifact SHA-256, and adapter binding revision. The
   benchmark—not the provider—canonicalizes and hashes that raw context. It binds
-  the exact street, effective stack, players-in-hand count, structural, economic,
-  and utility context and requires exactly one matching configured route. A
+  the complete provider-visible canonical decision state: cards, board, pot,
+  bets and stacks, player counts, positions, opener and action context, current
+  action histories, completed-street roots, street, and approval state. It also
+  binds structural actor mapping, economics, and utility, and requires exactly
+  one matching configured route. Raw catalog JSON must declare the benchmark's
+  exact recursive shape. Every canonical decision-state null, empty, and
+  default-valued key is explicit; surrounding structural, economic, and utility
+  objects mirror the field presence of the benchmark-generated payload. Omitted
+  or unknown required keys at any depth fail before provider execution. The
+  current canonical contract has no separate supplied range fields; range
+  derivation is bound through its exact position, stack, board, and
+  action-history inputs. A
   callback that sees the case and echoes its expected digest is not a binding.
   The benchmark snapshots and fingerprints the corpus before provider hooks and
   retains its declared schema version in the report. An invalid declared-v5

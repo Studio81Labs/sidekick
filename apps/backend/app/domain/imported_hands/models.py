@@ -211,7 +211,7 @@ class BlindStructure(ImportedHandModel):
     small_blind: PositiveDecimal | None = None
     big_blind: PositiveDecimal | None = None
     ante: NonNegativeDecimal | None = None
-    ante_mode: AnteMode = "per_player"
+    ante_mode: AnteMode = "unknown"
     straddle: PositiveDecimal | None = None
 
     @model_validator(mode="after")
@@ -2906,11 +2906,15 @@ def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
 
 
 def _state_payload_for_hash(state: ImportedHandState) -> dict[str, Any]:
-    """Keep legacy per-player-ante hashes stable while binding new schemes."""
+    """Keep legacy no-ante/per-player hashes stable while binding uncertainty."""
 
     payload = state.model_dump(mode="json")
     blinds = payload["game"]["blinds"]
-    if blinds.get("ante_mode") == "per_player":
+    ante_mode = state.game.blinds.ante_mode
+    ante = state.game.blinds.ante
+    if ante_mode == "per_player" or (
+        ante_mode == "unknown" and (ante is None or ante == 0)
+    ):
         blinds.pop("ante_mode")
     return payload
 
@@ -3443,7 +3447,10 @@ def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:
         and small_blind > 0
         and big_blind > 0
         and ante >= 0
-        and (ante == 0 or blinds.ante_mode != "unknown")
+        and (
+            ante == 0
+            or blinds.ante_mode in {"per_player", "big_blind"}
+        )
         and small_blind <= big_blind
     )
 

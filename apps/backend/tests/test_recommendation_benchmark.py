@@ -14,7 +14,7 @@ from app.domain.imported_hands import (
     TournamentEconomics,
     structural_position_labels,
 )
-from app.domain.poker import Card, PreflopAction
+from app.domain.poker import CanonicalState, Card, PreflopAction
 from app.domain.recommendations import RecommendationRequest, RecommendationResult
 from app.providers.base import (
     ProviderConfigurationError,
@@ -540,15 +540,19 @@ def cash_benchmark_dataset_with_blind_level(
     small_blind: str,
     big_blind: str,
     ante: str = "0",
+    ante_mode: Literal["per_player", "big_blind", "unknown"] | None = None,
 ) -> RecommendationBenchmarkDataset:
+    blind_level: dict[str, object] = {
+        "state_amount_unit": "bb",
+        "denomination_unit": "currency",
+        "small_blind": Decimal(small_blind),
+        "big_blind": Decimal(big_blind),
+        "ante": Decimal(ante),
+    }
+    if ante_mode is not None:
+        blind_level["ante_mode"] = ante_mode
     economic_model = case_economic_model_evidence(
-        blind_level={
-            "state_amount_unit": "bb",
-            "denomination_unit": "currency",
-            "small_blind": Decimal(small_blind),
-            "big_blind": Decimal(big_blind),
-            "ante": Decimal(ante),
-        }
+        blind_level=blind_level
     )
     case = covered_preflop_case().model_copy(deep=True)
     case.state = RecommendationBenchmarkState.model_validate(
@@ -1291,6 +1295,278 @@ def test_grading_context_digest_tracks_every_route_critical_model() -> None:
     }.isdisjoint({baseline})
 
 
+def test_grading_context_contains_the_complete_provider_decision_state() -> None:
+    state = covered_preflop_case().state
+
+    context = recommendation_grading_context_payload(state)
+
+    decision_state = context["decision_state"]
+    assert isinstance(decision_state, dict)
+    assert set(decision_state) == set(CanonicalState.model_fields)
+    assert decision_state["hero_cards"] == [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
+    assert decision_state["board_cards"] == []
+    assert decision_state["pot_size"] == 10.0
+    assert decision_state["current_bet"] == 0.0
+    assert decision_state["preflop_action_history"] == []
+    assert decision_state["postflop_action_history"] == []
+    assert decision_state["completed_postflop_streets"] == []
+
+
+@pytest.mark.parametrize(
+    ("catalog_mutation", "error_detail"),
+    [
+        (
+            "omit_top_level_default",
+            "decision_state missing fields: action_context",
+        ),
+        (
+            "add_top_level_extra",
+            "decision_state unknown fields: range_id",
+        ),
+        (
+            "omit_nested_default",
+            "decision_state.postflop_action_history[0] missing fields: amount",
+        ),
+        (
+            "add_nested_extra",
+            "decision_state.hero_cards[0] unknown fields: range_id",
+        ),
+    ],
+)
+def test_schema_five_rejects_a_lossy_catalog_decision_state_before_execution(
+    catalog_mutation: str,
+    error_detail: str,
+) -> None:
+    case = covered_heads_up_postflop_case(
+        postflop_action_history=[
+            {"actor": "oop", "action": "check"},
+        ],
+    )
+    context = json.loads(
+        json.dumps(recommendation_grading_context_payload(case.state))
+    )
+    decision_state = context["decision_state"]
+    assert isinstance(decision_state, dict)
+    if catalog_mutation == "omit_top_level_default":
+        decision_state.pop("action_context")
+    elif catalog_mutation == "add_top_level_extra":
+        decision_state["range_id"] = "solver-range-1"
+    elif catalog_mutation == "omit_nested_default":
+        history = decision_state["postflop_action_history"]
+        assert isinstance(history, list)
+        assert isinstance(history[0], dict)
+        history[0].pop("amount")
+    else:
+        cards = decision_state["hero_cards"]
+        assert isinstance(cards, list)
+        assert isinstance(cards[0], dict)
+        cards[0]["range_id"] = "solver-range-1"
+    binding = replace(
+        configured_grading_context_binding(case.state),
+        context=context,
+    )
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[binding],
+    )
+    grading_reference = grading_reference_evidence()
+    grading_reference["coverage"]["streets"].append("flop")
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference,
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "invalid grading-context binding at index 0" in report.cases[0].error
+    assert error_detail in report.cases[0].error
+    assert provider.requests == []
+    assert provider.events == ["bindings"]
+    assert len(provider.outcomes) == 1
+
+
+def test_schema_five_accepts_an_exact_lossless_catalog_decision_state() -> None:
+    case = covered_heads_up_postflop_case(
+        postflop_action_history=[
+            {"actor": "oop", "action": "check"},
+        ],
+    )
+    binding = configured_grading_context_binding(case.state)
+    decision_state = binding.context["decision_state"]
+    assert isinstance(decision_state, dict)
+    assert set(decision_state) == set(CanonicalState.model_fields)
+    history = decision_state["postflop_action_history"]
+    assert isinstance(history, list)
+    assert history == [{"actor": "oop", "action": "check", "amount": None}]
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[binding],
+    )
+    grading_reference = grading_reference_evidence()
+    grading_reference["coverage"]["streets"].append("flop")
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference,
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 1
+    assert report.failed_cases == 0
+    assert len(provider.requests) == 1
+    assert provider.events == ["bindings", "recommend"]
+
+
+@pytest.mark.parametrize(
+    "state_update",
+    [
+        {
+            "hero_cards": [
+                Card.from_code("Ac"),
+                Card.from_code("Ks"),
+            ]
+        },
+        {"pot_size": 11.0},
+        {
+            "preflop_action_history": [
+                PreflopAction(actor="button", action="raise", amount=2.5)
+            ]
+        },
+    ],
+    ids=["cards", "pot", "action-history"],
+)
+def test_schema_five_binding_rejects_an_unconfigured_decision_state_dimension(
+    state_update: dict[str, object],
+) -> None:
+    configured_case = covered_preflop_case("configured")
+    changed_case = covered_preflop_case("changed")
+    changed_payload = changed_case.state.model_dump(mode="python")
+    changed_payload.update(state_update)
+    changed_case.state = RecommendationBenchmarkState.model_validate(
+        changed_payload
+    )
+    assert recommendation_grading_context_sha256(
+        changed_case.state
+    ) != recommendation_grading_context_sha256(configured_case.state)
+    dataset = benchmark_dataset(
+        [configured_case, changed_case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = SequenceProvider(
+        [recommendation("check"), recommendation("check")],
+        grading_context_bindings=[
+            configured_grading_context_binding(configured_case.state)
+        ],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 1
+    assert report.failed_cases == 1
+    assert report.cases[1].error is not None
+    assert "has no configured grading-context route" in report.cases[1].error
+    assert len(provider.requests) == 1
+    assert len(provider.outcomes) == 1
+
+
+def test_schema_five_catalog_routes_distinct_complete_decision_states() -> None:
+    first = covered_preflop_case("first")
+    second = covered_preflop_case("second")
+    second.state = RecommendationBenchmarkState.model_validate(
+        {
+            **second.state.model_dump(mode="python"),
+            "hero_cards": [Card.from_code("Ac"), Card.from_code("Ks")],
+            "pot_size": 11.0,
+        }
+    )
+    dataset = benchmark_dataset(
+        [first, second],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = SequenceProvider(
+        [recommendation("check"), recommendation("check")],
+        grading_context_bindings=[
+            configured_grading_context_binding(first.state, route_id="first-route"),
+            configured_grading_context_binding(
+                second.state,
+                route_id="second-route",
+            ),
+        ],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 2
+    assert [case.grading_context_route_id for case in report.cases] == [
+        "first-route",
+        "second-route",
+    ]
+
+
+def test_grading_context_digest_tracks_postflop_board_wager_and_root_history() -> None:
+    state = covered_heads_up_postflop_case().state
+    baseline = recommendation_grading_context_sha256(state)
+    changed_board = RecommendationBenchmarkState.model_validate(
+        {
+            **state.model_dump(mode="python"),
+            "board_cards": [
+                Card.from_code("Qh"),
+                Card.from_code("Jc"),
+                Card.from_code("2h"),
+            ],
+        }
+    )
+    changed_wager = RecommendationBenchmarkState.model_validate(
+        {
+            **state.model_dump(mode="python"),
+            "current_bet": 2.0,
+            "opponent_wager": 2.0,
+            "opponent_commitment_total": 2.0,
+            "facing_action": "bet",
+        }
+    )
+    changed_history = RecommendationBenchmarkState.model_validate(
+        {
+            **state.model_dump(mode="python"),
+            "postflop_action_history": [
+                {"actor": "oop", "action": "check"}
+            ],
+        }
+    )
+    changed_completed_root = RecommendationBenchmarkState.model_validate(
+        {
+            **state.model_dump(mode="python"),
+            "street": "turn",
+            "board_cards": [
+                *state.board_cards,
+                Card.from_code("7d"),
+            ],
+            "completed_postflop_streets": [completed_postflop_street("flop")],
+        }
+    )
+
+    assert {
+        recommendation_grading_context_sha256(changed_board),
+        recommendation_grading_context_sha256(changed_wager),
+        recommendation_grading_context_sha256(changed_history),
+        recommendation_grading_context_sha256(changed_completed_root),
+    }.isdisjoint({baseline})
+
+
 def test_schema_five_rejects_a_provider_without_a_grading_context_binding() -> None:
     class UnboundProvider:
         name = "unbound-provider"
@@ -1677,8 +1953,7 @@ def test_schema_five_rejects_request_context_mutation_before_scoring() -> None:
             self,
             request: RecommendationRequest,
         ) -> RecommendationResult:
-            request.state.effective_stack = 50.0
-            request.state.hero_stack = 50.0
+            request.state.pot_size = 11.0
             return super().recommend(request)
 
     case = covered_preflop_case()
@@ -1708,7 +1983,7 @@ def test_schema_five_rejects_request_context_mutation_before_scoring() -> None:
     assert result.action_match is None
     assert result.policy_distance is None
     assert result.reference_ev_loss_bb is None
-    assert dataset.cases[0].state.effective_stack == 100.0
+    assert dataset.cases[0].state.pot_size == 10.0
     assert report.dataset_fingerprint == fingerprint_before
     assert report.completed_cases == 0
     assert report.action_evaluated == 0
@@ -2737,6 +3012,77 @@ def test_blind_level_rejects_missing_nonpositive_or_reversed_values(
         RecommendationEconomicBlindLevel.model_validate(blind_level)
 
 
+@pytest.mark.parametrize("ante_mode", [None, "unknown"])
+def test_schema_four_preserves_positive_ante_without_known_posting_mode(
+    ante_mode: Literal["unknown"] | None,
+) -> None:
+    blind_level: dict[str, object] = {
+        "state_amount_unit": "bb",
+        "denomination_unit": "currency",
+        "small_blind": Decimal("1"),
+        "big_blind": Decimal("2"),
+        "ante": Decimal("0.25"),
+    }
+    if ante_mode is not None:
+        blind_level["ante_mode"] = ante_mode
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state = RecommendationBenchmarkState.model_validate(
+        {
+            **case.state.model_dump(mode="python"),
+            "economic_model": case_economic_model_evidence(
+                blind_level=blind_level
+            ),
+        }
+    )
+    dataset = benchmark_dataset([case])
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.cases[0].status == "completed"
+    assert len(provider.requests) == 1
+
+
+@pytest.mark.parametrize("ante_mode", [None, "unknown"])
+def test_schema_five_rejects_positive_ante_without_known_posting_mode(
+    ante_mode: Literal["unknown"] | None,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match="positive ante requires a known ante posting mode",
+    ):
+        cash_benchmark_dataset_with_blind_level(
+            small_blind="1",
+            big_blind="2",
+            ante="0.25",
+            ante_mode=ante_mode,
+        )
+
+
+def test_grading_context_rejects_unresolved_positive_ante_mode() -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    case.state = RecommendationBenchmarkState.model_validate(
+        {
+            **case.state.model_dump(mode="python"),
+            "economic_model": case_economic_model_evidence(
+                blind_level={
+                    "state_amount_unit": "bb",
+                    "denomination_unit": "currency",
+                    "small_blind": Decimal("1"),
+                    "big_blind": Decimal("2"),
+                    "ante": Decimal("0.25"),
+                }
+            ),
+        }
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="positive ante requires a known ante posting mode",
+    ):
+        recommendation_grading_context_payload(case.state)
+
+
 def test_blind_level_mutation_with_stale_economic_digest_is_rejected() -> None:
     payload = case_economic_model_evidence()
     blind_level = payload["blind_level"]
@@ -2926,6 +3272,7 @@ def test_ante_changes_the_hashed_economic_context_and_dataset_fingerprint() -> N
         small_blind="1",
         big_blind="2",
         ante="0.25",
+        ante_mode="per_player",
     )
     no_ante_model = no_ante.cases[0].state.economic_model
     with_ante_model = with_ante.cases[0].state.economic_model
@@ -2938,6 +3285,62 @@ def test_ante_changes_the_hashed_economic_context_and_dataset_fingerprint() -> N
     assert recommendation_dataset_fingerprint(
         no_ante
     ) != recommendation_dataset_fingerprint(with_ante)
+
+
+def test_ante_posting_mode_changes_every_hashed_grading_identity() -> None:
+    per_player = cash_benchmark_dataset_with_blind_level(
+        small_blind="1",
+        big_blind="2",
+        ante="0.25",
+        ante_mode="per_player",
+    )
+    big_blind = cash_benchmark_dataset_with_blind_level(
+        small_blind="1",
+        big_blind="2",
+        ante="0.25",
+        ante_mode="big_blind",
+    )
+    per_player_model = per_player.cases[0].state.economic_model
+    big_blind_model = big_blind.cases[0].state.economic_model
+    assert per_player_model is not None and big_blind_model is not None
+
+    assert (
+        per_player_model.configuration_sha256
+        != big_blind_model.configuration_sha256
+    )
+    assert recommendation_dataset_fingerprint(
+        per_player
+    ) != recommendation_dataset_fingerprint(big_blind)
+    assert recommendation_grading_context_sha256(
+        per_player.cases[0].state
+    ) != recommendation_grading_context_sha256(big_blind.cases[0].state)
+
+
+def test_schema_five_rejects_case_and_reference_ante_mode_mismatch() -> None:
+    per_player = cash_benchmark_dataset_with_blind_level(
+        small_blind="1",
+        big_blind="2",
+        ante="0.25",
+        ante_mode="per_player",
+    )
+    big_blind = cash_benchmark_dataset_with_blind_level(
+        small_blind="1",
+        big_blind="2",
+        ante="0.25",
+        ante_mode="big_blind",
+    )
+    assert big_blind.grading_reference is not None
+
+    with pytest.raises(
+        ValidationError,
+        match="economic_model.configuration_sha256.*does not match declared",
+    ):
+        benchmark_dataset(
+            per_player.cases,
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source=per_player.reference_source,
+            grading_reference=big_blind.grading_reference,
+        )
 
 
 def test_tournament_blind_level_changes_stack_conversion_and_fingerprint() -> None:

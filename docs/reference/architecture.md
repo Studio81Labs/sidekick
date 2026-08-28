@@ -170,7 +170,9 @@ The Phase 0 V2 import contracts live separately under
 site-agnostic detected and approved revisions, exact dealt-in-ring positions,
 action-origin evidence, explicit per-player/big-blind/unknown ante schemes,
 re-import conflicts, lifecycle/deletion tombstones, and a pure
-pot-reconciliation oracle. The aggregate exposes only voluntary actions
+pot-reconciliation oracle. Omitted ante mode is canonicalized as unknown; a
+positive unknown mode remains reviewable but blocks decision extraction, while
+zero ante requires no poster mode. The aggregate exposes only voluntary actions
 from its active approved revision for later decision extraction. These contracts
 are not yet connected to V1 routes or file-backed storage, so they do not make
 the hosted screenshot workflow a V2 player-data path.
@@ -456,9 +458,19 @@ case state repeats the exact normalized economic and utility configurations,
 which are fingerprinted and revalidated before execution. Schema-v5 evaluation
 snapshots each provider's no-argument configured binding catalog once before any
 case execution. The benchmark canonicalizes and hashes the raw configured
-contexts itself, including street, effective stack, players-in-hand count,
-structural position, economics, and utility, and requires exactly one route
-match. The corpus and its fingerprint are snapshotted before provider hooks,
+contexts itself. Each context contains the complete provider-visible canonical
+decision state—cards, board, pot, wager and stack amounts, player counts,
+positions, opener and action context, current and completed action histories,
+street, and approval state—plus structural actor mapping, economics, and utility.
+Catalog JSON must match the benchmark-generated recursive shape exactly. Every
+canonical decision-state null, empty, and default-valued key remains explicit;
+the surrounding structural, economic, and utility objects must mirror the
+benchmark-generated field presence. Unknown or omitted required keys at any
+nested object fail before provider execution instead of being dropped or filled.
+Exactly one route must match. The economic route identity includes the exact
+blind denominations, ante amount, and canonical ante posting mode; a positive
+ante with an omitted or unknown poster scheme fails before route matching. The
+corpus and its fingerprint are snapshotted before provider hooks,
 and the report retains the declared schema version. An invalid declared-v5
 snapshot fails without calling the catalog or provider; removing its grading
 reference cannot select legacy execution or baseline behavior.

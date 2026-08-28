@@ -196,10 +196,10 @@ def test_missing_source_time_and_economics_stay_explicitly_unknown() -> None:
     assert restored.chronology.source_timezone is None
     assert restored.game.economics.kind == "unknown"
     assert restored.game.blinds.ante is None
-    assert restored.game.blinds.ante_mode == "per_player"
+    assert restored.game.blinds.ante_mode == "unknown"
 
 
-def test_legacy_per_player_ante_checksum_remains_stable() -> None:
+def test_legacy_no_ante_checksum_remains_stable_with_unknown_mode() -> None:
     state = hand_state()
     legacy_payload = state.model_dump(mode="json")
     legacy_payload["game"]["blinds"].pop("ante_mode")
@@ -222,20 +222,72 @@ def test_legacy_per_player_ante_checksum_remains_stable() -> None:
         state=state,
         content_sha256=legacy_checksum,
     )
-    assert retained.state.game.blinds.ante_mode == "per_player"
+    assert retained.state.game.blinds.ante_mode == "unknown"
 
-    big_blind_ante_state = state.model_copy(
+    explicit_per_player_state = state.model_copy(
         update={
             "game": state.game.model_copy(
                 update={
                     "blinds": state.game.blinds.model_copy(
+                        update={"ante_mode": "per_player"}
+                    )
+                }
+            )
+        }
+    )
+    assert imported_hand_state_sha256(explicit_per_player_state) == legacy_checksum
+
+
+def test_positive_ante_modes_have_distinct_state_hashes() -> None:
+    payload = hand_state().model_dump(mode="python")
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["game"]["blinds"].pop("ante_mode")
+    unknown_state = ImportedHandState.model_validate(payload)
+    assert unknown_state.game.blinds.ante_mode == "unknown"
+
+    per_player_state = unknown_state.model_copy(
+        update={
+            "game": unknown_state.game.model_copy(
+                update={
+                    "blinds": unknown_state.game.blinds.model_copy(
+                        update={"ante_mode": "per_player"}
+                    )
+                }
+            )
+        }
+    )
+    big_blind_state = unknown_state.model_copy(
+        update={
+            "game": unknown_state.game.model_copy(
+                update={
+                    "blinds": unknown_state.game.blinds.model_copy(
                         update={"ante_mode": "big_blind"}
                     )
                 }
             )
         }
     )
-    assert imported_hand_state_sha256(big_blind_ante_state) != legacy_checksum
+    legacy_per_player_payload = per_player_state.model_dump(mode="json")
+    legacy_per_player_payload["game"]["blinds"].pop("ante_mode")
+    legacy_per_player_checksum = sha256(
+        json.dumps(
+            legacy_per_player_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    assert (
+        imported_hand_state_sha256(per_player_state)
+        == legacy_per_player_checksum
+    )
+    assert len(
+        {
+            imported_hand_state_sha256(unknown_state),
+            imported_hand_state_sha256(per_player_state),
+            imported_hand_state_sha256(big_blind_state),
+        }
+    ) == 3
 
 
 @pytest.mark.parametrize("field", ["excerpt", "marker"])
@@ -6580,6 +6632,7 @@ def test_unknown_short_raise_keeps_reopening_rights_reviewable() -> None:
 def test_big_blind_ante_is_dead_money_for_call_and_raise_targets() -> None:
     payload = three_player_wager_payload()
     payload["game"]["blinds"]["ante"] = Decimal("1")
+    payload["game"]["blinds"]["ante_mode"] = "big_blind"
     payload["streets"] = [
         {
             "street": "preflop",
@@ -6624,6 +6677,7 @@ def test_big_blind_ante_is_dead_money_for_call_and_raise_targets() -> None:
 def short_big_blind_payload() -> dict[str, object]:
     payload = three_player_wager_payload(third_stack=Decimal("1.5"))
     payload["game"]["blinds"]["ante"] = Decimal("1")
+    payload["game"]["blinds"]["ante_mode"] = "big_blind"
     return payload
 
 
@@ -7212,6 +7266,7 @@ def known_ring_payload_with_ante_posts(
             "post_big_blind": "third-player",
         }
     payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["game"]["blinds"]["ante_mode"] = "per_player"
     totals = {
         seat["player_id"]: Decimal(0)
         for seat in payload["seats"]
@@ -7419,13 +7474,19 @@ def test_big_blind_ante_rejects_a_duplicate_big_blind_post() -> None:
         ImportedHandState.model_validate(payload)
 
 
-def test_unknown_ante_mode_keeps_known_ring_posts_reviewable() -> None:
+@pytest.mark.parametrize("ante_mode", [None, "unknown"])
+def test_unknown_ante_mode_keeps_known_ring_posts_reviewable(
+    ante_mode: str | None,
+) -> None:
     payload = known_ring_payload_with_ante_posts(
         3,
         (),
         include_table_action=True,
     )
-    payload["game"]["blinds"]["ante_mode"] = "unknown"
+    if ante_mode is None:
+        payload["game"]["blinds"].pop("ante_mode")
+    else:
+        payload["game"]["blinds"]["ante_mode"] = ante_mode
 
     state = ImportedHandState.model_validate(payload)
 
@@ -10654,6 +10715,7 @@ def test_positive_ante_with_required_posts_and_reconciliation_is_extractable(
 ) -> None:
     payload = extraction_ready_state_payload()
     payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["game"]["blinds"]["ante_mode"] = "per_player"
     payload["results"]["stated_pot"]["gross_total"] = Decimal("2.2")
     payload["streets"][0]["actions"] = [
         wager_action(
@@ -10747,10 +10809,16 @@ def test_big_blind_ante_is_dead_money_and_remains_extractable() -> None:
     ] == ["call"]
 
 
-def test_unknown_positive_ante_mode_is_not_extractable() -> None:
+@pytest.mark.parametrize("ante_mode", [None, "unknown"])
+def test_unknown_positive_ante_mode_is_not_extractable(
+    ante_mode: str | None,
+) -> None:
     payload = extraction_ready_state_payload()
     payload["game"]["blinds"]["ante"] = Decimal("0.1")
-    payload["game"]["blinds"]["ante_mode"] = "unknown"
+    if ante_mode is None:
+        payload["game"]["blinds"].pop("ante_mode")
+    else:
+        payload["game"]["blinds"]["ante_mode"] = ante_mode
     payload["results"]["stated_pot"]["gross_total"] = Decimal("2.2")
     payload["streets"][0]["actions"] = [
         wager_action(
@@ -10793,6 +10861,7 @@ def test_unknown_positive_ante_mode_is_not_extractable() -> None:
     state = ImportedHandState.model_validate(payload)
     record = extraction_record_for_state(state)
 
+    assert state.game.blinds.ante_mode == "unknown"
     assert reconcile_pot(state).status == "pass"
     assert record.active_hero_actions_for_extraction == []
 
@@ -10805,10 +10874,12 @@ def test_unknown_positive_ante_mode_is_not_extractable() -> None:
         {"small_blind": Decimal("2")},
         {"ante": None},
         {"ante": Decimal("-0.1")},
+        {"ante": Decimal("0.1"), "ante_mode": None},
+        {"ante": Decimal("0.1"), "ante_mode": "invalid"},
     ],
 )
 def test_extraction_fails_closed_for_unsafe_blind_copies(
-    unsafe_blind_update: dict[str, Decimal | None],
+    unsafe_blind_update: dict[str, object],
 ) -> None:
     state = ImportedHandState.model_validate(extraction_ready_state_payload())
     record = extraction_record_for_state(state)
