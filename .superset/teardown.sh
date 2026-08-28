@@ -8,11 +8,13 @@
 #
 # Dev servers are recognised by what they *are* (argv[0] and arguments), never
 # by text that merely mentions the workspace (an agent prompt, an editor arg):
-#   - executables living inside this worktree (venv python, esbuild, ...)
+#   - executables living inside this worktree (venv python, esbuild, the
+#     postflop solver, ...)
 #   - `node` running a script from this worktree (vite)
 #   - `python -m uvicorn` and its multiprocessing workers whose working
 #     directory is inside this worktree (macOS framework Python rewrites
 #     argv[0], so the venv path never shows up in `ps` for these)
+# plus everything those processes spawned (solver runs, esbuild, ...).
 set -u
 
 ROOT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")/.." 2>/dev/null && pwd -P) \
@@ -55,7 +57,8 @@ for pid in $candidates; do
   argv_of "$pid" || continue
   kind=""
   case $ARGV0 in
-    "$ROOT_DIR/apps/backend/.venv/"* | "$ROOT_DIR/node_modules/"* | "$ROOT_DIR/apps/pwa/node_modules/"*)
+    "$ROOT_DIR/apps/backend/.venv/"* | "$ROOT_DIR/node_modules/"* \
+      | "$ROOT_DIR/apps/pwa/node_modules/"* | "$ROOT_DIR/solver-plugins/"*)
       kind=path ;;
     node | */node)
       case $ARGS in
@@ -76,6 +79,21 @@ if [ -z "$pids" ]; then
   echo "No dev-server processes running from this workspace."
   exit 0
 fi
+
+# Add everything the matched processes spawned, recursively (an in-flight
+# solver run, esbuild, OCR helpers), so no part of the tree is left behind.
+pids=$(ps -axo pid=,ppid= 2>/dev/null | awk -v seeds="$pids" -v self="$$" '
+  BEGIN { n = split(seeds, a, " "); for (i = 1; i <= n; i++) if (a[i] != "") want[a[i]] = 1 }
+  { parent[$1] = $2 }
+  END {
+    changed = 1
+    while (changed) {
+      changed = 0
+      for (p in parent)
+        if (!(p in want) && (parent[p] in want) && p != self) { want[p] = 1; changed = 1 }
+    }
+    for (p in want) printf "%s ", p
+  }')
 
 echo "Stopping dev-server processes still running from this workspace:"
 printf '%s\n' "$snapshot" | awk -v list="$pids" '

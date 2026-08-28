@@ -126,6 +126,22 @@ PWA_PORT=${ports##* }
 BACKEND_URL="http://localhost:$BACKEND_PORT"
 PWA_URL="http://localhost:$PWA_PORT"
 
+# The solver binary goes on the backend's PATH only when it is at least as new
+# as its sources (src/, Cargo.toml, Cargo.lock); otherwise the backend's
+# fallback engine is used and a rebuild is suggested, so a stale binary never
+# masquerades as the current code.
+SOLVER_BIN="$SOLVER_BIN_DIR/poker-postflop-solver"
+SOLVER_SRC="$ROOT_DIR/solver-plugins/postflop"
+SOLVER_STATUS=missing
+if [ -x "$SOLVER_BIN" ]; then
+  if [ -z "$(find "$SOLVER_SRC/src" "$SOLVER_SRC/Cargo.toml" "$SOLVER_SRC/Cargo.lock" \
+        -newer "$SOLVER_BIN" 2>/dev/null | head -n 1)" ]; then
+    SOLVER_STATUS=ok
+  else
+    SOLVER_STATUS=stale
+  fi
+fi
+
 BACKEND_PID=""
 PWA_PID=""
 # shellcheck disable=SC2329  # invoked via trap
@@ -147,7 +163,7 @@ trap cleanup EXIT HUP INT TERM
 # .env and the data/ directory resolve). CORS follows the PWA port.
 (
   cd "$BACKEND_DIR" || exit 1
-  PATH="$SOLVER_BIN_DIR:$PATH"
+  [ "$SOLVER_STATUS" = ok ] && PATH="$SOLVER_BIN_DIR:$PATH"
   POKER_CORS_ORIGINS=$(printf '["http://localhost:%s","http://127.0.0.1:%s"]' "$PWA_PORT" "$PWA_PORT")
   export PATH POKER_CORS_ORIGINS
   exec "$VENV_PY" -m uvicorn app.main:app --reload --host localhost --port "$BACKEND_PORT"
@@ -166,8 +182,11 @@ PWA_PID=$!
 printf '\nPoker Hero dev servers  [%s]\n' "$(basename "$ROOT_DIR")"
 printf '  PWA  %s\n' "$PWA_URL"
 printf '  API  %s   (OpenAPI docs: %s/docs)\n' "$BACKEND_URL" "$BACKEND_URL"
-[ -x "$SOLVER_BIN_DIR/poker-postflop-solver" ] \
-  || printf '  note: postflop solver binary not built; using recommendation fallback\n'
+case $SOLVER_STATUS in
+  missing) printf '  note: postflop solver binary not built; using the recommendation fallback\n' ;;
+  stale) printf '  note: postflop solver binary is older than its sources; using the recommendation fallback\n'
+         printf '        (rebuild with ./.superset/setup.sh, or cargo build --release in solver-plugins/postflop)\n' ;;
+esac
 printf 'Ctrl-C stops both.\n\n'
 
 # Wait for either server to exit; the trap then stops the other one.
