@@ -20,6 +20,7 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from pydantic_core import PydanticSerializationError
 
 from app.config import Settings, get_settings
 from app.domain.imported_hands import (
@@ -2081,6 +2082,11 @@ def run_recommendation_benchmark(
         dataset_snapshot = RecommendationBenchmarkDataset.model_validate_json(
             dataset.model_dump_json(by_alias=True)
         )
+    except PydanticSerializationError:
+        # Preserve queue independence for one unsafely mutated case. Each case
+        # is still reserialized in _run_case before any case-scoped provider
+        # hook, and providers never receive the caller-owned corpus object.
+        dataset_snapshot = dataset.model_copy(deep=True)
     except ValidationError as exc:
         # Unsafe in-memory model copies are still reviewed by the existing
         # fail-closed per-case validators, but provider hooks never receive the
@@ -2097,7 +2103,13 @@ def run_recommendation_benchmark(
     )
     if dataset_snapshot_error is not None and not dataset_snapshot.cases:
         raise RecommendationBenchmarkError(dataset_snapshot_error)
-    dataset_fingerprint = recommendation_dataset_fingerprint(dataset_snapshot)
+    try:
+        dataset_fingerprint = recommendation_dataset_fingerprint(dataset_snapshot)
+    except PydanticSerializationError:
+        # A non-JSON corpus cannot have a truthful normalized fingerprint. The
+        # affected case still fails in isolation and the report cannot be used
+        # as an attested comparable baseline without this identity.
+        dataset_fingerprint = None
     grading_context_bindings: tuple[
         _VerifiedProviderGradingContextBinding, ...
     ] | None = None

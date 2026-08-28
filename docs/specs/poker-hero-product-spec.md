@@ -260,7 +260,8 @@ shape includes at minimum:
   positive ante is posted per player or by the big blind for the table. An ante
   scheme that the source semantics do not prove, including an omitted scheme on
   a positive ante, remains explicitly unknown and is not ready for decision
-  extraction. A confirmed zero ante needs no poster scheme.
+  extraction. A confirmed zero ante needs no poster scheme, so retained poster
+  labels do not distinguish otherwise identical detections during re-import.
   Missing source time remains explicitly unknown; ingestion time must not stand
   in for play time in recency, session, or proof-of-learning calculations.
 - Economic context when supplied: for cash games, currency and the applicable
@@ -602,11 +603,15 @@ or unknown required keys fail closed before provider execution.
 The benchmark fingerprints an isolated corpus snapshot before provider hooks,
 uses separate validated state copies for readiness inspection and execution, and
 rejects any retained execution-state mutation before reading runtime trust
-metadata or scoring the result. Any invalid snapshot fails before the binding
-catalog, required-field inspection, or provider is called. The declared schema
-version remains in the report and controls this trust boundary: a version-5
-corpus whose version is mutated or whose evidence envelope becomes invalid or
-missing cannot downgrade itself to version-4 execution or baseline rules.
+metadata or scoring the result. A structurally invalid dataset snapshot fails
+before the binding catalog, required-field inspection, or provider is called. A
+non-serializable nested case instead fails in isolation before its case-scoped
+provider hooks; unrelated valid cases continue from the deep snapshot, and the
+report omits the unprovable corpus fingerprint so it cannot become an attested
+baseline. The declared schema version remains in the report and controls this
+trust boundary: a version-5 corpus whose version is mutated or whose evidence
+envelope becomes invalid or missing cannot downgrade itself to version-4
+execution or baseline rules.
 After execution, a version-5 benchmark case completes only when the provider
 reports the exact engine selected by that binding and no fallback metadata. A
 missing, malformed, or different runtime engine and every explicit fallback are

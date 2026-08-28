@@ -1058,6 +1058,60 @@ def test_exact_reimport_ignores_source_location_in_detected_fingerprint() -> Non
     assert disposition.existing_raw_source_id == "file-1"
 
 
+@pytest.mark.parametrize("existing_mode", ["unknown", "per_player", "big_blind"])
+@pytest.mark.parametrize("candidate_mode", ["unknown", "per_player", "big_blind"])
+def test_exact_reimport_ignores_zero_ante_poster_mode(
+    existing_mode: str,
+    candidate_mode: str,
+) -> None:
+    def detection_for_source(
+        raw_source_id: str,
+        ante_mode: str,
+    ) -> DetectedImportedHand:
+        payload = hand_state(hero_player_id="hero").model_dump(mode="python")
+        payload["chronology"] = chronology(raw_source_id).model_dump(mode="python")
+        payload["game"]["blinds"].update(
+            {"ante": Decimal(0), "ante_mode": ante_mode}
+        )
+        state = ImportedHandState.model_validate(payload)
+        return DetectedImportedHand(
+            detection_id=f"detection-{raw_source_id}",
+            raw_source_id=raw_source_id,
+            detector_id="pokerstars",
+            detector_version="1.0.0" if raw_source_id == "file-1" else "2.0.0",
+            detected_at=NOW,
+            state=state,
+            content_sha256=imported_hand_state_sha256(state),
+        )
+
+    existing_detection = detection_for_source("file-1", existing_mode)
+    candidate_detection = detection_for_source("file-2", candidate_mode)
+
+    disposition = classify_reimport(
+        [raw_source()],
+        raw_source(raw_source_id="file-2"),
+        existing_detections=[existing_detection],
+        candidate_detection=candidate_detection,
+    )
+
+    assert disposition.kind == "exact_reimport"
+    assert disposition.existing_raw_source_id == "file-1"
+
+
+def test_zero_ante_semantic_reimport_preserves_existing_detection_checksums() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump(mode="python")
+    payload["game"]["blinds"].update(
+        {"ante": Decimal(0), "ante_mode": "unknown"}
+    )
+    unknown_state = ImportedHandState.model_validate(payload)
+    payload["game"]["blinds"]["ante_mode"] = "big_blind"
+    big_blind_state = ImportedHandState.model_validate(payload)
+
+    assert imported_hand_state_sha256(unknown_state) != imported_hand_state_sha256(
+        big_blind_state
+    )
+
+
 def test_detected_state_checksum_and_raw_source_link_are_enforced() -> None:
     state = hand_state()
 

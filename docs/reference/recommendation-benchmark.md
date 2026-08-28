@@ -396,10 +396,13 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   action-history inputs. A
   callback that sees the case and echoes its expected digest is not a binding.
   The benchmark snapshots and fingerprints the corpus before provider hooks and
-  retains its declared schema version in the report. Any invalid snapshot fails
-  without calling the catalog, required-field inspection, or provider; mutating
-  a v5 corpus's version or removing its grading reference cannot select legacy
-  execution or baseline behavior. Required-field
+  retains its declared schema version in the report. A structurally invalid
+  dataset snapshot fails without calling the catalog, required-field inspection,
+  or provider. A non-serializable nested case fails before its case-scoped hooks;
+  unrelated valid cases continue from the deep snapshot, but the report omits
+  the unavailable corpus fingerprint and cannot be an attested baseline.
+  Mutating a v5 corpus's version or removing its grading reference cannot select
+  legacy execution or baseline behavior. Required-field
   inspection and execution receive separate validated state copies, and the
   complete execution state is canonically snapshotted and revalidated after the
   provider returns before its selected route is checked independently. Provider

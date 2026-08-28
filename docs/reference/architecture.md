@@ -172,10 +172,11 @@ action-origin evidence, explicit per-player/big-blind/unknown ante schemes,
 re-import conflicts, lifecycle/deletion tombstones, and a pure
 pot-reconciliation oracle. Omitted ante mode is canonicalized as unknown; a
 positive unknown mode remains reviewable but blocks decision extraction, while
-zero ante requires no poster mode. Complete actions with missing results or
-award-only pot evidence remain indeterminate, and extraction requires a passing
-zero-discrepancy comparison against an independent source total. Decision
-extraction proves that independence from the active detection's non-empty,
+zero ante requires no poster mode and ignores retained poster labels in the
+source-location-independent re-import fingerprint. Complete actions with
+missing results or award-only pot evidence remain indeterminate, and extraction
+requires a passing zero-discrepancy comparison against an independent source
+total. Decision extraction proves that independence from the active detection's non-empty,
 stated-pot-scoped raw field evidence or from a value-changing correction on the
 active canonical revision; decimal formatting alone is not a value change.
 Numeric agreement without that provenance remains
@@ -494,10 +495,13 @@ Exactly one route must match. The economic route identity includes the exact
 blind denominations, ante amount, and canonical ante posting mode; a positive
 ante with an omitted or unknown poster scheme fails before route matching. The
 corpus and its fingerprint are snapshotted before provider hooks, and the report
-retains the declared schema version. Any invalid snapshot fails without calling
-the catalog, required-field inspection, or provider. Mutating a v5 corpus's
-version or removing its grading reference cannot select legacy execution or
-baseline behavior.
+retains the declared schema version. A structurally invalid dataset snapshot
+fails without calling the catalog, required-field inspection, or provider. A
+non-serializable nested case fails before its own case-scoped hooks while valid
+cases continue from the deep snapshot; the report omits the unavailable corpus
+fingerprint and cannot be an attested baseline. Mutating a v5 corpus's version
+or removing its grading reference cannot select legacy execution or baseline
+behavior.
 Required-field inspection and execution receive separate validated state copies,
 and the complete execution copy must remain byte-for-byte canonically equivalent
 to its pre-call snapshot after the provider returns. The selected route context

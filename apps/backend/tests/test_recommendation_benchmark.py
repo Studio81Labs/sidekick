@@ -2142,6 +2142,55 @@ def test_invalid_schema_five_hero_cards_block_all_provider_hooks(
     assert len(provider.outcomes) == 1
 
 
+def test_nonserializable_case_snapshot_is_isolated_before_provider_hooks() -> None:
+    class HookTrackingProvider(SequenceProvider):
+        required_fields = ["street"]
+
+        def __init__(self) -> None:
+            super().__init__(
+                [recommendation("check")],
+                grading_context_bindings=[
+                    configured_grading_context_binding(valid_case.state)
+                ],
+            )
+            self.required_fields_calls = 0
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            self.required_fields_calls += 1
+            return super().required_fields_for(state)
+
+    invalid_case = covered_preflop_case("nonserializable")
+    valid_case = covered_preflop_case("valid")
+    dataset = benchmark_dataset(
+        [invalid_case, valid_case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    dataset.cases[0].state.hero_cards[0] = object()  # type: ignore[assignment]
+    provider = HookTrackingProvider()
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.dataset_fingerprint is None
+    assert report.completed_cases == 1
+    assert report.failed_cases == 1
+    assert report.cases[0].case_id == "nonserializable"
+    assert report.cases[0].error is not None
+    assert "Unable to serialize unknown type" in report.cases[0].error
+    assert report.cases[1].case_id == "valid"
+    assert report.cases[1].status == "completed"
+    assert provider.binding_catalog_calls == 1
+    assert provider.required_fields_calls == 1
+    assert len(provider.requests) == 1
+    assert provider.requests[0].state.hero_cards == valid_case.state.hero_cards
+    assert provider.events == ["bindings", "recommend"]
+    assert provider.outcomes == []
+
+
 @pytest.mark.parametrize(
     "version_mutation",
     ["schema_five_to_four", "schema_four_to_five"],

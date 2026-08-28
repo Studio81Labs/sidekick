@@ -3293,6 +3293,8 @@ def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
     """Hash detected poker meaning without source-file location evidence."""
 
     normalized = _without_source_evidence(_state_payload_for_hash(state))
+    if state.game.blinds.ante == 0:
+        normalized["game"]["blinds"].pop("ante_mode", None)
     chronology = normalized["chronology"]
     for field_name in ("source_file_id", "source_session_id", "hand_ordinal"):
         chronology.pop(field_name, None)
