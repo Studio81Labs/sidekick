@@ -20,6 +20,7 @@ from pydantic import (
     Field,
     JsonValue,
     StringConstraints,
+    ValidationError,
     field_validator,
     model_validator,
 )
@@ -2309,7 +2310,17 @@ class ImportedHandRecord(ImportedHandModel):
                         "active canonical revision must use the selected conflict source"
                     )
 
-        if self.lifecycle.status in {"withdrawn", "rejected"}:
+        if self.lifecycle.status == "pending_review":
+            if (
+                revisions
+                and self.lifecycle.changed_at
+                < self.canonical_revisions[-1].approved_at
+            ):
+                raise ValueError(
+                    "pending_review lifecycle changed_at cannot precede the"
+                    " latest canonical revision approved_at"
+                )
+        elif self.lifecycle.status in {"withdrawn", "rejected"}:
             if not revisions:
                 raise ValueError("withdrawal/rejection audit requires a canonical revision")
             if self.lifecycle.changed_at < self.canonical_revisions[-1].approved_at:
@@ -2374,6 +2385,10 @@ class ImportedHandRecord(ImportedHandModel):
 
         state = self.active_state_for_extraction
         if state is None or state.hero_player_id is None:
+            return []
+        if not _terminal_hand_ready_for_extraction(state):
+            return []
+        if not _blind_structure_ready_for_extraction(state.game.blinds):
             return []
         if state.game.betting_limit not in {"no_limit", "pot_limit"}:
             return []
@@ -2457,6 +2472,7 @@ def classify_restore(
 
     if not all(
         _record_conflict_resolution_chronology_is_valid(record)
+        and _record_pending_review_revision_chronology_is_valid(record)
         for record in (current, candidate)
     ):
         return RestoreDisposition(kind="conflict_merge_required")
@@ -2670,6 +2686,17 @@ def _record_conflict_resolution_chronology_is_valid(
     except (IndexError, KeyError, ValueError):
         return False
     return True
+
+
+def _record_pending_review_revision_chronology_is_valid(
+    record: ImportedHandRecord,
+) -> bool:
+    return (
+        record.lifecycle.status != "pending_review"
+        or not record.canonical_revisions
+        or record.lifecycle.changed_at
+        >= record.canonical_revisions[-1].approved_at
+    )
 
 
 def imported_hand_state_sha256(state: ImportedHandState) -> str:
@@ -3152,6 +3179,33 @@ def _economics_ready_for_extraction(economics: Economics) -> bool:
     ):
         return False
     return True
+
+
+def _terminal_hand_ready_for_extraction(state: ImportedHandState) -> bool:
+    """Reuse definitive result-boundary validation without requiring results."""
+
+    terminal_payload = state.model_dump(mode="python")
+    if state.results is None:
+        terminal_payload["results"] = {}
+    try:
+        ImportedHandState.model_validate(terminal_payload)
+    except ValidationError:
+        return False
+    return True
+
+
+def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:
+    """Require exact positive small- and big-blind strategy context."""
+
+    small_blind = blinds.small_blind
+    big_blind = blinds.big_blind
+    return (
+        small_blind is not None
+        and big_blind is not None
+        and small_blind > 0
+        and big_blind > 0
+        and small_blind <= big_blind
+    )
 
 
 def _hero_actions_ready_for_extraction(
