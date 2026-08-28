@@ -129,7 +129,17 @@ was evaluated and disappears from the current run, the case fails explicitly.
       "kind": "cash",
       "name": "heads-up-no-rake-example",
       "revision": "economics-example-1",
-      "configuration_sha256": "4444444444444444444444444444444444444444444444444444444444444444"
+      "configuration_sha256": "01231c714c30e3102e02ab401fb43ca90180075db5cd0f28be13e0622d92acd5",
+      "configuration": {
+        "kind": "cash",
+        "currency": "USD",
+        "rake": {
+          "percentage": 0,
+          "cap": 0,
+          "fixed_drop": 0,
+          "description": null
+        }
+      }
     },
     "utility_model": {
       "name": "cash-expected-value-example",
@@ -188,6 +198,22 @@ was evaluated and disappears from the current run, the case fails explicitly.
         "opponent_stack": 97.5,
         "effective_stack": 97.5,
         "players_in_hand": 2,
+        "economic_model": {
+          "kind": "cash",
+          "name": "heads-up-no-rake-example",
+          "revision": "economics-example-1",
+          "configuration_sha256": "01231c714c30e3102e02ab401fb43ca90180075db5cd0f28be13e0622d92acd5",
+          "configuration": {
+            "kind": "cash",
+            "currency": "USD",
+            "rake": {
+              "percentage": 0,
+              "cap": 0,
+              "fixed_drop": 0,
+              "description": null
+            }
+          }
+        },
         "hero_structural_position": {
           "dealt_in_player_count": 2,
           "action_index": 0,
@@ -269,8 +295,22 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   multiway cases remain valid without an equality inference because the exact
   opponent minimum is not then determined by these two fields. The listed table
   configurations, stacks, and streets define the declared Cartesian coverage
-  boundary. Until recommendation providers consume structural position directly,
-  the legacy `hero_position` route must agree exactly: `BTN/SB` and
+  boundary. Every version-5 case also repeats the exact economic-model identity
+  declared by `grading_reference`: kind, name, immutable revision, and
+  configuration SHA-256 must all match. Both locations include the complete
+  structured configuration; the loader normalizes it, sorts tournament payouts,
+  stacks, and bounties by their stable keys, recomputes its canonical JSON
+  SHA-256, and requires exact normalized case/reference equality. Cash requires
+  explicit currency plus rake percentage, cap, and fixed drop, using zero rather
+  than omission for no-rake/no-drop. Tournament configuration requires type,
+  stage, currency, paid places, players remaining, contiguous payouts, every
+  remaining stack, complete ICM inputs, a bounty format, and every bounty value.
+  A non-bounty tournament uses an explicit non-bounty format and zero values, not
+  missing fields. Missing economics and an explicit `kind: "unknown"` fail the
+  version-5 gate rather than inheriting the corpus declaration. A corpus with
+  multiple economic strata must separate them into independently identified
+  grading references. Until recommendation providers consume structural position
+  directly, the legacy `hero_position` route must agree exactly: `BTN/SB` and
   `BTN` route as `button`, `SB` as `small_blind`, `BB` as `big_blind`, `UTG` as
   `utg`, `HJ` as `hijack`, and `CO` as `cutoff`. Table-specific full-ring labels
   such as `UTG+1`, `LJ`, and combined `*/LJ` labels have no exact legacy route;

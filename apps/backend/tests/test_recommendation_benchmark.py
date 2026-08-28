@@ -1,4 +1,5 @@
 import json
+from decimal import Decimal
 from pathlib import Path
 import sys
 from typing import Any, Literal
@@ -7,7 +8,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.config import Settings, get_settings
-from app.domain.imported_hands import structural_position_labels
+from app.domain.imported_hands import (
+    CashEconomics,
+    TournamentEconomics,
+    structural_position_labels,
+)
 from app.domain.poker import Card, PreflopAction
 from app.domain.recommendations import RecommendationRequest, RecommendationResult
 from app.providers.base import ProviderConfigurationError
@@ -29,6 +34,7 @@ from app.recommendation_benchmark import (
     load_recommendation_benchmark_report,
     main,
     recommendation_dataset_fingerprint,
+    recommendation_economic_configuration_sha256,
     run_recommendation_benchmark,
 )
 
@@ -138,6 +144,7 @@ def covered_preflop_case(
         board_cards=[],
         effective_stack=100.0,
         players_in_hand=2,
+        economic_model=case_economic_model_evidence(),
         hero_structural_position={
             "dealt_in_player_count": 2,
             "action_index": 0,
@@ -153,6 +160,7 @@ def covered_heads_up_postflop_case(
 ) -> RecommendationBenchmarkCase:
     values: dict[str, object] = {
         "opponent_position": "big_blind",
+        "economic_model": case_economic_model_evidence(),
         "hero_structural_position": {
             "dealt_in_player_count": 2,
             "action_index": 0,
@@ -162,6 +170,86 @@ def covered_heads_up_postflop_case(
     }
     values.update(state_overrides)
     return benchmark_case(case_id, [reference_line("check")], **values)
+
+
+def cash_economic_configuration(
+    *,
+    currency: str = "USD",
+    rake_percentage: str = "0",
+    rake_cap: str = "0",
+    fixed_drop: str = "0",
+) -> CashEconomics:
+    return CashEconomics.model_validate(
+        {
+            "kind": "cash",
+            "currency": currency,
+            "rake": {
+                "percentage": Decimal(rake_percentage),
+                "cap": Decimal(rake_cap),
+                "fixed_drop": Decimal(fixed_drop),
+            },
+        }
+    )
+
+
+def tournament_economic_configuration(
+    *,
+    no_bounties: bool = False,
+) -> TournamentEconomics:
+    bounty_format = "none" if no_bounties else "progressive"
+    hero_bounty = Decimal("0") if no_bounties else Decimal("25")
+    villain_bounty = Decimal("0") if no_bounties else Decimal("40")
+    return TournamentEconomics.model_validate(
+        {
+            "kind": "tournament",
+            "tournament_id": "tournament-42",
+            "tournament_type": "progressive-knockout",
+            "stage": "heads-up-final-table",
+            "currency": "USD",
+            "paid_places": 2,
+            "players_remaining": 2,
+            "payouts": [
+                {
+                    "place_from": 1,
+                    "place_to": 1,
+                    "amount": Decimal("100"),
+                },
+                {
+                    "place_from": 2,
+                    "place_to": 2,
+                    "amount": Decimal("50"),
+                },
+            ],
+            "remaining_stacks": [
+                {"player_id": "hero", "stack": Decimal("5000")},
+                {"player_id": "villain", "stack": Decimal("3000")},
+            ],
+            "bounty_format": bounty_format,
+            "bounties": [
+                {"player_id": "hero", "value": hero_bounty},
+                {"player_id": "villain", "value": villain_bounty},
+            ],
+            "icm_inputs_complete": True,
+        }
+    )
+
+
+def case_economic_model_evidence(
+    *,
+    name: str = "heads-up-no-rake",
+    revision: str = "economics-1",
+    configuration: CashEconomics | TournamentEconomics | None = None,
+    configuration_sha256: str | None = None,
+) -> dict[str, object]:
+    economic_configuration = configuration or cash_economic_configuration()
+    return {
+        "kind": economic_configuration.kind,
+        "name": name,
+        "revision": revision,
+        "configuration_sha256": configuration_sha256
+        or recommendation_economic_configuration_sha256(economic_configuration),
+        "configuration": economic_configuration,
+    }
 
 
 def grading_reference_evidence(
@@ -202,12 +290,7 @@ def grading_reference_evidence(
             "effective_stack_depths_bb": [50.0, 100.0],
             "streets": ["preflop"],
         },
-        "economic_model": {
-            "kind": "cash",
-            "name": "heads-up-no-rake",
-            "revision": "economics-1",
-            "configuration_sha256": "4" * 64,
-        },
+        "economic_model": case_economic_model_evidence(),
         "utility_model": {
             "name": "cash-expected-value",
             "revision": "utility-1",
@@ -367,6 +450,12 @@ def test_schema_five_propagates_grading_reference_and_fingerprints_evidence() ->
     changed_rights = dataset.model_copy(deep=True)
     assert changed_rights.grading_reference is not None
     changed_rights.grading_reference.rights_evidence.evidence_sha256 = "a" * 64
+    changed_case_economics = dataset.model_copy(deep=True)
+    assert changed_case_economics.cases[0].state.economic_model is not None
+    assert changed_case_economics.cases[0].state.economic_model.kind == "cash"
+    changed_case_economics.cases[0].state.economic_model.configuration_sha256 = (
+        "b" * 64
+    )
 
     report = run_recommendation_benchmark(
         dataset,
@@ -381,6 +470,10 @@ def test_schema_five_propagates_grading_reference_and_fingerprints_evidence() ->
     assert (
         recommendation_dataset_fingerprint(changed_rights) != baseline_fingerprint
     )
+    assert (
+        recommendation_dataset_fingerprint(changed_case_economics)
+        != baseline_fingerprint
+    )
     assert report.grading_reference == dataset.grading_reference
     formatted = format_recommendation_benchmark_report(report)
     assert "policy=policy-2026.08.1" in formatted
@@ -392,6 +485,286 @@ def test_schema_five_propagates_grading_reference_and_fingerprints_evidence() ->
     assert "EV unit=bb" in formatted
     assert "licensed/shipped_static_lookup" in formatted
     assert "exploitability 0.01 bb_per_100 <= 0.02" in formatted
+
+
+@pytest.mark.parametrize(
+    ("economic_model", "message"),
+    [
+        (None, "requires an economic_model"),
+        (
+            {"kind": "unknown", "reason": "source omitted tournament context"},
+            "economic_model is unknown",
+        ),
+        (
+            case_economic_model_evidence(
+                configuration=tournament_economic_configuration(),
+                name="final-table-icm-with-bounties",
+                revision="tournament-economics-7",
+            ),
+            "economic_model.kind 'tournament'.*declared.*'cash'",
+        ),
+        (
+            case_economic_model_evidence(name="different-rake-model"),
+            "economic_model.name 'different-rake-model'.*declared.*'heads-up-no-rake'",
+        ),
+        (
+            case_economic_model_evidence(revision="economics-2"),
+            "economic_model.revision 'economics-2'.*declared.*'economics-1'",
+        ),
+        (
+            case_economic_model_evidence(
+                configuration=cash_economic_configuration(
+                    currency="EUR",
+                    rake_percentage="0.05",
+                    rake_cap="4",
+                    fixed_drop="1",
+                )
+            ),
+            "economic_model.configuration_sha256.*does not match declared",
+        ),
+    ],
+)
+def test_schema_five_requires_each_case_to_match_the_declared_economic_model(
+    economic_model: dict[str, object] | None,
+    message: str,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload["economic_model"] = economic_model
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+
+    with pytest.raises(ValidationError, match=message):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+
+
+def test_schema_five_accepts_an_exact_tournament_economic_model_binding() -> None:
+    tournament_model = case_economic_model_evidence(
+        configuration=tournament_economic_configuration(),
+        name="final-table-icm-with-bounties",
+        revision="tournament-economics-7",
+    )
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload["economic_model"] = tournament_model
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+    case.reference_lines[0].ev_bb = None
+    reference = grading_reference_evidence(ev_unit="utility")
+    reference["economic_model"] = tournament_model
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=reference,
+    )
+
+    assert dataset.cases[0].state.economic_model is not None
+    assert dataset.cases[0].state.economic_model.kind == "tournament"
+
+
+def test_economic_model_rejects_material_config_mutation_with_stale_digest() -> None:
+    payload = case_economic_model_evidence()
+    configuration = payload["configuration"]
+    assert isinstance(configuration, CashEconomics)
+    assert configuration.rake is not None
+    configuration.rake.cap = Decimal("4")
+
+    with pytest.raises(
+        ValidationError,
+        match="configuration_sha256 must match its normalized route-critical",
+    ):
+        RecommendationBenchmarkState.model_validate({"economic_model": payload})
+
+
+def test_economic_model_digest_normalizes_equivalent_decimal_representations() -> None:
+    baseline = cash_economic_configuration()
+    equivalent = cash_economic_configuration(
+        rake_percentage="-0.000",
+        rake_cap="0.00",
+        fixed_drop="0E+3",
+    )
+
+    assert recommendation_economic_configuration_sha256(
+        equivalent
+    ) == recommendation_economic_configuration_sha256(baseline)
+
+
+def test_economic_model_rejects_incomplete_route_critical_configuration() -> None:
+    missing_cash_value = cash_economic_configuration()
+    assert missing_cash_value.rake is not None
+    missing_cash_value.rake.fixed_drop = None
+    incomplete_icm = tournament_economic_configuration()
+    incomplete_icm.icm_inputs_complete = False
+
+    for configuration, missing_field in (
+        (missing_cash_value, "rake.fixed_drop"),
+        (incomplete_icm, "icm_inputs_complete"),
+    ):
+        with pytest.raises(ValidationError, match=missing_field):
+            RecommendationBenchmarkState.model_validate(
+                {
+                    "economic_model": case_economic_model_evidence(
+                        configuration=configuration
+                    )
+                }
+            )
+
+
+def test_schema_five_rejects_distinct_valid_case_and_reference_economics() -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload["economic_model"] = case_economic_model_evidence(
+        configuration=cash_economic_configuration(
+            currency="EUR",
+            rake_percentage="0.05",
+            rake_cap="4",
+            fixed_drop="1",
+        )
+    )
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+
+    with pytest.raises(
+        ValidationError,
+        match="economic_model.configuration_sha256.*does not match declared",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+
+
+def test_schema_five_normalizes_tournament_economic_collection_order() -> None:
+    reference_configuration = tournament_economic_configuration()
+    case_configuration = reference_configuration.model_copy(deep=True)
+    case_configuration.payouts.reverse()
+    case_configuration.remaining_stacks.reverse()
+    case_configuration.bounties.reverse()
+    assert recommendation_economic_configuration_sha256(
+        case_configuration
+    ) == recommendation_economic_configuration_sha256(reference_configuration)
+    model_values = {
+        "name": "final-table-icm-with-bounties",
+        "revision": "tournament-economics-7",
+    }
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload["economic_model"] = case_economic_model_evidence(
+        configuration=case_configuration,
+        **model_values,
+    )
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+    case.reference_lines[0].ev_bb = None
+    reference = grading_reference_evidence(ev_unit="utility")
+    reference["economic_model"] = case_economic_model_evidence(
+        configuration=reference_configuration,
+        **model_values,
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=reference,
+    )
+
+    assert dataset.cases[0].state.economic_model is not None
+
+
+def test_economic_configuration_hash_normalizes_decimal_representation() -> None:
+    concise = cash_economic_configuration(
+        rake_percentage="0.05",
+        rake_cap="4",
+        fixed_drop="1",
+    )
+    padded = cash_economic_configuration(
+        rake_percentage="0.0500",
+        rake_cap="4.000",
+        fixed_drop="1.00",
+    )
+
+    assert recommendation_economic_configuration_sha256(
+        concise
+    ) == recommendation_economic_configuration_sha256(padded)
+
+
+def test_schema_five_accepts_explicit_no_bounty_tournament_economics() -> None:
+    configuration = tournament_economic_configuration(no_bounties=True)
+    tournament_model = case_economic_model_evidence(
+        configuration=configuration,
+        name="final-table-icm-no-bounties",
+        revision="tournament-economics-8",
+    )
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload["economic_model"] = tournament_model
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+    case.reference_lines[0].ev_bb = None
+    reference = grading_reference_evidence(ev_unit="utility")
+    reference["economic_model"] = tournament_model
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=reference,
+    )
+
+    economic_model = dataset.cases[0].state.economic_model
+    assert economic_model is not None and economic_model.kind == "tournament"
+    assert isinstance(economic_model.configuration, TournamentEconomics)
+    assert economic_model.configuration.bounty_format == "none"
+    assert {bounty.value for bounty in economic_model.configuration.bounties} == {
+        Decimal("0")
+    }
+
+
+def test_economic_model_rejects_nonzero_no_bounty_values() -> None:
+    configuration = tournament_economic_configuration(no_bounties=True)
+    configuration.bounties[0].value = Decimal("1")
+
+    with pytest.raises(ValidationError, match="requires explicit zero bounty values"):
+        RecommendationBenchmarkState.model_validate(
+            {
+                "economic_model": case_economic_model_evidence(
+                    configuration=configuration,
+                    name="invalid-no-bounty-model",
+                )
+            }
+        )
+
+
+def test_schema_five_economic_model_mismatch_fails_before_provider_execution(
+    tmp_path: Path,
+) -> None:
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    payload = dataset.model_dump(mode="json", by_alias=True)
+    payload["cases"][0]["state"]["economic_model"]["configuration"]["rake"][
+        "cap"
+    ] = 4
+    path = tmp_path / "mismatched-economic-model.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    provider = SequenceProvider([recommendation("check")])
+
+    with pytest.raises(RecommendationBenchmarkError, match="economic_model"):
+        benchmark_recommendation_file(
+            path,
+            Settings(data_dir=tmp_path / "unused"),
+            provider,
+        )
+
+    assert len(provider.outcomes) == 1
 
 
 @pytest.mark.parametrize(
@@ -543,6 +916,7 @@ def test_schema_five_multiway_stacks_require_only_visible_lower_bounds(
         hero_stack=150.0,
         opponent_stack=opponent_stack,
         players_in_hand=3,
+        economic_model=case_economic_model_evidence(),
         hero_position="button",
         hero_structural_position={
             "dealt_in_player_count": 3,
@@ -620,6 +994,7 @@ def test_schema_five_accepts_exact_legacy_routes_for_structural_positions(
         board_cards=[],
         effective_stack=100.0,
         players_in_hand=2,
+        economic_model=case_economic_model_evidence(),
         hero_position=hero_position,
         hero_structural_position={
             "dealt_in_player_count": dealt_in_count,
@@ -665,6 +1040,7 @@ def test_schema_five_exact_legacy_routes_cover_every_representable_table_positio
                     board_cards=[],
                     effective_stack=100.0,
                     players_in_hand=2,
+                    economic_model=case_economic_model_evidence(),
                     hero_position=hero_position,
                     hero_structural_position={
                         "dealt_in_player_count": dealt_in_count,
@@ -727,6 +1103,7 @@ def test_schema_five_rejects_mismatched_routes_for_every_exact_legacy_position(
         board_cards=[],
         effective_stack=100.0,
         players_in_hand=2,
+        economic_model=case_economic_model_evidence(),
         hero_position=hero_position,
         hero_structural_position={
             "dealt_in_player_count": dealt_in_count,
@@ -905,6 +1282,25 @@ def test_legacy_schema_versions_do_not_enforce_postflop_opponent_routing(
     assert dataset.cases[0].state.opponent_position == "button"
 
 
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+@pytest.mark.parametrize(
+    "economic_model",
+    [None, {"kind": "unknown", "reason": "legacy corpus did not record economics"}],
+)
+def test_legacy_schema_versions_do_not_enforce_economic_model_binding(
+    schema_version: int,
+    economic_model: dict[str, object] | None,
+) -> None:
+    case = covered_preflop_case().model_copy(deep=True)
+    state_payload = case.state.model_dump()
+    state_payload["economic_model"] = economic_model
+    case.state = RecommendationBenchmarkState.model_validate(state_payload)
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+
+    assert dataset.schema_version == schema_version
+
+
 @pytest.mark.parametrize(
     ("dealt_in_count", "button_distance", "hero_position"),
     [
@@ -934,6 +1330,7 @@ def test_schema_five_rejects_structural_positions_without_an_exact_legacy_route(
         board_cards=[],
         effective_stack=100.0,
         players_in_hand=2,
+        economic_model=case_economic_model_evidence(),
         hero_position=hero_position,
         hero_structural_position={
             "dealt_in_player_count": dealt_in_count,

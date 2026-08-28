@@ -95,7 +95,7 @@ def hand(
                 "rake": None,
             },
         },
-        button_seat=1,
+        button_seat=None,
         seats=[
             {
                 "seat_number": index,

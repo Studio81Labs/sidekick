@@ -1797,6 +1797,9 @@ def classify_restore(
 ) -> RestoreDisposition:
     """Guard one persisted record slot against resurrection by an old backup."""
 
+    both_retained = current.identity is not None and candidate.identity is not None
+    if both_retained and current.identity != candidate.identity:
+        return RestoreDisposition(kind="conflict_merge_required")
     if candidate.lifecycle.deletion_generation < current.lifecycle.deletion_generation:
         return RestoreDisposition(kind="stale_deletion_generation")
     if (
@@ -1810,11 +1813,25 @@ def classify_restore(
                 else "explicit_reimport_required"
             )
         )
-    if candidate.lifecycle.deletion_generation > current.lifecycle.deletion_generation:
-        return RestoreDisposition(kind="allow")
-
     current_revisions = current.canonical_revisions
     candidate_revisions = candidate.canonical_revisions
+    if candidate.lifecycle.deletion_generation > current.lifecycle.deletion_generation:
+        if candidate.lifecycle.status == "deleted":
+            return RestoreDisposition(kind="allow")
+        if both_retained:
+            if (
+                len(candidate_revisions) < len(current_revisions)
+                or candidate_revisions[: len(current_revisions)] != current_revisions
+                or (
+                    current.lifecycle.status
+                    in {"withdrawn", "rejected", "deletion_pending"}
+                    and candidate.lifecycle.status == "active"
+                )
+                or not _restore_candidate_preserves_audit(current, candidate)
+            ):
+                return RestoreDisposition(kind="conflict_merge_required")
+        return RestoreDisposition(kind="allow")
+
     common_revision_count = min(len(current_revisions), len(candidate_revisions))
     if (
         current_revisions[:common_revision_count]
@@ -1986,7 +2003,6 @@ def _known_action_orders(
     if (
         button is None
         or len(dealt) < 2
-        or any(seat.position is None for seat in dealt)
     ):
         return None
     derived = derive_structural_positions(seats, button_seat)

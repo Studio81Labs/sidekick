@@ -19,7 +19,13 @@ from pydantic import (
 )
 
 from app.config import Settings, get_settings
-from app.domain.imported_hands import StructuralPosition, structural_position_labels
+from app.domain.imported_hands import (
+    CashEconomics,
+    StructuralPosition,
+    TournamentEconomics,
+    UnknownEconomics,
+    structural_position_labels,
+)
 from app.domain.poker import CanonicalState, PreflopPosition, Street
 from app.domain.recommendations import (
     RecommendationAction,
@@ -217,12 +223,6 @@ class RecommendationBenchmarkError(RuntimeError):
     pass
 
 
-class RecommendationBenchmarkState(CanonicalState):
-    model_config = ConfigDict(extra="forbid")
-
-    hero_structural_position: StructuralPosition | None = None
-
-
 class RecommendationReferenceSource(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -323,6 +323,100 @@ class RecommendationReferenceCoverage(BaseModel):
         return self
 
 
+RecommendationEconomicConfiguration = Annotated[
+    CashEconomics | TournamentEconomics | UnknownEconomics,
+    Field(discriminator="kind"),
+]
+
+
+def _normalized_economic_value(value: object) -> object:
+    if isinstance(value, Decimal):
+        if value == 0:
+            return "0"
+        return format(value.normalize(), "f")
+    if isinstance(value, dict):
+        return {
+            str(key): _normalized_economic_value(item) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_normalized_economic_value(item) for item in value]
+    return value
+
+
+def _normalized_economic_configuration(
+    configuration: RecommendationEconomicConfiguration,
+) -> dict[str, object]:
+    normalized = cast(
+        dict[str, object],
+        _normalized_economic_value(configuration.model_dump(mode="python")),
+    )
+    if isinstance(configuration, TournamentEconomics):
+        normalized["payouts"] = sorted(
+            normalized["payouts"],
+            key=lambda payout: (payout["place_from"], payout["place_to"]),
+        )
+        normalized["remaining_stacks"] = sorted(
+            normalized["remaining_stacks"],
+            key=lambda stack: stack["player_id"],
+        )
+        normalized["bounties"] = sorted(
+            normalized["bounties"],
+            key=lambda bounty: bounty["player_id"],
+        )
+    return normalized
+
+
+def recommendation_economic_configuration_sha256(
+    configuration: RecommendationEconomicConfiguration,
+) -> str:
+    payload = json.dumps(
+        _normalized_economic_configuration(configuration),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _incomplete_economic_configuration_fields(
+    configuration: CashEconomics | TournamentEconomics,
+) -> list[str]:
+    if isinstance(configuration, CashEconomics):
+        missing = ["currency"] if configuration.currency is None else []
+        if configuration.rake is None:
+            return [*missing, "rake"]
+        return [
+            *missing,
+            *(
+                f"rake.{field_name}"
+                for field_name in ("percentage", "cap", "fixed_drop")
+                if getattr(configuration.rake, field_name) is None
+            ),
+        ]
+
+    missing = [
+        field_name
+        for field_name in (
+            "tournament_type",
+            "stage",
+            "currency",
+            "paid_places",
+            "players_remaining",
+            "bounty_format",
+        )
+        if getattr(configuration, field_name) is None
+    ]
+    if not configuration.payouts:
+        missing.append("payouts")
+    if not configuration.remaining_stacks:
+        missing.append("remaining_stacks")
+    if not configuration.bounties:
+        missing.append("bounties")
+    if not configuration.icm_inputs_complete:
+        missing.append("icm_inputs_complete")
+    return missing
+
+
 class RecommendationEconomicModel(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -330,6 +424,60 @@ class RecommendationEconomicModel(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     revision: EvidenceRevision
     configuration_sha256: Sha256Digest
+    configuration: RecommendationEconomicConfiguration
+
+    @model_validator(mode="after")
+    def validate_configuration(self) -> Self:
+        if self.configuration.kind != self.kind:
+            raise ValueError(
+                "Economic model kind must match its route-critical configuration"
+            )
+        if isinstance(self.configuration, UnknownEconomics):
+            raise ValueError("Economic model configuration cannot be unknown")
+        missing = _incomplete_economic_configuration_fields(self.configuration)
+        if missing:
+            raise ValueError(
+                "Economic model configuration has unknown route-critical fields:"
+                f" {', '.join(missing)}"
+            )
+        if (
+            isinstance(self.configuration, TournamentEconomics)
+            and self.configuration.bounty_format == "none"
+            and any(bounty.value != 0 for bounty in self.configuration.bounties)
+        ):
+            raise ValueError(
+                "A no-bounty economic configuration requires explicit zero bounty"
+                " values for every remaining player"
+            )
+        expected_sha256 = recommendation_economic_configuration_sha256(
+            self.configuration
+        )
+        if self.configuration_sha256 != expected_sha256:
+            raise ValueError(
+                "Economic model configuration_sha256 must match its normalized"
+                " route-critical configuration"
+            )
+        return self
+
+
+class RecommendationUnknownEconomicModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    kind: Literal["unknown"] = "unknown"
+    reason: str | None = Field(default=None, min_length=1, max_length=1_000)
+
+
+RecommendationCaseEconomicModel = Annotated[
+    RecommendationEconomicModel | RecommendationUnknownEconomicModel,
+    Field(discriminator="kind"),
+]
+
+
+class RecommendationBenchmarkState(CanonicalState):
+    model_config = ConfigDict(extra="forbid")
+
+    hero_structural_position: StructuralPosition | None = None
+    economic_model: RecommendationCaseEconomicModel | None = None
 
 
 class RecommendationUtilityModel(BaseModel):
@@ -569,6 +717,7 @@ class RecommendationBenchmarkDataset(BaseModel):
                 _validate_case_within_grading_coverage(
                     case,
                     self.grading_reference.coverage,
+                    self.grading_reference.economic_model,
                 )
         case_ids = [case.id for case in self.cases]
         if len(case_ids) != len(set(case_ids)):
@@ -614,8 +763,46 @@ class RecommendationBenchmarkDataset(BaseModel):
 def _validate_case_within_grading_coverage(
     case: RecommendationBenchmarkCase,
     coverage: RecommendationReferenceCoverage,
+    economic_model: RecommendationEconomicModel,
 ) -> None:
     state = case.state
+    case_economic_model = state.economic_model
+    if case_economic_model is None:
+        raise ValueError(
+            f"Case {case.id} requires an economic_model for grading coverage"
+        )
+    if isinstance(case_economic_model, RecommendationUnknownEconomicModel):
+        raise ValueError(
+            f"Case {case.id} economic_model is unknown and cannot match the declared"
+            " grading-reference economic model"
+        )
+    for model_label, model in (
+        ("case", case_economic_model),
+        ("grading-reference", economic_model),
+    ):
+        actual_sha256 = recommendation_economic_configuration_sha256(
+            model.configuration
+        )
+        if model.configuration_sha256 != actual_sha256:
+            raise ValueError(
+                f"Case {case.id} {model_label} economic_model configuration was"
+                " modified without updating its normalized configuration_sha256"
+            )
+    for field_name in ("kind", "name", "revision", "configuration_sha256"):
+        case_value = getattr(case_economic_model, field_name)
+        reference_value = getattr(economic_model, field_name)
+        if case_value != reference_value:
+            raise ValueError(
+                f"Case {case.id} economic_model.{field_name} {case_value!r} does not"
+                f" match declared grading-reference value {reference_value!r}"
+            )
+    if _normalized_economic_configuration(
+        case_economic_model.configuration
+    ) != _normalized_economic_configuration(economic_model.configuration):
+        raise ValueError(
+            f"Case {case.id} economic_model.configuration does not match the"
+            " declared grading-reference route-critical configuration"
+        )
     if state.street is None or state.street not in coverage.streets:
         raise ValueError(
             f"Case {case.id} street {state.street!r} is outside declared"

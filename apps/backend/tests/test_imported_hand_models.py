@@ -112,7 +112,7 @@ def hand_state(*, hero_player_id: str | None = None) -> ImportedHandState:
             },
             "economics": {"kind": "unknown", "reason": "not supplied"},
         },
-        button_seat=1,
+        button_seat=None,
         seats=seats(),
         hero_player_id=hero_player_id,
         hero_cards=[],
@@ -1646,6 +1646,7 @@ def three_player_wager_payload(
 
 def positioned_wager_payload(player_count: int = 3) -> dict[str, object]:
     payload = three_player_wager_payload()
+    payload["button_seat"] = 1
     if player_count == 4:
         payload["game"]["table_size"] = 4
         payload["seats"].append(
@@ -2675,6 +2676,7 @@ def test_heads_up_known_ring_uses_street_specific_first_actor(
     expected: str,
 ) -> None:
     payload = hand_state().model_dump()
+    payload["button_seat"] = 1
     validated_seats = [
         ImportedSeat.model_validate(seat) for seat in payload["seats"]
     ]
@@ -2710,7 +2712,7 @@ def test_heads_up_known_ring_uses_street_specific_first_actor(
         ImportedHandState.model_validate(payload)
 
 
-def test_missing_position_keeps_action_order_reviewable() -> None:
+def test_missing_position_still_uses_the_derivable_action_order() -> None:
     payload = positioned_wager_payload()
     payload["seats"][0]["position"] = None
     actions = three_way_blinds_and_calls()
@@ -2730,9 +2732,51 @@ def test_missing_position_keeps_action_order_reviewable() -> None:
     )
     payload["streets"] = [{"street": "preflop", "actions": actions}]
 
+    with pytest.raises(ValidationError, match="expected hero, got villain"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_all_missing_positions_still_use_a_known_heads_up_button_ring() -> None:
+    payload = hand_state().model_dump()
+    payload["button_seat"] = 1
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [wager_action(0, "villain", "fold", total=Decimal(0))],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="expected hero, got villain"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_all_missing_positions_accept_a_valid_known_multiway_ring() -> None:
+    payload = positioned_wager_payload()
+    for seat in payload["seats"]:
+        seat["position"] = None
+    payload["streets"] = [
+        {"street": "preflop", "actions": three_way_blinds_and_calls()}
+    ]
+
     state = ImportedHandState.model_validate(payload)
 
-    assert state.streets[0].actions[2].actor_id == "villain"
+    assert [
+        action.actor_id for action in state.streets[0].actions[2:]
+    ] == ["hero", "villain", "third-player"]
+
+
+def test_missing_button_keeps_action_order_reviewable_without_guessing() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [wager_action(0, "villain", "check", total=Decimal(0))],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.button_seat is None
 
 
 @pytest.mark.parametrize(
@@ -5289,7 +5333,7 @@ def test_approved_copy_uses_strict_json_scalar_types(
         corrections=[
             UserCorrection(
                 field_pointer="/button_seat",
-                detected_value=1,
+                detected_value=None,
                 approved_value=wrong_approved_value,
                 corrected_at=NOW,
             )
@@ -5597,6 +5641,134 @@ def record_with_revisions(
             ),
             "changed_at": changed_at,
         },
+    )
+
+
+def test_higher_generation_restore_rejects_a_different_retained_identity() -> None:
+    alternate_identity = StableHandIdentity(
+        site="pokerstars",
+        source_hand_id="different-hand",
+    )
+    alternate_payload = hand_state().model_dump()
+    alternate_payload["identity"] = alternate_identity.model_dump()
+    alternate_state = ImportedHandState.model_validate(alternate_payload)
+    alternate_detection = detected(alternate_state)
+    candidate = ImportedHandRecord(
+        identity=alternate_identity,
+        raw_sources=[raw_source(identity=alternate_identity)],
+        detections=[alternate_detection],
+        canonical_revisions=[
+            CanonicalHandRevision(
+                revision=1,
+                detection_id=alternate_detection.detection_id,
+                approved_at=NOW,
+                state=alternate_state,
+            )
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "deletion_generation": 1,
+            "changed_at": NOW + timedelta(minutes=1),
+        },
+    )
+
+    disposition = classify_restore(active_record(), candidate)
+
+    assert disposition.kind == "conflict_merge_required"
+
+
+def test_higher_generation_restore_requires_the_current_revision_prefix() -> None:
+    current = record_with_revisions(2)
+    candidate = record_with_revisions(1).model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(
+                status="active",
+                active_canonical_revision=1,
+                deletion_generation=1,
+                changed_at=NOW + timedelta(minutes=1),
+            )
+        }
+    )
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "conflict_merge_required"
+
+
+def test_higher_generation_restore_allows_a_same_identity_audit_extension() -> None:
+    current = record_with_revisions(1)
+    candidate = record_with_revisions(2).model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(
+                status="active",
+                active_canonical_revision=2,
+                deletion_generation=1,
+                changed_at=NOW + timedelta(minutes=1),
+            )
+        }
+    )
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "allow"
+
+
+def test_higher_generation_restore_allows_a_valid_deletion_tombstone() -> None:
+    tombstone = ImportedHandRecord(
+        identity=None,
+        lifecycle={
+            "status": "deleted",
+            "deletion_generation": 1,
+            "changed_at": NOW + timedelta(minutes=1),
+        },
+        deletion_receipt=DeletionReceipt(
+            receipt_id="deletion-1",
+            generation=1,
+            deleted_at=NOW + timedelta(minutes=1),
+            tombstone_sha256="b" * 64,
+        ),
+    )
+
+    disposition = classify_restore(active_record(), tombstone)
+
+    assert disposition.kind == "allow"
+
+
+def test_higher_generation_retained_restore_still_requires_explicit_reimport() -> None:
+    deleted = ImportedHandRecord(
+        identity=None,
+        lifecycle={
+            "status": "deleted",
+            "deletion_generation": 2,
+            "changed_at": NOW,
+        },
+        deletion_receipt=DeletionReceipt(
+            receipt_id="deletion-2",
+            generation=2,
+            deleted_at=NOW,
+            tombstone_sha256="b" * 64,
+        ),
+    )
+    candidate = active_record().model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(
+                status="active",
+                active_canonical_revision=1,
+                deletion_generation=3,
+                changed_at=NOW + timedelta(minutes=1),
+            )
+        }
+    )
+
+    assert classify_restore(deleted, candidate).kind == "explicit_reimport_required"
+    assert (
+        classify_restore(
+            deleted,
+            candidate,
+            user_authorized_reimport=True,
+        ).kind
+        == "allow"
     )
 
 
