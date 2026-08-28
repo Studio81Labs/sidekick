@@ -497,7 +497,15 @@ def test_false_all_in_marker_below_a_known_stack_does_not_split_the_pot() -> Non
         stated_net="25",
         gross_pots=["15", "10"],
         awards=[("p1", "15", 0), ("p2", "10", 1)],
-        starting_stacks={"p1": "100", "p2": "10", "p3": "10"},
+        starting_stacks={"p1": "5", "p2": "10", "p3": "10"},
+    )
+    state = state.model_copy(
+        update={
+            "seats": [
+                state.seats[0].model_copy(update={"starting_stack": Decimal("100")}),
+                *state.seats[1:],
+            ]
+        }
     )
 
     result = reconcile_pot(state)

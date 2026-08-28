@@ -938,6 +938,125 @@ def test_canonical_evidence_must_reference_a_retained_raw_source() -> None:
         )
 
 
+def record_payload_with_canonical_evidence(
+    locator: dict[str, object],
+    *,
+    raw_text: str,
+) -> dict[str, object]:
+    source_evidence = {"raw_source_id": "file-1", **locator}
+    state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "fold",
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [source_evidence],
+                    },
+                    "evidence": [source_evidence],
+                }
+            ],
+        }
+    ]
+    state = ImportedHandState.model_validate(state_payload)
+    source_detection = DetectedImportedHand(
+        detection_id="detection-1",
+        raw_source_id="file-1",
+        detector_id="pokerstars",
+        detector_version="1.0.0",
+        detected_at=NOW,
+        state=state,
+        content_sha256=imported_hand_state_sha256(state),
+    )
+    return {
+        "identity": IDENTITY,
+        "raw_sources": [raw_source(raw_text=raw_text)],
+        "detections": [source_detection],
+        "canonical_revisions": [
+            {
+                "revision": 1,
+                "detection_id": "detection-1",
+                "approved_at": NOW,
+                "state": state,
+            }
+        ],
+        "lifecycle": {
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "locator",
+    [
+        {"line_start": 3},
+        {"line_start": 1, "line_end": 3},
+    ],
+)
+def test_canonical_evidence_line_range_must_fit_the_retained_source(
+    locator: dict[str, object],
+) -> None:
+    payload = record_payload_with_canonical_evidence(
+        locator,
+        raw_text="first line\nsecond line\n",
+    )
+
+    with pytest.raises(ValidationError, match="line range exceeds.*line count 2"):
+        ImportedHandRecord.model_validate(payload)
+
+
+def test_canonical_evidence_accepts_the_final_retained_source_line() -> None:
+    payload = record_payload_with_canonical_evidence(
+        {"line_start": 2, "line_end": 2, "excerpt": "second line"},
+        raw_text="first line\r\nsecond line\r\n",
+    )
+
+    record = ImportedHandRecord.model_validate(payload)
+
+    assert record.canonical_revisions[0].state.streets[0].actions[0].evidence[
+        0
+    ].line_end == 2
+
+
+@pytest.mark.parametrize(
+    "locator",
+    [
+        {"excerpt": "missing action"},
+        {"line_start": 2, "excerpt": "first line"},
+    ],
+)
+def test_canonical_evidence_excerpt_must_occur_at_its_source_location(
+    locator: dict[str, object],
+) -> None:
+    payload = record_payload_with_canonical_evidence(
+        locator,
+        raw_text="first line\nsecond line\n",
+    )
+
+    with pytest.raises(ValidationError, match="excerpt does not occur at its retained"):
+        ImportedHandRecord.model_validate(payload)
+
+
+def test_canonical_evidence_preserves_opaque_marker_reviewability() -> None:
+    payload = record_payload_with_canonical_evidence(
+        {"marker": "adapter-action-1"},
+        raw_text="source text without that adapter label\n",
+    )
+
+    record = ImportedHandRecord.model_validate(payload)
+
+    assert record.canonical_revisions[0].state.streets[0].actions[0].evidence[
+        0
+    ].marker == "adapter-action-1"
+
+
 def test_conflict_detections_must_belong_to_the_conflict_sources() -> None:
     def source_detection(raw_source_id: str) -> DetectedImportedHand:
         payload = hand_state().model_dump()
@@ -1278,6 +1397,8 @@ def test_call_must_match_a_known_wager_or_be_an_all_in_undercall(
     total: Decimal, all_in: bool
 ) -> None:
     payload = hand_state().model_dump()
+    if all_in:
+        payload["seats"][0]["starting_stack"] = total
     payload["streets"] = [
         {
             "street": "preflop",
@@ -1320,6 +1441,8 @@ def test_call_must_match_a_known_wager_or_be_an_all_in_undercall(
 @pytest.mark.parametrize("all_in", [False, True])
 def test_call_requires_a_positive_outstanding_wager(all_in: bool) -> None:
     payload = hand_state().model_dump()
+    if all_in:
+        payload["seats"][0]["starting_stack"] = Decimal("1")
     payload["streets"] = [
         {"street": "preflop", "actions": []},
         {
@@ -1920,6 +2043,151 @@ def test_over_stack_action_after_unknown_prior_cannot_reach_extraction(
     with pytest.raises(
         ValidationError,
         match=rf"hero {message} exceeds known starting stack 2",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unresolved_configured_positive_post_blocks_a_stack_equal_addition(
+) -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["seats"][0]["starting_stack"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(0, "post_ante"),
+                wager_action(1, "hero", "bet", amount=Decimal("2")),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "lower bound 2 equals known starting stack 2 while a configured"
+            " positive forced contribution remains"
+        ),
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("configured_ante", [Decimal("0"), None])
+def test_zero_or_unknown_forced_post_configuration_does_not_prove_positivity(
+    configured_ante: Decimal | None,
+) -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["game"]["blinds"]["ante"] = configured_ante
+    payload["seats"][0]["starting_stack"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(0, "post_ante"),
+                wager_action(1, "hero", "bet", amount=Decimal("2")),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.game.blinds.ante == configured_ante
+
+
+def test_exact_total_may_resolve_a_configured_positive_post_with_slack() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["seats"][0]["starting_stack"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(0, "post_ante"),
+                wager_action(
+                    1,
+                    "hero",
+                    "bet",
+                    amount=Decimal("1.9"),
+                    total=Decimal("2"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("2")
+
+
+def test_exact_total_without_slack_cannot_erase_unresolved_positive_post() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["seats"][0]["starting_stack"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(0, "post_ante"),
+                wager_action(
+                    1,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="total_committed 2 cannot account for.*above provable commitment 2",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_exact_return_may_clear_an_unresolved_live_forced_post() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["game"]["blinds"]["straddle"] = Decimal("0.1")
+    payload["seats"][0]["starting_stack"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(0, "post_straddle"),
+                forced_post(1, "uncalled_return", total=Decimal("0")),
+            ],
+        },
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(0, "hero", "bet", amount=Decimal("2")),
+            ],
+        },
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[-1].actions[0].amount == Decimal("2")
+
+
+def test_exact_zero_return_cannot_erase_an_unresolved_positive_ante() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["seats"][0]["starting_stack"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(0, "post_ante"),
+                forced_post(1, "uncalled_return", total=Decimal("0")),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="return total_committed 0 cannot account for a configured positive ante",
     ):
         ImportedHandState.model_validate(payload)
 
@@ -2708,6 +2976,168 @@ def test_exact_known_stack_commitment_still_infers_all_in() -> None:
         match="cannot act after folding or going all-in",
     ):
         ImportedHandState.model_validate(payload)
+
+
+def test_known_stack_all_in_marker_must_exhaust_cumulative_commitment() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                    all_in=True,
+                )
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "hero all-in marker has cumulative commitment 2, which does not"
+            " exhaust known starting stack 100"
+        ),
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unresolved_known_stack_all_in_marker_does_not_waive_undercall_rule(
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [forced_post(0, "post_ante")],
+        },
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                    all_in=True,
+                ),
+            ],
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="call must match"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unresolved_known_stack_all_in_marker_does_not_waive_minimum_bet(
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [forced_post(0, "post_ante")],
+        },
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                    all_in=True,
+                )
+            ],
+        },
+    ]
+
+    with pytest.raises(ValidationError, match="non-all-in bet must be at least"):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unresolved_known_stack_all_in_marker_does_not_make_actor_terminal(
+) -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [forced_post(0, "post_ante")],
+        },
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                    all_in=True,
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        },
+        {
+            "street": "turn",
+            "actions": [wager_action(0, "hero", "check", total=Decimal("0"))],
+        },
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[-1].actions[0].actor_id == "hero"
+
+
+@pytest.mark.parametrize("starting_stack", [Decimal("1"), None])
+def test_exact_or_unknown_stack_all_in_marker_may_make_an_undercall(
+    starting_stack: Decimal | None,
+) -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][0]["starting_stack"] = starting_stack
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                    all_in=True,
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].all_in is True
 
 
 def test_uncalled_return_may_lower_an_exact_inferred_stack_commitment() -> None:
@@ -4246,6 +4676,8 @@ def test_minimum_full_raise_and_short_all_in_raise_are_accepted(
     total: Decimal, all_in: bool
 ) -> None:
     payload = hand_state().model_dump()
+    if all_in:
+        payload["seats"][0]["starting_stack"] = total
     payload["streets"] = [
         {
             "street": "preflop",
@@ -4994,6 +5426,8 @@ def test_pot_limit_opening_bet_cannot_exceed_the_pot(
         Decimal("2.1"),
         all_in=all_in,
     )
+    if all_in:
+        payload["seats"][1]["starting_stack"] = Decimal("3.1")
 
     with pytest.raises(ValidationError, match="pot-limit wager adds"):
         ImportedHandState.model_validate(payload)
@@ -5785,7 +6219,7 @@ def test_known_stack_amount_only_lower_bound_does_not_prove_ante_exhaustion(
 ) -> None:
     payload = positioned_wager_payload()
     payload["game"]["blinds"]["ante"] = Decimal("0.5")
-    payload["seats"][2]["starting_stack"] = Decimal("0.5")
+    payload["seats"][2]["starting_stack"] = Decimal("1")
     actions = [
         wager_action(0, "third-player", "post_ante"),
         wager_action(
@@ -5873,9 +6307,16 @@ def test_exhausted_straddle_does_not_substitute_for_a_structural_blind(
         ImportedHandState.model_validate(payload)
 
 
-@pytest.mark.parametrize("exhaustion_evidence", ["known_below_stack", "unresolved"])
+@pytest.mark.parametrize(
+    ("exhaustion_evidence", "message"),
+    [
+        ("known_below_stack", "all-in marker.*does not exhaust"),
+        ("unresolved", "missing post_big_blind"),
+    ],
+)
 def test_nonaffirmative_forced_all_in_does_not_satisfy_blind_presence(
     exhaustion_evidence: str,
+    message: str,
 ) -> None:
     payload = positioned_wager_payload()
     payload["game"]["blinds"]["ante"] = Decimal("0.5")
@@ -5914,7 +6355,7 @@ def test_nonaffirmative_forced_all_in_does_not_satisfy_blind_presence(
         }
     ]
 
-    with pytest.raises(ValidationError, match="missing post_big_blind"):
+    with pytest.raises(ValidationError, match=message):
         ImportedHandState.model_validate(payload)
 
 
@@ -6133,6 +6574,82 @@ def test_total_only_forced_post_uses_the_increment_after_an_ante() -> None:
 
     with pytest.raises(ValidationError, match="post_small_blind amount 100.0"):
         ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize("blind_total", [Decimal("0"), Decimal("0.4")])
+@pytest.mark.parametrize("all_in", [False, True])
+def test_unresolved_prior_cannot_hide_an_undersized_configured_blind(
+    blind_total: Decimal,
+    all_in: bool,
+) -> None:
+    payload = positioned_wager_payload()
+    payload["seats"][1]["starting_stack"] = Decimal("100")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "villain", "post_ante"),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_small_blind",
+                    total=blind_total,
+                    all_in=all_in,
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="post_small_blind post-action total.*short-stack all-in",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("starting_stack", "all_in"),
+    [(Decimal("0.4"), False), (None, True)],
+)
+def test_unresolved_prior_accepts_affirmative_short_configured_blind_exhaustion(
+    starting_stack: Decimal | None,
+    all_in: bool,
+) -> None:
+    payload = positioned_wager_payload()
+    payload["seats"][1]["starting_stack"] = starting_stack
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "villain", "post_ante"),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_small_blind",
+                    total=Decimal("0.4"),
+                    all_in=all_in,
+                ),
+                wager_action(
+                    2,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[1].total_committed == Decimal("0.4")
 
 
 def test_ante_plus_blind_cumulative_total_accepts_the_configured_increment() -> None:
@@ -6390,6 +6907,8 @@ def test_actions_after_a_player_becomes_terminal_are_rejected(
     terminal_action: str, same_street: bool
 ) -> None:
     payload = hand_state().model_dump()
+    if terminal_action == "all_in":
+        payload["seats"][0]["starting_stack"] = Decimal("10")
     first_action = {
         "sequence": 0,
         "actor_id": "hero",
@@ -6456,6 +6975,7 @@ def test_actions_after_a_player_becomes_terminal_are_rejected(
 
 def test_same_street_uncalled_return_is_allowed_after_all_in() -> None:
     payload = hand_state().model_dump()
+    payload["seats"][0]["starting_stack"] = Decimal("10")
     payload["streets"] = [
         {
             "street": "preflop",
