@@ -35,12 +35,13 @@ from app.domain.recommendations import (
 )
 from app.providers.base import (
     ProviderConfigurationError,
+    ProviderGradingContextBinding,
     RecommendationProvider,
     missing_required_fields,
 )
 from app.providers.registry import build_provider
 from app.solvers.postflop_ranges import RangeSource
-from app.solvers.preflop_context import normalize_position
+from app.solvers.preflop_context import normalize_position, opening_raise_position
 
 
 RECOMMENDATION_BENCHMARK_SCHEMA = "poker-hero-recommendation-benchmark"
@@ -555,6 +556,50 @@ class RecommendationBenchmarkRequest(RecommendationRequest):
     state: RecommendationBenchmarkState
 
 
+def recommendation_grading_context_sha256(
+    state: RecommendationBenchmarkState,
+) -> str:
+    """Fingerprint the route-critical context a provider must actually bind."""
+
+    economic_model = state.economic_model
+    if not isinstance(economic_model, RecommendationEconomicModel):
+        raise ValueError("A grading context requires an exact economic model")
+    utility_model = state.utility_model
+    if utility_model is None:
+        raise ValueError("A grading context requires an exact utility model")
+    structural_position = state.hero_structural_position
+    if structural_position is None:
+        raise ValueError("A grading context requires an exact structural position")
+    normalized = {
+        "schema": "poker-hero-recommendation-grading-context/v1",
+        "hero_structural_position": structural_position.model_dump(mode="json"),
+        "economic_model": {
+            "kind": economic_model.kind,
+            "name": economic_model.name,
+            "revision": economic_model.revision,
+            "configuration_sha256": economic_model.configuration_sha256,
+            "configuration": _normalized_economic_configuration(
+                economic_model.configuration
+            ),
+        },
+        "utility_model": {
+            "name": utility_model.name,
+            "revision": utility_model.revision,
+            "configuration_sha256": utility_model.configuration_sha256,
+            "configuration": _normalized_utility_configuration(
+                utility_model.configuration
+            ),
+        },
+    }
+    payload = json.dumps(
+        normalized,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
 class RecommendationRightsEvidence(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -1010,6 +1055,49 @@ def _validate_case_within_grading_coverage(
             f" {structural_position.dealt_in_player_count}-handed requires"
             f" {expected_legacy_position!r}"
         )
+    exact_table_routes = {
+        legacy_position
+        for position in table_configuration.structural_positions
+        if (
+            legacy_position := LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL.get(
+                position.display_label
+            )
+        )
+        is not None
+    }
+    expected_table_routes = ", ".join(
+        repr(position) for position in sorted(exact_table_routes)
+    )
+    for index, action in enumerate(state.preflop_action_history):
+        if action.actor not in exact_table_routes:
+            raise ValueError(
+                f"Case {case.id} preflop_action_history[{index}].actor"
+                f" {action.actor!r} is outside the declared"
+                f" {table_configuration.dealt_in_count}-handed exact structural"
+                f" routes: {expected_table_routes}"
+            )
+    routed_opener_position = None
+    opener_source: str | None = None
+    opener_value: str | None = None
+    if state.preflop_opener_position is not None:
+        routed_opener_position = opening_raise_position(
+            state.action_context,
+            state.preflop_opener_position,
+        )
+        opener_source = "preflop_opener_position"
+        opener_value = state.preflop_opener_position
+    elif not state.preflop_action_history:
+        routed_opener_position = opening_raise_position(state.action_context)
+        if routed_opener_position is not None:
+            opener_source = "action_context preflop opener"
+            opener_value = routed_opener_position
+    if opener_source is not None and routed_opener_position not in exact_table_routes:
+        raise ValueError(
+            f"Case {case.id} {opener_source} {opener_value!r} routes to"
+            f" {routed_opener_position!r}, outside the declared"
+            f" {table_configuration.dealt_in_count}-handed exact structural"
+            f" routes: {expected_table_routes}"
+        )
     if (
         state.players_in_hand is None
         or state.players_in_hand < 2
@@ -1063,6 +1151,8 @@ class RecommendationBenchmarkCaseResult(BaseModel):
     reference_ev_loss_bb: float | None = None
     engine: str | None = None
     fallback_reason: str | None = None
+    grading_context_sha256: Sha256Digest | None = None
+    grading_context_binding_revision: EvidenceRevision | None = None
     expected_range_conditioning: RangeConditioningStatus | None = None
     range_conditioning_status: RangeConditioningStatus | None = None
     range_conditioning_match: bool | None = None
@@ -1631,6 +1721,7 @@ def _run_case(
     dataset: RecommendationBenchmarkDataset,
     provider: RecommendationProvider,
 ) -> RecommendationBenchmarkCaseResult:
+    grading_context_binding: ProviderGradingContextBinding | None = None
     try:
         if dataset.grading_reference is not None:
             _validate_case_within_grading_coverage(
@@ -1638,6 +1729,10 @@ def _run_case(
                 dataset.grading_reference.coverage,
                 dataset.grading_reference.economic_model,
                 dataset.grading_reference.utility_model,
+            )
+            grading_context_binding = _verified_provider_grading_context_binding(
+                provider,
+                case.state,
             )
         missing = missing_required_fields(
             case.state,
@@ -1739,6 +1834,16 @@ def _run_case(
         ),
         engine=engine,
         fallback_reason=fallback_reason,
+        grading_context_sha256=(
+            grading_context_binding.context_sha256
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_binding_revision=(
+            grading_context_binding.binding_revision
+            if grading_context_binding is not None
+            else None
+        ),
         expected_range_conditioning=case.expected_range_conditioning,
         range_conditioning_status=range_conditioning_status,
         range_conditioning_match=range_conditioning_match,
@@ -1746,6 +1851,65 @@ def _run_case(
         range_source=range_source,
         range_source_match=range_source_match,
     )
+
+
+def _verified_provider_grading_context_binding(
+    provider: RecommendationProvider,
+    state: RecommendationBenchmarkState,
+) -> ProviderGradingContextBinding:
+    binding_for = getattr(provider, "grading_context_binding_for", None)
+    if not callable(binding_for):
+        raise ValueError(
+            f"Provider {provider.name!r} does not declare a configured schema-v5"
+            " grading-context binding"
+        )
+    binding = binding_for(state)
+    if binding is None:
+        raise ValueError(
+            f"Provider {provider.name!r} does not bind its engine to schema-v5"
+            " structural, economic, and utility context"
+        )
+    if not isinstance(binding, ProviderGradingContextBinding):
+        raise ValueError(
+            f"Provider {provider.name!r} returned an invalid grading-context binding"
+        )
+    if (
+        not isinstance(binding.context_sha256, str)
+        or len(binding.context_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in binding.context_sha256
+        )
+    ):
+        raise ValueError(
+            f"Provider {provider.name!r} returned an invalid grading-context SHA-256"
+        )
+    revision = binding.binding_revision
+    ascii_alphanumeric = (
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+    )
+    if (
+        not isinstance(revision, str)
+        or not revision
+        or len(revision) > 128
+        or revision[0] not in ascii_alphanumeric
+        or any(
+            character not in ascii_alphanumeric + "._:-"
+            for character in revision
+        )
+    ):
+        raise ValueError(
+            f"Provider {provider.name!r} returned an invalid grading-context"
+            " binding revision"
+        )
+    expected_sha256 = recommendation_grading_context_sha256(state)
+    if binding.context_sha256 != expected_sha256:
+        raise ValueError(
+            f"Provider {provider.name!r} grading-context binding"
+            f" {binding.context_sha256} does not match case context"
+            f" {expected_sha256}"
+        )
+    return binding
 
 
 def _policy_distance(

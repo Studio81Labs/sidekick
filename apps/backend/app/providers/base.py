@@ -1,3 +1,4 @@
+from dataclasses import dataclass
 from typing import Protocol
 
 from app.domain.poker import CanonicalState
@@ -16,6 +17,18 @@ class ProviderInputError(ProviderError):
     pass
 
 
+@dataclass(frozen=True)
+class ProviderGradingContextBinding:
+    """Provider-configured route context that the selected engine consumes.
+
+    Providers must derive this declaration from immutable adapter/engine
+    configuration. Echoing the request's expected digest is not a binding.
+    """
+
+    context_sha256: str
+    binding_revision: str
+
+
 class RecommendationProvider(Protocol):
     name: str
     required_fields: list[str]
@@ -24,6 +37,16 @@ class RecommendationProvider(Protocol):
         raise NotImplementedError
 
     def recommend(self, request: RecommendationRequest) -> RecommendationResult:
+        raise NotImplementedError
+
+
+class GradingContextBoundRecommendationProvider(Protocol):
+    def grading_context_binding_for(
+        self,
+        state: CanonicalState,
+    ) -> ProviderGradingContextBinding | None:
+        """Return the engine's configured schema-v5 context, if supported."""
+
         raise NotImplementedError
 
 

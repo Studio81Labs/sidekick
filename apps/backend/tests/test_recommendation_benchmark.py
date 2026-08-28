@@ -15,7 +15,11 @@ from app.domain.imported_hands import (
 )
 from app.domain.poker import Card, PreflopAction
 from app.domain.recommendations import RecommendationRequest, RecommendationResult
-from app.providers.base import ProviderConfigurationError
+from app.providers.base import (
+    ProviderConfigurationError,
+    ProviderGradingContextBinding,
+)
+from app.providers.local_solver import LocalSolverProvider
 from app.providers.registry import build_provider
 from app.recommendation_benchmark import (
     MAX_RECOMMENDATION_BENCHMARK_BYTES,
@@ -35,6 +39,7 @@ from app.recommendation_benchmark import (
     main,
     recommendation_dataset_fingerprint,
     recommendation_economic_configuration_sha256,
+    recommendation_grading_context_sha256,
     recommendation_utility_configuration_sha256,
     run_recommendation_benchmark,
     validate_comparable_recommendation_baseline,
@@ -54,6 +59,15 @@ class SequenceProvider:
         state: RecommendationBenchmarkState,
     ) -> list[str]:
         return self.required_fields
+
+    def grading_context_binding_for(
+        self,
+        state: RecommendationBenchmarkState,
+    ) -> ProviderGradingContextBinding:
+        return ProviderGradingContextBinding(
+            context_sha256=recommendation_grading_context_sha256(state),
+            binding_revision="test-sequence-provider:v1",
+        )
 
     def recommend(self, request: RecommendationRequest) -> RecommendationResult:
         self.requests.append(request)
@@ -379,6 +393,49 @@ def postflop_grading_reference_for_table_counts(
     return evidence
 
 
+def covered_big_blind_case_for_table(
+    dealt_in_count: int,
+    *,
+    preflop_action_history: list[PreflopAction] | None = None,
+    preflop_opener_position: str | None = None,
+    action_context: str | None = None,
+    street: Literal["preflop", "flop", "turn", "river"] = "preflop",
+) -> RecommendationBenchmarkCase:
+    table = reference_table_configuration(dealt_in_count)
+    big_blind_distance = 1 if dealt_in_count == 2 else 2
+    board_card_count = {
+        "preflop": 0,
+        "flop": 3,
+        "turn": 4,
+        "river": 5,
+    }[street]
+    board_cards = [
+        Card.from_code("Qs"),
+        Card.from_code("Jc"),
+        Card.from_code("2h"),
+        Card.from_code("7d"),
+        Card.from_code("9s"),
+    ][:board_card_count]
+    return benchmark_case(
+        f"covered-{dealt_in_count}-handed-big-blind-{street}",
+        [reference_line("check")],
+        street=street,
+        board_cards=board_cards,
+        effective_stack=100.0,
+        players_in_hand=dealt_in_count if street == "preflop" else 2,
+        hero_position="big_blind",
+        opponent_position="button" if street != "preflop" else None,
+        economic_model=case_economic_model_evidence(),
+        hero_structural_position={
+            "dealt_in_player_count": dealt_in_count,
+            **table["structural_positions"][big_blind_distance],
+        },
+        preflop_action_history=preflop_action_history or [],
+        preflop_opener_position=preflop_opener_position,
+        action_context=action_context,
+    )
+
+
 def tournament_benchmark_dataset(
     configuration: TournamentEconomics,
 ) -> RecommendationBenchmarkDataset:
@@ -615,6 +672,167 @@ def test_schema_five_routes_exact_utility_context_to_the_provider() -> None:
     )
     assert request_state["economic_model"] is not None
     assert request_state["hero_structural_position"] is not None
+    assert report.cases[0].grading_context_sha256 == (
+        recommendation_grading_context_sha256(dataset.cases[0].state)
+    )
+    assert (
+        report.cases[0].grading_context_binding_revision
+        == "test-sequence-provider:v1"
+    )
+
+
+def test_grading_context_digest_tracks_every_route_critical_model() -> None:
+    state = covered_preflop_case().state
+    baseline = recommendation_grading_context_sha256(state)
+    changed_structural = state.model_copy(deep=True)
+    assert changed_structural.hero_structural_position is not None
+    changed_structural.hero_structural_position = (
+        changed_structural.hero_structural_position.__class__.model_validate(
+            {
+                "dealt_in_player_count": 2,
+                "action_index": 1,
+                "button_distance": 1,
+                "display_label": "BB",
+            }
+        )
+    )
+    changed_economics = state.model_copy(deep=True)
+    assert changed_economics.economic_model is not None
+    assert changed_economics.economic_model.kind != "unknown"
+    changed_economics.economic_model.revision = "economics-2"
+    changed_utility = state.model_copy(deep=True)
+    assert changed_utility.utility_model is not None
+    changed_utility.utility_model.revision = "utility-2"
+
+    assert {
+        recommendation_grading_context_sha256(changed_structural),
+        recommendation_grading_context_sha256(changed_economics),
+        recommendation_grading_context_sha256(changed_utility),
+    }.isdisjoint({baseline})
+
+
+def test_schema_five_rejects_a_provider_without_a_grading_context_binding() -> None:
+    class UnboundProvider:
+        name = "unbound-provider"
+        required_fields = ["hero_cards", "street"]
+
+        def __init__(self) -> None:
+            self.called = False
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            return self.required_fields
+
+        def recommend(
+            self,
+            request: RecommendationRequest,
+        ) -> RecommendationResult:
+            self.called = True
+            return recommendation("check")
+
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = UnboundProvider()
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "does not declare a configured schema-v5" in report.cases[0].error
+    assert provider.called is False
+
+
+def test_schema_five_rejects_a_mismatched_provider_grading_context() -> None:
+    class MismatchedProvider(SequenceProvider):
+        def grading_context_binding_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> ProviderGradingContextBinding:
+            return ProviderGradingContextBinding(
+                context_sha256="0" * 64,
+                binding_revision="mismatched-provider:v1",
+            )
+
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = MismatchedProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "does not match case context" in report.cases[0].error
+    assert provider.requests == []
+    assert len(provider.outcomes) == 1
+
+
+def test_schema_five_blocks_local_solver_before_any_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    subprocess_called = False
+
+    def unexpected_subprocess(*args: object, **kwargs: object) -> object:
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("schema-v5 must fail before local solver execution")
+
+    monkeypatch.setattr(
+        "app.providers.local_solver.subprocess.run",
+        unexpected_subprocess,
+    )
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = LocalSolverProvider(Settings(data_dir=tmp_path))
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "does not bind its engine to schema-v5" in report.cases[0].error
+    assert subprocess_called is False
+
+
+def test_legacy_schema_still_allows_an_unbound_provider() -> None:
+    class LegacyProvider:
+        name = "legacy-provider"
+        required_fields = ["hero_cards", "street"]
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            return self.required_fields
+
+        def recommend(
+            self,
+            request: RecommendationRequest,
+        ) -> RecommendationResult:
+            return recommendation("check")
+
+    dataset = benchmark_dataset(
+        [benchmark_case("legacy", [reference_line("check")])],
+        schema_version=4,
+    )
+
+    report = run_recommendation_benchmark(dataset, LegacyProvider())
+
+    assert report.completed_cases == 1
+    assert report.cases[0].grading_context_sha256 is None
 
 
 def test_schema_five_revalidates_utility_binding_before_provider_execution() -> None:
@@ -1435,6 +1653,322 @@ def test_schema_five_route_mismatch_fails_before_provider_execution(
             provider,
         )
 
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize(
+    ("invalid_index", "invalid_actor"),
+    [(0, "utg"), (1, "hijack")],
+)
+def test_schema_five_rejects_every_preflop_actor_outside_the_exact_table(
+    invalid_index: int,
+    invalid_actor: str,
+) -> None:
+    actions = [
+        PreflopAction(actor="button", action="call", amount=1),
+        PreflopAction(actor="small_blind", action="call", amount=1),
+    ]
+    actions[invalid_index] = PreflopAction(
+        actor=invalid_actor,
+        action="call",
+        amount=1,
+    )
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_action_history=actions,
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=rf"preflop_action_history\[{invalid_index}\]\.actor"
+        rf" '{invalid_actor}'.*3-handed exact structural routes",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_for_table_counts(3),
+        )
+
+
+def test_schema_five_accepts_three_handed_button_and_small_blind_actors() -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="call", amount=1),
+            PreflopAction(actor="small_blind", action="call", amount=1),
+        ],
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert [
+        action.actor for action in dataset.cases[0].state.preflop_action_history
+    ] == ["button", "small_blind"]
+
+
+@pytest.mark.parametrize(
+    ("dealt_in_count", "actor", "valid"),
+    [
+        (2, "button", True),
+        (2, "small_blind", False),
+        (5, "hijack", True),
+        (5, "utg", False),
+    ],
+)
+def test_schema_five_preflop_actors_use_table_specific_exact_routes(
+    dealt_in_count: int,
+    actor: str,
+    valid: bool,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        dealt_in_count,
+        preflop_action_history=[
+            PreflopAction(actor=actor, action="call", amount=1),
+        ],
+    )
+    dataset_arguments = {
+        "schema_version": RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        "reference_source": {"name": "Independent solver export"},
+        "grading_reference": grading_reference_for_table_counts(dealt_in_count),
+    }
+
+    if valid:
+        dataset = benchmark_dataset([case], **dataset_arguments)
+        assert dataset.cases[0].state.preflop_action_history[0].actor == actor
+    else:
+        with pytest.raises(
+            ValidationError,
+            match=rf"actor '{actor}'.*{dealt_in_count}-handed exact structural",
+        ):
+            benchmark_dataset([case], **dataset_arguments)
+
+
+@pytest.mark.parametrize(
+    ("dealt_in_count", "opener", "valid"),
+    [
+        (2, "dealer", True),
+        (2, "small blind", False),
+        (3, "dealer", True),
+        (3, "small blind", True),
+        (3, "under the gun", False),
+        (3, "middle position", False),
+        (3, "lojack", False),
+        (5, "middle position", True),
+        (5, "under the gun", False),
+    ],
+)
+def test_schema_five_opener_aliases_require_an_exact_structural_seat(
+    dealt_in_count: int,
+    opener: str,
+    valid: bool,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        dealt_in_count,
+        preflop_opener_position=opener,
+    )
+    dataset_arguments = {
+        "schema_version": RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        "reference_source": {"name": "Independent solver export"},
+        "grading_reference": grading_reference_for_table_counts(dealt_in_count),
+    }
+
+    if valid:
+        dataset = benchmark_dataset([case], **dataset_arguments)
+        assert dataset.cases[0].state.preflop_opener_position == opener
+    else:
+        with pytest.raises(
+            ValidationError,
+            match=rf"preflop_opener_position '{opener}'.*routes to.*"
+            rf"{dealt_in_count}-handed exact structural",
+        ):
+            benchmark_dataset([case], **dataset_arguments)
+
+
+def test_schema_five_allows_an_absent_preflop_opener_position() -> None:
+    case = covered_big_blind_case_for_table(3)
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.preflop_opener_position is None
+
+
+@pytest.mark.parametrize("street", ["flop", "turn", "river"])
+def test_schema_five_checks_preflop_actors_on_every_postflop_street(
+    street: Literal["flop", "turn", "river"],
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        street=street,
+        preflop_action_history=[
+            PreflopAction(actor="utg", action="call", amount=1),
+        ],
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=r"preflop_action_history\[0\]\.actor 'utg'.*3-handed",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=postflop_grading_reference_for_table_counts(3),
+        )
+
+
+@pytest.mark.parametrize(
+    ("dealt_in_count", "action_context", "valid"),
+    [
+        (3, "Dealer raises to 2.5 BB", True),
+        (3, "UTG raises to 2.5 BB", False),
+        (5, "Middle position opens to 2.5 BB", True),
+        (5, "Early position opens to 2.5 BB", False),
+    ],
+)
+def test_schema_five_action_context_openers_use_the_provider_route(
+    dealt_in_count: int,
+    action_context: str,
+    valid: bool,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        dealt_in_count,
+        action_context=action_context,
+    )
+    dataset_arguments = {
+        "schema_version": RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        "reference_source": {"name": "Independent solver export"},
+        "grading_reference": grading_reference_for_table_counts(dealt_in_count),
+    }
+
+    if valid:
+        dataset = benchmark_dataset([case], **dataset_arguments)
+        assert dataset.cases[0].state.action_context == action_context
+    else:
+        with pytest.raises(
+            ValidationError,
+            match=rf"action_context preflop opener.*{dealt_in_count}-handed",
+        ):
+            benchmark_dataset([case], **dataset_arguments)
+
+
+def test_schema_five_explicit_opener_wins_over_action_context_routing() -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_opener_position="button",
+        action_context="UTG raises to 2.5 BB",
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.preflop_opener_position == "button"
+
+
+def test_schema_five_structured_history_ignores_action_context_opener() -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="call", amount=1),
+        ],
+        action_context="UTG raises to 2.5 BB",
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.preflop_action_history[0].actor == "button"
+
+
+def test_schema_five_allows_repeat_actions_from_an_exact_structural_seat() -> None:
+    case = covered_big_blind_case_for_table(
+        6,
+        preflop_action_history=[
+            PreflopAction(actor="cutoff", action="raise", amount=2.5),
+            PreflopAction(actor="button", action="raise", amount=8),
+            PreflopAction(actor="cutoff", action="raise", amount=20),
+        ],
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(6),
+    )
+
+    assert [
+        action.actor for action in dataset.cases[0].state.preflop_action_history
+    ] == ["cutoff", "button", "cutoff"]
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schemas_do_not_enforce_preflop_structural_actor_routing(
+    schema_version: int,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_action_history=[
+            PreflopAction(actor="utg", action="call", amount=1),
+            PreflopAction(actor="hijack", action="call", amount=1),
+        ],
+        preflop_opener_position="utg",
+    )
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+
+    assert dataset.schema_version == schema_version
+    assert dataset.cases[0].state.preflop_action_history[0].actor == "utg"
+
+
+def test_schema_five_preflop_actor_mismatch_fails_before_provider_execution(
+    tmp_path: Path,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="call", amount=1),
+            PreflopAction(actor="small_blind", action="call", amount=1),
+        ],
+    )
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+    payload = dataset.model_dump(mode="json", by_alias=True)
+    payload["cases"][0]["state"]["preflop_action_history"][0]["actor"] = "utg"
+    path = tmp_path / "mismatched-preflop-actor.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    provider = SequenceProvider([recommendation("check")])
+
+    with pytest.raises(RecommendationBenchmarkError, match="preflop_action_history"):
+        benchmark_recommendation_file(
+            path,
+            Settings(data_dir=tmp_path / "unused"),
+            provider,
+        )
+
+    assert provider.requests == []
     assert len(provider.outcomes) == 1
 
 
@@ -3886,6 +4420,41 @@ def test_cli_enforces_reference_source_and_evaluation_coverage(
         captured.err
     )
     assert "EV evaluation coverage 0.0% is below the minimum 100.0%" in captured.err
+
+
+def test_cli_rejects_schema_five_for_an_unbound_local_solver(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def unexpected_subprocess(*args: object, **kwargs: object) -> object:
+        raise AssertionError("unbound schema-v5 must not launch a subprocess")
+
+    monkeypatch.setattr(
+        "app.providers.local_solver.subprocess.run",
+        unexpected_subprocess,
+    )
+    dataset_path = write_dataset(
+        tmp_path / "recommendations-v5.json",
+        benchmark_dataset(
+            [covered_preflop_case()],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        ),
+    )
+
+    exit_code = main(
+        [str(dataset_path), "--require-grading-reference"],
+        settings=Settings(data_dir=tmp_path / "unused"),
+        provider=LocalSolverProvider(Settings(data_dir=tmp_path / "unused")),
+    )
+
+    captured = capsys.readouterr()
+    assert exit_code == 1
+    assert "Cases: 0/1 completed (1 failed)" in captured.out
+    assert "does not bind its engine to schema-v5" in captured.out
+    assert "Benchmark has 1 failed case(s)" in captured.err
 
 
 def test_cli_enforces_range_conditioning_accuracy_and_coverage(

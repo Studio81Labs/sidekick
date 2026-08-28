@@ -452,10 +452,15 @@ source/policy/tolerance revisions and digests, exact dealt-in structural
 positions, stack/street coverage, economic and utility models, an EV unit,
 delivery-specific rights evidence, and passing convergence measurements. The
 case state repeats the exact normalized economic and utility configurations,
-which are fingerprinted, revalidated, and preserved through the provider request
-boundary before execution. The CLI can require that envelope, but its
-declarations and artifact pointers are not themselves source approval;
-production route matching and real retained evidence remain Phase 0 gate work.
+which are fingerprinted and revalidated before execution. Schema-v5 evaluation
+also requires the provider to return a configured binding for the canonical
+structural/economic/utility context; the report retains that digest and the
+binding revision. Current built-in providers return no binding because their
+Python/Rust/HTTP engine contracts do not consume and attest the complete
+context, so they fail closed before their execution boundary. The CLI can
+require the evidence envelope, but declarations and artifact pointers are not
+themselves source approval; production route matching and real retained evidence
+remain Phase 0 gate work.
 Reports also carry a SHA-256 fingerprint over normalized scoring inputs and
 reference provenance. The CLI can load a full prior JSON report for the same
 provider and fingerprint, display aggregate deltas, and gate direction-aware

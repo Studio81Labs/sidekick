@@ -6,7 +6,11 @@ from pydantic import SecretStr, ValidationError
 from app.domain.poker import CanonicalState
 from app.domain.recommendations import RecommendationRequest, RecommendationResult
 from app.http_auth import bearer_headers
-from app.providers.base import ProviderConfigurationError, ProviderError
+from app.providers.base import (
+    ProviderConfigurationError,
+    ProviderError,
+    ProviderGradingContextBinding,
+)
 
 
 class HttpRecommendationProvider:
@@ -28,6 +32,14 @@ class HttpRecommendationProvider:
 
     def required_fields_for(self, state: CanonicalState) -> list[str]:
         return self.required_fields
+
+    def grading_context_binding_for(
+        self,
+        state: CanonicalState,
+    ) -> ProviderGradingContextBinding | None:
+        # Forwarding context is not evidence that an external service routes on
+        # it. A future adapter must verify a configured service-side binding.
+        return None
 
     def recommend(self, request: RecommendationRequest) -> RecommendationResult:
         if not self.url:

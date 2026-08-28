@@ -485,6 +485,8 @@ class ActionOrigin(ImportedHandModel):
             "user_confirmed",
         }:
             raise ValueError("player-selected origin requires affirmative evidence")
+        if self.basis == "user_confirmed" and self.kind != "player_selected":
+            raise ValueError("user-confirmed origin must be player-selected")
         if self.basis == "user_confirmed" and self.review_reference is None:
             raise ValueError("user-confirmed origin requires a review reference")
         if self.kind == "unknown" and self.basis != "unresolved":
@@ -1977,6 +1979,7 @@ class DetectedImportedHand(ImportedHandModel):
 
     @model_validator(mode="after")
     def validate_detected_provenance(self) -> Self:
+        _validate_detected_action_origins(self.state)
         if self.state.chronology.source_file_id != self.raw_source_id:
             raise ValueError(
                 "detected state source_file_id must equal the detected raw_source_id"
@@ -2037,6 +2040,7 @@ class CanonicalHandRevision(ImportedHandModel):
         pointers = [correction.field_pointer for correction in self.corrections]
         _validate_non_overlapping_correction_pointers(pointers)
         _validate_correction_timestamps(self)
+        _validate_user_confirmed_origin_correction_presence(self)
         return self
 
 
@@ -2169,6 +2173,7 @@ class ImportedHandRecord(ImportedHandModel):
         raw_ids = set(raw_by_id)
         detection_by_id = {detected.detection_id: detected for detected in self.detections}
         for detected in self.detections:
+            _validate_detected_action_origins(detected.state)
             if detected.raw_source_id not in raw_ids:
                 raise ValueError("detected hand must reference a retained raw source")
             detected_raw_source = raw_by_id[detected.raw_source_id]
@@ -3528,12 +3533,89 @@ def _validate_corrections_win(
     _validate_non_overlapping_correction_pointers(
         [correction.field_pointer for correction in revision.corrections]
     )
+    _validate_user_confirmed_origin_corrections(detected, revision)
     expected = json.loads(detected_json)
     for correction in revision.corrections:
         _pointer_set(expected, correction.field_pointer, correction.approved_value)
     approved = json.loads(revision.state.model_dump_json())
     if not _json_values_equal(expected, approved):
         raise ValueError("canonical state may differ from detection only through corrections")
+
+
+def _validate_detected_action_origins(state: ImportedHandState) -> None:
+    """Prevent detector output from manufacturing a user confirmation."""
+
+    for street_index, street in enumerate(state.streets):
+        for action_index, action in enumerate(street.actions):
+            if action.origin.basis == "user_confirmed":
+                raise ValueError(
+                    "detector-produced action origin cannot use user_confirmed"
+                    " basis at"
+                    f" /streets/{street_index}/actions/{action_index}/origin"
+                )
+
+
+def _validate_user_confirmed_origin_corrections(
+    detected: DetectedImportedHand,
+    revision: CanonicalHandRevision,
+) -> None:
+    """Require canonical user confirmation to resolve detected unknown origin."""
+
+    _validate_user_confirmed_origin_correction_presence(revision)
+    for street_index, street in enumerate(revision.state.streets):
+        for action_index, action in enumerate(street.actions):
+            if action.origin.basis != "user_confirmed":
+                continue
+            if (
+                street_index >= len(detected.state.streets)
+                or action_index
+                >= len(detected.state.streets[street_index].actions)
+            ):
+                raise ValueError(
+                    "user-confirmed origin must resolve a corresponding"
+                    " detected action"
+                )
+            detected_origin = detected.state.streets[street_index].actions[
+                action_index
+            ].origin
+            if not (
+                detected_origin.kind == "unknown"
+                and detected_origin.basis == "unresolved"
+            ):
+                raise ValueError(
+                    "user-confirmed origin must resolve a detected unknown origin"
+                )
+
+
+def _validate_user_confirmed_origin_correction_presence(
+    revision: CanonicalHandRevision,
+) -> None:
+    """Require every canonical user confirmation to overlap a correction."""
+
+    correction_token_paths = [
+        _pointer_tokens(correction.field_pointer)
+        for correction in revision.corrections
+    ]
+    for street_index, street in enumerate(revision.state.streets):
+        for action_index, action in enumerate(street.actions):
+            if action.origin.basis != "user_confirmed":
+                continue
+            origin_tokens = [
+                "streets",
+                str(street_index),
+                "actions",
+                str(action_index),
+                "origin",
+            ]
+            if not any(
+                tokens[: len(origin_tokens)] == origin_tokens
+                or origin_tokens[: len(tokens)] == tokens
+                for tokens in correction_token_paths
+            ):
+                raise ValueError(
+                    "user-confirmed origin requires an explicit canonical"
+                    " correction"
+                )
 
 
 def _validate_correction_timestamps(revision: CanonicalHandRevision) -> None:

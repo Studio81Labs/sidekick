@@ -719,6 +719,19 @@ def test_unmarked_action_needs_versioned_semantics_to_be_player_selected() -> No
     assert action.is_player_decision is True
 
 
+def test_user_confirmed_origin_must_be_player_selected() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="user-confirmed origin must be player-selected",
+    ):
+        ActionOrigin(
+            kind="forced_system",
+            basis="user_confirmed",
+            review_reference="review-action-0",
+            evidence=[evidence()],
+        )
+
+
 @pytest.mark.parametrize(
     ("kind", "basis", "reason"),
     [
@@ -10743,6 +10756,217 @@ def test_revision_without_corrections_is_unaffected_by_correction_chronology(
     )
 
     assert record.canonical_revisions[0].corrections == []
+
+
+def state_with_reviewed_action_origin(
+    *,
+    kind: str,
+    basis: str,
+    review_reference: str | None = None,
+) -> ImportedHandState:
+    payload = extraction_ready_state_payload()
+    payload["streets"][0]["actions"][0]["origin"] = {
+        "kind": kind,
+        "basis": basis,
+        "review_reference": review_reference,
+        "evidence": [evidence()],
+    }
+    return ImportedHandState.model_validate(payload)
+
+
+def user_confirmed_origin_corrections(
+    detected_state: ImportedHandState,
+    approved_state: ImportedHandState,
+    *,
+    leaf_fields: bool,
+) -> list[UserCorrection]:
+    origin_pointer = "/streets/0/actions/0/origin"
+    detected_origin = detected_state.model_dump(mode="json")["streets"][0][
+        "actions"
+    ][0]["origin"]
+    approved_origin = approved_state.model_dump(mode="json")["streets"][0][
+        "actions"
+    ][0]["origin"]
+    if not leaf_fields:
+        return [
+            UserCorrection(
+                field_pointer=origin_pointer,
+                detected_value=detected_origin,
+                approved_value=approved_origin,
+                corrected_at=NOW,
+            )
+        ]
+    return [
+        UserCorrection(
+            field_pointer=f"{origin_pointer}/{field_name}",
+            detected_value=detected_origin[field_name],
+            approved_value=approved_origin[field_name],
+            corrected_at=NOW,
+        )
+        for field_name in ("kind", "basis", "review_reference")
+    ]
+
+
+def origin_confirmation_record(
+    detected_state: ImportedHandState,
+    approved_state: ImportedHandState,
+    corrections: list[UserCorrection],
+) -> ImportedHandRecord:
+    source_detection = detected(detected_state)
+    return ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[source_detection],
+        canonical_revisions=[
+            CanonicalHandRevision(
+                revision=1,
+                detection_id=source_detection.detection_id,
+                approved_at=NOW,
+                state=approved_state,
+                corrections=corrections,
+            )
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+
+def test_detector_cannot_emit_a_user_confirmed_action_origin() -> None:
+    manufactured = state_with_reviewed_action_origin(
+        kind="player_selected",
+        basis="user_confirmed",
+        review_reference="review-action-0",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="detector-produced action origin cannot use user_confirmed basis",
+    ):
+        detected(manufactured)
+
+
+def test_aggregate_rechecks_detector_origin_after_unsafe_model_copy() -> None:
+    unresolved = state_with_reviewed_action_origin(
+        kind="unknown",
+        basis="unresolved",
+    )
+    source_detection = detected(unresolved)
+    manufactured = state_with_reviewed_action_origin(
+        kind="player_selected",
+        basis="user_confirmed",
+        review_reference="review-action-0",
+    )
+    unsafe_detection = source_detection.model_copy(
+        update={
+            "state": manufactured,
+            "content_sha256": imported_hand_state_sha256(manufactured),
+        }
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="detector-produced action origin cannot use user_confirmed basis",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[unsafe_detection],
+            lifecycle={"status": "pending_review", "changed_at": NOW},
+        )
+
+
+@pytest.mark.parametrize("leaf_fields", [False, True])
+def test_user_confirmation_requires_and_accepts_an_auditable_origin_correction(
+    leaf_fields: bool,
+) -> None:
+    unresolved = state_with_reviewed_action_origin(
+        kind="unknown",
+        basis="unresolved",
+    )
+    confirmed = state_with_reviewed_action_origin(
+        kind="player_selected",
+        basis="user_confirmed",
+        review_reference="review-action-0",
+    )
+    corrections = user_confirmed_origin_corrections(
+        unresolved,
+        confirmed,
+        leaf_fields=leaf_fields,
+    )
+
+    record = origin_confirmation_record(unresolved, confirmed, corrections)
+
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["check"]
+
+
+def test_unresolved_detected_origin_remains_excluded_without_confirmation() -> None:
+    unresolved = state_with_reviewed_action_origin(
+        kind="unknown",
+        basis="unresolved",
+    )
+
+    record = origin_confirmation_record(unresolved, unresolved, [])
+
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_user_confirmation_cannot_bypass_an_explicit_correction() -> None:
+    unresolved = state_with_reviewed_action_origin(
+        kind="unknown",
+        basis="unresolved",
+    )
+    confirmed = state_with_reviewed_action_origin(
+        kind="player_selected",
+        basis="user_confirmed",
+        review_reference="review-action-0",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="user-confirmed origin requires an explicit canonical correction",
+    ):
+        origin_confirmation_record(unresolved, confirmed, [])
+
+
+def test_user_confirmation_must_resolve_a_detected_unknown_origin() -> None:
+    explicit = state_with_reviewed_action_origin(
+        kind="player_selected",
+        basis="explicit_marker",
+    )
+    confirmed = state_with_reviewed_action_origin(
+        kind="player_selected",
+        basis="user_confirmed",
+        review_reference="review-action-0",
+    )
+    corrections = user_confirmed_origin_corrections(
+        explicit,
+        confirmed,
+        leaf_fields=False,
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="user-confirmed origin must resolve a detected unknown origin",
+    ):
+        origin_confirmation_record(explicit, confirmed, corrections)
+
+
+def test_explicit_marker_origin_remains_valid_without_a_correction() -> None:
+    explicit = state_with_reviewed_action_origin(
+        kind="player_selected",
+        basis="explicit_marker",
+    )
+
+    record = origin_confirmation_record(explicit, explicit, [])
+
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["check"]
 
 
 @pytest.mark.parametrize(

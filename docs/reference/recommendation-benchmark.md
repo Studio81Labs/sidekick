@@ -326,9 +326,18 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   canonical configuration SHA-256, and requires the case name, immutable
   revision, digest, and normalized configuration to match `grading_reference`
   exactly. These benchmark-only economics, structural-position, and utility
-  fields are preserved in the request sent to the selected provider; a mismatch
-  fails before provider execution. Versions 1 through 4 may omit utility context
-  and retain their prior serialized shape. Until recommendation providers
+  fields are preserved in the request sent to the selected provider. Schema-v5
+  grading additionally requires the provider adapter to return a configured
+  grading-context binding whose canonical SHA-256 covers the exact structural,
+  economic, and utility context. The binding must come from immutable adapter or
+  engine configuration that the selected route actually consumes; echoing the
+  request digest is not a binding. The verified digest and binding revision are
+  retained on each case result, and a missing or mismatched binding fails before
+  provider execution. The current local solver, rule-based, HTTP, and mock
+  providers do not claim such a binding. Their schema-v5 cases therefore fail
+  before a Python/Rust subprocess or remote request can be attributed to the
+  declared grading model. Versions 1 through 4 retain their prior provider and
+  serialized-shape behavior. Until recommendation providers
   consume structural position directly, the legacy `hero_position` route must
   agree exactly: `BTN/SB` and
   `BTN` route as `button`, `SB` as `small_blind`, `BB` as `big_blind`, `UTG` as
