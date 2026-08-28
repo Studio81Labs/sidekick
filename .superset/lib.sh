@@ -58,10 +58,21 @@ ensure_node() {
   node_ok "$WANTED_NODE"
 }
 
-# solver_fallback_enabled <backend dir> <venv python>: "yes" or "no", read
-# through the backend's own settings loader (environment plus the .env file
-# in the backend dir), so it reflects what the backend will actually do.
+# solver_fallback_enabled <backend dir> <venv python>: prints "yes" or "no",
+# read through the backend's own settings loader (environment plus the .env
+# file in the backend dir), so it reflects what the backend will actually do.
+# When the settings cannot be loaded — the backend would fail to start the
+# same way — prints "error: <diagnostic>" and fails.
 solver_fallback_enabled() {
-  (cd "$1" && "$2" -c 'from app.config import get_settings; print("yes" if get_settings().postflop_solver_fallback_enabled else "no")' 2>/dev/null) \
-    || echo yes
+  (cd "$1" && "$2" - <<'PY'
+import sys
+try:
+    from app.config import get_settings
+    print("yes" if get_settings().postflop_solver_fallback_enabled else "no")
+except Exception as exc:  # validation error, import error, ...
+    detail = " ".join(line.strip() for line in str(exc).splitlines() if line.strip())
+    print("error: " + (detail or type(exc).__name__)[:400])
+    sys.exit(1)
+PY
+  )
 }

@@ -92,6 +92,14 @@ copy_local apps/backend/.mcp.env
 copy_local apps/pwa/.env.local
 copy_local apps/pwa/.dev.vars
 
+# --- Backend configuration ----------------------------------------------------
+# Load the settings exactly as the backend will (environment plus the .env
+# just put in place); an invalid value would stop uvicorn from starting.
+step "Checking backend configuration"
+SOLVER_FALLBACK=$(solver_fallback_enabled "$BACKEND_DIR" "$VENV_PY") \
+  || fail "backend configuration does not load (check apps/backend/.env): ${SOLVER_FALLBACK#error: }"
+echo "settings load; postflop solver fallback enabled: $SOLVER_FALLBACK"
+
 # --- Rust solver (best-effort) -----------------------------------------------
 step "Building the postflop solver"
 SOLVER_STAMP="$SOLVER_DIR/target/release/.poker-hero-solver-tree"
@@ -143,8 +151,7 @@ else
   fi
   if [ ! -x "$SOLVER_BIN" ]; then
     warn "cargo not found: skipping the postflop solver build."
-    # Env files are in place by now, so this is the backend's effective setting.
-    if [ "$(solver_fallback_enabled "$BACKEND_DIR" "$VENV_PY")" = yes ]; then
+    if [ "$SOLVER_FALLBACK" = yes ]; then
       warn "The backend still runs; recommendations use the built-in fallback"
       warn "(POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED=true)."
     else

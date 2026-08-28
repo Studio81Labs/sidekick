@@ -35,6 +35,11 @@ PORT_CLAIMS="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/poker-hero-dev-ports-$(id -u)"
 ensure_node "$ROOT_DIR" \
   || { echo "Node.js $WANTED_NODE+ is required, found $(node_found) (see .nvmrc)" >&2; exit 1; }
 
+# Load the backend settings once, exactly as the backend will: this also
+# catches an invalid apps/backend/.env before anything is launched.
+SOLVER_FALLBACK=$(solver_fallback_enabled "$BACKEND_DIR" "$VENV_PY") \
+  || { echo "Backend configuration does not load (check apps/backend/.env): ${SOLVER_FALLBACK#error: }" >&2; exit 1; }
+
 # pick_ports <preferred>...: prints one free port per argument (the preferred
 # one, or the next free above it). Each port is recorded in $PORT_CLAIMS as a
 # file named after the port holding this script's PID; claims of dead processes
@@ -68,6 +73,12 @@ def is_free(port):
         except OSError as exc:
             if exc.errno == errno.EADDRINUSE:
                 return False
+            if exc.errno in (errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT):
+                continue  # this address family is not available here
+            if exc.errno in (errno.EACCES, errno.EPERM):
+                sys.exit(f"port {port} is not permitted for this user ({exc.strerror}); "
+                         "choose another with POKER_BACKEND_PORT / POKER_PWA_PORT")
+            sys.exit(f"cannot test port {port} on {host}: {exc}")
     return True
 
 
@@ -209,7 +220,7 @@ printf '\nPoker Hero dev servers  [%s]\n' "$(basename "$ROOT_DIR")"
 printf '  PWA  %s\n' "$PWA_URL"
 printf '  API  %s   (OpenAPI docs: %s/docs)\n' "$BACKEND_URL" "$BACKEND_URL"
 if [ "$SOLVER_STATUS" != ok ]; then
-  if [ "$(solver_fallback_enabled "$BACKEND_DIR" "$VENV_PY")" = yes ]; then
+  if [ "$SOLVER_FALLBACK" = yes ]; then
     outcome="using the recommendation fallback"
   else
     outcome="POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED is false, so postflop recommendations will fail"
