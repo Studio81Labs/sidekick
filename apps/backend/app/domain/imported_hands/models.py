@@ -2532,6 +2532,15 @@ class ImportedHandRecord(ImportedHandModel):
                         "deletion request requested_at cannot precede retained"
                         f" detection {detected.detection_id} detected_at"
                     )
+            for conflict in self.conflicts:
+                if (
+                    conflict.resolved_at is not None
+                    and deletion_request.requested_at < conflict.resolved_at
+                ):
+                    raise ValueError(
+                        "deletion request requested_at cannot precede retained"
+                        f" conflict {conflict.conflict_id} resolved_at"
+                    )
             if revisions:
                 latest_approved_at = self.canonical_revisions[-1].approved_at
                 if self.lifecycle.changed_at < latest_approved_at:
@@ -3103,6 +3112,14 @@ def _latest_retained_audit_event(
             f"canonical revision {revision.revision} approved_at",
         )
         for revision in record.canonical_revisions
+    )
+    events.extend(
+        (
+            conflict.resolved_at,
+            f"conflict {conflict.conflict_id} resolved_at",
+        )
+        for conflict in record.conflicts
+        if conflict.resolved_at is not None
     )
     return max(events, key=lambda event: event[0]) if events else None
 

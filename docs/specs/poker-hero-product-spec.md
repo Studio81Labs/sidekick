@@ -316,7 +316,9 @@ imports, detections, and approvals. This covers active, pending-review,
 withdrawn, and rejected records; a deletion-pending request must occur after
 that evidence and its lifecycle marker must reach the request. Resolving any
 retained conflict also advances freshness to at least the resolution time so
-backup/restore ordering cannot rank newer evidence by stale lifecycle state.
+backup/restore ordering cannot rank newer evidence by stale lifecycle state. A
+deletion request must occur at or after every retained conflict resolution so
+the request covers the complete audit record it will remove.
 
 **Correctness oracle:** re-derive the pot from the action stream and reconcile
 against the file's stated pot (accounting for rake, uncalled bets, side pots).

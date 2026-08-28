@@ -186,9 +186,11 @@ source and selects the new one, while same-source corrections remain ordinary
 revisions. Because nested audit collections remain mutable while a transition is
 assembled, every aggregate serialization, extraction, and restore comparison
 first rebuilds and validates a complete snapshot; an invalid graph cannot be
-persisted or exposed as learning evidence. These contracts are not yet connected
-to V1 routes or file-backed storage, so they do not make the hosted screenshot
-workflow a V2 player-data path.
+persisted or exposed as learning evidence. Conflict resolutions are retained
+audit events, so a deletion request must be ordered after them before deletion
+can proceed. These contracts are not yet connected to V1 routes or file-backed
+storage, so they do not make the hosted screenshot workflow a V2 player-data
+path.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, benchmarks, and

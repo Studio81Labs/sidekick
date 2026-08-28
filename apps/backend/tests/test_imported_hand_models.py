@@ -14244,6 +14244,113 @@ def test_unresolved_conflict_does_not_require_a_resolution_timestamp() -> None:
     assert record.conflicts[0].resolved_at is None
 
 
+def deletion_pending_conflict_record(
+    *,
+    requested_at: datetime,
+    changed_at: datetime,
+    resolved_at: datetime | None,
+) -> ImportedHandRecord:
+    status = "unresolved" if resolved_at is None else "resolved_use_source"
+    retained = conflict_chronology_record(
+        status=status,
+        resolved_at=resolved_at,
+        lifecycle_changed_at=changed_at,
+    )
+    return ImportedHandRecord(
+        identity=retained.identity,
+        raw_sources=retained.raw_sources,
+        detections=retained.detections,
+        conflicts=retained.conflicts,
+        lifecycle={
+            "status": "deletion_pending",
+            "deletion_generation": 1,
+            "changed_at": changed_at,
+            "deletion_request": {
+                "generation": 1,
+                "requested_at": requested_at,
+                "cleanup_status": "pending",
+            },
+        },
+    )
+
+
+def test_deletion_request_cannot_precede_a_retained_conflict_resolution() -> None:
+    resolved_at = NOW + timedelta(minutes=2)
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "deletion request requested_at cannot precede retained conflict"
+            " conflict-1 resolved_at"
+        ),
+    ):
+        deletion_pending_conflict_record(
+            requested_at=resolved_at - timedelta(microseconds=1),
+            changed_at=resolved_at + timedelta(minutes=1),
+            resolved_at=resolved_at,
+        )
+
+
+@pytest.mark.parametrize("offset", [timedelta(0), timedelta(microseconds=1)])
+def test_deletion_request_accepts_a_retained_conflict_resolution_at_or_before_it(
+    offset: timedelta,
+) -> None:
+    resolved_at = NOW + timedelta(minutes=2)
+    requested_at = resolved_at + offset
+
+    record = deletion_pending_conflict_record(
+        requested_at=requested_at,
+        changed_at=requested_at,
+        resolved_at=resolved_at,
+    )
+
+    assert record.lifecycle.deletion_request is not None
+    assert record.lifecycle.deletion_request.requested_at == requested_at
+
+
+def test_unresolved_conflict_does_not_delay_a_deletion_request() -> None:
+    record = deletion_pending_conflict_record(
+        requested_at=NOW,
+        changed_at=NOW,
+        resolved_at=None,
+    )
+
+    assert record.lifecycle.status == "deletion_pending"
+    assert record.conflicts[0].resolved_at is None
+
+
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+def test_restore_rejects_a_deletion_request_before_conflict_resolution(
+    invalid_side: str,
+) -> None:
+    resolved_at = NOW + timedelta(minutes=2)
+    valid = deletion_pending_conflict_record(
+        requested_at=resolved_at,
+        changed_at=resolved_at,
+        resolved_at=resolved_at,
+    )
+    assert valid.lifecycle.deletion_request is not None
+    invalid = valid.model_copy(
+        update={
+            "lifecycle": valid.lifecycle.model_copy(
+                update={
+                    "deletion_request": valid.lifecycle.deletion_request.model_copy(
+                        update={
+                            "requested_at": resolved_at
+                            - timedelta(microseconds=1)
+                        }
+                    )
+                }
+            )
+        }
+    )
+    current, candidate = (
+        (invalid, valid) if invalid_side == "current" else (valid, invalid)
+    )
+
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
 def test_conflict_resolution_ignores_unreferenced_later_audit_evidence() -> None:
     unrelated_at = NOW + timedelta(minutes=10)
 
