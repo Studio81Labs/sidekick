@@ -11476,6 +11476,268 @@ def retained_audit_source(
     return source, source_detection
 
 
+def conflict_chronology_record(
+    *,
+    source_times: tuple[tuple[datetime, datetime], ...] = (
+        (NOW, NOW),
+        (NOW, NOW),
+    ),
+    conflict_raw_source_ids: tuple[str, ...] = ("file-1", "file-2"),
+    conflict_detected_ids: tuple[str, ...] | None = None,
+    approved_at: datetime | None = None,
+    status: str = "resolved_use_source",
+    resolved_at: datetime | None = NOW,
+) -> ImportedHandRecord:
+    retained = [
+        retained_audit_source(
+            f"file-{index}",
+            raw_text=f"PokerStars Hand #123456789 source {index}\n",
+            imported_at=imported_at,
+            detected_at=detected_at,
+        )
+        for index, (imported_at, detected_at) in enumerate(source_times, start=1)
+    ]
+    sources = [source for source, _ in retained]
+    detections = [source_detection for _, source_detection in retained]
+    if conflict_detected_ids is None:
+        conflict_detected_ids = tuple(
+            f"detection-{raw_source_id}"
+            for raw_source_id in conflict_raw_source_ids
+        )
+    conflict: dict[str, object] = {
+        "conflict_id": "conflict-1",
+        "raw_source_ids": list(conflict_raw_source_ids),
+        "detected_ids": list(conflict_detected_ids),
+        "active_canonical_revision_at_creation": (
+            1 if approved_at is not None else None
+        ),
+        "status": status,
+    }
+    if status != "unresolved":
+        conflict.update(
+            selected_raw_source_id=conflict_raw_source_ids[0],
+            resolved_at=resolved_at,
+        )
+    revisions = (
+        [
+            CanonicalHandRevision(
+                revision=1,
+                detection_id=detections[0].detection_id,
+                approved_at=approved_at,
+                state=detections[0].state,
+            )
+        ]
+        if approved_at is not None
+        else []
+    )
+    return ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=sources,
+        detections=detections,
+        conflicts=[conflict],
+        canonical_revisions=revisions,
+        lifecycle={
+            "status": "pending_review",
+            "changed_at": NOW + timedelta(days=1),
+        },
+    )
+
+
+@pytest.mark.parametrize("latest_event", ["raw_import", "detection", "approval"])
+def test_resolved_conflict_cannot_precede_any_referenced_evidence(
+    latest_event: str,
+) -> None:
+    latest_at = NOW + timedelta(minutes=2)
+    source_times = ((NOW, NOW), (NOW, NOW))
+    detected_ids: tuple[str, ...] = (
+        "detection-file-1",
+        "detection-file-2",
+    )
+    approved_at = None
+    if latest_event == "raw_import":
+        source_times = ((NOW, NOW), (latest_at, latest_at))
+        detected_ids = ()
+    elif latest_event == "detection":
+        source_times = ((NOW, NOW), (NOW, latest_at))
+    else:
+        approved_at = latest_at
+
+    with pytest.raises(
+        ValidationError,
+        match="resolved_at cannot precede latest referenced evidence",
+    ):
+        conflict_chronology_record(
+            source_times=source_times,
+            conflict_detected_ids=detected_ids,
+            approved_at=approved_at,
+            resolved_at=latest_at - timedelta(microseconds=1),
+        )
+
+
+@pytest.mark.parametrize("latest_event", ["raw_import", "detection", "approval"])
+def test_resolved_conflict_accepts_the_latest_referenced_event_time(
+    latest_event: str,
+) -> None:
+    latest_at = NOW + timedelta(minutes=2)
+    source_times = ((NOW, NOW), (NOW, NOW))
+    detected_ids: tuple[str, ...] = (
+        "detection-file-1",
+        "detection-file-2",
+    )
+    approved_at = None
+    if latest_event == "raw_import":
+        source_times = ((NOW, NOW), (latest_at, latest_at))
+        detected_ids = ()
+    elif latest_event == "detection":
+        source_times = ((NOW, NOW), (NOW, latest_at))
+    else:
+        approved_at = latest_at
+
+    record = conflict_chronology_record(
+        source_times=source_times,
+        conflict_detected_ids=detected_ids,
+        approved_at=approved_at,
+        resolved_at=latest_at,
+    )
+
+    assert record.conflicts[0].resolved_at == latest_at
+
+
+def test_resolved_conflict_uses_the_latest_of_multiple_references() -> None:
+    latest_at = NOW + timedelta(minutes=4)
+
+    with pytest.raises(
+        ValidationError,
+        match="latest referenced evidence at 2026-08-27T12:04:00",
+    ):
+        conflict_chronology_record(
+            source_times=(
+                (NOW, NOW + timedelta(minutes=1)),
+                (NOW, latest_at),
+            ),
+            approved_at=NOW + timedelta(minutes=3),
+            resolved_at=NOW + timedelta(minutes=3),
+        )
+
+
+def test_unresolved_conflict_does_not_require_a_resolution_timestamp() -> None:
+    latest_at = NOW + timedelta(minutes=4)
+
+    record = conflict_chronology_record(
+        source_times=((NOW, NOW), (latest_at, latest_at)),
+        approved_at=latest_at,
+        status="unresolved",
+        resolved_at=None,
+    )
+
+    assert record.conflicts[0].resolved_at is None
+
+
+def test_conflict_resolution_ignores_unreferenced_later_audit_evidence() -> None:
+    unrelated_at = NOW + timedelta(minutes=10)
+
+    record = conflict_chronology_record(
+        source_times=(
+            (NOW, NOW),
+            (NOW, NOW),
+            (unrelated_at, unrelated_at),
+            (unrelated_at, unrelated_at),
+        ),
+        resolved_at=NOW,
+    )
+    unrelated_conflict = type(record.conflicts[0]).model_validate(
+        {
+            "conflict_id": "conflict-2",
+            "raw_source_ids": ["file-3", "file-4"],
+            "detected_ids": ["detection-file-3", "detection-file-4"],
+            "active_canonical_revision_at_creation": None,
+        }
+    )
+    record = ImportedHandRecord.model_validate(
+        {
+            **record.model_dump(),
+            "conflicts": [record.conflicts[0], unrelated_conflict],
+        }
+    )
+
+    assert record.conflicts[0].resolved_at == NOW
+    assert record.conflicts[1].status == "unresolved"
+
+
+def test_unsafe_record_copy_still_checks_conflict_resolution_chronology() -> None:
+    record = conflict_chronology_record()
+    invalid_conflict = record.conflicts[0].model_copy(
+        update={"resolved_at": NOW - timedelta(microseconds=1)}
+    )
+    unsafe_record = record.model_copy(update={"conflicts": [invalid_conflict]})
+
+    with pytest.raises(
+        ValueError,
+        match="resolved_at cannot precede latest referenced evidence",
+    ):
+        unsafe_record.validate_aggregate()
+
+
+def test_restore_allows_a_chronological_conflict_resolution() -> None:
+    current = conflict_chronology_record(
+        status="unresolved",
+        resolved_at=None,
+    )
+    resolved_conflict = current.conflicts[0].model_copy(
+        update={
+            "status": "resolved_use_source",
+            "selected_raw_source_id": "file-1",
+            "resolved_at": NOW,
+        }
+    )
+    candidate = current.model_copy(
+        update={
+            "conflicts": [resolved_conflict],
+            "lifecycle": current.lifecycle.model_copy(
+                update={
+                    "changed_at": current.lifecycle.changed_at
+                    + timedelta(minutes=1)
+                }
+            ),
+        }
+    )
+
+    assert classify_restore(current, candidate).kind == "allow"
+
+
+@pytest.mark.parametrize(
+    "resolved_at",
+    [NOW - timedelta(microseconds=1), None],
+)
+def test_restore_rejects_unsafe_nonchronological_conflict_copies(
+    resolved_at: datetime | None,
+) -> None:
+    current = conflict_chronology_record(
+        status="unresolved",
+        resolved_at=None,
+    )
+    invalid_conflict = current.conflicts[0].model_copy(
+        update={
+            "status": "resolved_use_source",
+            "selected_raw_source_id": "file-1",
+            "resolved_at": resolved_at,
+        }
+    )
+    candidate = current.model_copy(
+        update={
+            "conflicts": [invalid_conflict],
+            "lifecycle": current.lifecycle.model_copy(
+                update={
+                    "changed_at": current.lifecycle.changed_at
+                    + timedelta(minutes=1)
+                }
+            ),
+        }
+    )
+
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
 def test_deletion_request_cannot_precede_any_retained_raw_import() -> None:
     first_source = raw_source()
     second_source = raw_source(
