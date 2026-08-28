@@ -11378,24 +11378,7 @@ def test_extraction_returns_only_voluntary_hero_actions_from_supported_approval(
         },
     ]
     state = ImportedHandState.model_validate(state_payload)
-    detected_state = detected(state)
-    approved = CanonicalHandRevision(
-        revision=1,
-        detection_id=detected_state.detection_id,
-        approved_at=NOW,
-        state=state,
-    )
-    record = ImportedHandRecord(
-        identity=IDENTITY,
-        raw_sources=[raw_source()],
-        detections=[detected_state],
-        canonical_revisions=[approved],
-        lifecycle={
-            "status": "active",
-            "active_canonical_revision": 1,
-            "changed_at": NOW,
-        },
-    )
+    record = extraction_record_for_state(state)
 
     assert [action.actor_id for action in record.active_hero_actions_for_extraction] == [
         "hero"
@@ -11512,25 +11495,7 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
         },
     ]
     state = ImportedHandState.model_validate(state_payload)
-    source_detection = detected(state)
-    record = ImportedHandRecord(
-        identity=IDENTITY,
-        raw_sources=[raw_source()],
-        detections=[source_detection],
-        canonical_revisions=[
-            CanonicalHandRevision(
-                revision=1,
-                detection_id=source_detection.detection_id,
-                approved_at=NOW,
-                state=state,
-            )
-        ],
-        lifecycle={
-            "status": "active",
-            "active_canonical_revision": 1,
-            "changed_at": NOW,
-        },
-    )
+    record = extraction_record_for_state(state)
 
     assert any(
         action.actor_id == "hero" and action.action_type == action_type
@@ -11586,25 +11551,7 @@ def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
         },
     ]
     state = ImportedHandState.model_validate(state_payload)
-    source_detection = detected(state)
-    record = ImportedHandRecord(
-        identity=IDENTITY,
-        raw_sources=[raw_source()],
-        detections=[source_detection],
-        canonical_revisions=[
-            CanonicalHandRevision(
-                revision=1,
-                detection_id=source_detection.detection_id,
-                approved_at=NOW,
-                state=state,
-            )
-        ],
-        lifecycle={
-            "status": "active",
-            "active_canonical_revision": 1,
-            "changed_at": NOW,
-        },
-    )
+    record = extraction_record_for_state(state)
 
     assert record.active_hero_actions_for_extraction == []
 
@@ -11788,11 +11735,53 @@ def extraction_record_for_streets(
     return extraction_record_for_state(state)
 
 
-def extraction_record_for_state(state: ImportedHandState) -> ImportedHandRecord:
+def extraction_record_for_state(
+    state: ImportedHandState,
+    *,
+    with_pot_provenance: bool = True,
+    pot_evidence_pointers: tuple[str, ...] | None = None,
+) -> ImportedHandRecord:
     source_detection = detected(state)
+    raw_text = "PokerStars Hand #123456789\n"
+    stated_pot = state.results.stated_pot if state.results is not None else None
+    if with_pot_provenance and stated_pot is not None:
+        pointers = pot_evidence_pointers
+        if pointers is None:
+            selected_pointers: list[str] = []
+            if stated_pot.gross_total is not None:
+                selected_pointers.append("/results/stated_pot/gross_total")
+            if stated_pot.gross_pots:
+                selected_pointers.append("/results/stated_pot/gross_pots")
+            if stated_pot.net_total is not None:
+                selected_pointers.append("/results/stated_pot/net_total")
+            if stated_pot.rake is not None:
+                selected_pointers.append("/results/stated_pot/rake")
+            pointers = tuple(selected_pointers)
+        field_evidence = dict(source_detection.field_evidence)
+        for pointer in pointers:
+            source_line = (
+                f"Stated pot evidence {pointer}:"
+                f" {stated_pot.model_dump_json()}"
+            )
+            raw_text += f"{source_line}\n"
+            field_evidence[pointer] = {
+                "evidence": [
+                    {
+                        "raw_source_id": "file-1",
+                        "line_start": len(raw_text.splitlines()),
+                        "excerpt": source_line,
+                    }
+                ]
+            }
+        source_detection = DetectedImportedHand.model_validate(
+            {
+                **source_detection.model_dump(mode="python"),
+                "field_evidence": field_evidence,
+            }
+        )
     return ImportedHandRecord(
         identity=IDENTITY,
-        raw_sources=[raw_source()],
+        raw_sources=[raw_source(raw_text=raw_text)],
         detections=[source_detection],
         canonical_revisions=[
             CanonicalHandRevision(
@@ -12197,6 +12186,227 @@ def test_extraction_accepts_a_passing_gross_only_pot_reconciliation() -> None:
     ] == ["call"]
 
 
+@pytest.mark.parametrize(
+    ("evidence_pointers", "is_extractable"),
+    [
+        ((), False),
+        (("/results/stated_pot/gross_total",), True),
+        (("/results/stated_pot",), True),
+        (("/results",), False),
+        (("/results/stated_pot/rake",), False),
+    ],
+)
+def test_extraction_requires_source_provenance_for_the_stated_gross_total(
+    evidence_pointers: tuple[str, ...],
+    is_extractable: bool,
+) -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    record = extraction_record_for_state(
+        state,
+        pot_evidence_pointers=evidence_pointers,
+    )
+
+    assert reconcile_pot(state).status == "pass"
+    assert bool(record.active_hero_actions_for_extraction) is is_extractable
+
+
+def test_empty_field_evidence_does_not_prove_the_stated_pot() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    record = extraction_record_for_state(state)
+    detection = record.detections[0]
+    pot_metadata = detection.field_evidence[
+        "/results/stated_pot/gross_total"
+    ].model_copy(update={"evidence": []})
+    unproven_detection = detection.model_copy(
+        update={
+            "field_evidence": {
+                **detection.field_evidence,
+                "/results/stated_pot/gross_total": pot_metadata,
+            }
+        }
+    )
+    unproven_record = record.model_copy(
+        update={"detections": [unproven_detection]}
+    )
+
+    assert unproven_record.active_state_for_extraction == state
+    assert unproven_record.active_hero_actions_for_extraction == []
+    assert unproven_record.revalidated_snapshot().detections[0] == unproven_detection
+
+    round_tripped = ImportedHandRecord.model_validate_json(
+        unproven_record.model_dump_json()
+    )
+    assert round_tripped.active_state_for_extraction == state
+    assert round_tripped.active_hero_actions_for_extraction == []
+    assert classify_restore(unproven_record, round_tripped).kind == "allow"
+
+
+def test_unreferenced_detection_evidence_cannot_prove_the_active_comparator() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    active_record = extraction_record_for_state(
+        state,
+        with_pot_provenance=False,
+    )
+    raw_text = "PokerStars Hand #123456789\nTotal pot 2\n"
+    alternate_detection = DetectedImportedHand(
+        detection_id="detection-alternate",
+        raw_source_id="file-1",
+        detector_id="pokerstars",
+        detector_version="1.0.0",
+        detected_at=NOW,
+        state=state,
+        field_evidence={
+            "/results/stated_pot/gross_total": {
+                "evidence": [
+                    {
+                        "raw_source_id": "file-1",
+                        "line_start": 2,
+                        "excerpt": "Total pot 2",
+                    }
+                ]
+            }
+        },
+        content_sha256=imported_hand_state_sha256(state),
+    )
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source(raw_text=raw_text)],
+        detections=[active_record.detections[0], alternate_detection],
+        canonical_revisions=active_record.canonical_revisions,
+        lifecycle=active_record.lifecycle,
+    )
+
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+@pytest.mark.parametrize(
+    ("evidence_pointers", "is_extractable"),
+    [
+        (("/results/stated_pot/gross_pots",), True),
+        (("/results/stated_pot/gross_pots/0",), True),
+        ((), False),
+    ],
+)
+def test_extraction_requires_source_provenance_for_stated_gross_components(
+    evidence_pointers: tuple[str, ...],
+    is_extractable: bool,
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["results"] = {"stated_pot": {"gross_pots": [Decimal("2")]}}
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(
+        state,
+        pot_evidence_pointers=evidence_pointers,
+    )
+
+    assert reconcile_pot(state).status == "pass"
+    assert bool(record.active_hero_actions_for_extraction) is is_extractable
+
+
+@pytest.mark.parametrize(
+    ("evidence_pointers", "is_extractable"),
+    [
+        (("/results/stated_pot/gross_pots",), True),
+        (
+            (
+                "/results/stated_pot/gross_pots/0",
+                "/results/stated_pot/gross_pots/1",
+            ),
+            True,
+        ),
+        (("/results/stated_pot/gross_pots/0",), False),
+        (("/results/stated_pot/gross_pots/1",), False),
+    ],
+)
+def test_all_stated_gross_components_require_source_provenance(
+    evidence_pointers: tuple[str, ...],
+    is_extractable: bool,
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["table_size"] = 3
+    payload["seats"][1]["starting_stack"] = Decimal("0.5")
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "villain-2",
+            "starting_stack": Decimal("100"),
+            "participation": "dealt_in",
+        }
+    )
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                    all_in=True,
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                automatic_action(3, "villain-2", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "board_cards": [
+                {"rank": "2", "suit": "clubs"},
+                {"rank": "7", "suit": "diamonds"},
+                {"rank": "9", "suit": "spades"},
+            ],
+            "actions": [automatic_action(0, "villain-2", "fold")],
+        },
+        {
+            "street": "turn",
+            "board_cards": [
+                {"rank": "2", "suit": "clubs"},
+                {"rank": "7", "suit": "diamonds"},
+                {"rank": "9", "suit": "spades"},
+                {"rank": "J", "suit": "clubs"},
+            ],
+            "actions": [],
+        },
+        {
+            "street": "river",
+            "board_cards": [
+                {"rank": "2", "suit": "clubs"},
+                {"rank": "7", "suit": "diamonds"},
+                {"rank": "9", "suit": "spades"},
+                {"rank": "J", "suit": "clubs"},
+                {"rank": "Q", "suit": "hearts"},
+            ],
+            "actions": [],
+        },
+    ]
+    payload["results"] = {
+        "stated_pot": {"gross_pots": [Decimal("1.5"), Decimal("1")]}
+    }
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(
+        state,
+        pot_evidence_pointers=evidence_pointers,
+    )
+
+    assert reconcile_pot(state).status == "pass"
+    assert bool(record.active_hero_actions_for_extraction) is is_extractable
+
+
 def test_extraction_accepts_a_net_total_with_explicit_rake_comparator() -> None:
     payload = extraction_ready_state_payload()
     payload["game"]["economics"] = {
@@ -12223,6 +12433,198 @@ def test_extraction_accepts_a_net_total_with_explicit_rake_comparator() -> None:
     assert [
         action.action_type for action in record.active_hero_actions_for_extraction
     ] == ["call"]
+
+
+@pytest.mark.parametrize(
+    ("evidence_pointers", "is_extractable"),
+    [
+        (
+            (
+                "/results/stated_pot/net_total",
+                "/results/stated_pot/rake",
+            ),
+            True,
+        ),
+        (("/results/stated_pot/net_total",), False),
+        (("/results/stated_pot/rake",), False),
+        (("/results/stated_pot",), True),
+    ],
+)
+def test_net_pot_comparator_requires_provenance_for_net_and_rake(
+    evidence_pointers: tuple[str, ...],
+    is_extractable: bool,
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["economics"] = {
+        "kind": "cash",
+        "currency": "USD",
+        "rake": {
+            "percentage": Decimal(0),
+            "cap": Decimal(0),
+            "fixed_drop": Decimal(0),
+        },
+    }
+    payload["results"] = {
+        "stated_pot": {
+            "rake": Decimal(0),
+            "net_total": Decimal("2"),
+        }
+    }
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(
+        state,
+        pot_evidence_pointers=evidence_pointers,
+    )
+
+    assert reconcile_pot(state).status == "pass"
+    assert bool(record.active_hero_actions_for_extraction) is is_extractable
+
+
+def test_value_changing_pot_correction_can_prove_the_approved_comparator() -> None:
+    detected_payload = extraction_ready_state_payload()
+    detected_payload["results"]["stated_pot"]["gross_total"] = Decimal("3")
+    detected_state = ImportedHandState.model_validate(detected_payload)
+    approved_state = ImportedHandState.model_validate(
+        extraction_ready_state_payload()
+    )
+    source_detection = detected(detected_state)
+    detected_value = detected_state.model_dump(mode="json")["results"][
+        "stated_pot"
+    ]["gross_total"]
+    approved_value = approved_state.model_dump(mode="json")["results"][
+        "stated_pot"
+    ]["gross_total"]
+    correction = UserCorrection(
+        field_pointer="/results/stated_pot/gross_total",
+        detected_value=detected_value,
+        approved_value=approved_value,
+        corrected_at=NOW,
+        reason="Confirmed the total-pot line during review",
+    )
+    revision = CanonicalHandRevision(
+        revision=1,
+        detection_id=source_detection.detection_id,
+        approved_at=NOW,
+        state=approved_state,
+        corrections=[correction],
+    )
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[source_detection],
+        canonical_revisions=[revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+    assert reconcile_pot(approved_state).status == "pass"
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["call"]
+
+    unsafe_revision = revision.model_copy(update={"corrections": []})
+    unsafe_record = record.model_copy(
+        update={"canonical_revisions": [unsafe_revision]}
+    )
+    assert unsafe_record.active_state_for_extraction is None
+    assert unsafe_record.active_hero_actions_for_extraction == []
+
+
+@pytest.mark.parametrize("approved_total", [Decimal("2"), Decimal("2.0"), Decimal("2.00")])
+def test_noop_pot_correction_does_not_replace_raw_source_provenance(
+    approved_total: Decimal,
+) -> None:
+    detected_state = ImportedHandState.model_validate(
+        extraction_ready_state_payload()
+    )
+    approved_payload = extraction_ready_state_payload()
+    approved_payload["results"]["stated_pot"]["gross_total"] = approved_total
+    approved_state = ImportedHandState.model_validate(approved_payload)
+    source_detection = detected(detected_state)
+    detected_value = detected_state.model_dump(mode="json")["results"][
+        "stated_pot"
+    ]["gross_total"]
+    approved_value = approved_state.model_dump(mode="json")["results"][
+        "stated_pot"
+    ]["gross_total"]
+    revision = CanonicalHandRevision(
+        revision=1,
+        detection_id=source_detection.detection_id,
+        approved_at=NOW,
+        state=approved_state,
+        corrections=[
+            UserCorrection(
+                field_pointer="/results/stated_pot/gross_total",
+                detected_value=detected_value,
+                approved_value=approved_value,
+                corrected_at=NOW,
+                reason="No value change",
+            )
+        ],
+    )
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[source_detection],
+        canonical_revisions=[revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+    assert record.active_state_for_extraction == approved_state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_parent_pot_correction_does_not_prove_an_unchanged_comparator() -> None:
+    detected_payload = extraction_ready_state_payload()
+    detected_payload["results"]["stated_pot"]["rake"] = Decimal("1")
+    detected_state = ImportedHandState.model_validate(detected_payload)
+    approved_payload = extraction_ready_state_payload()
+    approved_payload["results"]["stated_pot"]["rake"] = Decimal("0")
+    approved_state = ImportedHandState.model_validate(approved_payload)
+    source_detection = detected(detected_state)
+    detected_value = detected_state.model_dump(mode="json")["results"][
+        "stated_pot"
+    ]
+    approved_value = approved_state.model_dump(mode="json")["results"][
+        "stated_pot"
+    ]
+    revision = CanonicalHandRevision(
+        revision=1,
+        detection_id=source_detection.detection_id,
+        approved_at=NOW,
+        state=approved_state,
+        corrections=[
+            UserCorrection(
+                field_pointer="/results/stated_pot",
+                detected_value=detected_value,
+                approved_value=approved_value,
+                corrected_at=NOW,
+                reason="Corrected rake only",
+            )
+        ],
+    )
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[source_detection],
+        canonical_revisions=[revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+    assert record.active_state_for_extraction == approved_state
+    assert reconcile_pot(approved_state).status == "pass"
+    assert record.active_hero_actions_for_extraction == []
 
 
 @pytest.mark.parametrize(
@@ -13814,9 +14216,30 @@ def origin_confirmation_record(
     corrections: list[UserCorrection],
 ) -> ImportedHandRecord:
     source_detection = detected(detected_state)
+    source_detection = DetectedImportedHand.model_validate(
+        {
+            **source_detection.model_dump(mode="python"),
+            "field_evidence": {
+                **source_detection.field_evidence,
+                "/results/stated_pot/gross_total": {
+                    "evidence": [
+                        {
+                            "raw_source_id": "file-1",
+                            "line_start": 2,
+                            "excerpt": "Total pot 2",
+                        }
+                    ]
+                },
+            },
+        }
+    )
     return ImportedHandRecord(
         identity=IDENTITY,
-        raw_sources=[raw_source()],
+        raw_sources=[
+            raw_source(
+                raw_text="PokerStars Hand #123456789\nTotal pot 2\n"
+            )
+        ],
         detections=[source_detection],
         canonical_revisions=[
             CanonicalHandRevision(

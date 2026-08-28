@@ -333,7 +333,11 @@ like-for-like gross total, or awards without a stated comparable pot remain
 reviewable but reconcile as indeterminate. Decision extraction requires a
 passing reconciliation with zero discrepancy against an independent source
 total; awards may corroborate that total but cannot replace it when gross versus
-net semantics are unresolved.
+net semantics are unresolved. A stated comparator counts as independent only
+when every value in at least one complete comparison route has non-empty raw
+field evidence scoped to the stated-pot summary, or the active canonical
+revision contains a semantically value-changing correction that audits that exact value.
+Missing comparator provenance remains reviewable but blocks decision extraction.
 
 Pot reconciliation remains an amount-only oracle and does not infer a site's
 cash-rake formula from percentage, cap, and fixed-drop values. Decision

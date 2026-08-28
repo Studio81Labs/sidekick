@@ -174,8 +174,13 @@ pot-reconciliation oracle. Omitted ante mode is canonicalized as unknown; a
 positive unknown mode remains reviewable but blocks decision extraction, while
 zero ante requires no poster mode. Complete actions with missing results or
 award-only pot evidence remain indeterminate, and extraction requires a passing
-zero-discrepancy comparison against an independent source total. Tournament
-extraction treats identified `remaining_stacks` as the same hand-start snapshot
+zero-discrepancy comparison against an independent source total. Decision
+extraction proves that independence from the active detection's non-empty,
+stated-pot-scoped raw field evidence or from a value-changing correction on the
+active canonical revision; decimal formatting alone is not a value change.
+Numeric agreement without that provenance remains
+reviewable but is not extractable. Tournament extraction treats identified
+`remaining_stacks` as the same hand-start snapshot
 and absolute tournament-chip unit as the dealt-in seats' `starting_stack`
 values, and binds each pair exactly; unrelated remaining field players may
 coexist. The aggregate exposes only voluntary actions from its active approved

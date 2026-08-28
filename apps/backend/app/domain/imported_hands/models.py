@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from hashlib import sha256
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal, Self
 
 from pydantic import (
@@ -2523,8 +2523,15 @@ class ImportedHandRecord(ImportedHandModel):
                     )
         return self
 
-    @property
-    def active_state_for_extraction(self) -> ImportedHandState | None:
+    def _active_extraction_context(
+        self,
+    ) -> tuple[
+        ImportedHandState,
+        DetectedImportedHand,
+        CanonicalHandRevision,
+    ] | None:
+        """Resolve state and its audit provenance from one validated snapshot."""
+
         try:
             snapshot = self.revalidated_snapshot()
         except (
@@ -2544,7 +2551,23 @@ class ImportedHandRecord(ImportedHandModel):
         revision = snapshot.lifecycle.active_canonical_revision
         if revision is None:
             return None
-        return snapshot.canonical_revisions[revision - 1].state
+        active_revision = snapshot.canonical_revisions[revision - 1]
+        active_detection = next(
+            (
+                detection
+                for detection in snapshot.detections
+                if detection.detection_id == active_revision.detection_id
+            ),
+            None,
+        )
+        if active_detection is None:
+            return None
+        return active_revision.state, active_detection, active_revision
+
+    @property
+    def active_state_for_extraction(self) -> ImportedHandState | None:
+        context = self._active_extraction_context()
+        return context[0] if context is not None else None
 
     @property
     def active_hero_actions_for_extraction(self) -> list[ImportedAction]:
@@ -2558,8 +2581,11 @@ class ImportedHandRecord(ImportedHandModel):
         approved chip representation before extraction.
         """
 
-        state = self.active_state_for_extraction
-        if state is None or state.hero_player_id is None:
+        context = self._active_extraction_context()
+        if context is None:
+            return []
+        state, detection, revision = context
+        if state.hero_player_id is None:
             return []
         if not _terminal_hand_ready_for_extraction(state):
             return []
@@ -2577,7 +2603,11 @@ class ImportedHandRecord(ImportedHandModel):
             dealt_in_starting_stacks=dealt_in_starting_stacks,
         ):
             return []
-        if not _pot_reconciliation_ready_for_extraction(state):
+        if not _pot_reconciliation_ready_for_extraction(
+            state,
+            detection=detection,
+            revision=revision,
+        ):
             return []
         if not _cash_rake_consistent_for_extraction(state):
             return []
@@ -3778,7 +3808,12 @@ def _terminal_hand_ready_for_extraction(state: ImportedHandState) -> bool:
     return True
 
 
-def _pot_reconciliation_ready_for_extraction(state: ImportedHandState) -> bool:
+def _pot_reconciliation_ready_for_extraction(
+    state: ImportedHandState,
+    *,
+    detection: DetectedImportedHand,
+    revision: CanonicalHandRevision,
+) -> bool:
     """Require an independent source total to match the derived pot exactly."""
 
     stated_pot = state.results.stated_pot if state.results is not None else None
@@ -3791,6 +3826,12 @@ def _pot_reconciliation_ready_for_extraction(state: ImportedHandState) -> bool:
         )
     ):
         return False
+    if not _stated_pot_comparator_has_provenance(
+        stated_pot,
+        detection=detection,
+        revision=revision,
+    ):
+        return False
 
     # pot imports these model contracts, so keep the reverse dependency local.
     from app.domain.imported_hands.pot import reconcile_pot
@@ -3800,6 +3841,104 @@ def _pot_reconciliation_ready_for_extraction(state: ImportedHandState) -> bool:
         reconciliation.status == "pass"
         and reconciliation.discrepancy == 0
     )
+
+
+def _stated_pot_comparator_has_provenance(
+    stated_pot: StatedPotSummary,
+    *,
+    detection: DetectedImportedHand,
+    revision: CanonicalHandRevision,
+) -> bool:
+    """Require one complete independent comparator route for extraction."""
+
+    comparator_routes: list[list[str]] = []
+    if stated_pot.gross_total is not None:
+        comparator_routes.append(["/results/stated_pot/gross_total"])
+    if stated_pot.gross_pots:
+        comparator_routes.append(
+            [
+                f"/results/stated_pot/gross_pots/{index}"
+                for index in range(len(stated_pot.gross_pots))
+            ]
+        )
+    if stated_pot.net_total is not None and stated_pot.rake is not None:
+        comparator_routes.append(
+            [
+                "/results/stated_pot/net_total",
+                "/results/stated_pot/rake",
+            ]
+        )
+    if not comparator_routes:
+        return False
+
+    detected_document = json.loads(detection.state.model_dump_json())
+    approved_document = json.loads(revision.state.model_dump_json())
+    return any(
+        all(
+            _stated_pot_field_has_provenance(
+                pointer,
+                detection=detection,
+                revision=revision,
+                detected_document=detected_document,
+                approved_document=approved_document,
+            )
+            for pointer in route
+        )
+        for route in comparator_routes
+    )
+
+
+def _stated_pot_field_has_provenance(
+    pointer: str,
+    *,
+    detection: DetectedImportedHand,
+    revision: CanonicalHandRevision,
+    detected_document: JsonValue,
+    approved_document: JsonValue,
+) -> bool:
+    """Verify one comparator leaf against raw evidence or a real correction."""
+
+    pointer_tokens = _pointer_tokens(pointer)
+    approved_value = _pointer_get(approved_document, pointer)
+    try:
+        detected_value = _pointer_get(detected_document, pointer)
+    except ValueError:
+        detected_value_matches = False
+    else:
+        detected_value_matches = _stated_pot_values_equal(
+            detected_value,
+            approved_value,
+        )
+
+    if detected_value_matches:
+        stated_pot_tokens = ["results", "stated_pot"]
+        for evidence_pointer, field in detection.field_evidence.items():
+            if not field.evidence:
+                continue
+            evidence_tokens = _pointer_tokens(evidence_pointer)
+            if (
+                evidence_tokens[: len(stated_pot_tokens)] == stated_pot_tokens
+                and pointer_tokens[: len(evidence_tokens)] == evidence_tokens
+            ):
+                return True
+        return False
+
+    return any(
+        pointer_tokens[: len(correction_tokens)] == correction_tokens
+        for correction in revision.corrections
+        if (
+            correction_tokens := _pointer_tokens(correction.field_pointer)
+        )
+    )
+
+
+def _stated_pot_values_equal(left: JsonValue, right: JsonValue) -> bool:
+    """Compare normalized pot amounts without treating decimal scale as a change."""
+
+    try:
+        return Decimal(str(left)) == Decimal(str(right))
+    except (InvalidOperation, ValueError):
+        return False
 
 
 def _cash_rake_consistent_for_extraction(state: ImportedHandState) -> bool:
