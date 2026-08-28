@@ -130,8 +130,9 @@ PWA_URL="http://localhost:$PWA_PORT"
 
 # Solver selection. The backend is told exactly which solver to run, as an
 # absolute path rather than a PATH lookup: this worktree's binary when it is
-# current, otherwise a deliberately absent path so the backend's fallback
-# engine runs and the reason shows up in its responses. A binary is current
+# current, otherwise a path that cannot exist (a child of /dev/null) so the
+# backend's fallback engine runs and the reason shows up in its responses. A
+# binary is current
 # when setup stamped it with the tree hash of a clean tree that is still
 # checked out (and the binary has not been rebuilt since the stamp), or when
 # nothing under solver-plugins/postflop (directories included, so deletions
@@ -157,7 +158,9 @@ SOLVER_STATUS=$(solver_status)
 if [ "$SOLVER_STATUS" = ok ]; then
   SOLVER_COMMAND=$SOLVER_BIN
 else
-  SOLVER_COMMAND="$SOLVER_BIN.$SOLVER_STATUS"  # does not exist: forces the fallback
+  # Unforgeable: nothing can be created below /dev/null, so this always fails
+  # to launch (ENOTDIR) and the status is still readable in the error.
+  SOLVER_COMMAND="/dev/null/poker-postflop-solver.$SOLVER_STATUS"
 fi
 # The setting is parsed with shlex, so single-quote it (paths may contain spaces).
 # shellcheck disable=SC2089  # the quotes are meant literally, for shlex
