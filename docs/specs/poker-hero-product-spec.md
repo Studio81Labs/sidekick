@@ -308,6 +308,13 @@ the action/amount parse without manual eyeballing. It is necessary but not
 sufficient: a wrong button, hero identity, card, timestamp, or participation
 status can reconcile the pot and still corrupt grading.
 
+An uncalled return closes a betting round only when it exactly removes the
+actor's unique unmatched live commitment after every other actionable opponent
+has folded, responded, or gone all-in. Folded and all-in commitments still set
+the matched floor; dead antes do not. An unresolved return remains reviewable
+but cannot authorize a later street, results, or learning extraction, and no
+same-street action may follow it.
+
 **Approval boundary:** raw history, detected output, confidences, warnings,
 reconciliation evidence, corrections, and final approved state remain separate
 and reviewable. Approval may be performed per hand or explicitly across a

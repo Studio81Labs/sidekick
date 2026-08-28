@@ -803,6 +803,7 @@ class ImportedHandState(ImportedHandModel):
             current_wager: Decimal | None = Decimal(0)
             nominal_bring_in = Decimal(0)
             last_full_wager_increment = self.game.blinds.big_blind
+            return_seen = False
             round_closed_by_return = False
             pending_action_players: set[str] | None = None
             next_action_player: str | None = None
@@ -810,10 +811,11 @@ class ImportedHandState(ImportedHandModel):
             last_preflop_straddler: str | None = None
             table_decision_seen = False
             for action in street.actions:
-                if round_closed_by_return:
+                if return_seen:
                     raise ValueError(
                         "an action cannot follow an uncalled return on the same street"
                     )
+                return_settles_round = False
                 sole_actionable_player = (
                     _sole_actionable_player_with_only_all_in_opponents(
                         live_players,
@@ -1436,6 +1438,43 @@ class ImportedHandState(ImportedHandModel):
                             f" legal maximum {maximum_wager_addition} from pot"
                             f" {pot_before_action} and call {call_amount}"
                         )
+                if action.action_type == "uncalled_return":
+                    other_live_commitments = [
+                        live_commitments[seat.player_id]
+                        for seat in self.seats
+                        if seat.player_id != action.actor_id
+                        and seat.participation in {"dealt_in", "unknown"}
+                    ]
+                    if (
+                        actor_live_commitment is not None
+                        and resolved_live_commitment is not None
+                        and all(
+                            commitment is not None
+                            for commitment in other_live_commitments
+                        )
+                    ):
+                        matched_live_commitment = max(
+                            (
+                                commitment
+                                for commitment in other_live_commitments
+                                if commitment is not None
+                            ),
+                            default=Decimal(0),
+                        )
+                        if (
+                            actor_live_commitment <= matched_live_commitment
+                            or resolved_live_commitment != matched_live_commitment
+                        ):
+                            raise ValueError(
+                                "an uncalled return must exactly settle the actor's"
+                                " unique unmatched live commitment"
+                            )
+                        if actionable_players - {action.actor_id}:
+                            raise ValueError(
+                                "an uncalled return cannot occur while an opponent"
+                                " response remains pending"
+                            )
+                        return_settles_round = True
                 if (
                     actor_seat.starting_stack is not None
                     and resolved_cumulative_commitment is not None
@@ -1664,7 +1703,8 @@ class ImportedHandState(ImportedHandModel):
                                 if commitment is not None
                             ),
                         )
-                    round_closed_by_return = True
+                    return_seen = True
+                    round_closed_by_return = return_settles_round
                 if action.action_type in {"check", "bet", "call", "raise"}:
                     acted_wager_by_player[action.actor_id] = current_wager
                     reopen_increment_by_player[action.actor_id] = (

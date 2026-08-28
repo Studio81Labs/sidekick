@@ -2066,6 +2066,32 @@ def three_way_blinds_and_calls() -> list[dict[str, object]]:
     ]
 
 
+def three_way_blinds_and_button_raise() -> list[dict[str, object]]:
+    return [
+        wager_action(
+            0,
+            "villain",
+            "post_small_blind",
+            amount=Decimal("0.5"),
+            total=Decimal("0.5"),
+        ),
+        wager_action(
+            1,
+            "third-player",
+            "post_big_blind",
+            amount=Decimal("1"),
+            total=Decimal("1"),
+        ),
+        wager_action(
+            2,
+            "hero",
+            "raise",
+            amount=Decimal("3"),
+            total=Decimal("3"),
+        ),
+    ]
+
+
 def incomplete_three_way_preflop_payload() -> dict[str, object]:
     payload = three_player_wager_payload()
     payload["streets"] = [
@@ -2525,6 +2551,7 @@ def test_uncalled_return_preserves_the_unknown_dead_ante_minimum(
     accepted: bool,
 ) -> None:
     payload = hand_state(hero_player_id="hero").model_dump()
+    payload["seats"][1]["starting_stack"] = Decimal("0.5")
     payload["game"]["blinds"]["ante"] = Decimal("0.1")
     payload["streets"] = [
         {
@@ -2532,7 +2559,14 @@ def test_uncalled_return_preserves_the_unknown_dead_ante_minimum(
             "actions": [
                 forced_post(0, "post_ante"),
                 wager_action(1, "hero", "bet", amount=Decimal("1")),
-                wager_action(2, "villain", "fold", total=Decimal("0")),
+                wager_action(
+                    2,
+                    "villain",
+                    "call",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                    all_in=True,
+                ),
                 forced_post(
                     3,
                     "uncalled_return",
@@ -3133,13 +3167,21 @@ def test_fold_or_check_total_at_an_unknown_prior_lower_bound_is_accepted(
 def test_return_total_at_the_proven_post_return_lower_bound_is_accepted() -> None:
     payload = hand_state(hero_player_id="hero").model_dump()
     payload["seats"][0]["starting_stack"] = Decimal("10")
+    payload["seats"][1]["starting_stack"] = Decimal("3")
     payload["streets"] = [
         {
             "street": "preflop",
             "actions": [
                 forced_post(0, "post_ante"),
                 wager_action(1, "hero", "bet", amount=Decimal("5")),
-                wager_action(2, "villain", "fold", total=Decimal("0")),
+                wager_action(
+                    2,
+                    "villain",
+                    "call",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                    all_in=True,
+                ),
                 forced_post(
                     3,
                     "uncalled_return",
@@ -3212,13 +3254,21 @@ def test_forced_and_voluntary_amount_lower_bounds_accumulate_together() -> None:
 def test_known_return_amount_reduces_the_future_commitment_lower_bound() -> None:
     payload = hand_state(hero_player_id="hero").model_dump()
     payload["seats"][0]["starting_stack"] = Decimal("3")
+    payload["seats"][1]["starting_stack"] = Decimal("1")
     payload["streets"] = [
         {
             "street": "preflop",
             "actions": [
                 forced_post(0, "post_ante"),
                 wager_action(1, "hero", "bet", amount=Decimal("2")),
-                wager_action(2, "villain", "fold", total=Decimal("0")),
+                wager_action(
+                    2,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                    all_in=True,
+                ),
                 forced_post(
                     3,
                     "uncalled_return",
@@ -3877,14 +3927,15 @@ def test_same_street_action_cannot_follow_a_concrete_uncalled_return() -> None:
                     amount=Decimal("2"),
                     total=Decimal("2"),
                 ),
+                wager_action(1, "villain", "fold", total=Decimal("0")),
                 forced_post(
-                    1,
+                    2,
                     "uncalled_return",
-                    amount=Decimal("1"),
-                    total=Decimal("1"),
+                    amount=Decimal("2"),
+                    total=Decimal("0"),
                 ),
                 wager_action(
-                    2,
+                    3,
                     "villain",
                     "call",
                     amount=Decimal("1"),
@@ -3938,6 +3989,212 @@ def test_concrete_uncalled_return_allows_the_next_street_and_results() -> None:
     state = ImportedHandState.model_validate(payload)
 
     assert state.results is not None
+
+
+def test_uncalled_return_cannot_precede_a_known_opponent_response() -> None:
+    payload = positioned_wager_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                *three_way_blinds_and_button_raise(),
+                forced_post(
+                    3,
+                    "uncalled_return",
+                    amount=Decimal("2"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="uncalled return cannot occur while an opponent response remains pending",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_uncalled_return_pending_guard_does_not_require_a_known_seat_ring(
+) -> None:
+    payload = three_player_wager_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                *three_way_blinds_and_button_raise(),
+                wager_action(3, "villain", "fold", total=Decimal("0.5")),
+                forced_post(
+                    4,
+                    "uncalled_return",
+                    amount=Decimal("2"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    assert payload["button_seat"] is None
+    assert all(seat["position"] is None for seat in payload["seats"])
+    with pytest.raises(
+        ValidationError,
+        match="uncalled return cannot occur while an opponent response remains pending",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_exact_uncalled_return_is_allowed_after_all_opponents_fold() -> None:
+    payload = positioned_wager_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                *three_way_blinds_and_button_raise(),
+                wager_action(3, "villain", "fold", total=Decimal("0.5")),
+                wager_action(4, "third-player", "fold", total=Decimal("1")),
+                forced_post(
+                    5,
+                    "uncalled_return",
+                    amount=Decimal("2"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+    payload["results"] = {}
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("1")
+
+
+@pytest.mark.parametrize(
+    ("amount", "total"),
+    [
+        (Decimal("1"), Decimal("2")),
+        (Decimal("2.5"), Decimal("0.5")),
+    ],
+)
+def test_uncalled_return_must_settle_the_exact_unique_excess(
+    amount: Decimal,
+    total: Decimal,
+) -> None:
+    payload = positioned_wager_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                *three_way_blinds_and_button_raise(),
+                wager_action(3, "villain", "fold", total=Decimal("0.5")),
+                wager_action(4, "third-player", "fold", total=Decimal("1")),
+                forced_post(
+                    5,
+                    "uncalled_return",
+                    amount=amount,
+                    total=total,
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="must exactly settle the actor's unique unmatched live commitment",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_uncalled_return_requires_a_unique_top_live_commitment() -> None:
+    payload = hand_state().model_dump()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "call",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                forced_post(
+                    2,
+                    "uncalled_return",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="must exactly settle the actor's unique unmatched live commitment",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_uncalled_return_with_unknown_opponent_commitment_remains_reviewable(
+) -> None:
+    payload = hand_state().model_dump()
+    payload["seats"][1]["starting_stack"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(1, "villain", "call", all_in=True),
+                forced_post(
+                    2,
+                    "uncalled_return",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].action_type == "uncalled_return"
+
+
+def test_unknown_uncalled_return_does_not_close_a_known_pending_action_round(
+) -> None:
+    payload = positioned_wager_payload()
+    unresolved_return = forced_post(3, "uncalled_return")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                *three_way_blinds_and_button_raise(),
+                unresolved_return,
+            ],
+        }
+    ]
+
+    partial = ImportedHandState.model_validate(payload)
+    assert partial.streets[0].actions[-1].amount is None
+
+    payload["streets"].append({"street": "flop", "actions": []})
+    with pytest.raises(
+        ValidationError,
+        match="street cannot end before the known action round is complete",
+    ):
+        ImportedHandState.model_validate(payload)
 
 
 def test_action_cannot_follow_an_unknown_uncalled_return() -> None:
@@ -5507,6 +5764,7 @@ def test_unique_top_wager_requires_an_uncalled_return_before_advancing(
     include_return: bool,
 ) -> None:
     payload = three_player_wager_payload()
+    payload["seats"][1]["starting_stack"] = Decimal("3")
     actions = [
         wager_action(
             0,
@@ -5531,11 +5789,24 @@ def test_unique_top_wager_requires_an_uncalled_return_before_advancing(
         ),
     ]
     if include_return:
+        actions.extend(
+            [
+                wager_action(3, "hero", "fold", total=Decimal("2")),
+                wager_action(
+                    4,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("3"),
+                    all_in=True,
+                ),
+            ]
+        )
         returned = forced_post(
-            3,
+            5,
             "uncalled_return",
-            amount=Decimal("2"),
-            total=Decimal("2"),
+            amount=Decimal("1"),
+            total=Decimal("3"),
         )
         returned["actor_id"] = "third-player"
         actions.append(returned)
@@ -8389,7 +8660,7 @@ def test_total_only_return_cannot_increase_exact_prior_commitment() -> None:
         ImportedHandState.model_validate(payload)
 
 
-def test_total_only_return_accepts_equal_prior_total_and_live_boundaries() -> None:
+def test_total_only_return_rejects_an_unchanged_prior_commitment() -> None:
     payload = fold_ended_return_payload(
         bet_amount=Decimal("1"),
         bet_total=Decimal("1"),
@@ -8397,9 +8668,11 @@ def test_total_only_return_accepts_equal_prior_total_and_live_boundaries() -> No
         return_total=Decimal("1"),
     )
 
-    state = ImportedHandState.model_validate(payload)
-
-    assert state.streets[0].actions[-1].total_committed == Decimal("1")
+    with pytest.raises(
+        ValidationError,
+        match="must exactly settle the actor's unique unmatched live commitment",
+    ):
+        ImportedHandState.model_validate(payload)
 
 
 @pytest.mark.parametrize(
@@ -8741,6 +9014,7 @@ def test_actions_after_a_player_becomes_terminal_are_rejected(
 def test_same_street_uncalled_return_is_allowed_after_all_in() -> None:
     payload = hand_state().model_dump()
     payload["seats"][0]["starting_stack"] = Decimal("10")
+    payload["seats"][1]["starting_stack"] = Decimal("8")
     payload["streets"] = [
         {
             "street": "preflop",
@@ -8761,6 +9035,20 @@ def test_same_street_uncalled_return_is_allowed_after_all_in() -> None:
                 },
                 {
                     "sequence": 1,
+                    "actor_id": "villain",
+                    "action_type": "call",
+                    "amount": Decimal("8"),
+                    "total_committed": Decimal("8"),
+                    "all_in": True,
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                },
+                {
+                    "sequence": 2,
                     "actor_id": "hero",
                     "action_type": "uncalled_return",
                     "amount": Decimal("2"),

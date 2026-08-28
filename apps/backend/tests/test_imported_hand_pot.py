@@ -292,6 +292,44 @@ def test_reconciles_uncalled_return_before_comparing_the_pot() -> None:
     assert result.pots[0].eligible_players == ["p1"]
 
 
+def test_pot_oracle_rejects_an_unvalidated_partial_uncalled_return() -> None:
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(0, "p1", "bet", amount="3", total="3"),
+                    action(1, "p2", "call", amount="1", total="1", all_in=True),
+                    action(2, "p1", "uncalled_return", amount="2", total="1"),
+                ],
+            }
+        ],
+        stated_gross="2",
+        stated_net="2",
+        awards=[("p1", "2", 0)],
+        starting_stacks={"p2": "1"},
+    )
+    unsafe_return = state.streets[0].actions[-1].model_copy(
+        update={
+            "amount": Decimal("1"),
+            "total_committed": Decimal("2"),
+        }
+    )
+    unsafe_street = state.streets[0].model_copy(
+        update={"actions": [*state.streets[0].actions[:-1], unsafe_return]}
+    )
+    state = state.model_copy(update={"streets": [unsafe_street]})
+
+    result = reconcile_pot(state)
+
+    assert result.status == "fail"
+    assert any(
+        "uncalled return must exactly settle the player's unique unmatched"
+        " live street commitment" in error
+        for error in result.errors
+    )
+
+
 def test_short_big_blind_nominal_call_return_reconciles_without_missing_return() -> None:
     state = hand(
         [

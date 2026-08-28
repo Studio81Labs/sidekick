@@ -72,14 +72,64 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
 
     for street in hand.streets:
         street_totals = {seat.player_id: Decimal(0) for seat in hand.seats}
+        street_live_totals: dict[str, Decimal | None] = {
+            seat.player_id: Decimal(0) for seat in hand.seats
+        }
+        street_incomplete = False
         for action in street.actions:
             prior = street_totals[action.actor_id]
+            prior_live = street_live_totals[action.actor_id]
             resolved, action_errors, is_incomplete = _resolve_action_total(action, prior)
+            resolved_live, live_errors = _resolve_live_action_total(
+                action,
+                prior=prior,
+                resolved=resolved,
+                prior_live=prior_live,
+            )
+            action_errors.extend(live_errors)
             errors.extend(
                 f"{street.street} action {action.sequence}: {message}"
                 for message in action_errors
             )
+            if (
+                action.action_type == "uncalled_return"
+                and resolved is not None
+                and not street_incomplete
+                and not is_incomplete
+                and not action_errors
+            ):
+                other_live_commitments = [
+                    commitment
+                    for player_id, commitment in street_live_totals.items()
+                    if player_id != action.actor_id
+                ]
+                matched_live_commitment = max(
+                    (
+                        commitment
+                        for commitment in other_live_commitments
+                        if commitment is not None
+                    ),
+                    default=Decimal(0),
+                )
+                if (
+                    prior_live is not None
+                    and resolved_live is not None
+                    and all(
+                        commitment is not None
+                        for commitment in other_live_commitments
+                    )
+                    and (
+                        prior_live <= matched_live_commitment
+                        or resolved_live != matched_live_commitment
+                    )
+                ):
+                    errors.append(
+                        f"{street.street} action {action.sequence}: uncalled return"
+                        " must exactly settle the player's unique unmatched"
+                        " live street commitment"
+                    )
             incomplete = incomplete or is_incomplete
+            street_incomplete = street_incomplete or is_incomplete
             if resolved is not None:
                 street_totals[action.actor_id] = resolved
                 starting_stack = starting_stacks[action.actor_id]
@@ -101,6 +151,7 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
                             f" commitment {hand_commitment} does not exhaust starting"
                             f" stack {starting_stack}"
                         )
+            street_live_totals[action.actor_id] = resolved_live
             if action.action_type == "uncalled_return" and resolved is not None:
                 resolved_return = prior - resolved
                 if resolved_return > 0:
@@ -609,6 +660,37 @@ def _resolve_action_total(
     if resolved is not None and resolved < prior:
         errors.append("chip action cannot reduce total_committed")
     return resolved, errors, resolved is None
+
+
+def _resolve_live_action_total(
+    action: ImportedAction,
+    *,
+    prior: Decimal,
+    resolved: Decimal | None,
+    prior_live: Decimal | None,
+) -> tuple[Decimal | None, list[str]]:
+    """Resolve wager-bearing chips while excluding dead ante contributions."""
+
+    if prior_live is None:
+        return None, []
+    if action.action_type in {"fold", "check", "post_ante"}:
+        return prior_live, []
+    if action.amount is not None:
+        resolved_live = (
+            prior_live - action.amount
+            if action.action_type == "uncalled_return"
+            else prior_live + action.amount
+        )
+    elif resolved is None:
+        return None, []
+    else:
+        resolved_live = prior_live + resolved - prior
+    if action.action_type == "uncalled_return" and resolved_live < 0:
+        return (
+            resolved_live,
+            ["uncalled return exceeds the player's live street commitment"],
+        )
+    return resolved_live, []
 
 
 def _build_pot_layers(
