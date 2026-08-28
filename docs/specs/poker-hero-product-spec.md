@@ -294,6 +294,9 @@ provenance may be appended for audit without multiplying learning data. If the
 same stable identity arrives with materially different source or detected
 content, both inputs are preserved as a conflict for explicit user resolution;
 neither silently overwrites the active approved revision or counts twice.
+Resolving any retained conflict advances the aggregate lifecycle freshness
+marker to at least the resolution time so backup/restore ordering cannot rank a
+post-resolution record by stale pre-resolution state.
 
 **Correctness oracle:** re-derive the pot from the action stream and reconcile
 against the file's stated pot (accounting for rake, uncalled bets, side pots).

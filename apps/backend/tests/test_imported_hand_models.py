@@ -12237,6 +12237,7 @@ def conflict_chronology_record(
     status: str = "resolved_use_source",
     selected_raw_source_id: str | None = None,
     resolved_at: datetime | None = NOW,
+    lifecycle_changed_at: datetime = NOW + timedelta(days=1),
 ) -> ImportedHandRecord:
     retained = [
         retained_audit_source(
@@ -12290,7 +12291,7 @@ def conflict_chronology_record(
         canonical_revisions=revisions,
         lifecycle={
             "status": "pending_review",
-            "changed_at": NOW + timedelta(days=1),
+            "changed_at": lifecycle_changed_at,
         },
     )
 
@@ -12409,6 +12410,33 @@ def test_resolved_conflict_uses_the_latest_of_multiple_references() -> None:
         )
 
 
+def test_lifecycle_cannot_precede_a_retained_conflict_resolution() -> None:
+    resolved_at = NOW + timedelta(minutes=2)
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "lifecycle changed_at cannot precede resolved conflict"
+            " conflict-1 resolved_at"
+        ),
+    ):
+        conflict_chronology_record(
+            resolved_at=resolved_at,
+            lifecycle_changed_at=resolved_at - timedelta(microseconds=1),
+        )
+
+
+def test_lifecycle_accepts_a_conflict_resolved_at_its_change_time() -> None:
+    resolved_at = NOW + timedelta(minutes=2)
+
+    record = conflict_chronology_record(
+        resolved_at=resolved_at,
+        lifecycle_changed_at=resolved_at,
+    )
+
+    assert record.lifecycle.changed_at == record.conflicts[0].resolved_at
+
+
 def test_unresolved_conflict_does_not_require_a_resolution_timestamp() -> None:
     latest_at = NOW + timedelta(minutes=4)
 
@@ -12522,6 +12550,28 @@ def test_restore_rejects_unsafe_nonchronological_conflict_copies(
                 }
             ),
         }
+    )
+
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+def test_restore_rejects_stale_conflict_resolution_lifecycle_copies(
+    invalid_side: str,
+) -> None:
+    resolved_at = NOW + timedelta(minutes=1)
+    valid = conflict_chronology_record(resolved_at=resolved_at)
+    invalid = valid.model_copy(
+        update={
+            "lifecycle": valid.lifecycle.model_copy(
+                update={
+                    "changed_at": resolved_at - timedelta(microseconds=1)
+                }
+            )
+        }
+    )
+    current, candidate = (
+        (invalid, valid) if invalid_side == "current" else (valid, invalid)
     )
 
     assert classify_restore(current, candidate).kind == "conflict_merge_required"

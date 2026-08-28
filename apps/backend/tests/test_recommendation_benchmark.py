@@ -604,6 +604,133 @@ def revalidate_tournament_case_with_state_updates(
     )
 
 
+def three_player_tournament_benchmark_dataset(
+    *,
+    players_in_hand: int = 3,
+    active_player_ids: list[str] | None = None,
+    opponent_position: str | None = "big_blind",
+) -> RecommendationBenchmarkDataset:
+    configuration = three_player_tournament_economic_configuration()
+    economic_model = case_economic_model_evidence(
+        configuration=configuration,
+        name="three-handed-final-table",
+        revision="tournament-economics-9",
+    )
+    table = reference_table_configuration(3)
+    case = benchmark_case(
+        "three-handed-tournament",
+        [reference_line("check")],
+        street="preflop",
+        board_cards=[],
+        effective_stack=30.0,
+        players_in_hand=players_in_hand,
+        hero_position="button",
+        opponent_position=opponent_position,
+        hero_stack=50.0,
+        opponent_stack=30.0,
+        economic_model=economic_model,
+        hero_structural_position={
+            "dealt_in_player_count": 3,
+            **table["structural_positions"][0],
+        },
+        hero_player_id="hero",
+        opponent_player_id="villain",
+        dealt_in_player_ids_by_position={
+            "BTN": "hero",
+            "SB": "third",
+            "BB": "villain",
+        },
+        active_player_ids=active_player_ids or ["hero", "third", "villain"],
+    )
+    reference = grading_reference_for_table_counts(3)
+    reference["economic_model"] = economic_model
+    reference["coverage"]["effective_stack_depths_bb"].append(30.0)
+    return benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=reference,
+    )
+
+
+def seven_player_tournament_benchmark_dataset(
+    *,
+    opponent_position: str | None,
+) -> RecommendationBenchmarkDataset:
+    player_by_position = {
+        "BTN": "hero",
+        "SB": "seat-2",
+        "BB": "seat-3",
+        "UTG": "seat-4",
+        "UTG+1/LJ": "villain",
+        "HJ": "seat-6",
+        "CO": "seat-7",
+    }
+    configuration_values = tournament_economic_configuration().model_dump(
+        mode="python"
+    )
+    configuration_values.update(
+        {
+            "stage": "seven-handed-final-table",
+            "players_remaining": 7,
+            "remaining_stacks": [
+                {
+                    "player_id": player_id,
+                    "stack": Decimal(
+                        "5000"
+                        if player_id == "hero"
+                        else "3000"
+                        if player_id == "villain"
+                        else "4000"
+                    ),
+                }
+                for player_id in player_by_position.values()
+            ],
+            "bounties": [
+                {"player_id": player_id, "value": Decimal("10")}
+                for player_id in player_by_position.values()
+            ],
+        }
+    )
+    configuration = TournamentEconomics.model_validate(configuration_values)
+    economic_model = case_economic_model_evidence(
+        configuration=configuration,
+        name="seven-handed-final-table",
+        revision="tournament-economics-10",
+    )
+    table = reference_table_configuration(7)
+    case = benchmark_case(
+        "seven-handed-unrouteable-opponent",
+        [reference_line("check")],
+        street="preflop",
+        board_cards=[],
+        effective_stack=30.0,
+        players_in_hand=7,
+        hero_position="button",
+        opponent_position=opponent_position,
+        hero_stack=50.0,
+        opponent_stack=30.0,
+        economic_model=economic_model,
+        hero_structural_position={
+            "dealt_in_player_count": 7,
+            **table["structural_positions"][0],
+        },
+        hero_player_id="hero",
+        opponent_player_id="villain",
+        dealt_in_player_ids_by_position=player_by_position,
+        active_player_ids=list(player_by_position.values()),
+    )
+    reference = grading_reference_for_table_counts(7)
+    reference["economic_model"] = economic_model
+    reference["coverage"]["effective_stack_depths_bb"].append(30.0)
+    return benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=reference,
+    )
+
+
 def recommendation(
     action: str,
     *,
@@ -1240,6 +1367,11 @@ def test_schema_five_accepts_an_exact_tournament_economic_model_binding() -> Non
             "hero_player_id does not match",
         ),
         (
+            {"opponent_position": "button"},
+            "opponent_position 'button' maps to player 'hero', not"
+            " opponent_player_id 'villain'",
+        ),
+        (
             {"active_player_ids": ["hero"]},
             "active_player_ids count must equal players_in_hand",
         ),
@@ -1308,49 +1440,60 @@ def test_schema_five_accepts_multiway_tournament_actor_mapping(
     players_in_hand: int,
     active_player_ids: list[str],
 ) -> None:
-    configuration = three_player_tournament_economic_configuration()
-    economic_model = case_economic_model_evidence(
-        configuration=configuration,
-        name="three-handed-final-table",
-        revision="tournament-economics-9",
-    )
-    table = reference_table_configuration(3)
-    case = benchmark_case(
-        "three-handed-tournament",
-        [reference_line("check")],
-        street="preflop",
-        board_cards=[],
-        effective_stack=30.0,
+    dataset = three_player_tournament_benchmark_dataset(
         players_in_hand=players_in_hand,
-        hero_position="button",
-        hero_stack=50.0,
-        opponent_stack=30.0,
-        economic_model=economic_model,
-        hero_structural_position={
-            "dealt_in_player_count": 3,
-            **table["structural_positions"][0],
-        },
-        hero_player_id="hero",
-        opponent_player_id="villain",
-        dealt_in_player_ids_by_position={
-            "BTN": "hero",
-            "SB": "third",
-            "BB": "villain",
-        },
         active_player_ids=active_player_ids,
-    )
-    reference = grading_reference_for_table_counts(3)
-    reference["economic_model"] = economic_model
-    reference["coverage"]["effective_stack_depths_bb"].append(30.0)
-
-    dataset = benchmark_dataset(
-        [case],
-        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
-        reference_source={"name": "Independent solver export"},
-        grading_reference=reference,
     )
 
     assert dataset.cases[0].state.active_player_ids == active_player_ids
+
+
+@pytest.mark.parametrize(
+    ("players_in_hand", "active_player_ids", "opponent_position", "message"),
+    [
+        (3, None, None, "tournament opponent_position None must route"),
+        (3, None, "ip", "tournament opponent_position 'ip' must route"),
+        (
+            3,
+            None,
+            "small_blind",
+            "opponent_position 'small_blind' maps to player 'third', not"
+            " opponent_player_id 'villain'",
+        ),
+        (
+            2,
+            ["hero", "villain"],
+            "small_blind",
+            "opponent_position 'small_blind' maps to player 'third', not"
+            " opponent_player_id 'villain'",
+        ),
+    ],
+)
+def test_schema_five_rejects_unbound_multiway_tournament_opponent_position(
+    players_in_hand: int,
+    active_player_ids: list[str] | None,
+    opponent_position: str | None,
+    message: str,
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        three_player_tournament_benchmark_dataset(
+            players_in_hand=players_in_hand,
+            active_player_ids=active_player_ids,
+            opponent_position=opponent_position,
+        )
+
+
+@pytest.mark.parametrize("opponent_position", [None, "unrecognized-seat"])
+def test_schema_five_does_not_route_missing_opponent_to_an_unsupported_seat(
+    opponent_position: str | None,
+) -> None:
+    with pytest.raises(
+        ValidationError,
+        match="must route to one exact structural position",
+    ):
+        seven_player_tournament_benchmark_dataset(
+            opponent_position=opponent_position,
+        )
 
 
 def test_tournament_actor_ids_accept_the_full_economic_identifier_alphabet() -> None:

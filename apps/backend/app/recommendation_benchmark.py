@@ -1073,6 +1073,37 @@ def _validate_case_actor_economics(
             f" hero structural position {structural_position.display_label!r}"
         )
 
+    if (
+        table_configuration.dealt_in_count > 2
+        or state.opponent_position is not None
+    ):
+        routed_opponent_position = normalize_position(state.opponent_position)
+        opponent_structural_positions = [
+            position
+            for position in table_configuration.structural_positions
+            if routed_opponent_position is not None
+            and LEGACY_POSITION_BY_EXACT_STRUCTURAL_LABEL.get(
+                position.display_label
+            )
+            == routed_opponent_position
+        ]
+        if len(opponent_structural_positions) != 1:
+            raise ValueError(
+                f"Case {case.id} tournament opponent_position"
+                f" {state.opponent_position!r} must route to one exact structural"
+                " position in its table configuration"
+            )
+        opponent_structural_position = opponent_structural_positions[0]
+        mapped_opponent_player_id = state.dealt_in_player_ids_by_position[
+            opponent_structural_position.display_label
+        ]
+        if mapped_opponent_player_id != state.opponent_player_id:
+            raise ValueError(
+                f"Case {case.id} opponent_position {state.opponent_position!r} maps"
+                f" to player {mapped_opponent_player_id!r}, not opponent_player_id"
+                f" {state.opponent_player_id!r}"
+            )
+
     dealt_in_player_ids = set(state.dealt_in_player_ids_by_position.values())
     active_player_ids = set(state.active_player_ids)
     if not active_player_ids <= dealt_in_player_ids:

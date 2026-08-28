@@ -347,6 +347,10 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   Every dealt-in ID must occur in the tournament's remaining-stack and bounty
   collections. Visible hero and opponent BB stacks, multiplied by the declared
   chip big blind, must exactly match those identified tournament stack entries.
+  Any supplied tournament `opponent_position` must route to the exact structural
+  seat occupied by `opponent_player_id`. Cases from tables with more than two
+  dealt players must supply that route; missing, relative-only, or differently
+  mapped opponent routes fail validation.
   Tournament rosters may contain additional players who are not dealt into this
   table. Missing economics and an explicit `kind: "unknown"` fail the
   version-5 gate rather than inheriting the corpus declaration. A corpus with

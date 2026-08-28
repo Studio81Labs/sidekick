@@ -2265,6 +2265,7 @@ class ImportedHandRecord(ImportedHandModel):
                 raw_by_id=raw_by_id,
                 detection_by_id=detection_by_id,
                 revisions=self.canonical_revisions,
+                lifecycle_changed_at=self.lifecycle.changed_at,
             )
 
         active = self.lifecycle.active_canonical_revision
@@ -2700,6 +2701,7 @@ def _validate_conflict_resolution_chronology(
     raw_by_id: dict[str, RawHandHistory],
     detection_by_id: dict[str, DetectedImportedHand],
     revisions: list[CanonicalHandRevision],
+    lifecycle_changed_at: datetime,
 ) -> None:
     if conflict.status == "unresolved":
         return
@@ -2717,6 +2719,11 @@ def _validate_conflict_resolution_chronology(
         raise ValueError(
             f"conflict {conflict.conflict_id} resolved_at cannot precede latest"
             f" referenced evidence at {latest_referenced_at.isoformat()}"
+        )
+    if lifecycle_changed_at < conflict.resolved_at:
+        raise ValueError(
+            "lifecycle changed_at cannot precede resolved conflict"
+            f" {conflict.conflict_id} resolved_at"
         )
 
 
@@ -2743,6 +2750,7 @@ def _record_conflict_resolution_is_valid(
                 raw_by_id=raw_by_id,
                 detection_by_id=detection_by_id,
                 revisions=record.canonical_revisions,
+                lifecycle_changed_at=record.lifecycle.changed_at,
             )
     except (AttributeError, IndexError, KeyError, TypeError, ValueError):
         return False
