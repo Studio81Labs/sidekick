@@ -136,6 +136,13 @@ class SourceEvidence(ImportedHandModel):
     excerpt: str | None = Field(default=None, max_length=1000, strict=True)
     marker: str | None = Field(default=None, max_length=160, strict=True)
 
+    @field_validator("excerpt", "marker")
+    @classmethod
+    def validate_non_empty_locator(cls, value: str | None) -> str | None:
+        if value is not None and not value.strip():
+            raise ValueError("source evidence text locators cannot be empty")
+        return value
+
     @model_validator(mode="after")
     def validate_line_range(self) -> Self:
         if self.line_end is not None and self.line_start is None:
@@ -448,6 +455,8 @@ class ImportedSeat(ImportedHandModel):
     def validate_position_participation(self) -> Self:
         if self.participation != "dealt_in" and self.position is not None:
             raise ValueError("only a dealt-in seat can have a structural position")
+        if self.participation == "dealt_in" and self.starting_stack == 0:
+            raise ValueError("a dealt-in seat must have a positive known starting stack")
         return self
 
 
@@ -1456,9 +1465,10 @@ class CanonicalHandRevision(ImportedHandModel):
     corrections: list[UserCorrection] = Field(default_factory=list)
 
     @model_validator(mode="after")
-    def validate_unique_corrections(self) -> Self:
+    def validate_corrections(self) -> Self:
         pointers = [correction.field_pointer for correction in self.corrections]
         _validate_non_overlapping_correction_pointers(pointers)
+        _validate_correction_timestamps(self)
         return self
 
 
@@ -1697,6 +1707,8 @@ class ImportedHandRecord(ImportedHandModel):
 
         state = self.active_state_for_extraction
         if state is None or state.hero_player_id is None:
+            return []
+        if state.game.betting_limit == "fixed_limit":
             return []
         hero = next(
             seat for seat in state.seats if seat.player_id == state.hero_player_id
@@ -2250,6 +2262,7 @@ def _validate_corrections_win(
     detected: DetectedImportedHand,
     revision: CanonicalHandRevision,
 ) -> None:
+    _validate_correction_timestamps(revision)
     detected_json = detected.state.model_dump_json()
     detected_document = json.loads(detected_json)
     for correction in revision.corrections:
@@ -2270,3 +2283,12 @@ def _validate_corrections_win(
     approved = json.loads(revision.state.model_dump_json())
     if not _json_values_equal(expected, approved):
         raise ValueError("canonical state may differ from detection only through corrections")
+
+
+def _validate_correction_timestamps(revision: CanonicalHandRevision) -> None:
+    for correction in revision.corrections:
+        if correction.corrected_at > revision.approved_at:
+            raise ValueError(
+                f"correction {correction.field_pointer} corrected_at cannot follow"
+                " approved_at"
+            )

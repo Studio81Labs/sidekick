@@ -22,6 +22,7 @@ from app.domain.imported_hands import (
     ImportedSeat,
     RawHandHistory,
     SourceChronology,
+    SourceEvidence,
     StableHandIdentity,
     StatedPotSummary,
     StructuralPosition,
@@ -181,6 +182,106 @@ def test_missing_source_time_and_economics_stay_explicitly_unknown() -> None:
     assert restored.chronology.source_timezone is None
     assert restored.game.economics.kind == "unknown"
     assert restored.game.blinds.ante is None
+
+
+@pytest.mark.parametrize("field", ["excerpt", "marker"])
+@pytest.mark.parametrize("blank", ["", "   ", "\t\n"])
+def test_source_evidence_rejects_blank_text_locators(
+    field: str,
+    blank: str,
+) -> None:
+    payload: dict[str, object] = {
+        "raw_source_id": "file-1",
+        "line_start": 1,
+        field: blank,
+    }
+
+    with pytest.raises(ValidationError, match="text locators cannot be empty"):
+        SourceEvidence.model_validate(payload)
+
+
+def test_source_evidence_preserves_meaningful_locator_whitespace() -> None:
+    source = SourceEvidence(
+        raw_source_id="file-1",
+        excerpt="  PokerStars Hand #123456789  ",
+    )
+
+    assert source.excerpt == "  PokerStars Hand #123456789  "
+
+
+def test_source_evidence_accepts_line_only_and_non_empty_text_only_locators() -> None:
+    line_only = SourceEvidence(raw_source_id="file-1", line_start=1)
+    excerpt_only = SourceEvidence(raw_source_id="file-1", excerpt="Hand #1")
+    marker_only = SourceEvidence(raw_source_id="file-1", marker="hand-start")
+
+    assert line_only.excerpt is None
+    assert excerpt_only.line_start is None
+    assert marker_only.line_start is None
+
+
+def test_dealt_in_seat_rejects_a_known_zero_starting_stack() -> None:
+    with pytest.raises(ValidationError, match="positive known starting stack"):
+        ImportedSeat(
+            seat_number=1,
+            player_id="hero",
+            starting_stack=Decimal(0),
+            participation="dealt_in",
+        )
+
+
+@pytest.mark.parametrize("starting_stack", [None, Decimal("0.01")])
+def test_dealt_in_seat_accepts_unknown_or_positive_starting_stack(
+    starting_stack: Decimal | None,
+) -> None:
+    seat = ImportedSeat(
+        seat_number=1,
+        player_id="hero",
+        starting_stack=starting_stack,
+        participation="dealt_in",
+    )
+
+    assert seat.starting_stack == starting_stack
+
+
+@pytest.mark.parametrize("participation", ["unknown", "sitting_out", "not_dealt"])
+def test_known_zero_stack_remains_valid_for_non_dealt_in_seats(
+    participation: str,
+) -> None:
+    seat = ImportedSeat(
+        seat_number=1,
+        player_id="hero",
+        starting_stack=Decimal(0),
+        participation=participation,
+    )
+
+    assert seat.starting_stack == 0
+
+
+def test_zero_stack_dealt_in_hero_cannot_enter_the_canonical_state() -> None:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["seats"][0]["starting_stack"] = Decimal(0)
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "check",
+                    "total_committed": Decimal(0),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                }
+            ],
+        }
+    ]
+
+    with pytest.raises(ValidationError, match="positive known starting stack"):
+        ImportedHandState.model_validate(payload)
 
 
 def complete_tournament_economics() -> dict[str, object]:
@@ -4688,7 +4789,10 @@ def test_hero_showdown_may_repeat_only_the_stored_hero_holding() -> None:
         ImportedHandState.model_validate(payload)
 
 
-def test_extraction_returns_only_voluntary_hero_actions_from_active_approval() -> None:
+@pytest.mark.parametrize("betting_limit", ["no_limit", "pot_limit"])
+def test_extraction_returns_only_voluntary_hero_actions_from_supported_approval(
+    betting_limit: str,
+) -> None:
     selected = {
         "sequence": 0,
         "actor_id": "hero",
@@ -4713,6 +4817,7 @@ def test_extraction_returns_only_voluntary_hero_actions_from_active_approval() -
         },
     }
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["game"]["betting_limit"] = betting_limit
     state_payload["streets"] = [
         {
             "street": "preflop",
@@ -4751,6 +4856,54 @@ def test_extraction_returns_only_voluntary_hero_actions_from_active_approval() -
     assert withdrawn.active_hero_actions_for_extraction == []
 
 
+def test_fixed_limit_hands_remain_reviewable_but_are_not_extractable() -> None:
+    state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["game"]["betting_limit"] = "fixed_limit"
+    state_payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                {
+                    "sequence": 0,
+                    "actor_id": "hero",
+                    "action_type": "check",
+                    "total_committed": Decimal(0),
+                    "origin": {
+                        "kind": "player_selected",
+                        "basis": "explicit_marker",
+                        "evidence": [evidence()],
+                    },
+                    "evidence": [evidence()],
+                }
+            ],
+        }
+    ]
+    state = ImportedHandState.model_validate(state_payload)
+    detected_state = detected(state)
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[detected_state],
+        canonical_revisions=[
+            CanonicalHandRevision(
+                revision=1,
+                detection_id=detected_state.detection_id,
+                approved_at=NOW,
+                state=state,
+            )
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+    assert state.streets[0].actions[0].is_player_decision is True
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
 def test_active_record_enforces_user_corrections_and_round_trips() -> None:
     record = active_record()
 
@@ -4769,6 +4922,72 @@ def test_active_record_enforces_user_corrections_and_round_trips() -> None:
             raw_sources=[raw_source()],
             detections=[detected()],
             canonical_revisions=[bad_revision],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": NOW,
+            },
+        )
+
+
+def test_correction_cannot_be_recorded_after_its_approval() -> None:
+    with pytest.raises(ValidationError, match="corrected_at cannot follow approved_at"):
+        CanonicalHandRevision(
+            revision=1,
+            detection_id="detection-1",
+            approved_at=NOW,
+            state=hand_state(hero_player_id="hero"),
+            corrections=[
+                UserCorrection(
+                    field_pointer="/hero_player_id",
+                    detected_value=None,
+                    approved_value="hero",
+                    corrected_at=NOW + timedelta(microseconds=1),
+                )
+            ],
+        )
+
+
+@pytest.mark.parametrize(
+    "corrected_at",
+    [
+        NOW - timedelta(minutes=1),
+        NOW,
+        datetime(2026, 8, 27, 14, 0, tzinfo=timezone(timedelta(hours=2))),
+    ],
+)
+def test_correction_at_or_before_approval_is_accepted(
+    corrected_at: datetime,
+) -> None:
+    approved = CanonicalHandRevision(
+        revision=1,
+        detection_id="detection-1",
+        approved_at=NOW,
+        state=hand_state(hero_player_id="hero"),
+        corrections=[
+            UserCorrection(
+                field_pointer="/hero_player_id",
+                detected_value=None,
+                approved_value="hero",
+                corrected_at=corrected_at,
+            )
+        ],
+    )
+
+    assert approved.corrections[0].corrected_at == corrected_at
+
+
+def test_aggregate_rechecks_correction_timestamps_after_unsafe_model_copy() -> None:
+    unsafe_revision = revision().model_copy(
+        update={"approved_at": NOW - timedelta(minutes=1)}
+    )
+
+    with pytest.raises(ValidationError, match="corrected_at cannot follow approved_at"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[unsafe_revision],
             lifecycle={
                 "status": "active",
                 "active_canonical_revision": 1,
