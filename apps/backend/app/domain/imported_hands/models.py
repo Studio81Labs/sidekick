@@ -1025,6 +1025,11 @@ class ImportedHandState(ImportedHandModel):
                         action.action_type == "post_ante"
                         and action.actor_id in required_ante_players
                     ):
+                        if action.actor_id in seen_ante_posts:
+                            raise ValueError(
+                                "post_ante may occur only once for each player in"
+                                " the known dealt-in seat ring"
+                            )
                         seen_ante_posts.add(action.actor_id)
                     posted_amount = action.amount
                     if (
@@ -2072,6 +2077,11 @@ class ImportedHandRecord(ImportedHandModel):
                 raise ValueError("permanently deleted record requires a deletion receipt")
             if self.deletion_receipt.generation != self.lifecycle.deletion_generation:
                 raise ValueError("deletion receipt generation must match lifecycle generation")
+            if self.lifecycle.changed_at < self.deletion_receipt.deleted_at:
+                raise ValueError(
+                    "deleted lifecycle changed_at cannot precede deletion receipt"
+                    " deleted_at"
+                )
             return self
         elif self.identity is None:
             raise ValueError("a retained imported hand requires its stable identity")
@@ -2219,16 +2229,26 @@ class ImportedHandRecord(ImportedHandModel):
                     "withdrawn/rejected lifecycle changed_at cannot precede the"
                     " latest canonical revision approved_at"
                 )
-        elif (
-            self.lifecycle.status == "deletion_pending"
-            and revisions
-            and self.lifecycle.changed_at
-            < self.canonical_revisions[-1].approved_at
-        ):
-            raise ValueError(
-                "deletion_pending lifecycle changed_at cannot precede the latest"
-                " canonical revision approved_at"
-            )
+        elif self.lifecycle.status == "deletion_pending":
+            deletion_request = self.lifecycle.deletion_request
+            assert deletion_request is not None
+            if self.lifecycle.changed_at < deletion_request.requested_at:
+                raise ValueError(
+                    "deletion_pending lifecycle changed_at cannot precede deletion"
+                    " request requested_at"
+                )
+            if revisions:
+                latest_approved_at = self.canonical_revisions[-1].approved_at
+                if self.lifecycle.changed_at < latest_approved_at:
+                    raise ValueError(
+                        "deletion_pending lifecycle changed_at cannot precede the"
+                        " latest canonical revision approved_at"
+                    )
+                if deletion_request.requested_at < latest_approved_at:
+                    raise ValueError(
+                        "deletion request requested_at cannot precede the latest"
+                        " canonical revision approved_at"
+                    )
         return self
 
     @property
@@ -2259,18 +2279,7 @@ class ImportedHandRecord(ImportedHandModel):
         )
         if hero.participation != "dealt_in":
             return []
-        return [
-            action
-            for street in state.streets
-            for action in street.actions
-            if action.actor_id == state.hero_player_id
-            and action.is_player_decision
-            and not (
-                action.action_type in {"bet", "raise"}
-                and action.amount is None
-                and action.total_committed is None
-            )
-        ]
+        return _hero_actions_ready_for_extraction(state)
 
 
 class ReimportDisposition(ImportedHandModel):
@@ -2348,6 +2357,22 @@ def classify_restore(
                 else "explicit_reimport_required"
             )
         )
+    if (
+        current.lifecycle.status == "deletion_pending"
+        and candidate.lifecycle.status == "deleted"
+        and candidate.lifecycle.deletion_generation
+        == current.lifecycle.deletion_generation
+    ):
+        current_request = current.lifecycle.deletion_request
+        candidate_receipt = candidate.deletion_receipt
+        assert current_request is not None
+        assert candidate_receipt is not None
+        if (
+            candidate.lifecycle.changed_at < current.lifecycle.changed_at
+            or candidate_receipt.deleted_at < current_request.requested_at
+        ):
+            return RestoreDisposition(kind="conflict_merge_required")
+        return RestoreDisposition(kind="allow")
     current_revisions = current.canonical_revisions
     candidate_revisions = candidate.canonical_revisions
     if candidate.lifecycle.deletion_generation > current.lifecycle.deletion_generation:
@@ -2361,6 +2386,10 @@ def classify_restore(
                     current.lifecycle.status
                     in {"withdrawn", "rejected", "deletion_pending"}
                     and candidate.lifecycle.status == "active"
+                )
+                or (
+                    current.lifecycle.status == "deletion_pending"
+                    and candidate.lifecycle.status != "deletion_pending"
                 )
                 or not _restore_candidate_preserves_audit(current, candidate)
             ):
@@ -2397,6 +2426,11 @@ def classify_restore(
     if (
         current.lifecycle.status in {"withdrawn", "rejected", "deletion_pending"}
         and candidate.lifecycle.status == "active"
+    ):
+        return RestoreDisposition(kind="conflict_merge_required")
+    if (
+        current.lifecycle.status == "deletion_pending"
+        and candidate.lifecycle.status != "deletion_pending"
     ):
         return RestoreDisposition(kind="conflict_merge_required")
     if not _restore_candidate_preserves_audit(current, candidate):
@@ -2615,6 +2649,21 @@ def _known_action_total(
                 f" {action.total_committed} conflicts with prior commitment {prior}"
             )
         return prior
+    if action.action_type == "uncalled_return" and prior is not None:
+        if action.amount is not None and action.amount > prior:
+            raise ValueError(
+                f"uncalled_return amount {action.amount} exceeds prior total"
+                f" commitment {prior}"
+            )
+        if (
+            action.total_committed is not None
+            and action.total_committed > prior
+        ):
+            raise ValueError(
+                "uncalled_return total_committed"
+                f" {action.total_committed} cannot exceed prior total"
+                f" commitment {prior}"
+            )
     if (
         prior is not None
         and action.amount is not None
@@ -2787,15 +2836,231 @@ def _known_live_action_total(
 
     if prior_live_commitment is None:
         return None
+    if (
+        action.action_type == "uncalled_return"
+        and action.amount is not None
+        and action.amount > prior_live_commitment
+    ):
+        raise ValueError(
+            f"uncalled_return amount {action.amount} exceeds prior live"
+            f" commitment {prior_live_commitment}"
+        )
     if action.action_type in {"fold", "check", "post_ante"}:
         return prior_live_commitment
     if prior_commitment is not None and resolved_commitment is not None:
-        return prior_live_commitment + resolved_commitment - prior_commitment
+        resolved_live_commitment = (
+            prior_live_commitment + resolved_commitment - prior_commitment
+        )
+        if (
+            action.action_type == "uncalled_return"
+            and resolved_live_commitment < 0
+        ):
+            raise ValueError(
+                "uncalled_return cannot reduce prior live commitment below zero"
+            )
+        if (
+            action.action_type == "uncalled_return"
+            and resolved_live_commitment > prior_live_commitment
+        ):
+            raise ValueError(
+                "uncalled_return cannot increase prior live commitment"
+            )
+        return resolved_live_commitment
     if action.amount is None:
         return None
     if action.action_type == "uncalled_return":
         return prior_live_commitment - action.amount
     return prior_live_commitment + action.amount
+
+
+def _hero_actions_ready_for_extraction(
+    state: ImportedHandState,
+) -> list[ImportedAction]:
+    """Return hero decisions whose chip-state prefix is exactly reconstructable."""
+
+    assert state.hero_player_id is not None
+    player_ids = {seat.player_id for seat in state.seats}
+    extracted: list[ImportedAction] = []
+    committed_pot_before_street: Decimal | None = Decimal(0)
+    live_player_count = sum(
+        seat.participation in {"dealt_in", "unknown"} for seat in state.seats
+    )
+
+    for street in state.streets:
+        street_commitments: dict[str, Decimal | None] = {
+            player_id: Decimal(0) for player_id in player_ids
+        }
+        live_commitments: dict[str, Decimal | None] = {
+            player_id: Decimal(0) for player_id in player_ids
+        }
+        current_wager: Decimal | None = Decimal(0)
+
+        for action in street.actions:
+            prior_commitment = street_commitments[action.actor_id]
+            prior_live_commitment = live_commitments[action.actor_id]
+            effective_prior_commitment = _action_implied_prior_commitment(
+                action,
+                prior_commitment=prior_commitment,
+                prior_live_commitment=prior_live_commitment,
+                current_wager=current_wager,
+            )
+            exact_commitment_context = all(
+                (
+                    effective_prior_commitment
+                    if player_id == action.actor_id
+                    else commitment
+                )
+                is not None
+                for player_id, commitment in street_commitments.items()
+            )
+            exact_live_context = all(
+                commitment is not None
+                for commitment in live_commitments.values()
+            )
+            selected_wager_is_resolved = not (
+                action.action_type in {"bet", "raise"}
+                and action.amount is None
+                and action.total_committed is None
+            )
+            if (
+                action.actor_id == state.hero_player_id
+                and action.is_player_decision
+                and committed_pot_before_street is not None
+                and current_wager is not None
+                and exact_commitment_context
+                and exact_live_context
+                and selected_wager_is_resolved
+            ):
+                extracted.append(action)
+
+            resolved_commitment = _known_action_total(
+                action,
+                effective_prior_commitment,
+            )
+            resolved_live_commitment = _known_live_action_total(
+                action,
+                effective_prior_commitment,
+                resolved_commitment,
+                prior_live_commitment,
+            )
+            if (
+                action.action_type == "call"
+                and not action.all_in
+                and current_wager is not None
+                and prior_live_commitment is not None
+                and effective_prior_commitment is not None
+            ):
+                call_amount = current_wager - prior_live_commitment
+                if call_amount >= 0:
+                    if resolved_commitment is None:
+                        resolved_commitment = (
+                            effective_prior_commitment + call_amount
+                        )
+                    if resolved_live_commitment is None:
+                        resolved_live_commitment = current_wager
+
+            street_commitments[action.actor_id] = resolved_commitment
+            live_commitments[action.actor_id] = resolved_live_commitment
+            if action.action_type in {"fold", "check", "post_ante"}:
+                continue
+            if action.action_type == "uncalled_return":
+                current_wager = (
+                    max(
+                        commitment
+                        for commitment in live_commitments.values()
+                        if commitment is not None
+                    )
+                    if all(
+                        commitment is not None
+                        for commitment in live_commitments.values()
+                    )
+                    else None
+                )
+                continue
+            if action.action_type == "call":
+                if (
+                    current_wager is None
+                    and resolved_live_commitment is not None
+                    and not action.all_in
+                ):
+                    current_wager = resolved_live_commitment
+                continue
+            if resolved_live_commitment is None:
+                current_wager = None
+                continue
+            if action.action_type in {"bet", "raise"}:
+                current_wager = resolved_live_commitment
+                continue
+            if current_wager is not None:
+                current_wager = max(current_wager, resolved_live_commitment)
+                if (
+                    action.action_type == "post_big_blind"
+                    and state.game.blinds.big_blind is not None
+                    and live_player_count >= 3
+                ):
+                    posted_amount = action.amount
+                    if (
+                        posted_amount is None
+                        and effective_prior_commitment is not None
+                        and resolved_commitment is not None
+                    ):
+                        posted_amount = (
+                            resolved_commitment - effective_prior_commitment
+                        )
+                    if (
+                        posted_amount is not None
+                        and 0 < posted_amount < state.game.blinds.big_blind
+                    ):
+                        current_wager = max(
+                            current_wager,
+                            state.game.blinds.big_blind,
+                        )
+
+        if committed_pot_before_street is not None and all(
+            commitment is not None for commitment in street_commitments.values()
+        ):
+            committed_pot_before_street += sum(
+                (
+                    commitment
+                    for commitment in street_commitments.values()
+                    if commitment is not None
+                ),
+                Decimal(0),
+            )
+        else:
+            committed_pot_before_street = None
+
+    return extracted
+
+
+def _action_implied_prior_commitment(
+    action: ImportedAction,
+    *,
+    prior_commitment: Decimal | None,
+    prior_live_commitment: Decimal | None,
+    current_wager: Decimal | None,
+) -> Decimal | None:
+    """Use dual fields or an exact call target to recover pre-action chips."""
+
+    if prior_commitment is not None:
+        return prior_commitment
+    if action.action_type in {"fold", "check"}:
+        return action.total_committed
+    if action.amount is not None and action.total_committed is not None:
+        if action.action_type == "uncalled_return":
+            return action.total_committed + action.amount
+        return action.total_committed - action.amount
+    if (
+        action.action_type == "call"
+        and not action.all_in
+        and action.total_committed is not None
+        and prior_live_commitment is not None
+        and current_wager is not None
+    ):
+        return action.total_committed - (
+            current_wager - prior_live_commitment
+        )
+    return None
 
 
 def _sole_actionable_player_with_only_all_in_opponents(

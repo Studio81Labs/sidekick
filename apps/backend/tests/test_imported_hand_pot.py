@@ -311,7 +311,7 @@ def test_total_only_uncalled_return_cannot_increase_commitment(
                 "actions": [
                     action(0, "p1", "bet", amount="3", total="3"),
                     action(1, "p2", "call", amount="1", total="1", all_in=True),
-                    action(2, "p1", "uncalled_return", total=return_total),
+                    action(2, "p1", "uncalled_return", total="1"),
                 ],
             }
         ],
@@ -322,8 +322,17 @@ def test_total_only_uncalled_return_cannot_increase_commitment(
         include_results=expected_status == "pass",
     )
     if expected_status == "fail":
+        unsafe_return = state.streets[0].actions[-1].model_copy(
+            update={"total_committed": Decimal(return_total)}
+        )
+        unsafe_street = state.streets[0].model_copy(
+            update={
+                "actions": [*state.streets[0].actions[:-1], unsafe_return]
+            }
+        )
         state = state.model_copy(
             update={
+                "streets": [unsafe_street],
                 "results": HandResults.model_validate(
                     {
                         "stated_pot": {

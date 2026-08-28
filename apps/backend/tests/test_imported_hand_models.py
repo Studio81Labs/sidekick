@@ -6392,6 +6392,63 @@ def test_known_ring_accepts_every_configured_ante_before_action_or_end(
     ) == player_count
 
 
+def test_known_ring_rejects_a_duplicate_configured_ante_for_one_player() -> None:
+    payload = known_ring_payload_with_ante_posts(
+        3,
+        ("hero", "villain", "third-player"),
+        include_table_action=False,
+    )
+    actions = payload["streets"][0]["actions"]
+    actions.insert(
+        3,
+        wager_action(
+            3,
+            "hero",
+            "post_ante",
+            amount=Decimal("0.1"),
+            total=Decimal("0.2"),
+        ),
+    )
+    for sequence, action in enumerate(actions):
+        action["sequence"] = sequence
+
+    with pytest.raises(
+        ValidationError,
+        match="post_ante may occur only once.*known dealt-in seat ring",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_unknown_ring_keeps_duplicate_ante_markers_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_ante",
+                    amount=Decimal("0.1"),
+                    total=Decimal("0.1"),
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "post_ante",
+                    amount=Decimal("0.1"),
+                    total=Decimal("0.2"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert len(state.streets[0].actions) == 2
+
+
 @pytest.mark.parametrize("participation", ["sitting_out", "not_dealt"])
 def test_known_ring_does_not_require_antes_from_known_nonparticipants(
     participation: str,
@@ -6979,7 +7036,7 @@ def test_known_stack_amount_only_lower_bound_does_not_prove_ante_exhaustion(
             amount=Decimal("0.5"),
             total=Decimal("0.5"),
         ),
-        wager_action(2, "third-player", "post_ante"),
+        wager_action(2, "third-player", "post_straddle"),
         wager_action(
             3,
             "third-player",
@@ -7605,6 +7662,199 @@ def test_uncalled_return_dual_fields_subtract_from_the_prior_commitment() -> Non
 
     with pytest.raises(ValidationError, match="conflict with prior commitment 2"):
         ImportedHandState.model_validate(payload)
+
+
+def fold_ended_return_payload(
+    *,
+    bet_amount: Decimal | None,
+    bet_total: Decimal | None,
+    return_amount: Decimal | None,
+    return_total: Decimal | None,
+    ante: Decimal | None = None,
+) -> dict[str, object]:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    actions: list[dict[str, object]] = []
+    if ante is not None:
+        actions.append(
+            forced_post(
+                0,
+                "post_ante",
+                amount=ante,
+                total=ante,
+            )
+        )
+    actions.extend(
+        [
+            wager_action(
+                len(actions),
+                "hero",
+                "bet",
+                amount=bet_amount,
+                total=bet_total,
+            ),
+            wager_action(
+                len(actions) + 1,
+                "villain",
+                "fold",
+                total=Decimal(0),
+            ),
+            forced_post(
+                len(actions) + 2,
+                "uncalled_return",
+                amount=return_amount,
+                total=return_total,
+            ),
+        ]
+    )
+    payload["streets"] = [{"street": "preflop", "actions": actions}]
+    return payload
+
+
+def test_amount_only_return_cannot_exceed_exact_prior_total_commitment() -> None:
+    payload = fold_ended_return_payload(
+        bet_amount=Decimal("1"),
+        bet_total=Decimal("1"),
+        return_amount=Decimal("2"),
+        return_total=None,
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="uncalled_return amount 2 exceeds prior total commitment 1",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("return_amount", "return_total"),
+    [
+        (Decimal("1.1"), None),
+        (None, Decimal("0.4")),
+        (Decimal("1.1"), Decimal("0.4")),
+    ],
+)
+def test_return_cannot_refund_a_dead_ante_from_exact_live_commitment(
+    return_amount: Decimal | None,
+    return_total: Decimal | None,
+) -> None:
+    payload = fold_ended_return_payload(
+        ante=Decimal("0.5"),
+        bet_amount=Decimal("1"),
+        bet_total=Decimal("1.5"),
+        return_amount=return_amount,
+        return_total=return_total,
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "exceeds prior live commitment 1|"
+            "cannot reduce prior live commitment below zero"
+        ),
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_total_only_return_cannot_increase_exact_prior_commitment() -> None:
+    payload = fold_ended_return_payload(
+        bet_amount=Decimal("1"),
+        bet_total=Decimal("1"),
+        return_amount=None,
+        return_total=Decimal("2"),
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "uncalled_return total_committed 2 cannot exceed prior total"
+            " commitment 1"
+        ),
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_total_only_return_accepts_equal_prior_total_and_live_boundaries() -> None:
+    payload = fold_ended_return_payload(
+        bet_amount=Decimal("1"),
+        bet_total=Decimal("1"),
+        return_amount=None,
+        return_total=Decimal("1"),
+    )
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("1")
+
+
+@pytest.mark.parametrize(
+    ("ante", "return_amount", "return_total"),
+    [
+        (None, Decimal("1"), None),
+        (Decimal("0.5"), Decimal("1"), None),
+        (Decimal("0.5"), None, Decimal("0.5")),
+        (Decimal("0.5"), Decimal("1"), Decimal("0.5")),
+    ],
+)
+def test_return_accepts_exact_total_and_live_boundaries(
+    ante: Decimal | None,
+    return_amount: Decimal | None,
+    return_total: Decimal | None,
+) -> None:
+    prior_total = Decimal("1") + (ante or Decimal(0))
+    payload = fold_ended_return_payload(
+        ante=ante,
+        bet_amount=Decimal("1"),
+        bet_total=prior_total,
+        return_amount=return_amount,
+        return_total=return_total,
+    )
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].action_type == "uncalled_return"
+
+
+def test_amount_only_return_with_unknown_prior_commitments_remains_reviewable(
+) -> None:
+    payload = fold_ended_return_payload(
+        bet_amount=None,
+        bet_total=None,
+        return_amount=Decimal("2"),
+        return_total=None,
+    )
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].amount == Decimal("2")
+
+
+def test_total_only_return_with_unknown_prior_commitment_remains_reviewable(
+) -> None:
+    payload = fold_ended_return_payload(
+        bet_amount=None,
+        bet_total=None,
+        return_amount=None,
+        return_total=Decimal("2"),
+    )
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert state.streets[0].actions[-1].total_committed == Decimal("2")
+
+
+def test_valid_amount_only_return_preserves_prior_wager_extraction() -> None:
+    payload = fold_ended_return_payload(
+        ante=Decimal("0.5"),
+        bet_amount=Decimal("1"),
+        bet_total=Decimal("1.5"),
+        return_amount=Decimal("1"),
+        return_total=None,
+    )
+    record = extraction_record_for_streets(payload["streets"])
+
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["bet"]
 
 
 def test_dual_fields_remain_reviewable_when_the_prior_commitment_is_unknown() -> None:
@@ -8262,6 +8512,191 @@ def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
     ] == ["call"]
 
 
+def extraction_record_for_streets(
+    streets: list[dict[str, object]],
+) -> ImportedHandRecord:
+    state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["streets"] = streets
+    state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(state)
+    return ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[source_detection],
+        canonical_revisions=[
+            CanonicalHandRevision(
+                revision=1,
+                detection_id=source_detection.detection_id,
+                approved_at=NOW,
+                state=state,
+            )
+        ],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": NOW,
+        },
+    )
+
+
+@pytest.mark.parametrize("action_type", ["fold", "check", "bet", "call", "raise"])
+def test_extraction_withholds_every_decision_after_an_unknown_wager(
+    action_type: str,
+) -> None:
+    selected = wager_action(
+        1,
+        "hero",
+        action_type,
+        amount=(Decimal("2") if action_type in {"bet", "raise"} else None),
+        total=(Decimal(0) if action_type in {"fold", "check"} else None),
+    )
+    record = extraction_record_for_streets(
+        [
+            {
+                "street": "preflop",
+                "actions": [wager_action(0, "villain", "bet"), selected],
+            }
+        ]
+    )
+
+    assert record.active_hero_actions_for_extraction == []
+
+
+@pytest.mark.parametrize("action_type", ["bet", "raise"])
+@pytest.mark.parametrize(
+    ("amount", "total"),
+    [
+        (Decimal("2"), None),
+        (None, Decimal("2")),
+    ],
+)
+def test_extraction_withholds_locally_sized_wagers_after_unknown_commitments(
+    action_type: str,
+    amount: Decimal | None,
+    total: Decimal | None,
+) -> None:
+    if action_type == "bet":
+        prior_actions = [wager_action(0, "hero", "post_ante")]
+    else:
+        prior_actions = [wager_action(0, "villain", "bet")]
+    prior_actions.append(
+        wager_action(
+            1,
+            "hero",
+            action_type,
+            amount=amount,
+            total=total,
+        )
+    )
+    record = extraction_record_for_streets(
+        [{"street": "preflop", "actions": prior_actions}]
+    )
+
+    assert record.active_hero_actions_for_extraction == []
+
+
+@pytest.mark.parametrize("action_type", ["check", "bet"])
+def test_extraction_withholds_later_street_decisions_after_an_unknown_pot(
+    action_type: str,
+) -> None:
+    record = extraction_record_for_streets(
+        [
+            {
+                "street": "preflop",
+                "actions": [wager_action(0, "villain", "post_ante")],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    wager_action(
+                        0,
+                        "hero",
+                        action_type,
+                        amount=(Decimal("2") if action_type == "bet" else None),
+                        total=(Decimal(0) if action_type == "check" else None),
+                    )
+                ],
+            },
+        ]
+    )
+
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_extraction_preserves_a_ready_decision_before_unresolved_evidence() -> None:
+    record = extraction_record_for_streets(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    wager_action(0, "hero", "check", total=Decimal(0)),
+                    wager_action(1, "villain", "bet"),
+                    wager_action(2, "hero", "fold", total=Decimal(0)),
+                ],
+            }
+        ]
+    )
+
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["check"]
+
+
+def test_dual_wager_fields_can_resolve_its_unknown_prior_for_extraction() -> None:
+    record = extraction_record_for_streets(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    wager_action(0, "hero", "post_ante"),
+                    wager_action(
+                        1,
+                        "hero",
+                        "bet",
+                        amount=Decimal("1"),
+                        total=Decimal("2"),
+                    ),
+                ],
+            }
+        ]
+    )
+
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["bet"]
+
+
+def test_exact_resolution_restores_same_and_later_street_extraction() -> None:
+    record = extraction_record_for_streets(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    wager_action(0, "villain", "post_ante"),
+                    wager_action(
+                        1,
+                        "villain",
+                        "bet",
+                        amount=Decimal("1"),
+                        total=Decimal("2"),
+                    ),
+                    wager_action(2, "hero", "call"),
+                ],
+            },
+            {
+                "street": "flop",
+                "actions": [
+                    wager_action(0, "hero", "check", total=Decimal(0)),
+                ],
+            },
+        ]
+    )
+
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["call", "check"]
+
+
 @pytest.mark.parametrize("betting_limit", ["fixed_limit", "unknown"])
 def test_unsupported_limit_hands_remain_reviewable_but_are_not_extractable(
     betting_limit: str,
@@ -8879,6 +9314,52 @@ def test_deletion_pending_without_a_canonical_revision_remains_valid() -> None:
     assert record.lifecycle.status == "deletion_pending"
 
 
+def test_deletion_pending_cannot_precede_its_request() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="changed_at cannot precede deletion request requested_at",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            lifecycle={
+                "status": "deletion_pending",
+                "deletion_generation": 1,
+                "changed_at": NOW,
+                "deletion_request": {
+                    "generation": 1,
+                    "requested_at": NOW + timedelta(microseconds=1),
+                    "cleanup_status": "pending",
+                },
+            },
+        )
+
+
+def test_deletion_request_cannot_precede_the_latest_approval() -> None:
+    approved_at = NOW + timedelta(minutes=1)
+    approval = revision().model_copy(update={"approved_at": approved_at})
+
+    with pytest.raises(
+        ValidationError,
+        match="request requested_at cannot precede.*approved_at",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[approval],
+            lifecycle={
+                "status": "deletion_pending",
+                "deletion_generation": 1,
+                "changed_at": approved_at + timedelta(minutes=1),
+                "deletion_request": {
+                    "generation": 1,
+                    "requested_at": NOW,
+                    "cleanup_status": "pending",
+                },
+            },
+        )
+
+
 @pytest.mark.parametrize("status", ["withdrawn", "rejected"])
 def test_withdrawn_or_rejected_lifecycle_cannot_precede_latest_approval(
     status: str,
@@ -9023,6 +9504,51 @@ def test_permanent_deletion_retains_only_non_sensitive_generation_receipt() -> N
             raw_sources=[raw_source()],
             lifecycle=deleted.lifecycle,
             deletion_receipt=deleted.deletion_receipt,
+        )
+
+
+@pytest.mark.parametrize("offset", [timedelta(0), timedelta(microseconds=1)])
+def test_deleted_lifecycle_accepts_equal_or_later_receipt_time(
+    offset: timedelta,
+) -> None:
+    deleted_at = NOW + timedelta(minutes=1)
+
+    record = ImportedHandRecord(
+        identity=None,
+        lifecycle={
+            "status": "deleted",
+            "deletion_generation": 1,
+            "changed_at": deleted_at + offset,
+        },
+        deletion_receipt={
+            "receipt_id": "deletion-1",
+            "generation": 1,
+            "deleted_at": deleted_at,
+            "tombstone_sha256": "b" * 64,
+        },
+    )
+
+    assert record.lifecycle.changed_at == deleted_at + offset
+
+
+def test_deleted_lifecycle_cannot_precede_its_receipt() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="changed_at cannot precede deletion receipt deleted_at",
+    ):
+        ImportedHandRecord(
+            identity=None,
+            lifecycle={
+                "status": "deleted",
+                "deletion_generation": 1,
+                "changed_at": NOW,
+            },
+            deletion_receipt={
+                "receipt_id": "deletion-1",
+                "generation": 1,
+                "deleted_at": NOW + timedelta(microseconds=1),
+                "tombstone_sha256": "b" * 64,
+            },
         )
 
 
@@ -9183,6 +9709,120 @@ def test_higher_generation_restore_allows_a_valid_deletion_tombstone() -> None:
     disposition = classify_restore(active_record(), tombstone)
 
     assert disposition.kind == "allow"
+
+
+def test_same_generation_restore_allows_deletion_pending_to_finish() -> None:
+    active = active_record()
+    pending = ImportedHandRecord(
+        identity=active.identity,
+        raw_sources=active.raw_sources,
+        detections=active.detections,
+        canonical_revisions=active.canonical_revisions,
+        lifecycle={
+            "status": "deletion_pending",
+            "deletion_generation": 1,
+            "changed_at": NOW + timedelta(minutes=1),
+            "deletion_request": {
+                "generation": 1,
+                "requested_at": NOW + timedelta(minutes=1),
+                "cleanup_status": "pending",
+            },
+        },
+    )
+    tombstone = ImportedHandRecord(
+        identity=None,
+        lifecycle={
+            "status": "deleted",
+            "deletion_generation": 1,
+            "changed_at": NOW + timedelta(minutes=2),
+        },
+        deletion_receipt={
+            "receipt_id": "deletion-1",
+            "generation": 1,
+            "deleted_at": NOW + timedelta(minutes=2),
+            "tombstone_sha256": "b" * 64,
+        },
+    )
+
+    disposition = classify_restore(pending, tombstone)
+
+    assert disposition.kind == "allow"
+
+
+def test_same_generation_restore_rejects_a_tombstone_older_than_its_request(
+) -> None:
+    active = active_record()
+    requested_at = NOW + timedelta(minutes=2)
+    pending = ImportedHandRecord(
+        identity=active.identity,
+        raw_sources=active.raw_sources,
+        detections=active.detections,
+        canonical_revisions=active.canonical_revisions,
+        lifecycle={
+            "status": "deletion_pending",
+            "deletion_generation": 1,
+            "changed_at": requested_at,
+            "deletion_request": {
+                "generation": 1,
+                "requested_at": requested_at,
+                "cleanup_status": "pending",
+            },
+        },
+    )
+    tombstone = ImportedHandRecord(
+        identity=None,
+        lifecycle={
+            "status": "deleted",
+            "deletion_generation": 1,
+            "changed_at": NOW + timedelta(minutes=3),
+        },
+        deletion_receipt={
+            "receipt_id": "deletion-1",
+            "generation": 1,
+            "deleted_at": NOW + timedelta(minutes=1),
+            "tombstone_sha256": "b" * 64,
+        },
+    )
+
+    disposition = classify_restore(pending, tombstone)
+
+    assert disposition.kind == "conflict_merge_required"
+
+
+@pytest.mark.parametrize("deletion_generation", [1, 2])
+@pytest.mark.parametrize("status", ["pending_review", "withdrawn", "rejected"])
+def test_restore_cannot_abandon_a_pending_deletion_without_a_tombstone(
+    deletion_generation: int,
+    status: str,
+) -> None:
+    base = record_with_revisions(1)
+    current = base.model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(
+                status="deletion_pending",
+                deletion_generation=1,
+                changed_at=NOW + timedelta(minutes=1),
+                deletion_request={
+                    "generation": 1,
+                    "requested_at": NOW + timedelta(minutes=1),
+                    "cleanup_status": "pending",
+                },
+            )
+        }
+    )
+    candidate = base.model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(
+                status=status,
+                deletion_generation=deletion_generation,
+                changed_at=NOW + timedelta(minutes=2),
+            )
+        }
+    )
+
+    disposition = classify_restore(current, candidate)
+
+    assert disposition.kind == "conflict_merge_required"
 
 
 def test_higher_generation_retained_restore_still_requires_explicit_reimport() -> None:
