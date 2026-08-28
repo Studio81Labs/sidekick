@@ -18,7 +18,9 @@ PWA_DIR="$ROOT_DIR/apps/pwa"
 VENV_PY="$BACKEND_DIR/.venv/bin/python"
 VITE_BIN="$PWA_DIR/node_modules/.bin/vite"
 SOLVER_BIN_DIR="$ROOT_DIR/solver-plugins/postflop/target/release"
-PORT_CLAIMS="${TMPDIR:-/tmp}/poker-hero-dev-ports"
+# Per-user claims directory: the XDG runtime dir when available, else a
+# uid-suffixed temp dir (TMPDIR is per-user on macOS but often unset on Linux).
+PORT_CLAIMS="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/poker-hero-dev-ports-$(id -u)"
 
 [ -x "$VENV_PY" ] || { echo "Backend virtualenv missing; run ./.superset/setup.sh first" >&2; exit 1; }
 [ -x "$VITE_BIN" ] || { echo "PWA dependencies missing; run ./.superset/setup.sh first" >&2; exit 1; }
@@ -33,7 +35,7 @@ pick_ports() {
 import errno, os, socket, sys, tempfile
 
 claims_dir, owner_pid, preferred = sys.argv[1], sys.argv[2], sys.argv[3:]
-os.makedirs(claims_dir, exist_ok=True)
+os.makedirs(claims_dir, mode=0o700, exist_ok=True)
 
 
 def is_free(port):

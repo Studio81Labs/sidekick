@@ -36,15 +36,24 @@ MAIN_DIR=$(CDPATH='' cd -- "$MAIN_DIR" && pwd -P)
 # The setup terminal may not load the interactive shell rc, so expose the usual
 # per-user tool locations (pnpm standalone, rustup, nvm) before probing.
 PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
-if ! command -v node >/dev/null 2>&1; then
-  wanted=$(cat "$ROOT_DIR/.nvmrc" 2>/dev/null || echo 24)
-  for candidate in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v"$wanted"*/bin; do
-    [ -d "$candidate" ] && PATH="$candidate:$PATH"
+
+# Node major required by .nvmrc (package.json engines: node >=24).
+WANTED_NODE=$(sed -n '1s/^v\{0,1\}\([0-9][0-9]*\).*/\1/p' "$ROOT_DIR/.nvmrc" 2>/dev/null)
+WANTED_NODE=${WANTED_NODE:-24}
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  major=$(node --version 2>/dev/null | sed -n 's/^v\([0-9][0-9]*\).*/\1/p')
+  [ "${major:-0}" -ge "$WANTED_NODE" ] 2>/dev/null
+}
+# A missing or too-old node on PATH is overridden by the matching nvm install.
+if ! node_ok; then
+  for candidate in "${NVM_DIR:-$HOME/.nvm}"/versions/node/v"$WANTED_NODE".*/bin; do
+    [ -x "$candidate/node" ] && PATH="$candidate:$PATH"
   done
 fi
 export PATH
 
-command -v node >/dev/null 2>&1 || fail "Node.js 24+ is required (see .nvmrc)"
+node_ok || fail "Node.js $WANTED_NODE+ is required, found $(node --version 2>/dev/null || echo none) (see .nvmrc)"
 command -v pnpm >/dev/null 2>&1 || fail "pnpm 11+ is required"
 
 PYTHON_BIN="${POKER_PYTHON:-}"
@@ -93,10 +102,6 @@ if command -v cargo >/dev/null 2>&1; then
     cp -f "$SHARED_TARGET/release/$SOLVER_BIN_NAME" "$SOLVER_BIN"
   fi
   [ -x "$SOLVER_BIN" ] || fail "solver build did not produce $SOLVER_BIN"
-elif [ -x "$SHARED_TARGET/release/$SOLVER_BIN_NAME" ]; then
-  warn "cargo not found; reusing the solver binary built in $MAIN_DIR"
-  mkdir -p "$SOLVER_DIR/target/release"
-  cp -f "$SHARED_TARGET/release/$SOLVER_BIN_NAME" "$SOLVER_BIN"
 else
   warn "cargo not found: skipping the postflop solver build."
   warn "The backend still runs; recommendations use the built-in fallback"
