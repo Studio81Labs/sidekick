@@ -1399,6 +1399,26 @@ def _validate_case_within_grading_coverage(
                 f" {table_configuration.dealt_in_count}-handed exact structural"
                 f" routes: {expected_table_routes}"
             )
+    first_structured_raise = next(
+        (
+            action
+            for action in state.preflop_action_history
+            if action.action == "raise"
+        ),
+        None,
+    )
+    if (
+        state.preflop_action_history
+        and first_structured_raise is None
+        and (
+            state.preflop_opener_position is not None
+            or state.preflop_open_size is not None
+        )
+    ):
+        raise ValueError(
+            f"Case {case.id} structured preflop history has no raise, so"
+            " preflop_opener_position and preflop_open_size must both be absent"
+        )
     routed_opener_position = None
     opener_source: str | None = None
     opener_value: str | None = None
@@ -1421,6 +1441,26 @@ def _validate_case_within_grading_coverage(
             f" {table_configuration.dealt_in_count}-handed exact structural"
             f" routes: {expected_table_routes}"
         )
+    if first_structured_raise is not None:
+        if (
+            state.preflop_opener_position is not None
+            and routed_opener_position != first_structured_raise.actor
+        ):
+            raise ValueError(
+                f"Case {case.id} preflop_opener_position"
+                f" {state.preflop_opener_position!r} routes to"
+                f" {routed_opener_position!r}, but the first structured raise is"
+                f" from {first_structured_raise.actor!r}"
+            )
+        if state.preflop_open_size is not None:
+            explicit_open_size = Decimal(str(state.preflop_open_size))
+            structured_open_size = Decimal(str(first_structured_raise.amount))
+            if explicit_open_size != structured_open_size:
+                raise ValueError(
+                    f"Case {case.id} preflop_open_size"
+                    f" {state.preflop_open_size:g} BB does not match first"
+                    f" structured raise size {first_structured_raise.amount:g} BB"
+                )
     if (
         state.players_in_hand is None
         or state.players_in_hand < 2

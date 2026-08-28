@@ -2809,6 +2809,257 @@ def test_schema_five_allows_an_absent_preflop_opener_position() -> None:
     assert dataset.cases[0].state.preflop_opener_position is None
 
 
+@pytest.mark.parametrize(
+    ("opener_position", "open_size", "message"),
+    [
+        (
+            "small blind",
+            2.5,
+            "preflop_opener_position 'small blind'.*first structured raise.*button",
+        ),
+        (
+            "button",
+            2.5001,
+            "preflop_open_size 2.5001 BB.*first structured raise size 2.5 BB",
+        ),
+    ],
+)
+def test_schema_five_rejects_explicit_opener_mismatch_with_first_raise(
+    opener_position: str | None,
+    open_size: float | None,
+    message: str,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_opener_position=opener_position,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="raise", amount=2.5),
+            PreflopAction(actor="small_blind", action="call", amount=2.5),
+        ],
+    )
+    case.state.preflop_open_size = open_size
+
+    with pytest.raises(ValidationError, match=message):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_for_table_counts(3),
+        )
+
+
+@pytest.mark.parametrize(
+    ("opener_position", "open_size"),
+    [
+        (None, None),
+        ("dealer", None),
+        (None, 2.5),
+        ("btn", 2.50),
+    ],
+)
+def test_schema_five_allows_independently_optional_matching_opener_fields(
+    opener_position: str | None,
+    open_size: float | None,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_opener_position=opener_position,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="raise", amount=2.5),
+            PreflopAction(actor="small_blind", action="call", amount=2.5),
+        ],
+    )
+    case.state.preflop_open_size = open_size
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.preflop_opener_position == opener_position
+    assert dataset.cases[0].state.preflop_open_size == open_size
+
+
+@pytest.mark.parametrize("opener_alias", ["button", "dealer", "btn"])
+def test_schema_five_accepts_exact_opener_alias_and_decimal_size(
+    opener_alias: str,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_opener_position=opener_alias,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="raise", amount=2.5),
+            PreflopAction(actor="small_blind", action="call", amount=2.5),
+        ],
+    )
+    case.state.preflop_open_size = 2.50
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.preflop_opener_position == opener_alias
+    assert dataset.cases[0].state.preflop_open_size == 2.5
+
+
+def test_schema_five_binds_opener_to_first_raise_after_limp() -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_opener_position="small blind",
+        preflop_action_history=[
+            PreflopAction(actor="button", action="call", amount=1),
+            PreflopAction(actor="small_blind", action="raise", amount=4),
+        ],
+    )
+    case.state.preflop_open_size = 4.0
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.preflop_opener_position == "small blind"
+    assert dataset.cases[0].state.preflop_open_size == 4.0
+
+
+def test_schema_five_limp_only_history_does_not_require_opener_fields() -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="call", amount=1),
+            PreflopAction(actor="small_blind", action="call", amount=1),
+        ],
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.preflop_opener_position is None
+    assert dataset.cases[0].state.preflop_open_size is None
+
+
+@pytest.mark.parametrize(
+    ("opener_position", "open_size"),
+    [
+        ("button", None),
+        (None, 1.0),
+        ("button", 1.0),
+    ],
+)
+def test_schema_five_call_only_history_rejects_supplied_opener_fields(
+    opener_position: str | None,
+    open_size: float | None,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_opener_position=opener_position,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="call", amount=1),
+            PreflopAction(actor="small_blind", action="call", amount=1),
+        ],
+    )
+    case.state.preflop_open_size = open_size
+
+    with pytest.raises(
+        ValidationError,
+        match="structured preflop history has no raise.*must both be absent",
+    ):
+        benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_for_table_counts(3),
+        )
+
+
+def test_schema_five_structured_raise_is_authoritative_over_action_context() -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_action_history=[
+            PreflopAction(actor="button", action="raise", amount=2.5),
+        ],
+        action_context="UTG raises to 8 BB",
+    )
+
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+
+    assert dataset.cases[0].state.preflop_action_history[0].actor == "button"
+    assert dataset.cases[0].state.preflop_opener_position is None
+
+
+@pytest.mark.parametrize(
+    "unsafe_update",
+    [
+        {"preflop_opener_position": "small blind"},
+        {"preflop_open_size": 8.0},
+    ],
+)
+def test_unsafe_opener_mismatch_fails_before_provider_execution(
+    unsafe_update: dict[str, object],
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_opener_position="button",
+        preflop_action_history=[
+            PreflopAction(actor="button", action="raise", amount=2.5),
+            PreflopAction(actor="small_blind", action="call", amount=2.5),
+        ],
+    )
+    case.state.preflop_open_size = 2.5
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_for_table_counts(3),
+    )
+    dataset.cases[0].state = dataset.cases[0].state.model_copy(
+        update=unsafe_update
+    )
+    provider = SequenceProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.cases[0].status == "error"
+    assert "first structured raise" in (report.cases[0].error or "")
+    assert provider.requests == []
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_schemas_allow_structured_opener_mismatches(
+    schema_version: int,
+) -> None:
+    case = covered_big_blind_case_for_table(
+        3,
+        preflop_opener_position="small blind",
+        preflop_action_history=[
+            PreflopAction(actor="button", action="raise", amount=2.5),
+        ],
+    )
+    case.state.preflop_open_size = 8.0
+
+    dataset = benchmark_dataset([case], schema_version=schema_version)
+
+    assert dataset.cases[0].state.preflop_opener_position == "small blind"
+    assert dataset.cases[0].state.preflop_open_size == 8.0
+
+
 @pytest.mark.parametrize("street", ["flop", "turn", "river"])
 def test_schema_five_checks_preflop_actors_on_every_postflop_street(
     street: Literal["flop", "turn", "river"],
@@ -2907,12 +3158,14 @@ def test_schema_five_structured_history_ignores_action_context_opener() -> None:
 def test_schema_five_allows_repeat_actions_from_an_exact_structural_seat() -> None:
     case = covered_big_blind_case_for_table(
         6,
+        preflop_opener_position="cutoff",
         preflop_action_history=[
             PreflopAction(actor="cutoff", action="raise", amount=2.5),
             PreflopAction(actor="button", action="raise", amount=8),
             PreflopAction(actor="cutoff", action="raise", amount=20),
         ],
     )
+    case.state.preflop_open_size = 2.5
 
     dataset = benchmark_dataset(
         [case],

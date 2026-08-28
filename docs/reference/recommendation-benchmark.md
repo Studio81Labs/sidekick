@@ -388,6 +388,16 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   `utg`, `HJ` as `hijack`, and `CO` as `cutoff`. Table-specific full-ring labels
   such as `UTG+1`, `LJ`, and combined `*/LJ` labels have no exact legacy route;
   version-5 corpora are rejected instead of coercing them into a nearby policy.
+  Structured preflop history is authoritative for version 5. When it contains a
+  raise, `preflop_opener_position` and `preflop_open_size` remain independently
+  optional, but each supplied field must match the first structured raise: the
+  normalized opener alias must equal its actor and the BB size must match exactly
+  under Decimal comparison. Later reraises do not replace the opener. A nonempty
+  call-only/limp-only structured history requires both explicit opener fields to
+  be absent. Empty structured history retains the existing explicit-field and
+  `action_context` inference behavior. These checks run again before provider
+  binding so an unsafe in-memory mutation cannot make the representations
+  disagree.
   For heads-up postflop cases, `opponent_position` must likewise route to a
   distinct exactly representable seat in the same covered table configuration.
   At a two-handed table, that requires `BB` opposite `BTN/SB` and `BTN/SB`

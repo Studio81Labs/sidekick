@@ -463,7 +463,10 @@ ceiling on learning quality, so it is treated as first-class.
   defense, squeeze, cold-call, short-stack) with explicit table-size, structural
   position, stack-depth, sizing, economic, and mixed-policy boundaries. V1's
   routing/context extraction may be reused only where independently validated;
-  its threshold policy must not be relabeled `solved`.
+  its threshold policy must not be relabeled `solved`. Structured history is
+  authoritative: any supplied opener position or size must match its first raise
+  exactly, while a nonempty call-only/limp-only history carries neither opener
+  field.
 - **Heads-up postflop** — potentially mastery-gradeable only when the reviewed
   hand resolves an exact supported line against a benchmarked solved-tree
   revision **and** all required root inputs are verified: effective stack,
