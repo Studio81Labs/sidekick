@@ -312,6 +312,14 @@ the action/amount parse without manual eyeballing. It is necessary but not
 sufficient: a wrong button, hero identity, card, timestamp, or participation
 status can reconcile the pot and still corrupt grading.
 
+A complete action stream is not its own independent pot oracle. Missing results,
+an absent stated-pot summary, a net total without the rake needed to recover a
+like-for-like gross total, or awards without a stated comparable pot remain
+reviewable but reconcile as indeterminate. Decision extraction requires a
+passing reconciliation with zero discrepancy against an independent source
+total; awards may corroborate that total but cannot replace it when gross versus
+net semantics are unresolved.
+
 Pot reconciliation remains an amount-only oracle and does not infer a site's
 cash-rake formula from percentage, cap, and fixed-drop values. Decision
 extraction separately checks any stated cash rake against the approved schedule.
@@ -572,10 +580,11 @@ or unknown required keys fail closed before provider execution.
 The benchmark fingerprints an isolated corpus snapshot before provider hooks,
 uses separate validated state copies for readiness inspection and execution, and
 rejects any retained execution-state mutation before reading runtime trust
-metadata or scoring the result. The declared schema version remains in the
-report and controls this trust boundary: a version-5 corpus whose evidence
-envelope becomes invalid or missing cannot downgrade itself to version-4
-execution or baseline rules.
+metadata or scoring the result. Any invalid snapshot fails before the binding
+catalog, required-field inspection, or provider is called. The declared schema
+version remains in the report and controls this trust boundary: a version-5
+corpus whose version is mutated or whose evidence envelope becomes invalid or
+missing cannot downgrade itself to version-4 execution or baseline rules.
 After execution, a version-5 benchmark case completes only when the provider
 reports the exact engine selected by that binding and no fallback metadata. A
 missing, malformed, or different runtime engine and every explicit fallback are

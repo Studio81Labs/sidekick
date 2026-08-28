@@ -2094,7 +2094,67 @@ def test_invalid_schema_five_top_level_state_blocks_all_provider_hooks() -> None
     assert provider.events == []
 
 
-def test_invalid_empty_schema_five_fails_before_all_provider_hooks() -> None:
+@pytest.mark.parametrize(
+    "version_mutation",
+    ["schema_five_to_four", "schema_four_to_five"],
+)
+def test_invalid_snapshot_version_mutation_blocks_all_provider_hooks(
+    version_mutation: str,
+) -> None:
+    class HookTrackingProvider(SequenceProvider):
+        def __init__(self) -> None:
+            super().__init__([recommendation("check")])
+            self.required_fields_calls = 0
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            self.required_fields_calls += 1
+            return super().required_fields_for(state)
+
+    case = covered_preflop_case()
+    if version_mutation == "schema_five_to_four":
+        dataset = benchmark_dataset(
+            [case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+        dataset.schema_version = 4
+        expected_error = "Grading reference evidence requires schema version 5"
+    else:
+        dataset = benchmark_dataset([case], schema_version=4)
+        dataset.schema_version = RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+        expected_error = "Schema version 5 requires grading reference evidence"
+    provider = HookTrackingProvider()
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.action_correct == 0
+    assert report.action_evaluated == 0
+    assert report.line_evaluated == 0
+    assert report.policy_evaluated_cases == 0
+    assert report.ev_evaluated_cases == 0
+    assert report.cases[0].status == "error"
+    assert report.cases[0].error is not None
+    assert "Recommendation benchmark snapshot is invalid" in report.cases[0].error
+    assert expected_error in report.cases[0].error
+    assert report.cases[0].action is None
+    assert report.cases[0].grading_context_sha256 is None
+    assert provider.binding_catalog_calls == 0
+    assert provider.required_fields_calls == 0
+    assert provider.requests == []
+    assert provider.events == []
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize("downgrade_schema", [False, True])
+def test_invalid_empty_snapshot_fails_before_all_provider_hooks(
+    downgrade_schema: bool,
+) -> None:
     case = covered_preflop_case()
     dataset = benchmark_dataset(
         [case],
@@ -2103,6 +2163,8 @@ def test_invalid_empty_schema_five_fails_before_all_provider_hooks() -> None:
         grading_reference=grading_reference_evidence(),
     )
     dataset.cases = []
+    if downgrade_schema:
+        dataset.schema_version = 4
     provider = SequenceProvider(
         [recommendation("check")],
         grading_context_bindings=[configured_grading_context_binding(case.state)],
@@ -4975,10 +5037,15 @@ def test_unsafe_invalid_completed_street_root_fails_before_provider_execution() 
     report = run_recommendation_benchmark(dataset, provider)
 
     assert report.cases[0].status == "error"
-    assert "completed_postflop_streets[0] root evidence is invalid" in (
+    assert (
+        "snapshot is invalid at"
+        " cases.0.state.completed_postflop_streets.0.actions"
+    ) in (
         report.cases[0].error or ""
     )
+    assert provider.binding_catalog_calls == 0
     assert provider.requests == []
+    assert provider.events == []
     assert len(provider.outcomes) == 1
 
 

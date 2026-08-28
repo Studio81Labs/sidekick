@@ -2091,7 +2091,7 @@ def run_recommendation_benchmark(
     schema_five = (
         dataset_snapshot.schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
     )
-    if schema_five and dataset_snapshot_error is not None and not dataset_snapshot.cases:
+    if dataset_snapshot_error is not None and not dataset_snapshot.cases:
         raise RecommendationBenchmarkError(dataset_snapshot_error)
     dataset_fingerprint = recommendation_dataset_fingerprint(dataset_snapshot)
     grading_context_bindings: tuple[
@@ -2682,6 +2682,8 @@ def _run_case(
 ) -> RecommendationBenchmarkCaseResult:
     grading_context_binding: _VerifiedProviderGradingContextBinding | None = None
     try:
+        if dataset_snapshot_error is not None:
+            raise ValueError(dataset_snapshot_error)
         if dataset.schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION:
             if dataset.grading_reference is None:
                 raise ValueError("Schema version 5 requires grading reference evidence")
@@ -2691,8 +2693,6 @@ def _run_case(
                 dataset.grading_reference.economic_model,
                 dataset.grading_reference.utility_model,
             )
-            if dataset_snapshot_error is not None:
-                raise ValueError(dataset_snapshot_error)
             if grading_context_binding_error is not None:
                 raise ValueError(grading_context_binding_error)
             if grading_context_bindings is None:

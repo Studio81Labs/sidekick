@@ -3399,12 +3399,27 @@ def _terminal_hand_ready_for_extraction(state: ImportedHandState) -> bool:
 
 
 def _pot_reconciliation_ready_for_extraction(state: ImportedHandState) -> bool:
-    """Require the amount oracle to prove the approved pot exactly."""
+    """Require an independent source total to match the derived pot exactly."""
+
+    stated_pot = state.results.stated_pot if state.results is not None else None
+    if stated_pot is None or not (
+        stated_pot.gross_total is not None
+        or bool(stated_pot.gross_pots)
+        or (
+            stated_pot.net_total is not None
+            and stated_pot.rake is not None
+        )
+    ):
+        return False
 
     # pot imports these model contracts, so keep the reverse dependency local.
     from app.domain.imported_hands.pot import reconcile_pot
 
-    return reconcile_pot(state).status == "pass"
+    reconciliation = reconcile_pot(state)
+    return (
+        reconciliation.status == "pass"
+        and reconciliation.discrepancy == 0
+    )
 
 
 def _cash_rake_consistent_for_extraction(state: ImportedHandState) -> bool:

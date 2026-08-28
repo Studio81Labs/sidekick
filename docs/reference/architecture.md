@@ -172,7 +172,10 @@ action-origin evidence, explicit per-player/big-blind/unknown ante schemes,
 re-import conflicts, lifecycle/deletion tombstones, and a pure
 pot-reconciliation oracle. Omitted ante mode is canonicalized as unknown; a
 positive unknown mode remains reviewable but blocks decision extraction, while
-zero ante requires no poster mode. The aggregate exposes only voluntary actions
+zero ante requires no poster mode. Complete actions with missing results or
+award-only pot evidence remain indeterminate, and extraction requires a passing
+zero-discrepancy comparison against an independent source total. The aggregate
+exposes only voluntary actions
 from its active approved revision for later decision extraction. These contracts
 are not yet connected to V1 routes or file-backed storage, so they do not make
 the hosted screenshot workflow a V2 player-data path.
@@ -470,10 +473,11 @@ nested object fail before provider execution instead of being dropped or filled.
 Exactly one route must match. The economic route identity includes the exact
 blind denominations, ante amount, and canonical ante posting mode; a positive
 ante with an omitted or unknown poster scheme fails before route matching. The
-corpus and its fingerprint are snapshotted before provider hooks,
-and the report retains the declared schema version. An invalid declared-v5
-snapshot fails without calling the catalog or provider; removing its grading
-reference cannot select legacy execution or baseline behavior.
+corpus and its fingerprint are snapshotted before provider hooks, and the report
+retains the declared schema version. Any invalid snapshot fails without calling
+the catalog, required-field inspection, or provider. Mutating a v5 corpus's
+version or removing its grading reference cannot select legacy execution or
+baseline behavior.
 Required-field inspection and execution receive separate validated state copies,
 and the complete execution copy must remain byte-for-byte canonically equivalent
 to its pre-call snapshot after the provider returns. The selected route context

@@ -57,8 +57,9 @@ def reconcile_pot(hand: ImportedHandState) -> PotReconciliationResult:
 
     Contributions are accumulated independently for every player and street.
     Explicit uncalled returns reduce them before side-pot layers are built.
-    A pass validates only action amounts; it cannot validate cards, chronology,
-    participation, button/position, or action origin.
+    A pass requires a like-for-like comparison with an independent stated pot
+    total. It validates only action amounts; it cannot validate cards,
+    chronology, participation, button/position, or action origin.
     """
 
     contributions = {seat.player_id: Decimal(0) for seat in hand.seats}

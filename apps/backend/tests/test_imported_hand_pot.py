@@ -223,6 +223,85 @@ def test_reconciles_basic_blinds_call_and_check() -> None:
     assert result.amount_parse_validated_only is True
 
 
+@pytest.mark.parametrize(
+    ("pot_evidence", "expected_status"),
+    [
+        ("missing_results", "indeterminate"),
+        ("empty_results", "indeterminate"),
+        ("stated_gross", "pass"),
+        ("stated_net_with_rake", "pass"),
+        ("stated_net_without_rake", "indeterminate"),
+        ("award_only", "indeterminate"),
+        ("stated_gross_and_award", "pass"),
+    ],
+)
+def test_fold_ended_hand_requires_an_independent_like_for_like_pot_total(
+    pot_evidence: str,
+    expected_status: str,
+) -> None:
+    stated_gross = "2" if pot_evidence in {
+        "stated_gross",
+        "stated_gross_and_award",
+    } else None
+    stated_net = "2" if pot_evidence in {
+        "stated_net_with_rake",
+        "stated_net_without_rake",
+    } else None
+    rake = None if pot_evidence == "stated_net_without_rake" else "0"
+    awards = (
+        [("p1", "2", None)]
+        if pot_evidence in {"award_only", "stated_gross_and_award"}
+        else None
+    )
+    state = hand(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    action(
+                        0,
+                        "p1",
+                        "post_small_blind",
+                        amount="0.5",
+                        total="0.5",
+                    ),
+                    action(
+                        1,
+                        "p2",
+                        "post_big_blind",
+                        amount="1",
+                        total="1",
+                    ),
+                    action(2, "p1", "call", amount="0.5", total="1"),
+                    action(3, "p2", "fold", total="1"),
+                ],
+            }
+        ],
+        stated_gross=stated_gross,
+        stated_net=stated_net,
+        rake=rake,
+        awards=awards,
+        include_results=pot_evidence != "missing_results",
+    )
+
+    result = reconcile_pot(state)
+
+    assert result.status == expected_status
+    assert result.derived_gross_total == Decimal("2")
+    if expected_status == "pass":
+        assert result.discrepancy == 0
+    else:
+        assert result.discrepancy is None
+        assert any(
+            warning
+            in {
+                "source does not state a pot total",
+                "source totals are insufficient for a like-for-like comparison",
+            }
+            for warning in result.warnings
+        )
+
+
 def test_reconciles_per_street_commitments_rake_and_aggregate_awards() -> None:
     state = hand(
         [

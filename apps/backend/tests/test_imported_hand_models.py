@@ -10907,11 +10907,41 @@ def test_extraction_accepts_a_passing_gross_only_pot_reconciliation() -> None:
     ] == ["call"]
 
 
+def test_extraction_accepts_a_net_total_with_explicit_rake_comparator() -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["economics"] = {
+        "kind": "cash",
+        "currency": "USD",
+        "rake": {
+            "percentage": Decimal(0),
+            "cap": Decimal(0),
+            "fixed_drop": Decimal(0),
+        },
+    }
+    payload["results"] = {
+        "stated_pot": {
+            "rake": Decimal(0),
+            "net_total": Decimal("2"),
+        }
+    }
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    reconciliation = reconcile_pot(state)
+    assert reconciliation.status == "pass"
+    assert reconciliation.discrepancy == 0
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["call"]
+
+
 @pytest.mark.parametrize(
     ("pot_evidence", "expected_status"),
     [
         ("mismatched_stated_total", "fail"),
+        ("missing_results", "indeterminate"),
         ("missing_stated_total", "indeterminate"),
+        ("award_only", "indeterminate"),
         ("unknown_award", "indeterminate"),
         ("unresolved_contribution", "indeterminate"),
     ],
@@ -10923,8 +10953,21 @@ def test_extraction_withholds_failed_or_indeterminate_pot_reconciliation(
     payload = extraction_ready_state_payload()
     if pot_evidence == "mismatched_stated_total":
         payload["results"]["stated_pot"]["gross_total"] = Decimal("3")
+    elif pot_evidence == "missing_results":
+        payload["results"] = None
     elif pot_evidence == "missing_stated_total":
         payload["results"] = {}
+    elif pot_evidence == "award_only":
+        payload["results"] = {
+            "awards": [
+                {
+                    "player_id": "hero",
+                    "amount": Decimal("2"),
+                    "pot_index": 0,
+                    "evidence": [evidence()],
+                }
+            ]
+        }
     elif pot_evidence == "unknown_award":
         payload["results"]["awards"] = [
             {
