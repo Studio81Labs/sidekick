@@ -3257,15 +3257,18 @@ def _pot_reconciliation_ready_for_extraction(state: ImportedHandState) -> bool:
 
 
 def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:
-    """Require exact positive small- and big-blind strategy context."""
+    """Require exact blinds and an explicitly resolved ante context."""
 
     small_blind = blinds.small_blind
     big_blind = blinds.big_blind
+    ante = blinds.ante
     return (
         small_blind is not None
         and big_blind is not None
+        and ante is not None
         and small_blind > 0
         and big_blind > 0
+        and ante >= 0
         and small_blind <= big_blind
     )
 

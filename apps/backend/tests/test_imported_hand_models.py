@@ -9518,6 +9518,7 @@ def test_extraction_returns_only_voluntary_hero_actions_from_supported_approval(
     }
     state_payload = hand_state(hero_player_id="hero").model_dump()
     state_payload["game"]["economics"] = complete_cash_economics()
+    state_payload["game"]["blinds"]["ante"] = Decimal(0)
     state_payload["button_seat"] = 1
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
@@ -9645,6 +9646,7 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
     )
     state_payload = hand_state(hero_player_id="hero").model_dump()
     state_payload["game"]["economics"] = complete_cash_economics()
+    state_payload["game"]["blinds"]["ante"] = Decimal(0)
     state_payload["button_seat"] = 1
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
@@ -9719,6 +9721,7 @@ def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
 ) -> None:
     state_payload = hand_state(hero_player_id="hero").model_dump()
     state_payload["game"]["economics"] = complete_cash_economics()
+    state_payload["game"]["blinds"]["ante"] = Decimal(0)
     state_payload["button_seat"] = 2
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
@@ -9941,6 +9944,7 @@ def extraction_record_for_streets(
 ) -> ImportedHandRecord:
     state_payload = hand_state(hero_player_id="hero").model_dump()
     state_payload["game"]["economics"] = complete_cash_economics()
+    state_payload["game"]["blinds"]["ante"] = Decimal(0)
     state_payload["button_seat"] = button_seat
     state_payload["hero_cards"] = (
         [
@@ -10009,6 +10013,7 @@ def automatic_action(
 def extraction_ready_state_payload() -> dict[str, object]:
     payload = hand_state(hero_player_id="hero").model_dump()
     payload["game"]["economics"] = complete_cash_economics()
+    payload["game"]["blinds"]["ante"] = Decimal(0)
     payload["button_seat"] = 1
     payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
@@ -10074,7 +10079,10 @@ def test_extraction_requires_both_configured_blinds(
     assert record.active_hero_actions_for_extraction == []
 
 
-def test_missing_blind_context_withholds_postflop_decisions_hand_wide() -> None:
+@pytest.mark.parametrize("unresolved_field", ["big_blind", "ante"])
+def test_unresolved_blind_context_withholds_postflop_decisions_hand_wide(
+    unresolved_field: str,
+) -> None:
     payload = extraction_ready_state_payload()
     payload["streets"][1]["board_cards"] = [
         {"rank": "2", "suit": "clubs"},
@@ -10106,20 +10114,82 @@ def test_missing_blind_context_withholds_postflop_decisions_hand_wide() -> None:
         for action in ready_record.active_hero_actions_for_extraction
     ] == ["call", "bet"]
 
-    payload["game"]["blinds"]["big_blind"] = None
+    payload["game"]["blinds"][unresolved_field] = None
     incomplete_state = ImportedHandState.model_validate(payload)
     incomplete_record = extraction_record_for_state(incomplete_state)
 
     assert incomplete_record.active_hero_actions_for_extraction == []
 
 
-def test_absent_optional_ante_and_straddle_do_not_block_complete_blinds() -> None:
+def test_unresolved_ante_withholds_an_otherwise_passing_hand() -> None:
     payload = extraction_ready_state_payload()
     payload["game"]["blinds"]["ante"] = None
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_confirmed_zero_ante_and_absent_straddle_are_extractable() -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["blinds"]["ante"] = Decimal(0)
     payload["game"]["blinds"]["straddle"] = None
     state = ImportedHandState.model_validate(payload)
     record = extraction_record_for_state(state)
 
+    assert [
+        action.action_type for action in record.active_hero_actions_for_extraction
+    ] == ["call"]
+
+
+def test_positive_ante_with_required_posts_and_reconciliation_is_extractable(
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["blinds"]["ante"] = Decimal("0.1")
+    payload["results"]["stated_pot"]["gross_total"] = Decimal("2.2")
+    payload["streets"][0]["actions"] = [
+        wager_action(
+            0,
+            "hero",
+            "post_ante",
+            amount=Decimal("0.1"),
+            total=Decimal("0.1"),
+        ),
+        wager_action(
+            1,
+            "villain",
+            "post_ante",
+            amount=Decimal("0.1"),
+            total=Decimal("0.1"),
+        ),
+        wager_action(
+            2,
+            "hero",
+            "post_small_blind",
+            amount=Decimal("0.5"),
+            total=Decimal("0.6"),
+        ),
+        wager_action(
+            3,
+            "villain",
+            "post_big_blind",
+            amount=Decimal("1"),
+            total=Decimal("1.1"),
+        ),
+        wager_action(
+            4,
+            "hero",
+            "call",
+            amount=Decimal("0.5"),
+            total=Decimal("1.1"),
+        ),
+        automatic_action(5, "villain", total=Decimal("1.1")),
+    ]
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
     assert [
         action.action_type for action in record.active_hero_actions_for_extraction
     ] == ["call"]
@@ -10131,10 +10201,12 @@ def test_absent_optional_ante_and_straddle_do_not_block_complete_blinds() -> Non
         {"small_blind": Decimal(0)},
         {"big_blind": Decimal(0)},
         {"small_blind": Decimal("2")},
+        {"ante": None},
+        {"ante": Decimal("-0.1")},
     ],
 )
 def test_extraction_fails_closed_for_unsafe_blind_copies(
-    unsafe_blind_update: dict[str, Decimal],
+    unsafe_blind_update: dict[str, Decimal | None],
 ) -> None:
     state = ImportedHandState.model_validate(extraction_ready_state_payload())
     record = extraction_record_for_state(state)
