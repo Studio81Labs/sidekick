@@ -688,6 +688,12 @@ class ImportedHandState(ImportedHandModel):
         cumulative_commitment_lower_bounds: dict[str, Decimal] = {
             player_id: Decimal(0) for player_id in player_ids
         }
+        cumulative_unresolved_minimum_dead: dict[str, Decimal] = {
+            player_id: Decimal(0) for player_id in player_ids
+        }
+        cumulative_unresolved_minimum_live: dict[str, Decimal] = {
+            player_id: Decimal(0) for player_id in player_ids
+        }
         cumulative_unresolved_positive_dead: dict[str, bool] = {
             player_id: False for player_id in player_ids
         }
@@ -735,6 +741,12 @@ class ImportedHandState(ImportedHandModel):
             cumulative_lower_bounds_before_street = dict(
                 cumulative_commitment_lower_bounds
             )
+            unresolved_minimum_dead_before_street = dict(
+                cumulative_unresolved_minimum_dead
+            )
+            unresolved_minimum_live_before_street = dict(
+                cumulative_unresolved_minimum_live
+            )
             unresolved_positive_dead_before_street = dict(
                 cumulative_unresolved_positive_dead
             )
@@ -745,6 +757,12 @@ class ImportedHandState(ImportedHandModel):
                 player_id: Decimal(0) for player_id in player_ids
             }
             street_commitment_lower_bounds: dict[str, Decimal] = {
+                player_id: Decimal(0) for player_id in player_ids
+            }
+            street_unresolved_minimum_dead: dict[str, Decimal] = {
+                player_id: Decimal(0) for player_id in player_ids
+            }
+            street_unresolved_minimum_live: dict[str, Decimal] = {
                 player_id: Decimal(0) for player_id in player_ids
             }
             street_unresolved_positive_dead: dict[str, bool] = {
@@ -937,13 +955,11 @@ class ImportedHandState(ImportedHandModel):
                         street_commitment_lower_bounds[action.actor_id],
                     )
                 )
-                resolved_cumulative_commitment_lower_bound = (
-                    cumulative_lower_bounds_before_street[action.actor_id]
-                    + resolved_street_commitment_lower_bound
-                )
                 posted_amount: Decimal | None = None
                 configured_post_amount: Decimal | None = None
                 short_forced_post = False
+                unresolved_configured_post_minimum = Decimal(0)
+                unresolved_configured_post_strict_positive = False
                 bet_increment: Decimal | None = None
                 raise_increment: Decimal | None = None
                 forced_post_field = _FORCED_POST_FIELDS.get(action.action_type)
@@ -1025,7 +1041,6 @@ class ImportedHandState(ImportedHandModel):
                                     starting_stack is None
                                     and action.all_in
                                 )
-                                or resolved_commitment is None
                             )
                         )
                         short_forced_post = short_stack_exhausted
@@ -1041,7 +1056,132 @@ class ImportedHandState(ImportedHandModel):
                                 f" match configured {forced_post_field}"
                                 f" {configured_post_amount} or a short-stack all-in"
                             )
+                    if (
+                        configured_post_amount is not None
+                        and configured_post_amount > 0
+                        and action.amount is None
+                    ):
+                        prior_unresolved_minimum = sum(
+                            (
+                                street_commitment_lower_bounds[action.actor_id],
+                                street_unresolved_minimum_dead[action.actor_id],
+                                street_unresolved_minimum_live[action.actor_id],
+                            ),
+                            Decimal(0),
+                        )
+                        prior_unresolved_positive = any(
+                            (
+                                street_unresolved_positive_dead[action.actor_id],
+                                street_unresolved_positive_live[action.actor_id],
+                            )
+                        )
+                        full_configured_post_minimum = (
+                            prior_unresolved_minimum + configured_post_amount
+                        )
+                        full_configured_post_fits = (
+                            resolved_commitment is not None
+                            and (
+                                resolved_commitment
+                                > full_configured_post_minimum
+                                if prior_unresolved_positive
+                                else resolved_commitment
+                                >= full_configured_post_minimum
+                            )
+                        )
+                        unresolved_short_stack_exhausted = (
+                            actor_commitment is None
+                            and resolved_commitment is not None
+                            and not full_configured_post_fits
+                            and (
+                                (
+                                    actor_seat.starting_stack is not None
+                                    and resolved_commitment
+                                    == actor_seat.starting_stack
+                                )
+                                or (
+                                    actor_seat.starting_stack is None
+                                    and action.all_in
+                                )
+                            )
+                        )
+                        if short_forced_post:
+                            unresolved_configured_post_strict_positive = True
+                        elif unresolved_short_stack_exhausted:
+                            # An exact cumulative total can prove exhaustion while
+                            # an unresolved prior post prevents deriving this
+                            # forced post's delta. Preserve only the fact that the
+                            # short post added chips; do not require the full
+                            # configured amount.
+                            unresolved_configured_post_strict_positive = True
+                        elif resolved_commitment is not None:
+                            unresolved_configured_post_minimum = (
+                                configured_post_amount
+                            )
+                        elif (
+                            actor_seat.starting_stack is not None
+                            and prior_cumulative_commitment is not None
+                        ):
+                            remaining_stack = (
+                                actor_seat.starting_stack
+                                - prior_cumulative_commitment
+                            )
+                            if remaining_stack > 0:
+                                unresolved_configured_post_minimum = min(
+                                    configured_post_amount,
+                                    remaining_stack,
+                                )
+                            else:
+                                unresolved_configured_post_strict_positive = True
+                        elif actor_seat.starting_stack is not None and not any(
+                            (
+                                unresolved_positive_dead_before_street[
+                                    action.actor_id
+                                ],
+                                unresolved_positive_live_before_street[
+                                    action.actor_id
+                                ],
+                                street_unresolved_positive_dead[action.actor_id],
+                                street_unresolved_positive_live[action.actor_id],
+                            )
+                        ):
+                            prior_proven_commitment = sum(
+                                (
+                                    cumulative_lower_bounds_before_street[
+                                        action.actor_id
+                                    ],
+                                    street_commitment_lower_bounds[action.actor_id],
+                                    unresolved_minimum_dead_before_street[
+                                        action.actor_id
+                                    ],
+                                    unresolved_minimum_live_before_street[
+                                        action.actor_id
+                                    ],
+                                    street_unresolved_minimum_dead[action.actor_id],
+                                    street_unresolved_minimum_live[action.actor_id],
+                                ),
+                                Decimal(0),
+                            )
+                            remaining_stack = (
+                                actor_seat.starting_stack
+                                - prior_proven_commitment
+                            )
+                            if remaining_stack > 0:
+                                unresolved_configured_post_minimum = min(
+                                    configured_post_amount,
+                                    remaining_stack,
+                                )
+                            else:
+                                unresolved_configured_post_strict_positive = True
+                        elif actor_seat.starting_stack is None and not action.all_in:
+                            unresolved_configured_post_minimum = (
+                                configured_post_amount
+                            )
+                        else:
+                            unresolved_configured_post_strict_positive = True
                 (
+                    resolved_street_commitment_lower_bound,
+                    resolved_street_unresolved_minimum_dead,
+                    resolved_street_unresolved_minimum_live,
                     resolved_street_unresolved_positive_dead,
                     resolved_street_unresolved_positive_live,
                 ) = _action_street_unresolved_positive_evidence(
@@ -1049,9 +1189,38 @@ class ImportedHandState(ImportedHandModel):
                     prior_lower_bound=street_commitment_lower_bounds[
                         action.actor_id
                     ],
-                    prior_dead=street_unresolved_positive_dead[action.actor_id],
-                    prior_live=street_unresolved_positive_live[action.actor_id],
-                    configured_post_amount=configured_post_amount,
+                    resolved_lower_bound=resolved_street_commitment_lower_bound,
+                    prior_minimum_dead=street_unresolved_minimum_dead[
+                        action.actor_id
+                    ],
+                    prior_minimum_live=street_unresolved_minimum_live[
+                        action.actor_id
+                    ],
+                    prior_positive_dead=street_unresolved_positive_dead[
+                        action.actor_id
+                    ],
+                    prior_positive_live=street_unresolved_positive_live[
+                        action.actor_id
+                    ],
+                    configured_post_minimum=(
+                        unresolved_configured_post_minimum
+                    ),
+                    configured_post_strict_positive=(
+                        unresolved_configured_post_strict_positive
+                    ),
+                )
+                resolved_cumulative_commitment_lower_bound = (
+                    cumulative_lower_bounds_before_street[action.actor_id]
+                    + resolved_street_commitment_lower_bound
+                )
+                resolved_cumulative_unresolved_minimum = sum(
+                    (
+                        unresolved_minimum_dead_before_street[action.actor_id],
+                        unresolved_minimum_live_before_street[action.actor_id],
+                        resolved_street_unresolved_minimum_dead,
+                        resolved_street_unresolved_minimum_live,
+                    ),
+                    Decimal(0),
                 )
                 resolved_cumulative_unresolved_positive = any(
                     (
@@ -1061,6 +1230,10 @@ class ImportedHandState(ImportedHandModel):
                         resolved_street_unresolved_positive_live,
                     )
                 )
+                resolved_cumulative_minimum = (
+                    resolved_cumulative_commitment_lower_bound
+                    + resolved_cumulative_unresolved_minimum
+                )
                 known_all_in_commitment = resolved_cumulative_commitment
                 if (
                     known_all_in_commitment is None
@@ -1069,7 +1242,14 @@ class ImportedHandState(ImportedHandModel):
                     known_all_in_commitment = resolved_commitment
                 known_stack_exhausted = (
                     actor_seat.starting_stack is not None
-                    and known_all_in_commitment == actor_seat.starting_stack
+                    and (
+                        known_all_in_commitment == actor_seat.starting_stack
+                        or (
+                            resolved_cumulative_minimum
+                            == actor_seat.starting_stack
+                            and not resolved_cumulative_unresolved_positive
+                        )
+                    )
                 )
                 if (
                     action.all_in
@@ -1232,26 +1412,23 @@ class ImportedHandState(ImportedHandModel):
                     )
                 if (
                     actor_seat.starting_stack is not None
-                    and resolved_cumulative_commitment_lower_bound
-                    > actor_seat.starting_stack
+                    and resolved_cumulative_minimum > actor_seat.starting_stack
                 ):
                     raise ValueError(
                         f"{action.actor_id} cumulative commitment lower bound"
-                        f" {resolved_cumulative_commitment_lower_bound} exceeds"
+                        f" {resolved_cumulative_minimum} exceeds"
                         f" known starting stack {actor_seat.starting_stack}"
                     )
                 if (
                     actor_seat.starting_stack is not None
                     and resolved_cumulative_unresolved_positive
-                    and resolved_cumulative_commitment_lower_bound
-                    == actor_seat.starting_stack
+                    and resolved_cumulative_minimum == actor_seat.starting_stack
                 ):
                     raise ValueError(
                         f"{action.actor_id} cumulative commitment lower bound"
-                        f" {resolved_cumulative_commitment_lower_bound} equals known"
+                        f" {resolved_cumulative_minimum} equals known"
                         f" starting stack {actor_seat.starting_stack} while a"
-                        " configured positive forced contribution remains"
-                        " numerically unresolved"
+                        " positive contribution remains numerically unresolved"
                     )
                 positive_forced_commitment_evidence = any(
                     value is not None and value > 0
@@ -1305,6 +1482,14 @@ class ImportedHandState(ImportedHandModel):
                 cumulative_commitment_lower_bounds[action.actor_id] = (
                     resolved_cumulative_commitment_lower_bound
                 )
+                cumulative_unresolved_minimum_dead[action.actor_id] = (
+                    unresolved_minimum_dead_before_street[action.actor_id]
+                    + resolved_street_unresolved_minimum_dead
+                )
+                cumulative_unresolved_minimum_live[action.actor_id] = (
+                    unresolved_minimum_live_before_street[action.actor_id]
+                    + resolved_street_unresolved_minimum_live
+                )
                 cumulative_unresolved_positive_dead[action.actor_id] = any(
                     (
                         unresolved_positive_dead_before_street[action.actor_id],
@@ -1320,6 +1505,12 @@ class ImportedHandState(ImportedHandModel):
                 street_commitments[action.actor_id] = resolved_commitment
                 street_commitment_lower_bounds[action.actor_id] = (
                     resolved_street_commitment_lower_bound
+                )
+                street_unresolved_minimum_dead[action.actor_id] = (
+                    resolved_street_unresolved_minimum_dead
+                )
+                street_unresolved_minimum_live[action.actor_id] = (
+                    resolved_street_unresolved_minimum_live
                 )
                 street_unresolved_positive_dead[action.actor_id] = (
                     resolved_street_unresolved_positive_dead
@@ -1683,12 +1874,9 @@ class DetectedImportedHand(ImportedHandModel):
             )
         if self.content_sha256 != imported_hand_state_sha256(self.state):
             raise ValueError("content_sha256 must match the normalized detected state")
-        evidence_ids = _state_source_evidence_ids(self.state)
-        evidence_ids.update(
-            item.raw_source_id
-            for field in self.field_evidence.values()
-            for item in field.evidence
-        )
+        evidence_ids = {
+            item.raw_source_id for item in _detected_source_evidence(self)
+        }
         if evidence_ids.difference({self.raw_source_id}):
             raise ValueError(
                 "detected evidence must reference only the detected raw source"
@@ -1871,6 +2059,11 @@ class ImportedHandRecord(ImportedHandModel):
                 raise ValueError("detected hand must reference a retained raw source")
             if detected.state.identity != self.identity:
                 raise ValueError("detected hand must share the stable hand identity")
+            for item in _detected_source_evidence(detected):
+                _validate_source_evidence_location(
+                    item,
+                    raw_by_id[detected.raw_source_id],
+                )
         for conflict in self.conflicts:
             if not set(conflict.raw_source_ids).issubset(raw_ids):
                 raise ValueError("conflict must reference retained raw sources")
@@ -2436,61 +2629,101 @@ def _action_street_unresolved_positive_evidence(
     action: ImportedAction,
     *,
     prior_lower_bound: Decimal,
-    prior_dead: bool,
-    prior_live: bool,
-    configured_post_amount: Decimal | None,
-) -> tuple[bool, bool]:
-    """Track configured positive posts not yet represented by a number."""
+    resolved_lower_bound: Decimal,
+    prior_minimum_dead: Decimal,
+    prior_minimum_live: Decimal,
+    prior_positive_dead: bool,
+    prior_positive_live: bool,
+    configured_post_minimum: Decimal,
+    configured_post_strict_positive: bool,
+) -> tuple[Decimal, Decimal, Decimal, bool, bool]:
+    """Track quantified and strict-positive unresolved contribution evidence."""
 
     if action.action_type == "uncalled_return":
-        if action.total_committed is not None:
-            amount_bound = (
-                max(prior_lower_bound - action.amount, Decimal(0))
-                if action.amount is not None
-                else Decimal(0)
+        prior_combined_minimum = sum(
+            (
+                prior_lower_bound,
+                prior_minimum_dead,
+                prior_minimum_live,
+            ),
+            Decimal(0),
+        )
+        if action.amount is None:
+            required_total = prior_minimum_dead
+        else:
+            required_total = max(
+                prior_minimum_dead,
+                prior_combined_minimum - action.amount,
             )
-            if prior_dead and action.total_committed <= amount_bound:
+        if action.total_committed is not None:
+            if action.total_committed < required_total or (
+                prior_positive_dead
+                and action.total_committed <= required_total
+            ):
                 raise ValueError(
                     "uncalled_return total_committed"
                     f" {action.total_committed} cannot account for a configured"
-                    " positive ante above provable post-return commitment"
-                    f" {amount_bound}"
+                    " positive ante above required post-return commitment"
+                    f" {required_total}"
                 )
-            return False, False
+            return action.total_committed, Decimal(0), Decimal(0), False, False
         # A return can consume an unresolved live forced post. It cannot return
-        # a dead ante without an exact post-return total proving what remains.
-        return prior_dead, False
+        # a dead ante, so preserve that evidence outside the numeric lower bound.
+        return (
+            required_total - prior_minimum_dead,
+            prior_minimum_dead,
+            Decimal(0),
+            prior_positive_dead,
+            False,
+        )
 
-    current_dead = False
-    current_live = False
-    if (
-        configured_post_amount is not None
-        and configured_post_amount > 0
-        and action.amount is None
-    ):
+    unresolved_minimum_dead = prior_minimum_dead
+    unresolved_minimum_live = prior_minimum_live
+    unresolved_positive_dead = prior_positive_dead
+    unresolved_positive_live = prior_positive_live
+    if action.action_type in {"bet", "call", "raise"} and action.amount is None:
+        unresolved_positive_live = True
+    elif configured_post_minimum > 0:
         if action.action_type == "post_ante":
-            current_dead = True
+            unresolved_minimum_dead += configured_post_minimum
         else:
-            current_live = True
+            unresolved_minimum_live += configured_post_minimum
+    if configured_post_strict_positive:
+        if action.action_type == "post_ante":
+            unresolved_positive_dead = True
+        else:
+            unresolved_positive_live = True
 
-    unresolved_dead = prior_dead or current_dead
-    unresolved_live = prior_live or current_live
     if action.total_committed is None:
-        return unresolved_dead, unresolved_live
+        return (
+            resolved_lower_bound,
+            unresolved_minimum_dead,
+            unresolved_minimum_live,
+            unresolved_positive_dead,
+            unresolved_positive_live,
+        )
 
     amount_bound = prior_lower_bound
     if action.action_type in _CHIP_ACTIONS and action.amount is not None:
         amount_bound += action.amount
-    if (
-        (unresolved_dead or unresolved_live)
-        and action.total_committed <= amount_bound
+    required_total = sum(
+        (
+            amount_bound,
+            unresolved_minimum_dead,
+            unresolved_minimum_live,
+        ),
+        Decimal(0),
+    )
+    has_strict_positive = unresolved_positive_dead or unresolved_positive_live
+    if action.total_committed < required_total or (
+        has_strict_positive and action.total_committed <= required_total
     ):
         raise ValueError(
             f"{action.action_type} total_committed {action.total_committed}"
-            " cannot account for a configured positive forced contribution"
-            f" above provable commitment {amount_bound}"
+            " cannot account for unresolved contributions requiring"
+            f" commitment above {required_total}"
         )
-    return False, False
+    return action.total_committed, Decimal(0), Decimal(0), False, False
 
 
 def _known_live_action_total(
@@ -2593,8 +2826,13 @@ def _state_source_evidence(state: ImportedHandState) -> list[SourceEvidence]:
     return evidence
 
 
-def _state_source_evidence_ids(state: ImportedHandState) -> set[str]:
-    return {item.raw_source_id for item in _state_source_evidence(state)}
+def _detected_source_evidence(
+    detected: DetectedImportedHand,
+) -> list[SourceEvidence]:
+    evidence = _state_source_evidence(detected.state)
+    for field in detected.field_evidence.values():
+        evidence.extend(field.evidence)
+    return evidence
 
 
 def _validate_source_evidence_location(
@@ -2606,7 +2844,7 @@ def _validate_source_evidence_location(
     last_evidence_line = evidence.line_end or evidence.line_start
     if last_evidence_line is not None and last_evidence_line > source_line_count:
         raise ValueError(
-            "canonical source evidence line range exceeds retained raw source"
+            "source evidence line range exceeds retained raw source"
             f" {raw_source.raw_source_id} line count {source_line_count}"
         )
     excerpt_scope = raw_source.raw_text
@@ -2618,7 +2856,7 @@ def _validate_source_evidence_location(
         )
     if evidence.excerpt is not None and evidence.excerpt not in excerpt_scope:
         raise ValueError(
-            "canonical source evidence excerpt does not occur at its retained raw"
+            "source evidence excerpt does not occur at its retained raw"
             " source location"
             f" {raw_source.raw_source_id}"
         )
