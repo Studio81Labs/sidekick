@@ -6,8 +6,8 @@
 # from this workspace: left alone they would keep their ports and serve code
 # from a deleted directory. Best-effort; never fails the workspace delete.
 #
-# Dev servers are recognised by what they *are*, never by text that merely
-# mentions the workspace (an agent prompt, an editor argument):
+# Dev servers are recognised by what they *are* (argv[0] and arguments), never
+# by text that merely mentions the workspace (an agent prompt, an editor arg):
 #   - executables living inside this worktree (venv python, esbuild, ...)
 #   - `node` running a script from this worktree (vite)
 #   - `python -m uvicorn` and its multiprocessing workers whose working
@@ -28,40 +28,48 @@ cwd_of() {
   fi
 }
 
-# Snapshot first so the filtering below cannot match its own processes.
-snapshot=$(ps -axo pid=,command= 2>/dev/null) || exit 0
+# argv_of <pid>: sets ARGV0 (argv[0] verbatim, spaces included) and ARGS (the
+# remaining arguments, space-joined). Linux reads /proc; on macOS `ps -o comm`
+# is argv[0] verbatim and `ps -o command` is argv[0] followed by the arguments.
+argv_of() {
+  if [ -r "/proc/$1/cmdline" ]; then
+    ARGV0=$(tr '\0' '\n' < "/proc/$1/cmdline" | head -n 1)
+    ARGS=$(tr '\0' ' ' < "/proc/$1/cmdline")
+  else
+    ARGV0=$(ps -o comm= -p "$1" 2>/dev/null) || return 1
+    ARGS=$(ps -o command= -p "$1" 2>/dev/null)
+  fi
+  [ -n "$ARGV0" ] || return 1
+  ARGS=${ARGS#"$ARGV0"}
+  ARGS=${ARGS# }
+}
 
-# One "<kind>:<pid>" per candidate; kind "cwd" still needs the directory check.
+# Snapshot first so the filtering below cannot match its own processes, then
+# prefilter cheaply on the full command line; exact classification follows.
+snapshot=$(ps -axo pid=,command= 2>/dev/null) || exit 0
 candidates=$(printf '%s\n' "$snapshot" | awk -v root="$ROOT_DIR" -v self="$$" '
-  $1 == self { next }
-  {
-    argv0 = $2
-    if (index(argv0, root "/apps/backend/.venv/") == 1 \
-        || index(argv0, root "/node_modules/") == 1 \
-        || index(argv0, root "/apps/pwa/node_modules/") == 1) {
-      print "path:" $1; next
-    }
-    if (argv0 ~ /(^|\/)node$/ \
-        && (index($0, root "/node_modules/") || index($0, root "/apps/pwa/node_modules/"))) {
-      print "path:" $1; next
-    }
-    if (argv0 ~ /(^|\/)[Pp]ython[0-9.]*$/ \
-        && (($3 == "-m" && $4 == "uvicorn") \
-            || ($3 == "-c" && $4 == "from" && $5 ~ /^multiprocessing\./))) {
-      print "cwd:" $1; next
-    }
-  }')
+  $1 != self && (index($0, root) || index($0, "uvicorn") || index($0, "multiprocessing.")) { print $1 }')
 
 pids=""
-for entry in $candidates; do
-  pid=${entry#*:}
-  case $entry in
-    path:*) pids="$pids $pid" ;;
-    cwd:*)
-      case "$(cwd_of "$pid")" in
-        "$ROOT_DIR" | "$ROOT_DIR"/*) pids="$pids $pid" ;;
+for pid in $candidates; do
+  argv_of "$pid" || continue
+  kind=""
+  case $ARGV0 in
+    "$ROOT_DIR/apps/backend/.venv/"* | "$ROOT_DIR/node_modules/"* | "$ROOT_DIR/apps/pwa/node_modules/"*)
+      kind=path ;;
+    node | */node)
+      case $ARGS in
+        *"$ROOT_DIR/node_modules/"* | *"$ROOT_DIR/apps/pwa/node_modules/"*) kind=path ;;
+      esac ;;
+    python | python[0-9]* | */python | */python[0-9]* | Python | */Python)
+      case $ARGS in
+        "-m uvicorn" | "-m uvicorn "* | "-c from multiprocessing."*)
+          case "$(cwd_of "$pid")" in
+            "$ROOT_DIR" | "$ROOT_DIR"/*) kind=cwd ;;
+          esac ;;
       esac ;;
   esac
+  [ -n "$kind" ] && pids="$pids $pid"
 done
 
 if [ -z "$pids" ]; then

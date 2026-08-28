@@ -20,6 +20,7 @@ VITE_BIN="$PWA_DIR/node_modules/.bin/vite"
 SOLVER_BIN_DIR="$ROOT_DIR/solver-plugins/postflop/target/release"
 # Per-user claims directory: the XDG runtime dir when available, else a
 # uid-suffixed temp dir (TMPDIR is per-user on macOS but often unset on Linux).
+# It is verified to be a private directory owned by this user before use.
 PORT_CLAIMS="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/poker-hero-dev-ports-$(id -u)"
 
 [ -x "$VENV_PY" ] || { echo "Backend virtualenv missing; run ./.superset/setup.sh first" >&2; exit 1; }
@@ -33,10 +34,21 @@ PORT_CLAIMS="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/poker-hero-dev-ports-$(id -u)"
 # same port, even while reclaiming a stale claim.
 pick_ports() {
   "$VENV_PY" - "$PORT_CLAIMS" "$$" "$@" <<'PY'
-import errno, fcntl, os, socket, sys
+import errno, fcntl, os, socket, stat, sys
 
 claims_dir, owner_pid, preferred = sys.argv[1], sys.argv[2], sys.argv[3:]
+
+# The directory must be ours and private: a pre-created or shared directory
+# (possible for the /tmp fallback on multi-user hosts) could carry planted
+# entries, so refuse anything that is not a 0700 directory owned by this user.
 os.makedirs(claims_dir, mode=0o700, exist_ok=True)
+info = os.lstat(claims_dir)
+if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+    sys.exit(
+        f"refusing to use {claims_dir}: it must be a directory owned by you with "
+        "mode 0700 (remove it, or point XDG_RUNTIME_DIR or TMPDIR at a private directory)"
+    )
+NOFOLLOW = os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 def is_free(port):
@@ -63,27 +75,40 @@ def is_alive(pid):
 def claim(port):
     path = os.path.join(claims_dir, str(port))
     try:
-        with open(path) as fh:
-            holder = int(fh.read().strip() or 0)
+        entry = os.lstat(path)
     except FileNotFoundError:
-        holder = 0
-    except (OSError, ValueError):
-        holder = 0  # unreadable or garbage: no live process can rely on it
+        entry = None
+    if entry is not None and not stat.S_ISREG(entry.st_mode):
+        os.unlink(path)  # links and other non-files are never followed or trusted
+        entry = None
+    holder = 0
+    if entry is not None:
+        with os.fdopen(os.open(path, os.O_RDONLY | NOFOLLOW)) as fh:
+            try:
+                holder = int(fh.read().strip() or 0)
+            except ValueError:
+                holder = 0  # garbage: no live process can rely on it
     if holder and holder != int(owner_pid) and is_alive(holder):
         return False
-    with open(path, "w") as fh:
+    with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | NOFOLLOW, 0o600), "w") as fh:
         fh.write(owner_pid + "\n")
     return True
 
 
 chosen = []
-with open(os.path.join(claims_dir, ".lock"), "a+") as lock:
-    fcntl.flock(lock, fcntl.LOCK_EX)
+try:
+    lock_fd = os.open(os.path.join(claims_dir, ".lock"), os.O_RDWR | os.O_CREAT | NOFOLLOW, 0o600)
+except OSError as exc:
+    sys.exit(f"refusing to use the port lock in {claims_dir}: {exc}")
+try:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
     for wanted in preferred:
         port = int(wanted)
         while port in chosen or not (is_free(port) and claim(port)):
             port += 1
         chosen.append(port)
+finally:
+    os.close(lock_fd)
 print(" ".join(map(str, chosen)))
 PY
 }

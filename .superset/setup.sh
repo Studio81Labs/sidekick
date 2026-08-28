@@ -89,17 +89,24 @@ VENV_PY="$BACKEND_DIR/.venv/bin/python"
 
 # --- Rust solver (best-effort) -----------------------------------------------
 step "Building the postflop solver"
+SOLVER_STAMP="$SOLVER_DIR/target/release/.poker-hero-solver-tree"
+# The solver's git tree hash identifies its sources; "clean" means the worktree
+# has no local changes under solver-plugins/postflop.
+solver_tree=$(git -C "$ROOT_DIR" rev-parse "HEAD:solver-plugins/postflop" 2>/dev/null || true)
+solver_clean=no
+if [ -n "$solver_tree" ] \
+  && [ -z "$(git -C "$ROOT_DIR" status --porcelain -- solver-plugins/postflop)" ]; then
+  solver_clean=yes
+fi
 if command -v cargo >/dev/null 2>&1; then
-  # Workspaces whose solver sources are identical (same git tree hash, no
-  # local changes) share one Cargo target dir under the user's cache, so the
-  # common case is a no-op build plus a copy of the binary into this worktree
-  # (the path `pnpm backend:dev` expects). Any other state builds privately in
-  # the worktree. Different sources never share a target dir, so cargo's
+  # Workspaces whose solver sources are identical (same tree hash, clean) share
+  # one Cargo target dir under the user's cache, so the common case is a no-op
+  # build plus a copy of the binary into this worktree (the path
+  # `pnpm backend:dev` expects). Any other state builds privately in the
+  # worktree. Different sources never share a target dir, so cargo's
   # mtime-based freshness and the post-build copy cannot mix up workspaces.
   # The cache (~/.cache/poker-hero/solver-target) is safe to delete anytime.
-  solver_tree=$(git -C "$ROOT_DIR" rev-parse "HEAD:solver-plugins/postflop" 2>/dev/null || true)
-  if [ -n "$solver_tree" ] \
-    && [ -z "$(git -C "$ROOT_DIR" status --porcelain -- solver-plugins/postflop)" ]; then
+  if [ "$solver_clean" = yes ]; then
     target_dir="${XDG_CACHE_HOME:-$HOME/.cache}/poker-hero/solver-target/$solver_tree"
   else
     target_dir="$SOLVER_DIR/target"
@@ -111,11 +118,28 @@ if command -v cargo >/dev/null 2>&1; then
     cp -f "$target_dir/release/$SOLVER_BIN_NAME" "$SOLVER_BIN"
   fi
   [ -x "$SOLVER_BIN" ] || fail "solver build did not produce $SOLVER_BIN"
+  # Record which sources the binary came from, so a later run without cargo
+  # can tell whether it is still valid.
+  if [ "$solver_clean" = yes ]; then
+    printf '%s\n' "$solver_tree" > "$SOLVER_STAMP"
+  else
+    rm -f "$SOLVER_STAMP"
+  fi
 else
-  warn "cargo not found: skipping the postflop solver build."
-  warn "The backend still runs; recommendations use the built-in fallback"
-  warn "(POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED=true). Install Rust 1.85+"
-  warn "(https://rustup.rs) and re-run ./.superset/setup.sh to enable the solver."
+  if [ -x "$SOLVER_BIN" ]; then
+    if [ "$solver_clean" = yes ] && [ "$(cat "$SOLVER_STAMP" 2>/dev/null)" = "$solver_tree" ]; then
+      warn "cargo not found; keeping the solver binary previously built from these exact sources."
+    else
+      rm -f "$SOLVER_BIN" "$SOLVER_STAMP"
+      warn "cargo not found: removed a solver binary that no longer matches this worktree's sources."
+    fi
+  fi
+  if [ ! -x "$SOLVER_BIN" ]; then
+    warn "cargo not found: skipping the postflop solver build."
+    warn "The backend still runs; recommendations use the built-in fallback"
+    warn "(POKER_POSTFLOP_SOLVER_FALLBACK_ENABLED=true). Install Rust 1.85+"
+    warn "(https://rustup.rs) and re-run ./.superset/setup.sh to enable the solver."
+  fi
 fi
 
 # --- Local env files ----------------------------------------------------------
