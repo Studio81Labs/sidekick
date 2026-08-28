@@ -125,10 +125,9 @@ class LocalSolverProvider:
             required_fields.extend(["opponent_stack", "postflop_action_history"])
         return required_fields
 
-    def grading_context_binding_for(
+    def grading_context_bindings(
         self,
-        state: CanonicalState,
-    ) -> ProviderGradingContextBinding | None:
+    ) -> list[ProviderGradingContextBinding] | None:
         # The Python fallback CLIs parse CanonicalState and the Rust plugin has
         # no economic/utility contract. Reject schema-v5 grading until an engine
         # consumes and attests the full route context end to end.

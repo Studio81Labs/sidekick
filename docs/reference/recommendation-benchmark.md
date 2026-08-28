@@ -367,13 +367,36 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   revision, digest, and normalized configuration to match `grading_reference`
   exactly. These benchmark-only economics, structural-position, and utility
   fields are preserved in the request sent to the selected provider. Schema-v5
-  grading additionally requires the provider adapter to return a configured
-  grading-context binding whose canonical SHA-256 covers the exact structural,
-  economic, and utility context. The binding must come from immutable adapter or
-  engine configuration that the selected route actually consumes; echoing the
-  request digest is not a binding. The verified digest and binding revision are
-  retained on each case result, and a missing or mismatched binding fails before
-  provider execution. The current local solver, rule-based, HTTP, and mock
+  grading additionally snapshots a no-argument provider binding catalog once,
+  before any case or provider execution. Each catalog entry supplies raw
+  configured context plus a stable route ID, engine ID, immutable engine
+  revision, configuration/artifact SHA-256, and adapter binding revision. The
+  benchmark—not the provider—canonicalizes and hashes that raw context. It binds
+  the exact street, effective stack, players-in-hand count, structural, economic,
+  and utility context and requires exactly one matching configured route. A
+  callback that sees the case and echoes its expected digest is not a binding.
+  The benchmark snapshots and fingerprints the corpus before provider hooks and
+  retains its declared schema version in the report. An invalid declared-v5
+  snapshot fails without calling the catalog or provider; removing its grading
+  reference cannot select legacy execution or baseline behavior. Required-field
+  inspection and execution receive separate validated state copies, and the
+  complete execution state is canonically snapshotted and revalidated after the
+  provider returns before its selected route is checked independently. Provider
+  mutation therefore cannot alter the retained corpus, and any retained request
+  mutation fails before scoring.
+  Case results retain the benchmark-derived context and attestation digests plus
+  the selected route, engine, configuration, and adapter identities. Missing,
+  ambiguous, or mismatched bindings fail before provider execution, and v5
+  baselines require those identities to remain equal. Older reports remain
+  readable but are not comparable as independently attested v5 baselines. The
+  provider result must then report a canonical `raw.engine` exactly equal to the
+  selected binding engine and omit `fallback_reason`. This check runs before any
+  action, line, policy, EV, range-conditioning, or range-source score is derived.
+  A missing or different engine, malformed fallback metadata, or a real fallback
+  fails that case while retaining only runtime and intended-binding audit fields.
+  Completed v5 baselines with a fallback or mismatched engine are rejected.
+  Versions 1 through 4 retain completed fallback diagnostics and scoring. The
+  current local solver, rule-based, HTTP, and mock
   providers do not claim such a binding. Their schema-v5 cases therefore fail
   before a Python/Rust subprocess or remote request can be attributed to the
   declared grading model. Versions 1 through 4 retain their prior provider and
@@ -440,8 +463,10 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   from one only by bounded rounding error. Zero-frequency candidates do not
   require sizing because they contribute no policy mass.
 - A provider exception or missing required canonical field fails only that case.
-- A non-empty `raw.fallback_reason` counts toward fallback rate;
-  `routing_reason` does not.
+- In versions 1 through 4, a non-empty `raw.fallback_reason` counts toward
+  fallback rate; `routing_reason` does not. In version 5, any present fallback
+  metadata fails the case before scoring, while `routing_reason` cannot authorize
+  an engine other than the one selected by the configured binding.
 - Turn and river cases may declare `expected_range_conditioning` as `applied` or
   `skipped`. The benchmark compares it with
   `raw.range_conditioning.status`; an absent or malformed status lowers evidence

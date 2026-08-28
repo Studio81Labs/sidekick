@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 import sys
@@ -40,6 +41,7 @@ from app.recommendation_benchmark import (
     main,
     recommendation_dataset_fingerprint,
     recommendation_economic_configuration_sha256,
+    recommendation_grading_context_payload,
     recommendation_grading_context_sha256,
     recommendation_utility_configuration_sha256,
     run_recommendation_benchmark,
@@ -51,9 +53,19 @@ class SequenceProvider:
     name = "test_solver"
     required_fields = ["hero_cards", "street"]
 
-    def __init__(self, outcomes: list[RecommendationResult | Exception]) -> None:
+    def __init__(
+        self,
+        outcomes: list[RecommendationResult | Exception],
+        *,
+        grading_context_bindings: list[ProviderGradingContextBinding] | None = None,
+    ) -> None:
         self.outcomes = list(outcomes)
         self.requests: list[RecommendationRequest] = []
+        self.configured_grading_context_bindings = list(
+            grading_context_bindings or []
+        )
+        self.binding_catalog_calls = 0
+        self.events: list[str] = []
 
     def required_fields_for(
         self,
@@ -61,21 +73,37 @@ class SequenceProvider:
     ) -> list[str]:
         return self.required_fields
 
-    def grading_context_binding_for(
-        self,
-        state: RecommendationBenchmarkState,
-    ) -> ProviderGradingContextBinding:
-        return ProviderGradingContextBinding(
-            context_sha256=recommendation_grading_context_sha256(state),
-            binding_revision="test-sequence-provider:v1",
-        )
+    def grading_context_bindings(self) -> list[ProviderGradingContextBinding]:
+        self.binding_catalog_calls += 1
+        self.events.append("bindings")
+        return self.configured_grading_context_bindings
 
     def recommend(self, request: RecommendationRequest) -> RecommendationResult:
+        self.events.append("recommend")
         self.requests.append(request)
         outcome = self.outcomes.pop(0)
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
+
+
+def configured_grading_context_binding(
+    state: RecommendationBenchmarkState,
+    *,
+    route_id: str = "test-route",
+    engine_id: str = "reference_test_v1",
+    engine_revision: str = "test-engine:v1",
+    configuration_sha256: str = "d" * 64,
+    binding_revision: str = "test-sequence-provider:v2",
+) -> ProviderGradingContextBinding:
+    return ProviderGradingContextBinding(
+        route_id=route_id,
+        engine_id=engine_id,
+        engine_revision=engine_revision,
+        configuration_sha256=configuration_sha256,
+        binding_revision=binding_revision,
+        context=recommendation_grading_context_payload(state),
+    )
 
 
 def benchmark_state(**overrides: object) -> RecommendationBenchmarkState:
@@ -749,8 +777,11 @@ def recommendation(
     fallback_reason: str | None = None,
     range_conditioning: object | None = None,
     range_source: object | None = None,
+    engine: object = "reference_test_v1",
+    include_engine: bool = True,
+    raw_overrides: dict[str, object] | None = None,
 ) -> RecommendationResult:
-    raw: dict[str, object] = {"engine": "reference_test_v1"}
+    raw: dict[str, object] = {"engine": engine} if include_engine else {}
     if candidates is not None:
         raw["candidates"] = candidates
     if fallback_reason is not None:
@@ -759,6 +790,8 @@ def recommendation(
         raw["range_conditioning"] = range_conditioning
     if range_source is not None:
         raw["range_source"] = range_source
+    if raw_overrides is not None:
+        raw.update(raw_overrides)
     return RecommendationResult.model_validate(
         {
             "action": action,
@@ -841,7 +874,12 @@ def test_schema_five_propagates_grading_reference_and_fingerprints_evidence() ->
 
     report = run_recommendation_benchmark(
         dataset,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[
+                configured_grading_context_binding(dataset.cases[0].state)
+            ],
+        ),
     )
 
     assert recommendation_dataset_fingerprint(reordered) == baseline_fingerprint
@@ -943,7 +981,12 @@ def test_schema_five_routes_exact_utility_context_to_the_provider() -> None:
         reference_source={"name": "Independent solver export"},
         grading_reference=grading_reference_evidence(),
     )
-    provider = SequenceProvider([recommendation("check")])
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[
+            configured_grading_context_binding(covered_preflop_case().state)
+        ],
+    )
 
     report = run_recommendation_benchmark(dataset, provider)
 
@@ -959,8 +1002,257 @@ def test_schema_five_routes_exact_utility_context_to_the_provider() -> None:
     )
     assert (
         report.cases[0].grading_context_binding_revision
-        == "test-sequence-provider:v1"
+        == "test-sequence-provider:v2"
     )
+    assert report.cases[0].grading_context_route_id == "test-route"
+    assert report.cases[0].grading_context_engine_id == "reference_test_v1"
+    assert report.cases[0].grading_context_engine_revision == "test-engine:v1"
+    assert report.cases[0].grading_context_configuration_sha256 == "d" * 64
+    assert report.cases[0].grading_context_attestation_sha256 is not None
+    assert provider.binding_catalog_calls == 1
+    assert provider.events == ["bindings", "recommend"]
+
+
+def test_schema_five_rejects_a_fallback_from_the_exact_bound_engine() -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = SequenceProvider(
+        [
+            recommendation(
+                "check",
+                fallback_reason="configured engine was unavailable",
+            )
+        ],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    result = report.cases[0]
+    assert result.status == "error"
+    assert result.error is not None
+    assert "reported fallback" in result.error
+    assert result.engine == "reference_test_v1"
+    assert result.fallback_reason == "configured engine was unavailable"
+    assert result.grading_context_engine_id == "reference_test_v1"
+    assert result.grading_context_attestation_sha256 is not None
+    assert result.action is None
+    assert result.sizing is None
+    assert result.confidence is None
+    assert result.action_match is None
+    assert result.line_match is None
+    assert result.policy_distance is None
+    assert result.reference_ev_loss_bb is None
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.action_evaluated == 0
+    assert report.fallback_cases == 0
+
+
+@pytest.mark.parametrize(
+    ("recommendation_kwargs", "retained_engine"),
+    [
+        ({"engine": "other-engine"}, "other-engine"),
+        ({"include_engine": False}, None),
+        ({"engine": 7}, None),
+        ({"engine": " reference_test_v1 "}, " reference_test_v1 "),
+    ],
+)
+def test_schema_five_rejects_unattested_runtime_engine_identity(
+    recommendation_kwargs: dict[str, object],
+    retained_engine: str | None,
+) -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = SequenceProvider(
+        [recommendation("check", **recommendation_kwargs)],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    result = report.cases[0]
+    assert result.status == "error"
+    assert result.error is not None
+    assert "does not exactly match configured grading-context engine" in result.error
+    assert result.engine == retained_engine
+    assert result.grading_context_engine_id == "reference_test_v1"
+    assert result.action is None
+    assert result.action_match is None
+    assert result.range_conditioning_status is None
+    assert result.range_source is None
+
+
+@pytest.mark.parametrize("fallback_value", [None, "", "   ", 3, {"reason": "x"}])
+def test_schema_five_rejects_malformed_present_fallback_metadata(
+    fallback_value: object,
+) -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = SequenceProvider(
+        [
+            recommendation(
+                "check",
+                raw_overrides={"fallback_reason": fallback_value},
+            )
+        ],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    result = report.cases[0]
+    assert result.status == "error"
+    assert result.error is not None
+    assert "invalid fallback_reason metadata" in result.error
+    assert result.action is None
+    assert result.action_match is None
+
+
+def test_schema_five_routing_reason_cannot_override_a_runtime_engine_mismatch() -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = SequenceProvider(
+        [
+            recommendation(
+                "check",
+                engine="other-engine",
+                raw_overrides={
+                    "routing_reason": "the provider intentionally selected it"
+                },
+            )
+        ],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "does not exactly match" in report.cases[0].error
+
+
+def test_schema_five_fallback_cannot_inflate_scoring_or_evidence_coverage() -> None:
+    state = {
+        "street": "turn",
+        "board_cards": [
+            Card.from_code("Qs"),
+            Card.from_code("Jc"),
+            Card.from_code("2h"),
+            Card.from_code("7d"),
+        ],
+        "completed_postflop_streets": [completed_postflop_street("flop")],
+        "opponent_position": "big_blind",
+        "economic_model": case_economic_model_evidence(),
+        "hero_structural_position": {
+            "dealt_in_player_count": 2,
+            "action_index": 0,
+            "button_distance": 0,
+            "display_label": "BTN/SB",
+        },
+    }
+    cases = [
+        benchmark_case(
+            "bound-success",
+            [reference_line("check", ev_bb=0.4)],
+            expected_range_conditioning="applied",
+            expected_range_source="configured",
+            **state,
+        ),
+        benchmark_case(
+            "bound-fallback",
+            [reference_line("check", ev_bb=0.4)],
+            expected_range_conditioning="applied",
+            expected_range_source="configured",
+            **state,
+        ),
+    ]
+    dataset = benchmark_dataset(
+        cases,
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=postflop_grading_reference_for_table_counts(2),
+    )
+    provider = SequenceProvider(
+        [
+            recommendation(
+                "check",
+                range_conditioning={"status": "applied"},
+                range_source="configured",
+            ),
+            recommendation(
+                "check",
+                fallback_reason="solver failed",
+                range_conditioning={"status": "applied"},
+                range_source="configured",
+            ),
+        ],
+        grading_context_bindings=[
+            configured_grading_context_binding(cases[0].state)
+        ],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 1
+    assert report.failed_cases == 1
+    assert report.action_evaluated == 1
+    assert report.action_correct == 1
+    assert report.line_evaluated == 1
+    assert report.ev_evaluated_cases == 1
+    assert report.conditioning_expected_cases == 2
+    assert report.conditioning_evaluated_cases == 1
+    assert report.conditioning_coverage == 0.5
+    assert report.range_source_expected_cases == 2
+    assert report.range_source_evaluated_cases == 1
+    assert report.range_source_coverage == 0.5
+    failed = report.cases[1]
+    assert failed.range_conditioning_status is None
+    assert failed.range_conditioning_match is None
+    assert failed.range_source is None
+    assert failed.range_source_match is None
+
+
+def test_schema_four_preserves_completed_fallback_scoring() -> None:
+    dataset = benchmark_dataset(
+        [benchmark_case("legacy-fallback", [reference_line("fold")])],
+        schema_version=4,
+    )
+
+    report = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider(
+            [recommendation("call", fallback_reason="legacy heuristic")]
+        ),
+    )
+
+    assert report.completed_cases == 1
+    assert report.failed_cases == 0
+    assert report.action_evaluated == 1
+    assert report.cases[0].action == "call"
+    assert report.cases[0].action_match is False
+    assert report.fallback_cases == 1
+    assert report.fallback_rate == 1
 
 
 def test_grading_context_digest_tracks_every_route_critical_model() -> None:
@@ -985,11 +1277,17 @@ def test_grading_context_digest_tracks_every_route_critical_model() -> None:
     changed_utility = state.model_copy(deep=True)
     assert changed_utility.utility_model is not None
     changed_utility.utility_model.revision = "utility-2"
+    changed_street = state.model_copy(update={"street": "flop"}, deep=True)
+    changed_stack = state.model_copy(update={"effective_stack": 50.0}, deep=True)
+    changed_players = state.model_copy(update={"players_in_hand": 3}, deep=True)
 
     assert {
         recommendation_grading_context_sha256(changed_structural),
         recommendation_grading_context_sha256(changed_economics),
         recommendation_grading_context_sha256(changed_utility),
+        recommendation_grading_context_sha256(changed_street),
+        recommendation_grading_context_sha256(changed_stack),
+        recommendation_grading_context_sha256(changed_players),
     }.isdisjoint({baseline})
 
 
@@ -1030,16 +1328,34 @@ def test_schema_five_rejects_a_provider_without_a_grading_context_binding() -> N
     assert provider.called is False
 
 
-def test_schema_five_rejects_a_mismatched_provider_grading_context() -> None:
-    class MismatchedProvider(SequenceProvider):
+def test_schema_five_rejects_an_old_state_echo_binding_callback() -> None:
+    class EchoProvider:
+        name = "echo-provider"
+        required_fields = ["hero_cards", "street"]
+
+        def __init__(self) -> None:
+            self.binding_called = False
+            self.recommend_called = False
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            return self.required_fields
+
         def grading_context_binding_for(
             self,
             state: RecommendationBenchmarkState,
         ) -> ProviderGradingContextBinding:
-            return ProviderGradingContextBinding(
-                context_sha256="0" * 64,
-                binding_revision="mismatched-provider:v1",
-            )
+            self.binding_called = True
+            return configured_grading_context_binding(state)
+
+        def recommend(
+            self,
+            request: RecommendationRequest,
+        ) -> RecommendationResult:
+            self.recommend_called = True
+            return recommendation("check")
 
     dataset = benchmark_dataset(
         [covered_preflop_case()],
@@ -1047,15 +1363,485 @@ def test_schema_five_rejects_a_mismatched_provider_grading_context() -> None:
         reference_source={"name": "Independent solver export"},
         grading_reference=grading_reference_evidence(),
     )
-    provider = MismatchedProvider([recommendation("check")])
+    provider = EchoProvider()
 
     report = run_recommendation_benchmark(dataset, provider)
 
     assert report.failed_cases == 1
     assert report.cases[0].error is not None
-    assert "does not match case context" in report.cases[0].error
+    assert "does not declare a configured schema-v5" in report.cases[0].error
+    assert provider.binding_called is False
+    assert provider.recommend_called is False
+
+
+@pytest.mark.parametrize(
+    ("catalog_kind", "message"),
+    [
+        ("none", "does not bind its engine to schema-v5"),
+        ("empty", "empty grading-context binding catalog"),
+        ("non_iterable", "invalid grading-context binding catalog"),
+        ("iteration_failure", "catalog iteration failed"),
+        ("invalid_entry", "invalid grading-context binding at index 0"),
+    ],
+)
+def test_schema_five_rejects_invalid_binding_catalog_shapes(
+    catalog_kind: str,
+    message: str,
+) -> None:
+    def failing_catalog() -> Any:
+        raise RuntimeError("catalog iteration failed")
+        yield
+
+    catalogs: dict[str, object] = {
+        "none": None,
+        "empty": [],
+        "non_iterable": 42,
+        "iteration_failure": failing_catalog(),
+        "invalid_entry": [object()],
+    }
+
+    class RawCatalogProvider(SequenceProvider):
+        def grading_context_bindings(self) -> Any:
+            self.binding_catalog_calls += 1
+            self.events.append("bindings")
+            return catalogs[catalog_kind]
+
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = RawCatalogProvider([recommendation("check")])
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert message in report.cases[0].error
+    assert provider.binding_catalog_calls == 1
+    assert provider.requests == []
+    assert provider.events == ["bindings"]
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("route_id", "invalid route"),
+        ("engine_id", ""),
+        ("engine_revision", "invalid revision"),
+        ("configuration_sha256", "not-a-sha256"),
+        ("binding_revision", "invalid revision"),
+        ("context", {}),
+    ],
+)
+def test_schema_five_rejects_malformed_binding_declarations(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    case = covered_preflop_case()
+    binding = replace(
+        configured_grading_context_binding(case.state),
+        **{field_name: invalid_value},
+    )
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[binding],
+    )
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "invalid grading-context binding at index 0" in report.cases[0].error
+    assert provider.requests == []
+    assert provider.events == ["bindings"]
+    assert len(provider.outcomes) == 1
+
+
+def test_schema_five_rejects_duplicate_binding_route_ids() -> None:
+    case = covered_preflop_case()
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[
+            configured_grading_context_binding(case.state),
+            configured_grading_context_binding(case.state),
+        ],
+    )
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "grading-context route IDs must be unique" in report.cases[0].error
+    assert provider.requests == []
+    assert provider.events == ["bindings"]
+    assert len(provider.outcomes) == 1
+
+
+def test_schema_five_rejects_a_mismatched_provider_grading_context() -> None:
+    configured_state = covered_preflop_case().state.model_copy(
+        update={"effective_stack": 50.0, "hero_stack": 50.0},
+        deep=True,
+    )
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[
+            configured_grading_context_binding(configured_state)
+        ],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "has no configured grading-context route" in report.cases[0].error
     assert provider.requests == []
     assert len(provider.outcomes) == 1
+
+
+def test_schema_five_does_not_treat_an_artifact_digest_as_a_context_binding() -> None:
+    case = covered_preflop_case()
+    configured_state = case.state.model_copy(
+        update={"effective_stack": 50.0, "hero_stack": 50.0},
+        deep=True,
+    )
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[
+            configured_grading_context_binding(
+                configured_state,
+                configuration_sha256=recommendation_grading_context_sha256(
+                    case.state
+                ),
+            )
+        ],
+    )
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "has no configured grading-context route" in report.cases[0].error
+    assert provider.requests == []
+
+
+def test_schema_five_rejects_ambiguous_independently_configured_routes() -> None:
+    state = covered_preflop_case().state
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[
+            configured_grading_context_binding(state, route_id="route-a"),
+            configured_grading_context_binding(state, route_id="route-b"),
+        ],
+    )
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "ambiguous configured grading-context routes" in report.cases[0].error
+    assert provider.requests == []
+
+
+def test_schema_five_snapshots_the_binding_catalog_once_before_all_cases() -> None:
+    state = covered_preflop_case().state
+    provider = SequenceProvider(
+        [recommendation("check"), recommendation("check")],
+        grading_context_bindings=[configured_grading_context_binding(state)],
+    )
+    dataset = benchmark_dataset(
+        [
+            covered_preflop_case("first"),
+            covered_preflop_case("second"),
+        ],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 2
+    assert provider.binding_catalog_calls == 1
+    assert provider.events == ["bindings", "recommend", "recommend"]
+
+
+def test_schema_five_deep_copies_configured_context_before_recommendation() -> None:
+    class MutatingProvider(SequenceProvider):
+        def recommend(
+            self,
+            request: RecommendationRequest,
+        ) -> RecommendationResult:
+            raw_context.clear()
+            return super().recommend(request)
+
+    state = covered_preflop_case().state
+    raw_context = recommendation_grading_context_payload(state)
+    binding = ProviderGradingContextBinding(
+        route_id="test-route",
+        engine_id="test-engine",
+        engine_revision="test-engine:v1",
+        configuration_sha256="d" * 64,
+        binding_revision="test-sequence-provider:v2",
+        context=raw_context,
+    )
+    provider = MutatingProvider(
+        [recommendation("check", engine="test-engine")],
+        grading_context_bindings=[binding],
+    )
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert raw_context == {}
+    assert report.completed_cases == 1
+    assert report.cases[0].grading_context_sha256 == (
+        recommendation_grading_context_sha256(state)
+    )
+
+
+def test_schema_five_isolates_required_field_inspection_from_execution_state() -> None:
+    class MutatingRequiredFieldsProvider(SequenceProvider):
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            state.effective_stack = 50.0
+            state.hero_stack = 50.0
+            return self.required_fields
+
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    fingerprint_before = recommendation_dataset_fingerprint(dataset)
+    provider = MutatingRequiredFieldsProvider(
+        [recommendation("check")],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 1
+    assert provider.requests[0].state.effective_stack == 100.0
+    assert dataset.cases[0].state.effective_stack == 100.0
+    assert report.dataset_fingerprint == fingerprint_before
+
+
+def test_schema_five_rejects_request_context_mutation_before_scoring() -> None:
+    class MutatingRecommendationProvider(SequenceProvider):
+        def recommend(
+            self,
+            request: RecommendationRequest,
+        ) -> RecommendationResult:
+            request.state.effective_stack = 50.0
+            request.state.hero_stack = 50.0
+            return super().recommend(request)
+
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    fingerprint_before = recommendation_dataset_fingerprint(dataset)
+    binding_sha256 = recommendation_grading_context_sha256(case.state)
+    provider = MutatingRecommendationProvider(
+        [recommendation("check")],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    result = report.cases[0]
+    assert result.status == "error"
+    assert result.error is not None
+    assert "mutated schema-v5 execution state" in result.error
+    assert result.engine == "reference_test_v1"
+    assert result.grading_context_sha256 == binding_sha256
+    assert result.grading_context_attestation_sha256 is not None
+    assert result.action is None
+    assert result.action_match is None
+    assert result.policy_distance is None
+    assert result.reference_ev_loss_bb is None
+    assert dataset.cases[0].state.effective_stack == 100.0
+    assert report.dataset_fingerprint == fingerprint_before
+    assert report.completed_cases == 0
+    assert report.action_evaluated == 0
+
+
+@pytest.mark.parametrize("mutation", ["hero_cards", "preflop_action_history"])
+def test_schema_five_rejects_hand_state_mutation_before_scoring(
+    mutation: str,
+) -> None:
+    class MutatingRecommendationProvider(SequenceProvider):
+        def recommend(
+            self,
+            request: RecommendationRequest,
+        ) -> RecommendationResult:
+            if mutation == "hero_cards":
+                request.state.hero_cards = [
+                    Card.from_code("2c"),
+                    Card.from_code("3d"),
+                ]
+            else:
+                request.state.preflop_action_history.append(
+                    PreflopAction(actor="button", action="call", amount=1)
+                )
+            return super().recommend(request)
+
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    provider = MutatingRecommendationProvider(
+        [recommendation("check")],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    result = report.cases[0]
+    assert result.status == "error"
+    assert result.error is not None
+    assert "mutated schema-v5 execution state" in result.error
+    assert result.engine == "reference_test_v1"
+    assert result.grading_context_attestation_sha256 is not None
+    assert result.action is None
+    assert result.action_match is None
+    assert result.policy_distance is None
+    assert result.reference_ev_loss_bb is None
+    assert report.completed_cases == 0
+    assert report.action_evaluated == 0
+
+
+def test_unsafe_schema_five_cannot_downgrade_by_removing_grading_reference() -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    dataset.grading_reference = None
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.dataset_schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+    assert report.grading_reference is None
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.action_evaluated == 0
+    assert report.cases[0].status == "error"
+    assert report.cases[0].error is not None
+    assert "Schema version 5 requires grading reference evidence" in (
+        report.cases[0].error
+    )
+    assert report.cases[0].grading_context_engine_id is None
+    assert provider.binding_catalog_calls == 0
+    assert provider.requests == []
+    assert provider.events == []
+
+
+def test_invalid_schema_five_top_level_state_blocks_all_provider_hooks() -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    dataset.sizing_tolerance_bb = -1
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "snapshot is invalid at sizing_tolerance_bb" in report.cases[0].error
+    assert provider.binding_catalog_calls == 0
+    assert provider.requests == []
+    assert provider.events == []
+
+
+def test_invalid_empty_schema_five_fails_before_all_provider_hooks() -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    dataset.cases = []
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[configured_grading_context_binding(case.state)],
+    )
+
+    with pytest.raises(
+        RecommendationBenchmarkError,
+        match="snapshot is invalid at cases",
+    ):
+        run_recommendation_benchmark(dataset, provider)
+
+    assert provider.binding_catalog_calls == 0
+    assert provider.requests == []
+    assert provider.events == []
 
 
 def test_schema_five_blocks_local_solver_before_any_subprocess(
@@ -1114,6 +1900,7 @@ def test_legacy_schema_still_allows_an_unbound_provider() -> None:
     report = run_recommendation_benchmark(dataset, LegacyProvider())
 
     assert report.completed_cases == 1
+    assert report.dataset_schema_version == 4
     assert report.cases[0].grading_context_sha256 is None
 
 
@@ -1204,11 +1991,21 @@ def test_utility_binding_is_fingerprinted_and_order_normalized() -> None:
     ) != recommendation_dataset_fingerprint(baseline)
     baseline_report = run_recommendation_benchmark(
         baseline,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[
+                configured_grading_context_binding(baseline.cases[0].state)
+            ],
+        ),
     )
     changed_report = run_recommendation_benchmark(
         changed,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[
+                configured_grading_context_binding(changed.cases[0].state)
+            ],
+        ),
     )
     with pytest.raises(
         RecommendationBenchmarkError,
@@ -1221,11 +2018,18 @@ def test_utility_binding_is_fingerprinted_and_order_normalized() -> None:
 
 
 @pytest.mark.parametrize(
-    "baseline_binding_revision",
-    [None, "test-sequence-provider:v2"],
+    ("baseline_binding_revision", "message"),
+    [
+        (None, "baseline lacks an independently verified engine binding"),
+        (
+            "test-sequence-provider:v3",
+            "baseline engine binding identity does not match",
+        ),
+    ],
 )
 def test_schema_five_baseline_requires_the_same_engine_binding_revision(
     baseline_binding_revision: str | None,
+    message: str,
 ) -> None:
     dataset = benchmark_dataset(
         [covered_preflop_case()],
@@ -1235,7 +2039,12 @@ def test_schema_five_baseline_requires_the_same_engine_binding_revision(
     )
     report = run_recommendation_benchmark(
         dataset,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[
+                configured_grading_context_binding(covered_preflop_case().state)
+            ],
+        ),
     )
     baseline = report.model_copy(deep=True)
     baseline.cases[0] = baseline.cases[0].model_copy(
@@ -1246,10 +2055,189 @@ def test_schema_five_baseline_requires_the_same_engine_binding_revision(
 
     with pytest.raises(
         RecommendationBenchmarkError,
-        match=(
-            "baseline engine binding revision does not match the current report"
-            " for case 'covered-preflop'"
+        match=message,
+    ):
+        validate_comparable_recommendation_baseline(report, baseline)
+
+
+@pytest.mark.parametrize(
+    ("case_updates", "message"),
+    [
+        (
+            {"fallback_reason": "old fallback was scored"},
+            "baseline contains a completed fallback",
         ),
+        (
+            {"engine": None},
+            "baseline lacks matching runtime engine attestation",
+        ),
+        (
+            {"engine": "other-engine"},
+            "baseline lacks matching runtime engine attestation",
+        ),
+    ],
+)
+def test_schema_five_rejects_an_unsafe_completed_baseline_result(
+    case_updates: dict[str, object],
+    message: str,
+) -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    report = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[configured_grading_context_binding(case.state)],
+        ),
+    )
+    baseline = report.model_copy(deep=True)
+    baseline.cases[0] = baseline.cases[0].model_copy(update=case_updates)
+
+    with pytest.raises(RecommendationBenchmarkError, match=message):
+        validate_comparable_recommendation_baseline(report, baseline)
+
+
+def test_legacy_schema_five_report_remains_loadable_but_not_comparable(
+    tmp_path: Path,
+) -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    report = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[configured_grading_context_binding(case.state)],
+        ),
+    )
+    current_path = tmp_path / "current-v5-report.json"
+    current_path.write_text(report.model_dump_json(), encoding="utf-8")
+
+    current = load_recommendation_benchmark_report(current_path)
+
+    assert current.dataset_schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+    payload = report.model_dump(mode="json")
+    payload.pop("dataset_schema_version")
+    for field_name in (
+        "grading_context_attestation_sha256",
+        "grading_context_route_id",
+        "grading_context_engine_id",
+        "grading_context_engine_revision",
+        "grading_context_configuration_sha256",
+    ):
+        payload["cases"][0].pop(field_name, None)
+    path = tmp_path / "legacy-v5-report.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    legacy = load_recommendation_benchmark_report(path)
+
+    assert legacy.dataset_schema_version is None
+    assert legacy.cases[0].grading_context_engine_id is None
+    with pytest.raises(
+        RecommendationBenchmarkError,
+        match="baseline lacks matching runtime engine attestation",
+    ):
+        validate_comparable_recommendation_baseline(report, legacy)
+
+
+def test_report_schema_version_keeps_v5_baseline_guards_without_reference() -> None:
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    report = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[configured_grading_context_binding(case.state)],
+        ),
+    )
+    report_without_reference = report.model_copy(
+        update={"grading_reference": None},
+        deep=True,
+    )
+    baseline_without_reference = report_without_reference.model_copy(deep=True)
+    baseline_without_reference.cases[0] = (
+        baseline_without_reference.cases[0].model_copy(
+            update={"fallback_reason": "unsafe completed fallback"}
+        )
+    )
+
+    with pytest.raises(
+        RecommendationBenchmarkError,
+        match="baseline contains a completed fallback",
+    ):
+        validate_comparable_recommendation_baseline(
+            report_without_reference,
+            baseline_without_reference,
+        )
+
+
+@pytest.mark.parametrize(
+    ("binding_overrides", "expected_value"),
+    [
+        ({"engine_id": "other-engine"}, "other-engine"),
+        ({"engine_revision": "test-engine:v2"}, "test-engine:v2"),
+        ({"configuration_sha256": "e" * 64}, "e" * 64),
+    ],
+)
+def test_schema_five_baseline_distinguishes_engine_and_configuration_identity(
+    binding_overrides: dict[str, str],
+    expected_value: str,
+) -> None:
+    dataset = benchmark_dataset(
+        [covered_preflop_case()],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    baseline_binding = configured_grading_context_binding(
+        covered_preflop_case().state
+    )
+    changed_binding = configured_grading_context_binding(
+        covered_preflop_case().state,
+        **binding_overrides,
+    )
+    baseline = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[baseline_binding],
+        ),
+    )
+    report = run_recommendation_benchmark(
+        dataset,
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[changed_binding],
+        ),
+    )
+
+    assert report.dataset_fingerprint == baseline.dataset_fingerprint
+    assert (
+        report.cases[0].grading_context_attestation_sha256
+        != baseline.cases[0].grading_context_attestation_sha256
+    )
+    assert expected_value in {
+        report.cases[0].grading_context_engine_id,
+        report.cases[0].grading_context_engine_revision,
+        report.cases[0].grading_context_configuration_sha256,
+    }
+    with pytest.raises(
+        RecommendationBenchmarkError,
+        match="baseline engine binding identity does not match",
     ):
         validate_comparable_recommendation_baseline(report, baseline)
 
@@ -1271,6 +2259,7 @@ def test_legacy_baseline_ignores_engine_binding_revision_metadata() -> None:
         update={"grading_context_binding_revision": "legacy-provider:v1"}
     )
 
+    assert report.dataset_schema_version == 4
     validate_comparable_recommendation_baseline(report, baseline)
 
 
@@ -1548,7 +2537,12 @@ def test_tournament_actor_context_reaches_provider_and_changes_fingerprints() ->
     assert recommendation_grading_context_sha256(
         swapped.cases[0].state
     ) != recommendation_grading_context_sha256(baseline.cases[0].state)
-    provider = SequenceProvider([recommendation("check")])
+    provider = SequenceProvider(
+        [recommendation("check")],
+        grading_context_bindings=[
+            configured_grading_context_binding(baseline.cases[0].state)
+        ],
+    )
     run_recommendation_benchmark(baseline, provider)
     routed_state = provider.requests[0].state
     assert isinstance(routed_state, RecommendationBenchmarkState)
@@ -1867,13 +2861,20 @@ def test_blind_decimal_spellings_have_equal_fingerprints_and_are_comparable() ->
     assert recommendation_dataset_fingerprint(
         padded
     ) == recommendation_dataset_fingerprint(concise)
+    binding = configured_grading_context_binding(concise.cases[0].state)
     concise_report = run_recommendation_benchmark(
         concise,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[binding],
+        ),
     )
     padded_report = run_recommendation_benchmark(
         padded,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[binding],
+        ),
     )
     validate_comparable_recommendation_baseline(padded_report, concise_report)
 
@@ -1893,11 +2894,21 @@ def test_blind_denominations_change_fingerprint_and_baseline_comparability() -> 
     ) != recommendation_dataset_fingerprint(five_ten)
     one_two_report = run_recommendation_benchmark(
         one_two,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[
+                configured_grading_context_binding(one_two.cases[0].state)
+            ],
+        ),
     )
     five_ten_report = run_recommendation_benchmark(
         five_ten,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[
+                configured_grading_context_binding(five_ten.cases[0].state)
+            ],
+        ),
     )
     with pytest.raises(RecommendationBenchmarkError, match="baseline corpus does not match"):
         validate_comparable_recommendation_baseline(
@@ -2082,13 +3093,20 @@ def test_fingerprint_normalizes_case_and_reference_tournament_collection_order(
     assert recommendation_grading_context_sha256(
         reordered.cases[0].state
     ) == recommendation_grading_context_sha256(baseline.cases[0].state)
+    binding = configured_grading_context_binding(baseline.cases[0].state)
     baseline_report = run_recommendation_benchmark(
         baseline,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[binding],
+        ),
     )
     reordered_report = run_recommendation_benchmark(
         reordered,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[binding],
+        ),
     )
     validate_comparable_recommendation_baseline(reordered_report, baseline_report)
 
@@ -2105,11 +3123,21 @@ def test_fingerprint_and_comparability_track_material_tournament_economic_change
     ) != recommendation_dataset_fingerprint(baseline)
     baseline_report = run_recommendation_benchmark(
         baseline,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[
+                configured_grading_context_binding(baseline.cases[0].state)
+            ],
+        ),
     )
     changed_report = run_recommendation_benchmark(
         changed,
-        SequenceProvider([recommendation("check")]),
+        SequenceProvider(
+            [recommendation("check")],
+            grading_context_bindings=[
+                configured_grading_context_binding(changed.cases[0].state)
+            ],
+        ),
     )
     with pytest.raises(
         RecommendationBenchmarkError,

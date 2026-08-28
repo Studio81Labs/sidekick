@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Mapping, Protocol, Sequence
 
 from app.domain.poker import CanonicalState
 from app.domain.recommendations import RecommendationRequest, RecommendationResult
@@ -21,12 +21,17 @@ class ProviderInputError(ProviderError):
 class ProviderGradingContextBinding:
     """Provider-configured route context that the selected engine consumes.
 
-    Providers must derive this declaration from immutable adapter/engine
-    configuration. Echoing the request's expected digest is not a binding.
+    The context is raw so the benchmark can validate and fingerprint it without
+    trusting a provider-computed digest. Providers must derive the complete
+    catalog from immutable adapter/engine configuration before seeing a case.
     """
 
-    context_sha256: str
+    route_id: str
+    engine_id: str
+    engine_revision: str
+    configuration_sha256: str
     binding_revision: str
+    context: Mapping[str, object]
 
 
 class RecommendationProvider(Protocol):
@@ -41,11 +46,10 @@ class RecommendationProvider(Protocol):
 
 
 class GradingContextBoundRecommendationProvider(Protocol):
-    def grading_context_binding_for(
+    def grading_context_bindings(
         self,
-        state: CanonicalState,
-    ) -> ProviderGradingContextBinding | None:
-        """Return the engine's configured schema-v5 context, if supported."""
+    ) -> Sequence[ProviderGradingContextBinding] | None:
+        """Return the engine's configured schema-v5 route catalog, if supported."""
 
         raise NotImplementedError
 

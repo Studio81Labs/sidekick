@@ -549,6 +549,25 @@ Solved eligibility also requires evidence that every route-critical canonical
 input matches the reference. A provider fallback or default for effective stack,
 range, position, action history, board conditioning, or economic context is an
 assumption, not verification, and forces the result to `heuristic`/ungraded.
+For benchmark schema v5, that evidence must be matched against an independently
+configured provider route catalog captured before the provider sees any case.
+Poker Hero canonicalizes and hashes the raw configured route context itself and
+retains the selected route, engine revision, configuration artifact, and adapter
+binding identities. A provider-computed echo of case input is not an attestation;
+missing, ambiguous, or changed bindings fail closed before grading.
+The benchmark fingerprints an isolated corpus snapshot before provider hooks,
+uses separate validated state copies for readiness inspection and execution, and
+rejects any retained execution-state mutation before reading runtime trust
+metadata or scoring the result. The declared schema version remains in the
+report and controls this trust boundary: a version-5 corpus whose evidence
+envelope becomes invalid or missing cannot downgrade itself to version-4
+execution or baseline rules.
+After execution, a version-5 benchmark case completes only when the provider
+reports the exact engine selected by that binding and no fallback metadata. A
+missing, malformed, or different runtime engine and every explicit fallback are
+case failures, retain only route/result audit identity, and contribute no policy,
+EV, range-conditioning, or range-source evidence. Versions 1 through 4 retain
+their diagnostic fallback scoring behavior.
 
 Active mastery for one concept/coverage band uses one pinned reference-policy
 revision. A new chart, solved tree, economic model, or support tolerance is

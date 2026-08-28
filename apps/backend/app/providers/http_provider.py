@@ -33,10 +33,9 @@ class HttpRecommendationProvider:
     def required_fields_for(self, state: CanonicalState) -> list[str]:
         return self.required_fields
 
-    def grading_context_binding_for(
+    def grading_context_bindings(
         self,
-        state: CanonicalState,
-    ) -> ProviderGradingContextBinding | None:
+    ) -> list[ProviderGradingContextBinding] | None:
         # Forwarding context is not evidence that an external service routes on
         # it. A future adapter must verify a configured service-side binding.
         return None

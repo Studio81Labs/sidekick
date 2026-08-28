@@ -90,10 +90,9 @@ class RuleBasedTrainingProvider:
     def required_fields_for(self, state: CanonicalState) -> list[str]:
         return self.required_fields
 
-    def grading_context_binding_for(
+    def grading_context_bindings(
         self,
-        state: CanonicalState,
-    ) -> ProviderGradingContextBinding | None:
+    ) -> list[ProviderGradingContextBinding] | None:
         return None
 
     def recommend(self, request: RecommendationRequest) -> RecommendationResult:

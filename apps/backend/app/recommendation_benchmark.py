@@ -663,35 +663,74 @@ class RecommendationBenchmarkRequest(RecommendationRequest):
     state: RecommendationBenchmarkState
 
 
-def recommendation_grading_context_sha256(
-    state: RecommendationBenchmarkState,
-) -> str:
-    """Fingerprint the route-critical context a provider must actually bind."""
+class RecommendationGradingContext(BaseModel):
+    """Canonical route context independently compared with provider configuration."""
 
-    economic_model = state.economic_model
-    if not isinstance(economic_model, RecommendationEconomicModel):
-        raise ValueError("A grading context requires an exact economic model")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    context_schema: Literal[
+        "poker-hero-recommendation-grading-context/v3"
+    ] = Field(alias="schema")
+    street: Street
+    effective_stack_bb: PositiveDecimal
+    players_in_hand: DealtInCount
+    hero_structural_position: StructuralPosition
+    hero_player_id: BenchmarkActorId | None = None
+    opponent_player_id: BenchmarkActorId | None = None
+    dealt_in_player_ids_by_position: dict[
+        StructuralPositionLabel, BenchmarkActorId
+    ] | None = None
+    active_player_ids: list[BenchmarkActorId] | None = None
+    economic_model: RecommendationEconomicModel
+    utility_model: RecommendationUtilityModel
+
+    @model_validator(mode="after")
+    def validate_actor_identities(self) -> Self:
+        if (
+            self.hero_player_id is not None
+            and self.opponent_player_id is not None
+            and self.hero_player_id == self.opponent_player_id
+        ):
+            raise ValueError("Hero and opponent player identities must be distinct")
+        if self.dealt_in_player_ids_by_position is not None:
+            dealt_in_player_ids = list(
+                self.dealt_in_player_ids_by_position.values()
+            )
+            if len(dealt_in_player_ids) != len(set(dealt_in_player_ids)):
+                raise ValueError("Dealt-in player identities must be unique")
+        if self.active_player_ids is not None and len(
+            self.active_player_ids
+        ) != len(set(self.active_player_ids)):
+            raise ValueError("Active player identities must be unique")
+        return self
+
+
+def _canonical_grading_context_payload(
+    context: RecommendationGradingContext,
+) -> dict[str, object]:
+    economic_model = context.economic_model
     if economic_model.blind_level is None:
         raise ValueError("A grading context requires an exact economic blind level")
-    utility_model = state.utility_model
-    if utility_model is None:
-        raise ValueError("A grading context requires an exact utility model")
-    structural_position = state.hero_structural_position
-    if structural_position is None:
-        raise ValueError("A grading context requires an exact structural position")
-    normalized = {
-        "schema": "poker-hero-recommendation-grading-context/v2",
-        "hero_structural_position": structural_position.model_dump(mode="json"),
-        "hero_player_id": state.hero_player_id,
-        "opponent_player_id": state.opponent_player_id,
+    return {
+        "schema": context.context_schema,
+        "street": context.street,
+        "effective_stack_bb": _normalized_economic_value(
+            context.effective_stack_bb
+        ),
+        "players_in_hand": context.players_in_hand,
+        "hero_structural_position": context.hero_structural_position.model_dump(
+            mode="json"
+        ),
+        "hero_player_id": context.hero_player_id,
+        "opponent_player_id": context.opponent_player_id,
         "dealt_in_player_ids_by_position": (
-            dict(sorted(state.dealt_in_player_ids_by_position.items()))
-            if state.dealt_in_player_ids_by_position is not None
+            dict(sorted(context.dealt_in_player_ids_by_position.items()))
+            if context.dealt_in_player_ids_by_position is not None
             else None
         ),
         "active_player_ids": (
-            sorted(state.active_player_ids)
-            if state.active_player_ids is not None
+            sorted(context.active_player_ids)
+            if context.active_player_ids is not None
             else None
         ),
         "economic_model": {
@@ -707,14 +746,60 @@ def recommendation_grading_context_sha256(
             ),
         },
         "utility_model": {
-            "name": utility_model.name,
-            "revision": utility_model.revision,
-            "configuration_sha256": utility_model.configuration_sha256,
+            "name": context.utility_model.name,
+            "revision": context.utility_model.revision,
+            "configuration_sha256": context.utility_model.configuration_sha256,
             "configuration": _normalized_utility_configuration(
-                utility_model.configuration
+                context.utility_model.configuration
             ),
         },
     }
+
+
+def recommendation_grading_context_payload(
+    state: RecommendationBenchmarkState,
+) -> dict[str, object]:
+    """Return the benchmark-owned canonical context a provider route must bind."""
+
+    economic_model = state.economic_model
+    if not isinstance(economic_model, RecommendationEconomicModel):
+        raise ValueError("A grading context requires an exact economic model")
+    if economic_model.blind_level is None:
+        raise ValueError("A grading context requires an exact economic blind level")
+    utility_model = state.utility_model
+    if utility_model is None:
+        raise ValueError("A grading context requires an exact utility model")
+    structural_position = state.hero_structural_position
+    if structural_position is None:
+        raise ValueError("A grading context requires an exact structural position")
+    if state.street is None:
+        raise ValueError("A grading context requires an exact street")
+    if state.effective_stack is None:
+        raise ValueError("A grading context requires an exact effective stack")
+    if state.players_in_hand is None:
+        raise ValueError("A grading context requires an exact active-player count")
+    context = RecommendationGradingContext(
+        context_schema="poker-hero-recommendation-grading-context/v3",
+        street=state.street,
+        effective_stack_bb=Decimal(str(state.effective_stack)),
+        players_in_hand=state.players_in_hand,
+        hero_structural_position=structural_position,
+        hero_player_id=state.hero_player_id,
+        opponent_player_id=state.opponent_player_id,
+        dealt_in_player_ids_by_position=state.dealt_in_player_ids_by_position,
+        active_player_ids=state.active_player_ids,
+        economic_model=economic_model,
+        utility_model=utility_model,
+    )
+    return _canonical_grading_context_payload(context)
+
+
+def recommendation_grading_context_sha256(
+    state: RecommendationBenchmarkState,
+) -> str:
+    """Fingerprint the route-critical context a provider must actually bind."""
+
+    normalized = recommendation_grading_context_payload(state)
     payload = json.dumps(
         normalized,
         ensure_ascii=True,
@@ -1551,6 +1636,26 @@ class RecommendationBenchmarkCaseResult(BaseModel):
     engine: str | None = None
     fallback_reason: str | None = None
     grading_context_sha256: Sha256Digest | None = None
+    grading_context_attestation_sha256: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_route_id: EvidenceRevision | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_engine_id: EvidenceRevision | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_engine_revision: EvidenceRevision | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    grading_context_configuration_sha256: Sha256Digest | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     grading_context_binding_revision: EvidenceRevision | None = None
     expected_range_conditioning: RangeConditioningStatus | None = None
     range_conditioning_status: RangeConditioningStatus | None = None
@@ -1598,6 +1703,13 @@ class RecommendationBenchmarkBreakdown(RecommendationBenchmarkMetrics):
 
 class RecommendationBenchmarkReport(RecommendationBenchmarkMetrics):
     dataset_name: str
+    dataset_schema_version: Literal[
+        RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_TAGGED_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION,
+        RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+    ] | None = None
     dataset_fingerprint: str | None = Field(
         default=None,
         pattern=r"^[0-9a-f]{64}$",
@@ -1798,9 +1910,49 @@ def run_recommendation_benchmark(
     dataset: RecommendationBenchmarkDataset,
     provider: RecommendationProvider,
 ) -> RecommendationBenchmarkReport:
+    dataset_snapshot_error: str | None = None
+    try:
+        dataset_snapshot = RecommendationBenchmarkDataset.model_validate_json(
+            dataset.model_dump_json(by_alias=True)
+        )
+    except ValidationError as exc:
+        # Unsafe in-memory model copies are still reviewed by the existing
+        # fail-closed per-case validators, but provider hooks never receive the
+        # caller-owned corpus object.
+        dataset_snapshot = dataset.model_copy(deep=True)
+        first_error = exc.errors(include_url=False)[0]
+        location = ".".join(str(part) for part in first_error["loc"]) or "dataset"
+        dataset_snapshot_error = (
+            f"Recommendation benchmark snapshot is invalid at {location}:"
+            f" {first_error['msg']}"
+        )
+    schema_five = (
+        dataset_snapshot.schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+    )
+    if schema_five and dataset_snapshot_error is not None and not dataset_snapshot.cases:
+        raise RecommendationBenchmarkError(dataset_snapshot_error)
+    dataset_fingerprint = recommendation_dataset_fingerprint(dataset_snapshot)
+    grading_context_bindings: tuple[
+        _VerifiedProviderGradingContextBinding, ...
+    ] | None = None
+    grading_context_binding_error: str | None = None
+    if schema_five and dataset_snapshot_error is None:
+        try:
+            grading_context_bindings = (
+                _snapshot_provider_grading_context_bindings(provider)
+            )
+        except Exception as exc:
+            grading_context_binding_error = str(exc) or exc.__class__.__name__
     results = [
-        _run_case(case, dataset, provider)
-        for case in dataset.cases
+        _run_case(
+            case,
+            dataset_snapshot,
+            provider,
+            grading_context_bindings,
+            grading_context_binding_error,
+            dataset_snapshot_error,
+        )
+        for case in dataset_snapshot.cases
     ]
     metrics = _aggregate_metrics(results)
     street_metrics = [
@@ -1823,11 +1975,12 @@ def run_recommendation_benchmark(
         for tag in sorted({tag for result in results for tag in result.tags})
     ]
     return RecommendationBenchmarkReport(
-        dataset_name=dataset.name,
-        dataset_fingerprint=recommendation_dataset_fingerprint(dataset),
+        dataset_name=dataset_snapshot.name,
+        dataset_schema_version=dataset_snapshot.schema_version,
+        dataset_fingerprint=dataset_fingerprint,
         provider=provider.name,
-        reference_source=dataset.reference_source,
-        grading_reference=dataset.grading_reference,
+        reference_source=dataset_snapshot.reference_source,
+        grading_reference=dataset_snapshot.grading_reference,
         street_metrics=street_metrics,
         tag_metrics=tag_metrics,
         cases=results,
@@ -2003,16 +2156,67 @@ def validate_comparable_recommendation_baseline(
         raise RecommendationBenchmarkError(
             "Recommendation baseline cases do not match the benchmark dataset"
         )
-    if report.grading_reference is not None or baseline.grading_reference is not None:
+    report_is_schema_five = (
+        report.dataset_schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+        or report.grading_reference is not None
+    )
+    baseline_is_schema_five = (
+        baseline.dataset_schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+        or baseline.grading_reference is not None
+    )
+    if report_is_schema_five or baseline_is_schema_five:
         baseline_by_id = {case.case_id: case for case in baseline.cases}
+        binding_identity_fields = (
+            "grading_context_sha256",
+            "grading_context_attestation_sha256",
+            "grading_context_route_id",
+            "grading_context_engine_id",
+            "grading_context_engine_revision",
+            "grading_context_configuration_sha256",
+            "grading_context_binding_revision",
+        )
         for case in report.cases:
             baseline_case = baseline_by_id[case.case_id]
-            if (
-                baseline_case.grading_context_binding_revision
-                != case.grading_context_binding_revision
+            for report_label, bound_case in (
+                ("current report", case),
+                ("baseline", baseline_case),
+            ):
+                if bound_case.status != "completed":
+                    continue
+                if bound_case.fallback_reason is not None:
+                    raise RecommendationBenchmarkError(
+                        f"Recommendation {report_label} contains a completed"
+                        " fallback for schema-v5 case"
+                        f" {case.case_id!r}"
+                    )
+                if (
+                    bound_case.engine is None
+                    or bound_case.grading_context_engine_id is None
+                    or bound_case.engine
+                    != bound_case.grading_context_engine_id
+                ):
+                    raise RecommendationBenchmarkError(
+                        f"Recommendation {report_label} lacks matching runtime"
+                        " engine attestation for schema-v5 case"
+                        f" {case.case_id!r}"
+                    )
+            if any(
+                getattr(case, field_name) is None
+                or getattr(baseline_case, field_name) is None
+                for field_name in binding_identity_fields
             ):
                 raise RecommendationBenchmarkError(
-                    "Recommendation baseline engine binding revision does not"
+                    "Recommendation baseline lacks an independently verified"
+                    " engine binding for schema-v5 case"
+                    f" {case.case_id!r}"
+                )
+            if any(
+                getattr(baseline_case, field_name)
+                != getattr(case, field_name)
+                for field_name in binding_identity_fields
+            ):
+                raise RecommendationBenchmarkError(
+                    "Recommendation baseline engine binding identity does not"
                     f" match the current report for case {case.case_id!r}"
                 )
 
@@ -2145,36 +2349,214 @@ def format_recommendation_benchmark_report(
     return "\n".join(lines)
 
 
+class _ProviderGradingContextBindingDeclaration(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    route_id: EvidenceRevision
+    engine_id: EvidenceRevision
+    engine_revision: EvidenceRevision
+    configuration_sha256: Sha256Digest
+    binding_revision: EvidenceRevision
+    context: RecommendationGradingContext
+
+
+@dataclass(frozen=True)
+class _VerifiedProviderGradingContextBinding:
+    route_id: str
+    engine_id: str
+    engine_revision: str
+    configuration_sha256: str
+    binding_revision: str
+    context: dict[str, object]
+    context_sha256: str
+    attestation_sha256: str
+
+
+def _grading_context_payload_sha256(context: dict[str, object]) -> str:
+    payload = json.dumps(
+        context,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _provider_grading_context_attestation_sha256(
+    provider_name: str,
+    binding: _ProviderGradingContextBindingDeclaration,
+    context: dict[str, object],
+) -> str:
+    normalized = {
+        "schema": "poker-hero-provider-grading-context-attestation/v1",
+        "provider": provider_name,
+        "route_id": binding.route_id,
+        "engine_id": binding.engine_id,
+        "engine_revision": binding.engine_revision,
+        "configuration_sha256": binding.configuration_sha256,
+        "binding_revision": binding.binding_revision,
+        "context": context,
+    }
+    payload = json.dumps(
+        normalized,
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _snapshot_provider_grading_context_bindings(
+    provider: RecommendationProvider,
+) -> tuple[_VerifiedProviderGradingContextBinding, ...]:
+    bindings_for = getattr(provider, "grading_context_bindings", None)
+    if not callable(bindings_for):
+        raise ValueError(
+            f"Provider {provider.name!r} does not declare a configured schema-v5"
+            " grading-context binding catalog"
+        )
+    bindings = bindings_for()
+    if bindings is None:
+        raise ValueError(
+            f"Provider {provider.name!r} does not bind its engine to schema-v5"
+            " structural, economic, and utility context"
+        )
+    try:
+        raw_bindings = tuple(bindings)
+    except TypeError as exc:
+        raise ValueError(
+            f"Provider {provider.name!r} returned an invalid grading-context"
+            " binding catalog"
+        ) from exc
+    if not raw_bindings:
+        raise ValueError(
+            f"Provider {provider.name!r} returned an empty grading-context"
+            " binding catalog"
+        )
+
+    verified: list[_VerifiedProviderGradingContextBinding] = []
+    for index, raw_binding in enumerate(raw_bindings):
+        if not isinstance(raw_binding, ProviderGradingContextBinding):
+            raise ValueError(
+                f"Provider {provider.name!r} returned an invalid grading-context"
+                f" binding at index {index}"
+            )
+        try:
+            declaration_payload = json.dumps(
+                {
+                    "route_id": raw_binding.route_id,
+                    "engine_id": raw_binding.engine_id,
+                    "engine_revision": raw_binding.engine_revision,
+                    "configuration_sha256": raw_binding.configuration_sha256,
+                    "binding_revision": raw_binding.binding_revision,
+                    "context": dict(raw_binding.context),
+                },
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+            declaration = (
+                _ProviderGradingContextBindingDeclaration.model_validate_json(
+                    declaration_payload
+                )
+            )
+        except (TypeError, ValueError, ValidationError) as exc:
+            detail = (
+                exc.errors(include_url=False)[0]["msg"]
+                if isinstance(exc, ValidationError)
+                else str(exc) or exc.__class__.__name__
+            )
+            raise ValueError(
+                f"Provider {provider.name!r} returned an invalid grading-context"
+                f" binding at index {index}: {detail}"
+            ) from exc
+        context = _canonical_grading_context_payload(declaration.context)
+        context_sha256 = _grading_context_payload_sha256(context)
+        verified.append(
+            _VerifiedProviderGradingContextBinding(
+                route_id=declaration.route_id,
+                engine_id=declaration.engine_id,
+                engine_revision=declaration.engine_revision,
+                configuration_sha256=declaration.configuration_sha256,
+                binding_revision=declaration.binding_revision,
+                context=context,
+                context_sha256=context_sha256,
+                attestation_sha256=(
+                    _provider_grading_context_attestation_sha256(
+                        provider.name,
+                        declaration,
+                        context,
+                    )
+                ),
+            )
+        )
+    route_ids = [binding.route_id for binding in verified]
+    if len(route_ids) != len(set(route_ids)):
+        raise ValueError(
+            f"Provider {provider.name!r} grading-context route IDs must be unique"
+        )
+    return tuple(verified)
+
+
 def _run_case(
     case: RecommendationBenchmarkCase,
     dataset: RecommendationBenchmarkDataset,
     provider: RecommendationProvider,
+    grading_context_bindings: tuple[
+        _VerifiedProviderGradingContextBinding, ...
+    ] | None = None,
+    grading_context_binding_error: str | None = None,
+    dataset_snapshot_error: str | None = None,
 ) -> RecommendationBenchmarkCaseResult:
-    grading_context_binding: ProviderGradingContextBinding | None = None
+    grading_context_binding: _VerifiedProviderGradingContextBinding | None = None
     try:
-        if dataset.grading_reference is not None:
+        if dataset.schema_version == RECOMMENDATION_BENCHMARK_SCHEMA_VERSION:
+            if dataset.grading_reference is None:
+                raise ValueError("Schema version 5 requires grading reference evidence")
             _validate_case_within_grading_coverage(
                 case,
                 dataset.grading_reference.coverage,
                 dataset.grading_reference.economic_model,
                 dataset.grading_reference.utility_model,
             )
+            if dataset_snapshot_error is not None:
+                raise ValueError(dataset_snapshot_error)
+            if grading_context_binding_error is not None:
+                raise ValueError(grading_context_binding_error)
+            if grading_context_bindings is None:
+                raise ValueError(
+                    f"Provider {provider.name!r} does not declare a configured"
+                    " schema-v5 grading-context binding catalog"
+                )
             grading_context_binding = _verified_provider_grading_context_binding(
                 provider,
                 case.state,
+                grading_context_bindings,
             )
+        inspection_state = RecommendationBenchmarkState.model_validate_json(
+            case.state.model_dump_json()
+        )
         missing = missing_required_fields(
-            case.state,
-            provider.required_fields_for(case.state),
+            inspection_state,
+            provider.required_fields_for(inspection_state),
         )
         if missing:
             raise ValueError(f"Missing required fields: {', '.join(missing)}")
-        result = provider.recommend(
-            RecommendationBenchmarkRequest(
-                state=case.state,
-                provider=provider.name,
-            )
+        execution_state = RecommendationBenchmarkState.model_validate_json(
+            case.state.model_dump_json()
         )
+        execution_state_payload = execution_state.model_dump(mode="json")
+        execution_state_sha256 = _grading_context_payload_sha256(
+            execution_state_payload
+        )
+        request = RecommendationBenchmarkRequest(
+            state=execution_state,
+            provider=provider.name,
+        )
+        result = provider.recommend(request)
     except ProviderConfigurationError:
         raise
     except Exception as exc:
@@ -2188,6 +2570,118 @@ def _run_case(
             expected_range_conditioning=case.expected_range_conditioning,
             expected_range_source=case.expected_range_source,
         )
+
+    if grading_context_binding is not None:
+        request_context_error: str | None = None
+        try:
+            retained_execution_state = (
+                RecommendationBenchmarkState.model_validate_json(
+                    request.state.model_dump_json()
+                )
+            )
+            retained_execution_state_payload = retained_execution_state.model_dump(
+                mode="json"
+            )
+            retained_execution_state_sha256 = _grading_context_payload_sha256(
+                retained_execution_state_payload
+            )
+            if retained_execution_state_payload != execution_state_payload:
+                request_context_error = (
+                    f"Provider {provider.name!r} mutated schema-v5 execution state"
+                    f" from {execution_state_sha256}"
+                    f" to {retained_execution_state_sha256}"
+                )
+            executed_context = recommendation_grading_context_payload(
+                retained_execution_state
+            )
+            executed_context_sha256 = _grading_context_payload_sha256(
+                executed_context
+            )
+            if (
+                request_context_error is None
+                and (
+                    executed_context_sha256
+                    != grading_context_binding.context_sha256
+                    or executed_context != grading_context_binding.context
+                )
+            ):
+                request_context_error = (
+                    f"Provider {provider.name!r} mutated schema-v5 request context"
+                    f" from bound route {grading_context_binding.context_sha256}"
+                    f" to {executed_context_sha256}"
+                )
+        except Exception as exc:
+            request_context_error = (
+                f"Provider {provider.name!r} left schema-v5 execution state"
+                f" invalid after execution: {str(exc) or exc.__class__.__name__}"
+            )
+        if request_context_error is not None:
+            raw = result.raw
+            runtime_engine_value = raw.get("engine")
+            runtime_fallback_value = raw.get("fallback_reason")
+            return _schema_five_runtime_result_error(
+                case,
+                grading_context_binding,
+                error=request_context_error,
+                engine=(
+                    runtime_engine_value
+                    if isinstance(runtime_engine_value, str)
+                    else None
+                ),
+                fallback_reason=_nonempty_string(runtime_fallback_value),
+            )
+    raw = result.raw
+    if grading_context_binding is not None:
+        runtime_engine_value = raw.get("engine")
+        runtime_engine = (
+            runtime_engine_value
+            if isinstance(runtime_engine_value, str)
+            else None
+        )
+        fallback_present = "fallback_reason" in raw
+        runtime_fallback_value = raw.get("fallback_reason")
+        runtime_fallback_reason = _nonempty_string(runtime_fallback_value)
+        audit_fallback_reason = (
+            runtime_fallback_reason
+            if runtime_fallback_reason is not None
+            else (
+                runtime_fallback_value
+                if isinstance(runtime_fallback_value, str)
+                else None
+            )
+        )
+        trust_error: str | None = None
+        if runtime_engine != grading_context_binding.engine_id:
+            trust_error = (
+                f"Provider {provider.name!r} schema-v5 result engine"
+                f" {runtime_engine_value!r} does not exactly match configured"
+                " grading-context engine"
+                f" {grading_context_binding.engine_id!r}"
+            )
+        elif fallback_present and runtime_fallback_reason is None:
+            trust_error = (
+                f"Provider {provider.name!r} schema-v5 result contains invalid"
+                " fallback_reason metadata; omit it when no fallback occurred"
+            )
+        elif runtime_fallback_reason is not None:
+            trust_error = (
+                f"Provider {provider.name!r} schema-v5 result from bound engine"
+                f" {grading_context_binding.engine_id!r} reported fallback:"
+                f" {runtime_fallback_reason}"
+            )
+        if trust_error is not None:
+            return _schema_five_runtime_result_error(
+                case,
+                grading_context_binding,
+                error=trust_error,
+                engine=runtime_engine,
+                fallback_reason=audit_fallback_reason,
+            )
+        engine = runtime_engine
+        fallback_reason = None
+    else:
+        engine = _nonempty_string(raw.get("engine"))
+        fallback_reason = _nonempty_string(raw.get("fallback_reason"))
 
     supported_lines = [
         line
@@ -2222,9 +2716,6 @@ def _run_case(
         if line_evaluated
         else None
     )
-    raw = result.raw
-    engine = _nonempty_string(raw.get("engine"))
-    fallback_reason = _nonempty_string(raw.get("fallback_reason"))
     range_conditioning_status = _range_conditioning_status(
         raw.get("range_conditioning")
     )
@@ -2268,6 +2759,31 @@ def _run_case(
             if grading_context_binding is not None
             else None
         ),
+        grading_context_attestation_sha256=(
+            grading_context_binding.attestation_sha256
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_route_id=(
+            grading_context_binding.route_id
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_engine_id=(
+            grading_context_binding.engine_id
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_engine_revision=(
+            grading_context_binding.engine_revision
+            if grading_context_binding is not None
+            else None
+        ),
+        grading_context_configuration_sha256=(
+            grading_context_binding.configuration_sha256
+            if grading_context_binding is not None
+            else None
+        ),
         grading_context_binding_revision=(
             grading_context_binding.binding_revision
             if grading_context_binding is not None
@@ -2282,63 +2798,60 @@ def _run_case(
     )
 
 
+def _schema_five_runtime_result_error(
+    case: RecommendationBenchmarkCase,
+    binding: _VerifiedProviderGradingContextBinding,
+    *,
+    error: str,
+    engine: str | None,
+    fallback_reason: str | None,
+) -> RecommendationBenchmarkCaseResult:
+    return RecommendationBenchmarkCaseResult(
+        case_id=case.id,
+        description=case.description,
+        street=case.state.street,
+        tags=case.tags,
+        status="error",
+        error=error,
+        engine=engine,
+        fallback_reason=fallback_reason,
+        grading_context_sha256=binding.context_sha256,
+        grading_context_attestation_sha256=binding.attestation_sha256,
+        grading_context_route_id=binding.route_id,
+        grading_context_engine_id=binding.engine_id,
+        grading_context_engine_revision=binding.engine_revision,
+        grading_context_configuration_sha256=binding.configuration_sha256,
+        grading_context_binding_revision=binding.binding_revision,
+        expected_range_conditioning=case.expected_range_conditioning,
+        expected_range_source=case.expected_range_source,
+    )
+
+
 def _verified_provider_grading_context_binding(
     provider: RecommendationProvider,
     state: RecommendationBenchmarkState,
-) -> ProviderGradingContextBinding:
-    binding_for = getattr(provider, "grading_context_binding_for", None)
-    if not callable(binding_for):
+    bindings: tuple[_VerifiedProviderGradingContextBinding, ...],
+) -> _VerifiedProviderGradingContextBinding:
+    expected_context = recommendation_grading_context_payload(state)
+    expected_sha256 = _grading_context_payload_sha256(expected_context)
+    matching = [
+        binding
+        for binding in bindings
+        if binding.context_sha256 == expected_sha256
+        and binding.context == expected_context
+    ]
+    if not matching:
         raise ValueError(
-            f"Provider {provider.name!r} does not declare a configured schema-v5"
-            " grading-context binding"
+            f"Provider {provider.name!r} has no configured grading-context route"
+            f" matching case context {expected_sha256}"
         )
-    binding = binding_for(state)
-    if binding is None:
+    if len(matching) > 1:
+        route_ids = ", ".join(repr(binding.route_id) for binding in matching)
         raise ValueError(
-            f"Provider {provider.name!r} does not bind its engine to schema-v5"
-            " structural, economic, and utility context"
+            f"Provider {provider.name!r} has ambiguous configured grading-context"
+            f" routes for case context {expected_sha256}: {route_ids}"
         )
-    if not isinstance(binding, ProviderGradingContextBinding):
-        raise ValueError(
-            f"Provider {provider.name!r} returned an invalid grading-context binding"
-        )
-    if (
-        not isinstance(binding.context_sha256, str)
-        or len(binding.context_sha256) != 64
-        or any(
-            character not in "0123456789abcdef"
-            for character in binding.context_sha256
-        )
-    ):
-        raise ValueError(
-            f"Provider {provider.name!r} returned an invalid grading-context SHA-256"
-        )
-    revision = binding.binding_revision
-    ascii_alphanumeric = (
-        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-    )
-    if (
-        not isinstance(revision, str)
-        or not revision
-        or len(revision) > 128
-        or revision[0] not in ascii_alphanumeric
-        or any(
-            character not in ascii_alphanumeric + "._:-"
-            for character in revision
-        )
-    ):
-        raise ValueError(
-            f"Provider {provider.name!r} returned an invalid grading-context"
-            " binding revision"
-        )
-    expected_sha256 = recommendation_grading_context_sha256(state)
-    if binding.context_sha256 != expected_sha256:
-        raise ValueError(
-            f"Provider {provider.name!r} grading-context binding"
-            f" {binding.context_sha256} does not match case context"
-            f" {expected_sha256}"
-        )
-    return binding
+    return matching[0]
 
 
 def _policy_distance(

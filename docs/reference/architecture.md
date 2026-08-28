@@ -454,9 +454,31 @@ positions, stack/street coverage, economic and utility models, an EV unit,
 delivery-specific rights evidence, and passing convergence measurements. The
 case state repeats the exact normalized economic and utility configurations,
 which are fingerprinted and revalidated before execution. Schema-v5 evaluation
-also requires the provider to return a configured binding for the canonical
-structural/economic/utility context; the report retains that digest and the
-binding revision. Current built-in providers return no binding because their
+snapshots each provider's no-argument configured binding catalog once before any
+case execution. The benchmark canonicalizes and hashes the raw configured
+contexts itself, including street, effective stack, players-in-hand count,
+structural position, economics, and utility, and requires exactly one route
+match. The corpus and its fingerprint are snapshotted before provider hooks,
+and the report retains the declared schema version. An invalid declared-v5
+snapshot fails without calling the catalog or provider; removing its grading
+reference cannot select legacy execution or baseline behavior.
+Required-field inspection and execution receive separate validated state copies,
+and the complete execution copy must remain byte-for-byte canonically equivalent
+to its pre-call snapshot after the provider returns. The selected route context
+is then revalidated independently. Reports retain the case-context and
+attestation digests, route ID, engine ID and immutable revision,
+configuration/artifact digest, and adapter binding revision; schema-v5 baselines
+compare all of those identities. A case-aware callback or recommendation
+response cannot establish this binding. After
+provider execution and before any scoring, the benchmark also requires
+the result's canonical `raw.engine` to equal the selected binding's engine ID
+exactly and rejects every present fallback marker, including malformed metadata.
+Rejected results are case errors: they retain runtime and intended-binding audit
+identity but omit recommendations, scores, policy/EV values, and actual
+range-conditioning/source evidence. Completed schema-v5 baselines must preserve
+the same runtime-engine attestation and cannot contain a fallback. Older report
+shapes remain readable but cannot serve as unattested schema-v5 baselines.
+Current built-in providers return no binding because their
 Python/Rust/HTTP engine contracts do not consume and attest the complete
 context, so they fail closed before their execution boundary. The CLI can
 require the evidence envelope, but declarations and artifact pointers are not
