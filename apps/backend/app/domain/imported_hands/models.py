@@ -19,11 +19,14 @@ from pydantic import (
     ConfigDict,
     Field,
     JsonValue,
+    SerializerFunctionWrapHandler,
     StringConstraints,
     ValidationError,
     field_validator,
+    model_serializer,
     model_validator,
 )
+from pydantic_core import PydanticSerializationError
 
 from app.domain.poker import Card
 
@@ -119,6 +122,102 @@ class ImportedHandModel(BaseModel):
         strict=True,
         validate_assignment=True,
     )
+
+
+def _unvalidated_python_graph(
+    value: Any,
+    *,
+    ancestors: set[int] | None = None,
+) -> Any:
+    """Read a mutable model graph without invoking any serializer hooks."""
+
+    if ancestors is None:
+        ancestors = set()
+    if isinstance(value, BaseModel):
+        identity = id(value)
+        if identity in ancestors:
+            raise ValueError("persisted model graphs cannot contain cycles")
+        ancestors.add(identity)
+        try:
+            payload = {
+                field_name: _unvalidated_python_graph(
+                    getattr(value, field_name),
+                    ancestors=ancestors,
+                )
+                for field_name in type(value).model_fields
+            }
+            extra = value.__pydantic_extra__
+            if extra:
+                payload.update(
+                    {
+                        field_name: _unvalidated_python_graph(
+                            field_value,
+                            ancestors=ancestors,
+                        )
+                        for field_name, field_value in extra.items()
+                    }
+                )
+            return payload
+        finally:
+            ancestors.remove(identity)
+    if isinstance(value, dict):
+        identity = id(value)
+        if identity in ancestors:
+            raise ValueError("persisted model graphs cannot contain cycles")
+        ancestors.add(identity)
+        try:
+            return {
+                _unvalidated_python_graph(key, ancestors=ancestors): (
+                    _unvalidated_python_graph(item, ancestors=ancestors)
+                )
+                for key, item in value.items()
+            }
+        finally:
+            ancestors.remove(identity)
+    if isinstance(value, (list, tuple, set, frozenset)):
+        identity = id(value)
+        if identity in ancestors:
+            raise ValueError("persisted model graphs cannot contain cycles")
+        ancestors.add(identity)
+        try:
+            items = [
+                _unvalidated_python_graph(item, ancestors=ancestors)
+                for item in value
+            ]
+        finally:
+            ancestors.remove(identity)
+        if isinstance(value, tuple):
+            return tuple(items)
+        if isinstance(value, set):
+            return set(items)
+        if isinstance(value, frozenset):
+            return frozenset(items)
+        return items
+    return value
+
+
+def _preserve_model_fields_set(source: Any, snapshot: Any) -> None:
+    """Retain exclude_unset semantics after validating the complete graph."""
+
+    if isinstance(source, BaseModel) and isinstance(snapshot, BaseModel):
+        object.__setattr__(
+            snapshot,
+            "__pydantic_fields_set__",
+            set(source.__pydantic_fields_set__),
+        )
+        for field_name in type(source).model_fields:
+            _preserve_model_fields_set(
+                getattr(source, field_name),
+                getattr(snapshot, field_name),
+            )
+        return
+    if isinstance(source, dict) and isinstance(snapshot, dict):
+        for key in source.keys() & snapshot.keys():
+            _preserve_model_fields_set(source[key], snapshot[key])
+        return
+    if isinstance(source, (list, tuple)) and isinstance(snapshot, (list, tuple)):
+        for source_item, snapshot_item in zip(source, snapshot, strict=True):
+            _preserve_model_fields_set(source_item, snapshot_item)
 
 
 class StableHandIdentity(ImportedHandModel):
@@ -2187,6 +2286,23 @@ class ImportedHandRecord(ImportedHandModel):
     lifecycle: ImportedHandLifecycle
     deletion_receipt: DeletionReceipt | None = None
 
+    def revalidated_snapshot(self) -> Self:
+        """Rebuild the complete mutable graph before a trusted boundary."""
+
+        payload = _unvalidated_python_graph(self)
+        snapshot = type(self).model_validate(payload)
+        _preserve_model_fields_set(self, snapshot)
+        return snapshot
+
+    @model_serializer(mode="wrap")
+    def serialize_revalidated(
+        self,
+        handler: SerializerFunctionWrapHandler,
+    ) -> Any:
+        """Serialize only a complete, freshly validated aggregate snapshot."""
+
+        return handler(self.revalidated_snapshot())
+
     @model_validator(mode="after")
     def validate_aggregate(self) -> Self:
         if self.lifecycle.status == "deleted":
@@ -2432,14 +2548,26 @@ class ImportedHandRecord(ImportedHandModel):
 
     @property
     def active_state_for_extraction(self) -> ImportedHandState | None:
-        if not self.lifecycle.learning_eligible:
+        try:
+            snapshot = self.revalidated_snapshot()
+        except (
+            AttributeError,
+            IndexError,
+            KeyError,
+            PydanticSerializationError,
+            TypeError,
+            ValidationError,
+            ValueError,
+        ):
             return None
-        if not _record_conflict_resolution_is_valid(self):
+        if not snapshot.lifecycle.learning_eligible:
             return None
-        revision = self.lifecycle.active_canonical_revision
+        if not _record_conflict_resolution_is_valid(snapshot):
+            return None
+        revision = snapshot.lifecycle.active_canonical_revision
         if revision is None:
             return None
-        return self.canonical_revisions[revision - 1].state
+        return snapshot.canonical_revisions[revision - 1].state
 
     @property
     def active_hero_actions_for_extraction(self) -> list[ImportedAction]:
@@ -2552,6 +2680,19 @@ def classify_restore(
 ) -> RestoreDisposition:
     """Guard one persisted record slot against resurrection by an old backup."""
 
+    try:
+        current = current.revalidated_snapshot()
+        candidate = candidate.revalidated_snapshot()
+    except (
+        AttributeError,
+        IndexError,
+        KeyError,
+        PydanticSerializationError,
+        TypeError,
+        ValidationError,
+        ValueError,
+    ):
+        return RestoreDisposition(kind="conflict_merge_required")
     if not all(
         _record_conflict_resolution_is_valid(record)
         and _record_lifecycle_audit_chronology_is_valid(record)

@@ -6,7 +6,8 @@ from decimal import Decimal
 from hashlib import sha256
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic_core import PydanticSerializationError
 
 from app.domain.hands import JobRecord
 from app.domain.imported_hands import (
@@ -40,6 +41,10 @@ from app.domain.imported_hands import (
 
 NOW = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
 IDENTITY = StableHandIdentity(site="pokerstars", source_hand_id="123456789")
+
+
+class ImportedHandEnvelope(BaseModel):
+    record: ImportedHandRecord
 
 
 def evidence(raw_source_id: str = "file-1") -> dict[str, object]:
@@ -204,6 +209,80 @@ def active_record() -> ImportedHandRecord:
             changed_at=NOW,
         ),
     )
+
+
+def test_record_boundaries_use_a_fresh_validated_snapshot() -> None:
+    record = active_record()
+
+    snapshot = record.revalidated_snapshot()
+
+    assert snapshot == record
+    assert snapshot is not record
+    assert snapshot.detections[0] is not record.detections[0]
+    assert ImportedHandRecord.model_validate(record.model_dump()) == record
+    assert ImportedHandRecord.model_validate_json(record.model_dump_json()) == record
+    assert record.active_state_for_extraction == revision().state
+    assert classify_restore(record, snapshot).kind == "allow"
+
+
+def test_revalidated_serialization_preserves_exclude_unset_semantics() -> None:
+    record = active_record()
+
+    payload = record.model_dump(exclude_unset=True)
+
+    assert set(payload) == record.model_fields_set
+    assert set(payload["lifecycle"]) == record.lifecycle.model_fields_set
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "duplicate_raw_source",
+        "invalid_nested_warning",
+        "invalid_evidence_pointer",
+        "stale_detection_checksum",
+    ],
+)
+def test_record_boundaries_reject_in_place_nested_mutations(
+    mutation: str,
+) -> None:
+    record = active_record()
+    if mutation == "duplicate_raw_source":
+        record.raw_sources.append(record.raw_sources[0])
+    elif mutation == "invalid_nested_warning":
+        record.detections[0].warnings.append("")
+    elif mutation == "invalid_evidence_pointer":
+        record.detections[0].field_evidence["/missing"] = (
+            record.detections[0].field_evidence["/hero_player_id"]
+        )
+    else:
+        record.detections[0].state.seats[0].display_name = "Mutated after validation"
+
+    with pytest.raises(PydanticSerializationError):
+        record.model_dump(mode="python")
+    with pytest.raises(PydanticSerializationError):
+        record.model_dump_json()
+    with pytest.raises(ValidationError):
+        record.revalidated_snapshot()
+    assert record.active_state_for_extraction is None
+    assert record.active_hero_actions_for_extraction == []
+    assert classify_restore(record, record).kind == "conflict_merge_required"
+
+
+def test_nested_and_type_adapter_serialization_revalidate_the_record() -> None:
+    record = active_record()
+    envelope = ImportedHandEnvelope(record=record)
+    adapter = TypeAdapter(ImportedHandRecord)
+    record.detections[0].warnings.append("")
+
+    with pytest.raises(PydanticSerializationError):
+        envelope.model_dump()
+    with pytest.raises(PydanticSerializationError):
+        envelope.model_dump_json()
+    with pytest.raises(PydanticSerializationError):
+        adapter.dump_python(record)
+    with pytest.raises(PydanticSerializationError):
+        adapter.dump_json(record)
 
 
 def test_missing_source_time_and_economics_stay_explicitly_unknown() -> None:
@@ -1923,7 +2002,7 @@ def test_unsafe_conflict_copy_cannot_expose_a_source_switched_revision(
     assert unsafe_record.active_state_for_extraction is None
     assert unsafe_record.active_hero_actions_for_extraction == []
     with pytest.raises(ValidationError):
-        ImportedHandRecord.model_validate(unsafe_record.model_dump(mode="python"))
+        unsafe_record.revalidated_snapshot()
 
 
 def test_unsafe_selected_source_copy_cannot_extract_without_a_source_transition(
@@ -2039,9 +2118,7 @@ def test_unsafe_canonical_source_binding_copy_cannot_extract_or_restore() -> Non
         ValidationError,
         match="source_file_id must match its detected raw source",
     ):
-        ImportedHandRecord.model_validate(
-            unsafe_candidate.model_dump(mode="python")
-        )
+        unsafe_candidate.revalidated_snapshot()
 
 
 def test_unsafe_nonlatest_active_pointer_copy_cannot_extract_or_restore() -> None:
@@ -2064,9 +2141,7 @@ def test_unsafe_nonlatest_active_pointer_copy_cannot_extract_or_restore() -> Non
         ValidationError,
         match="active pointer must select the latest canonical revision",
     ):
-        ImportedHandRecord.model_validate(
-            unsafe_candidate.model_dump(mode="python")
-        )
+        unsafe_candidate.revalidated_snapshot()
 
 
 def source_switch_restore_pair() -> tuple[ImportedHandRecord, ImportedHandRecord]:
@@ -11853,7 +11928,7 @@ def test_tournament_stack_binding_rechecks_unsafe_valid_model_copies(
     )
 
     assert reconcile_pot(unsafe_state).status == "pass"
-    assert unsafe_record.active_state_for_extraction == unsafe_state
+    assert unsafe_record.active_state_for_extraction is None
     assert unsafe_record.active_hero_actions_for_extraction == []
 
 
@@ -12009,7 +12084,7 @@ def test_tournament_player_binding_fails_closed_for_an_unsafe_record_copy() -> N
         update={"canonical_revisions": [unsafe_revision]}
     )
 
-    assert unsafe_record.active_state_for_extraction == unsafe_state
+    assert unsafe_record.active_state_for_extraction is None
     assert unsafe_record.active_hero_actions_for_extraction == []
 
 
@@ -12374,7 +12449,7 @@ def test_incomplete_later_board_does_not_suppress_an_earlier_ready_action() -> N
     extracted = record.active_hero_actions_for_extraction
     assert len(extracted) == 1
     assert record.active_state_for_extraction is not None
-    assert extracted[0] is record.active_state_for_extraction.streets[0].actions[2]
+    assert extracted[0] == record.active_state_for_extraction.streets[0].actions[2]
 
 
 def test_complete_cumulative_board_restores_later_street_extraction() -> None:

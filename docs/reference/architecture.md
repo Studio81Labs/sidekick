@@ -183,9 +183,12 @@ revision for later decision extraction. Activation, extraction, and restore
 preflight all verify canonical raw-source lineage: a transition to another
 retained source requires a resolved conflict that binds the preserved canonical
 source and selects the new one, while same-source corrections remain ordinary
-revisions. These contracts are not yet connected to V1 routes or file-backed
-storage, so they do not make the hosted screenshot workflow a V2 player-data
-path.
+revisions. Because nested audit collections remain mutable while a transition is
+assembled, every aggregate serialization, extraction, and restore comparison
+first rebuilds and validates a complete snapshot; an invalid graph cannot be
+persisted or exposed as learning evidence. These contracts are not yet connected
+to V1 routes or file-backed storage, so they do not make the hosted screenshot
+workflow a V2 player-data path.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, benchmarks, and

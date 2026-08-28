@@ -308,6 +308,9 @@ approved revision may become active from a different retained raw source only
 after a `resolved_use_source` conflict binds the prior canonical source and
 explicitly selects the new source. Same-source corrections and reapprovals stay
 ordinary canonical revisions and do not require a conflict.
+Every persistence, extraction, and restore boundary revalidates the complete
+aggregate graph from a fresh snapshot. Nested in-memory edits cannot bypass
+checksums, corrections, chronology, conflicts, or source-evidence invariants.
 Every audit-retaining lifecycle freshness marker advances through all retained
 imports, detections, and approvals. This covers active, pending-review,
 withdrawn, and rejected records; a deletion-pending request must occur after
