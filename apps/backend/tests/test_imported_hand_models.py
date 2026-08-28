@@ -4668,6 +4668,143 @@ def test_last_predecision_straddle_rotates_preflop_action(
             ImportedHandState.model_validate(payload)
 
 
+def test_known_ring_rejects_a_repeated_straddle_by_the_same_player() -> None:
+    payload = positioned_wager_payload(player_count=4)
+    payload["game"]["blinds"]["straddle"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "fourth-player",
+                    "post_straddle",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    3,
+                    "fourth-player",
+                    "post_straddle",
+                    amount=Decimal("2"),
+                    total=Decimal("4"),
+                ),
+                wager_action(
+                    4,
+                    "hero",
+                    "call",
+                    amount=Decimal("4"),
+                    total=Decimal("4"),
+                ),
+            ],
+        }
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="post_straddle may occur only once.*known dealt-in seat ring",
+    ):
+        ImportedHandState.model_validate(payload)
+
+
+def test_known_ring_accepts_distinct_straddlers_and_rotates_from_the_last() -> None:
+    payload = positioned_wager_payload(player_count=4)
+    payload["game"]["blinds"]["straddle"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "third-player",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "fourth-player",
+                    "post_straddle",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    3,
+                    "hero",
+                    "post_straddle",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                wager_action(
+                    4,
+                    "villain",
+                    "call",
+                    amount=Decimal("1.5"),
+                    total=Decimal("2"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert [
+        action.actor_id
+        for action in state.streets[0].actions
+        if action.action_type == "post_straddle"
+    ] == ["fourth-player", "hero"]
+    assert state.streets[0].actions[-1].actor_id == "villain"
+
+
+def test_unknown_ring_keeps_repeated_straddle_markers_reviewable() -> None:
+    payload = hand_state().model_dump()
+    payload["game"]["blinds"]["straddle"] = Decimal("2")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                forced_post(
+                    0,
+                    "post_straddle",
+                    amount=Decimal("2"),
+                    total=Decimal("2"),
+                ),
+                forced_post(
+                    1,
+                    "post_straddle",
+                    amount=Decimal("2"),
+                    total=Decimal("4"),
+                ),
+            ],
+        }
+    ]
+
+    state = ImportedHandState.model_validate(payload)
+
+    assert len(state.streets[0].actions) == 2
+
+
 def test_forced_ante_is_rejected_after_a_completed_action_round() -> None:
     payload = positioned_wager_payload()
     actions = three_way_blinds_and_calls()
@@ -8367,10 +8504,13 @@ def test_extraction_returns_only_voluntary_hero_actions_from_supported_approval(
         },
     }
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["button_seat"] = 1
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
         {"rank": "K", "suit": "diamonds"},
     ]
+    state_payload["game"]["blinds"]["small_blind"] = None
+    state_payload["game"]["blinds"]["big_blind"] = None
     state_payload["game"]["betting_limit"] = betting_limit
     state_payload["streets"] = [
         {
@@ -8446,10 +8586,13 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
         )
     )
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["button_seat"] = 1 if action_type == "bet" else 2
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
         {"rank": "K", "suit": "diamonds"},
     ]
+    state_payload["game"]["blinds"]["small_blind"] = None
+    state_payload["game"]["blinds"]["big_blind"] = None
     state_payload["streets"] = [{"street": "preflop", "actions": actions}]
     state = ImportedHandState.model_validate(state_payload)
     source_detection = detected(state)
@@ -8479,10 +8622,13 @@ def test_extraction_requires_a_chip_representation_for_player_wagers(
 def test_extraction_keeps_an_unresolved_call_without_player_selected_sizing(
 ) -> None:
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["button_seat"] = 2
     state_payload["hero_cards"] = [
         {"rank": "A", "suit": "hearts"},
         {"rank": "K", "suit": "diamonds"},
     ]
+    state_payload["game"]["blinds"]["small_blind"] = None
+    state_payload["game"]["blinds"]["big_blind"] = None
     state_payload["streets"] = [
         {
             "street": "preflop",
@@ -8528,8 +8674,10 @@ def extraction_record_for_streets(
     streets: list[dict[str, object]],
     *,
     hero_cards: list[dict[str, str]] | None = None,
+    button_seat: int | None = 1,
 ) -> ImportedHandRecord:
     state_payload = hand_state(hero_player_id="hero").model_dump()
+    state_payload["button_seat"] = button_seat
     state_payload["hero_cards"] = (
         [
             {"rank": "A", "suit": "hearts"},
@@ -8538,8 +8686,15 @@ def extraction_record_for_streets(
         if hero_cards is None
         else hero_cards
     )
+    if button_seat is not None:
+        state_payload["game"]["blinds"]["small_blind"] = None
+        state_payload["game"]["blinds"]["big_blind"] = None
     state_payload["streets"] = streets
     state = ImportedHandState.model_validate(state_payload)
+    return extraction_record_for_state(state)
+
+
+def extraction_record_for_state(state: ImportedHandState) -> ImportedHandRecord:
     source_detection = detected(state)
     return ImportedHandRecord(
         identity=IDENTITY,
@@ -8559,6 +8714,142 @@ def extraction_record_for_streets(
             "changed_at": NOW,
         },
     )
+
+
+def automatic_action(
+    sequence: int,
+    actor_id: str,
+    action_type: str = "check",
+    *,
+    total: Decimal | None = Decimal(0),
+) -> dict[str, object]:
+    action = wager_action(
+        sequence,
+        actor_id,
+        action_type,
+        total=total,
+    )
+    action["origin"] = {
+        "kind": "client_automatic",
+        "basis": "explicit_marker",
+        "automatic_reason": "timeout",
+        "evidence": [evidence()],
+    }
+    return action
+
+
+def extraction_ready_state_payload() -> dict[str, object]:
+    payload = hand_state(hero_player_id="hero").model_dump()
+    payload["button_seat"] = 1
+    payload["hero_cards"] = [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
+    payload["game"]["blinds"]["small_blind"] = None
+    payload["game"]["blinds"]["big_blind"] = None
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(0, "hero", "check", total=Decimal(0)),
+            ],
+        }
+    ]
+    return payload
+
+
+def test_extraction_withholds_a_known_hero_when_any_participation_is_unknown(
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "unknown-player",
+            "starting_stack": None,
+            "participation": "unknown",
+            "position": None,
+        }
+    )
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert state.hero_player_id == "hero"
+    assert state.seats[0].participation == "dealt_in"
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_extraction_withholds_a_resolved_hand_when_the_button_is_unknown() -> None:
+    record = extraction_record_for_streets(
+        [
+            {
+                "street": "preflop",
+                "actions": [
+                    wager_action(0, "hero", "check", total=Decimal(0)),
+                ],
+            }
+        ],
+        button_seat=None,
+    )
+
+    assert record.active_state_for_extraction is not None
+    assert record.active_state_for_extraction.button_seat is None
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_extraction_withholds_a_resolved_dead_button_ring() -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["table_size"] = 3
+    payload["button_seat"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "not-dealt-button",
+            "starting_stack": Decimal("100"),
+            "participation": "not_dealt",
+            "position": None,
+        }
+    )
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_extraction_withholds_a_ring_with_fewer_than_two_dealt_players() -> None:
+    payload = extraction_ready_state_payload()
+    payload["seats"][1]["participation"] = "not_dealt"
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+@pytest.mark.parametrize("excluded_participation", ["sitting_out", "not_dealt"])
+def test_extraction_derives_positions_while_skipping_resolved_nonparticipants(
+    excluded_participation: str,
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "excluded-player",
+            "starting_stack": Decimal("100"),
+            "participation": excluded_participation,
+            "position": None,
+        }
+    )
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert all(seat.position is None for seat in state.seats)
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
 
 
 @pytest.mark.parametrize(
@@ -8619,7 +8910,14 @@ def test_extraction_requires_the_complete_cumulative_board_for_each_street(
     ]
     required_board_cards = {"preflop": 0, "flop": 3, "turn": 4, "river": 5}
     streets: list[dict[str, object]] = [
-        {"street": "preflop", "board_cards": [], "actions": []}
+        {
+            "street": "preflop",
+            "board_cards": [],
+            "actions": [
+                automatic_action(0, "villain"),
+                automatic_action(1, "hero"),
+            ],
+        }
     ]
     for street_name in ("flop", "turn", "river"):
         if street_name == candidate_street:
@@ -8637,11 +8935,14 @@ def test_extraction_requires_the_complete_cumulative_board_for_each_street(
             {
                 "street": street_name,
                 "board_cards": board[: required_board_cards[street_name]],
-                "actions": [],
+                "actions": [
+                    automatic_action(0, "hero"),
+                    automatic_action(1, "villain"),
+                ],
             }
         )
 
-    record = extraction_record_for_streets(streets)
+    record = extraction_record_for_streets(streets, button_seat=2)
 
     assert bool(record.active_hero_actions_for_extraction) is is_extractable
 
@@ -8653,6 +8954,7 @@ def test_incomplete_later_board_does_not_suppress_an_earlier_ready_action() -> N
                 "street": "preflop",
                 "actions": [
                     wager_action(0, "hero", "check", total=Decimal(0)),
+                    automatic_action(1, "villain"),
                 ],
             },
             {
@@ -8662,7 +8964,8 @@ def test_incomplete_later_board_does_not_suppress_an_earlier_ready_action() -> N
                     {"rank": "3", "suit": "clubs"},
                 ],
                 "actions": [
-                    wager_action(0, "hero", "check", total=Decimal(0)),
+                    automatic_action(0, "villain"),
+                    wager_action(1, "hero", "check", total=Decimal(0)),
                 ],
             },
         ]
@@ -8683,8 +8986,21 @@ def test_complete_cumulative_board_restores_later_street_extraction() -> None:
     ]
     record = extraction_record_for_streets(
         [
-            {"street": "preflop", "actions": []},
-            {"street": "flop", "board_cards": board[:2], "actions": []},
+            {
+                "street": "preflop",
+                "actions": [
+                    automatic_action(0, "villain"),
+                    automatic_action(1, "hero"),
+                ],
+            },
+            {
+                "street": "flop",
+                "board_cards": board[:2],
+                "actions": [
+                    automatic_action(0, "hero"),
+                    automatic_action(1, "villain"),
+                ],
+            },
             {
                 "street": "turn",
                 "board_cards": board,
@@ -8692,7 +9008,8 @@ def test_complete_cumulative_board_restores_later_street_extraction() -> None:
                     wager_action(0, "hero", "check", total=Decimal(0)),
                 ],
             },
-        ]
+        ],
+        button_seat=2,
     )
 
     assert [
@@ -8717,7 +9034,8 @@ def test_extraction_withholds_every_decision_after_an_unknown_wager(
                 "street": "preflop",
                 "actions": [wager_action(0, "villain", "bet"), selected],
             }
-        ]
+        ],
+        button_seat=2,
     )
 
     assert record.active_hero_actions_for_extraction == []
@@ -8750,7 +9068,8 @@ def test_extraction_withholds_locally_sized_wagers_after_unknown_commitments(
         )
     )
     record = extraction_record_for_streets(
-        [{"street": "preflop", "actions": prior_actions}]
+        [{"street": "preflop", "actions": prior_actions}],
+        button_seat=(1 if action_type == "bet" else 2),
     )
 
     assert record.active_hero_actions_for_extraction == []
@@ -8764,7 +9083,11 @@ def test_extraction_withholds_later_street_decisions_after_an_unknown_pot(
         [
             {
                 "street": "preflop",
-                "actions": [wager_action(0, "villain", "post_ante")],
+                "actions": [
+                    wager_action(0, "villain", "post_ante"),
+                    automatic_action(1, "villain", total=None),
+                    automatic_action(2, "hero"),
+                ],
             },
             {
                 "street": "flop",
@@ -8783,7 +9106,8 @@ def test_extraction_withholds_later_street_decisions_after_an_unknown_pot(
                     )
                 ],
             },
-        ]
+        ],
+        button_seat=2,
     )
 
     assert record.active_hero_actions_for_extraction == []
@@ -8860,7 +9184,8 @@ def test_exact_resolution_restores_same_and_later_street_extraction() -> None:
                     wager_action(0, "hero", "check", total=Decimal(0)),
                 ],
             },
-        ]
+        ],
+        button_seat=2,
     )
 
     assert [
@@ -9009,6 +9334,159 @@ def test_aggregate_rechecks_correction_timestamps_after_unsafe_model_copy() -> N
                 "changed_at": NOW,
             },
         )
+
+
+def test_correction_cannot_precede_its_referenced_detection() -> None:
+    detected_at = NOW + timedelta(minutes=1)
+    approved_at = NOW + timedelta(minutes=2)
+    source_detection = detected().model_copy(
+        update={"detected_at": detected_at}
+    )
+    correction = revision().corrections[0].model_copy(
+        update={"corrected_at": NOW}
+    )
+    approval = revision().model_copy(
+        update={
+            "approved_at": approved_at,
+            "corrections": [correction],
+        }
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "correction /hero_player_id corrected_at cannot precede referenced"
+            " detection detection-1 detected_at"
+        ),
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[source_detection],
+            canonical_revisions=[approval],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": approved_at,
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    "correction_offset",
+    [timedelta(0), timedelta(microseconds=1)],
+)
+def test_correction_at_or_after_detection_is_accepted(
+    correction_offset: timedelta,
+) -> None:
+    detected_at = NOW
+    approved_at = NOW + timedelta(minutes=1)
+    source_detection = detected().model_copy(
+        update={"detected_at": detected_at}
+    )
+    correction = revision().corrections[0].model_copy(
+        update={"corrected_at": detected_at + correction_offset}
+    )
+    approval = revision().model_copy(
+        update={
+            "approved_at": approved_at,
+            "corrections": [correction],
+        }
+    )
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[source_detection],
+        canonical_revisions=[approval],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved_at,
+        },
+    )
+
+    assert record.canonical_revisions[0].corrections[0].corrected_at == (
+        detected_at + correction_offset
+    )
+
+
+def test_every_correction_must_follow_the_referenced_detection() -> None:
+    detected_at = NOW + timedelta(minutes=1)
+    approved_at = NOW + timedelta(minutes=2)
+    detected_state = hand_state()
+    source_detection = detected(detected_state).model_copy(
+        update={"detected_at": detected_at}
+    )
+    approved_payload = detected_state.model_dump()
+    approved_payload["hero_player_id"] = "hero"
+    approved_payload["seats"][0]["display_name"] = "Hero"
+    approved_state = ImportedHandState.model_validate(approved_payload)
+    approval = CanonicalHandRevision(
+        revision=1,
+        detection_id=source_detection.detection_id,
+        approved_at=approved_at,
+        state=approved_state,
+        corrections=[
+            UserCorrection(
+                field_pointer="/hero_player_id",
+                detected_value=None,
+                approved_value="hero",
+                corrected_at=detected_at - timedelta(microseconds=1),
+            ),
+            UserCorrection(
+                field_pointer="/seats/0/display_name",
+                detected_value=None,
+                approved_value="Hero",
+                corrected_at=detected_at + timedelta(microseconds=1),
+            ),
+        ],
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="correction /hero_player_id corrected_at cannot precede",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[source_detection],
+            canonical_revisions=[approval],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": approved_at,
+            },
+        )
+
+
+def test_revision_without_corrections_is_unaffected_by_correction_chronology(
+) -> None:
+    detected_at = NOW
+    approved_at = NOW + timedelta(minutes=1)
+    source_detection = detected().model_copy(
+        update={"detected_at": detected_at}
+    )
+    approval = CanonicalHandRevision(
+        revision=1,
+        detection_id=source_detection.detection_id,
+        approved_at=approved_at,
+        state=source_detection.state,
+    )
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[raw_source()],
+        detections=[source_detection],
+        canonical_revisions=[approval],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved_at,
+        },
+    )
+
+    assert record.canonical_revisions[0].corrections == []
 
 
 @pytest.mark.parametrize(

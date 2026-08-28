@@ -729,6 +729,7 @@ class ImportedHandState(ImportedHandModel):
             else ()
         )
         seen_ante_posts: set[str] = set()
+        seen_straddle_players: set[str] = set()
         seen_structural_blind_posts: set[str] = set()
         forced_stack_exhausted_players: set[str] = set()
 
@@ -1031,6 +1032,16 @@ class ImportedHandState(ImportedHandModel):
                                 " the known dealt-in seat ring"
                             )
                         seen_ante_posts.add(action.actor_id)
+                    if (
+                        action.action_type == "post_straddle"
+                        and clockwise_action_order is not None
+                    ):
+                        if action.actor_id in seen_straddle_players:
+                            raise ValueError(
+                                "post_straddle may occur only once for each player"
+                                " in the known dealt-in seat ring"
+                            )
+                        seen_straddle_players.add(action.actor_id)
                     posted_amount = action.amount
                     if (
                         posted_amount is None
@@ -2266,9 +2277,9 @@ class ImportedHandRecord(ImportedHandModel):
 
         Forced, client-automatic, and unresolved actions remain in the canonical
         audit stream but cannot become learning decision points. Player-selected
-        decisions require two approved hero cards and the complete cumulative
-        board for their street. Wagers also require an approved chip
-        representation before extraction.
+        decisions require a fully resolved, derivable dealt-in seat ring, two
+        approved hero cards, and the complete cumulative board for their street.
+        Wagers also require an approved chip representation before extraction.
         """
 
         state = self.active_state_for_extraction
@@ -2280,6 +2291,10 @@ class ImportedHandRecord(ImportedHandModel):
             seat for seat in state.seats if seat.player_id == state.hero_player_id
         )
         if hero.participation != "dealt_in":
+            return []
+        if any(seat.participation == "unknown" for seat in state.seats):
+            return []
+        if _known_action_orders(state.seats, state.button_seat) is None:
             return []
         return _hero_actions_ready_for_extraction(state)
 
@@ -3306,6 +3321,13 @@ def _validate_corrections_win(
     revision: CanonicalHandRevision,
 ) -> None:
     _validate_correction_timestamps(revision)
+    for correction in revision.corrections:
+        if correction.corrected_at < detected.detected_at:
+            raise ValueError(
+                f"correction {correction.field_pointer} corrected_at cannot"
+                f" precede referenced detection {detected.detection_id}"
+                " detected_at"
+            )
     detected_json = detected.state.model_dump_json()
     detected_document = json.loads(detected_json)
     for correction in revision.corrections:
