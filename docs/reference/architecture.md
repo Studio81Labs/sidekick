@@ -174,8 +174,11 @@ pot-reconciliation oracle. Omitted ante mode is canonicalized as unknown; a
 positive unknown mode remains reviewable but blocks decision extraction, while
 zero ante requires no poster mode. Complete actions with missing results or
 award-only pot evidence remain indeterminate, and extraction requires a passing
-zero-discrepancy comparison against an independent source total. The aggregate
-exposes only voluntary actions
+zero-discrepancy comparison against an independent source total. Tournament
+extraction treats identified `remaining_stacks` as the same hand-start snapshot
+and absolute tournament-chip unit as the dealt-in seats' `starting_stack`
+values, and binds each pair exactly; unrelated remaining field players may
+coexist. The aggregate exposes only voluntary actions
 from its active approved revision for later decision extraction. These contracts
 are not yet connected to V1 routes or file-backed storage, so they do not make
 the hosted screenshot workflow a V2 player-data path.

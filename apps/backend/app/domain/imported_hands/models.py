@@ -2450,14 +2450,14 @@ class ImportedHandRecord(ImportedHandModel):
             return []
         if state.game.betting_limit not in {"no_limit", "pot_limit"}:
             return []
-        dealt_in_player_ids = {
-            seat.player_id
+        dealt_in_starting_stacks = {
+            seat.player_id: seat.starting_stack
             for seat in state.seats
             if seat.participation == "dealt_in"
         }
         if not _economics_ready_for_extraction(
             state.game.economics,
-            dealt_in_player_ids=dealt_in_player_ids,
+            dealt_in_starting_stacks=dealt_in_starting_stacks,
         ):
             return []
         if not _pot_reconciliation_ready_for_extraction(state):
@@ -3333,7 +3333,7 @@ def _known_live_action_total(
 def _economics_ready_for_extraction(
     economics: Economics,
     *,
-    dealt_in_player_ids: set[str],
+    dealt_in_starting_stacks: dict[str, Decimal | None],
 ) -> bool:
     """Require the exact route-critical strategy economics without defaults."""
 
@@ -3368,8 +3368,18 @@ def _economics_ready_for_extraction(
         for stack in economics.remaining_stacks
     ):
         return False
+    remaining_stack_by_player = {
+        stack.player_id: stack.stack for stack in economics.remaining_stacks
+    }
+    dealt_in_player_ids = set(dealt_in_starting_stacks)
     if not dealt_in_player_ids.issubset(
-        {stack.player_id for stack in economics.remaining_stacks}
+        remaining_stack_by_player
+    ):
+        return False
+    if any(
+        starting_stack is not None
+        and remaining_stack_by_player[player_id] != starting_stack
+        for player_id, starting_stack in dealt_in_starting_stacks.items()
     ):
         return False
     if any(bounty.value is None for bounty in economics.bounties):

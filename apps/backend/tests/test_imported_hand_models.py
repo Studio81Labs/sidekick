@@ -423,6 +423,9 @@ def complete_route_tournament_economics(
     *, bounty_format: str = "none",
 ) -> dict[str, object]:
     economics = complete_tournament_economics()
+    for stack in economics["remaining_stacks"]:
+        if stack["player_id"] in {"hero", "villain"}:
+            stack["stack"] = Decimal("100")
     economics["kind"] = "tournament"
     economics["bounty_format"] = bounty_format
     economics["bounties"] = [
@@ -11204,6 +11207,202 @@ def test_complete_tournament_utility_context_is_extractable(
         bounty_format=bounty_format
     )
     economics["tournament_id"] = None
+    payload["game"]["economics"] = economics
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+def test_tournament_stack_binding_uses_exact_decimal_chip_values() -> None:
+    payload = extraction_ready_state_payload()
+    economics = complete_route_tournament_economics()
+    hero_stack = next(
+        stack
+        for stack in economics["remaining_stacks"]
+        if stack["player_id"] == "hero"
+    )
+    hero_stack["stack"] = Decimal("100.000")
+    payload["game"]["economics"] = economics
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+def three_way_tournament_extraction_payload(
+    *,
+    third_starting_stack: Decimal = Decimal("100"),
+) -> dict[str, object]:
+    payload = positioned_wager_payload()
+    payload["hero_player_id"] = "hero"
+    payload["hero_cards"] = [
+        {"rank": "A", "suit": "hearts"},
+        {"rank": "K", "suit": "diamonds"},
+    ]
+    payload["game"]["blinds"]["ante"] = Decimal(0)
+    payload["seats"][2]["starting_stack"] = third_starting_stack
+    economics = complete_route_tournament_economics()
+    next(
+        stack
+        for stack in economics["remaining_stacks"]
+        if stack["player_id"] == "third-player"
+    )["stack"] = third_starting_stack
+    payload["game"]["economics"] = economics
+    actions = three_way_blinds_and_calls()
+    actions[-1] = wager_action(
+        4,
+        "third-player",
+        "fold",
+        total=Decimal("1"),
+    )
+    payload["streets"] = [
+        {"street": "preflop", "actions": actions},
+        {
+            "street": "flop",
+            "actions": [
+                wager_action(0, "villain", "fold", total=Decimal(0)),
+            ],
+        },
+    ]
+    payload["results"] = {
+        "stated_pot": {"gross_total": Decimal("3")},
+    }
+    return payload
+
+
+@pytest.mark.parametrize("player_id", ["hero", "villain"])
+def test_tournament_stack_binding_rejects_a_dealt_in_stack_mismatch(
+    player_id: str,
+) -> None:
+    payload = extraction_ready_state_payload()
+    economics = complete_route_tournament_economics()
+    mismatched_stack = next(
+        stack
+        for stack in economics["remaining_stacks"]
+        if stack["player_id"] == player_id
+    )
+    mismatched_stack["stack"] = Decimal("100.01")
+    payload["game"]["economics"] = economics
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+@pytest.mark.parametrize("mutation_target", ["seat", "economics"])
+def test_tournament_stack_binding_rechecks_unsafe_valid_model_copies(
+    mutation_target: str,
+) -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    tournament_payload = state.model_dump(mode="python")
+    tournament_payload["game"]["economics"] = (
+        complete_route_tournament_economics()
+    )
+    tournament_state = ImportedHandState.model_validate(tournament_payload)
+    record = extraction_record_for_state(tournament_state)
+    assert record.active_hero_actions_for_extraction
+
+    if mutation_target == "seat":
+        unsafe_seats = [
+            seat.model_copy(update={"starting_stack": Decimal("99")})
+            if seat.player_id == "hero"
+            else seat
+            for seat in tournament_state.seats
+        ]
+        unsafe_hero = next(
+            seat for seat in unsafe_seats if seat.player_id == "hero"
+        )
+        ImportedSeat.model_validate(unsafe_hero.model_dump(mode="python"))
+        unsafe_state = tournament_state.model_copy(update={"seats": unsafe_seats})
+    else:
+        economics = tournament_state.game.economics
+        assert economics.kind == "tournament"
+        unsafe_stacks = [
+            stack.model_copy(update={"stack": Decimal("99")})
+            if stack.player_id == "hero"
+            else stack
+            for stack in economics.remaining_stacks
+        ]
+        unsafe_economics = economics.model_copy(
+            update={"remaining_stacks": unsafe_stacks}
+        )
+        TournamentEconomics.model_validate(
+            unsafe_economics.model_dump(mode="python")
+        )
+        unsafe_state = tournament_state.model_copy(
+            update={
+                "game": tournament_state.game.model_copy(
+                    update={"economics": unsafe_economics}
+                )
+            }
+        )
+    unsafe_revision = record.canonical_revisions[0].model_copy(
+        update={"state": unsafe_state}
+    )
+    unsafe_record = record.model_copy(
+        update={"canonical_revisions": [unsafe_revision]}
+    )
+
+    assert reconcile_pot(unsafe_state).status == "pass"
+    assert unsafe_record.active_state_for_extraction == unsafe_state
+    assert unsafe_record.active_hero_actions_for_extraction == []
+
+
+def test_tournament_stack_binding_compares_a_folded_third_dealt_in_seat() -> None:
+    payload = three_way_tournament_extraction_payload()
+    matching_state = ImportedHandState.model_validate(payload)
+    matching_record = extraction_record_for_state(matching_state)
+    assert [
+        action.actor_id
+        for action in matching_record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+    economics = payload["game"]["economics"]
+    third_stack = next(
+        stack
+        for stack in economics["remaining_stacks"]
+        if stack["player_id"] == "third-player"
+    )
+    third_stack["stack"] = Decimal("101")
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert any(
+        action.actor_id == "third-player" and action.action_type == "fold"
+        for street in state.streets
+        for action in street.actions
+    )
+    assert reconcile_pot(state).status == "pass"
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_tournament_unknown_starting_stack_withholds_extraction() -> None:
+    payload = extraction_ready_state_payload()
+    payload["seats"][0]["starting_stack"] = None
+    payload["game"]["economics"] = complete_route_tournament_economics()
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_tournament_matching_short_positive_starting_stack_is_extractable() -> None:
+    payload = extraction_ready_state_payload()
+    payload["seats"][0]["starting_stack"] = Decimal("2")
+    economics = complete_route_tournament_economics()
+    next(
+        stack
+        for stack in economics["remaining_stacks"]
+        if stack["player_id"] == "hero"
+    )["stack"] = Decimal("2.000")
     payload["game"]["economics"] = economics
     state = ImportedHandState.model_validate(payload)
     record = extraction_record_for_state(state)

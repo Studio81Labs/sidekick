@@ -267,7 +267,13 @@ shape includes at minimum:
   rake/drop schedule and cap; for tournaments, tournament identity/type and
   stage, payout/paid-place structure, players remaining, relevant remaining
   stacks, bounty format/values, and any other ICM inputs. Missing economic fields
-  remain explicitly unknown rather than inferred.
+  remain explicitly unknown rather than inferred. Tournament seat
+  `remaining_stacks` entries used for current-hand extraction are the same
+  hand-start stack snapshot as the seats' `starting_stack` values. Both use
+  absolute tournament chips, not currency or BB. Before decision extraction,
+  every dealt-in player with a known seat stack must have an exactly equal
+  Decimal remaining-stack entry; additional off-table field players remain
+  valid.
 - Button seat.
 - Seats: for each, seat number, starting stack, and participation status
   (including dealt-in and sitting-out/not-dealt states). Each dealt-in player
