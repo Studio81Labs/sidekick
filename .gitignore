@@ -28,6 +28,8 @@ apps/backend/data/
 __pycache__/
 *.py[cod]
 *.egg-info/
+# In-tree wheel build left behind by `pip install apps/backend`
+apps/backend/build/
 .venv/
 target/
 
@@ -42,3 +44,6 @@ target/
 *.log
 npm-debug.log*
 pnpm-debug.log*
+
+# Superset per-user lifecycle overrides
+.superset/config.local.json
