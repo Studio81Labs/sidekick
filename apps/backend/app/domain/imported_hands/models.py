@@ -2385,7 +2385,15 @@ class ImportedHandRecord(ImportedHandModel):
             return []
         if state.game.betting_limit not in {"no_limit", "pot_limit"}:
             return []
-        if not _economics_ready_for_extraction(state.game.economics):
+        dealt_in_player_ids = {
+            seat.player_id
+            for seat in state.seats
+            if seat.participation == "dealt_in"
+        }
+        if not _economics_ready_for_extraction(
+            state.game.economics,
+            dealt_in_player_ids=dealt_in_player_ids,
+        ):
             return []
         if not _pot_reconciliation_ready_for_extraction(state):
             return []
@@ -3191,7 +3199,11 @@ def _known_live_action_total(
     return prior_live_commitment + action.amount
 
 
-def _economics_ready_for_extraction(economics: Economics) -> bool:
+def _economics_ready_for_extraction(
+    economics: Economics,
+    *,
+    dealt_in_player_ids: set[str],
+) -> bool:
     """Require the exact route-critical strategy economics without defaults."""
 
     if isinstance(economics, UnknownEconomics):
@@ -3225,7 +3237,15 @@ def _economics_ready_for_extraction(economics: Economics) -> bool:
         for stack in economics.remaining_stacks
     ):
         return False
+    if not dealt_in_player_ids.issubset(
+        {stack.player_id for stack in economics.remaining_stacks}
+    ):
+        return False
     if any(bounty.value is None for bounty in economics.bounties):
+        return False
+    if not dealt_in_player_ids.issubset(
+        {bounty.player_id for bounty in economics.bounties}
+    ):
         return False
     if economics.bounty_format == "none" and any(
         bounty.value != 0 for bounty in economics.bounties

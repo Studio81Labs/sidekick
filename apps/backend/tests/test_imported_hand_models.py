@@ -10390,6 +10390,104 @@ def test_complete_tournament_utility_context_is_extractable(
     ] == ["hero"]
 
 
+def test_tournament_economics_allow_unrelated_remaining_field_players() -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["economics"] = complete_route_tournament_economics()
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert "third-player" not in {seat.player_id for seat in state.seats}
+    assert state.game.economics.kind == "tournament"
+    assert {stack.player_id for stack in state.game.economics.remaining_stacks} == {
+        "hero",
+        "villain",
+        "third-player",
+    }
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+@pytest.mark.parametrize("missing_player_id", ["hero", "villain"])
+def test_tournament_economics_require_every_dealt_in_player(
+    missing_player_id: str,
+) -> None:
+    payload = extraction_ready_state_payload()
+    economics = complete_route_tournament_economics()
+    replacement_id = f"field-player-replacing-{missing_player_id}"
+    for collection_name in ("remaining_stacks", "bounties"):
+        player = next(
+            item
+            for item in economics[collection_name]
+            if item["player_id"] == missing_player_id
+        )
+        player["player_id"] = replacement_id
+    payload["game"]["economics"] = economics
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert state.game.economics.kind == "tournament"
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+def test_tournament_player_binding_fails_closed_for_an_unsafe_record_copy() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    tournament_payload = complete_route_tournament_economics()
+    tournament_state_payload = state.model_dump(mode="python")
+    tournament_state_payload["game"]["economics"] = tournament_payload
+    tournament_state = ImportedHandState.model_validate(tournament_state_payload)
+    record = extraction_record_for_state(tournament_state)
+    economics = tournament_state.game.economics
+    assert economics.kind == "tournament"
+    unsafe_stacks = [
+        stack.model_copy(
+            update={
+                "player_id": (
+                    "unrelated-field-player"
+                    if stack.player_id == "hero"
+                    else stack.player_id
+                )
+            }
+        )
+        for stack in economics.remaining_stacks
+    ]
+    unsafe_bounties = [
+        bounty.model_copy(
+            update={
+                "player_id": (
+                    "unrelated-field-player"
+                    if bounty.player_id == "hero"
+                    else bounty.player_id
+                )
+            }
+        )
+        for bounty in economics.bounties
+    ]
+    unsafe_economics = economics.model_copy(
+        update={
+            "remaining_stacks": unsafe_stacks,
+            "bounties": unsafe_bounties,
+        }
+    )
+    unsafe_state = tournament_state.model_copy(
+        update={
+            "game": tournament_state.game.model_copy(
+                update={"economics": unsafe_economics}
+            )
+        }
+    )
+    unsafe_revision = record.canonical_revisions[0].model_copy(
+        update={"state": unsafe_state}
+    )
+    unsafe_record = record.model_copy(
+        update={"canonical_revisions": [unsafe_revision]}
+    )
+
+    assert unsafe_record.active_state_for_extraction == unsafe_state
+    assert unsafe_record.active_hero_actions_for_extraction == []
+
+
 @pytest.mark.parametrize(
     "missing_field",
     [
