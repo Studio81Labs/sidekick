@@ -5,7 +5,7 @@
 #
 # Every workspace gets its own ports so several workspaces can run at once. The
 # defaults (API 8000, PWA 5173) are used when free; otherwise the next free ports
-# are taken. Chosen ports are claimed in a per-user directory so workspaces
+# are taken. Ports are claimed under a lock in a per-user directory so workspaces
 # started at the same moment cannot collide, and CORS plus the PWA's API URL are
 # wired to the chosen ports automatically (a custom POKER_CORS_ORIGINS in
 # apps/backend/.env is not used here; run `pnpm backend:dev` for that).
@@ -28,11 +28,12 @@ PORT_CLAIMS="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/poker-hero-dev-ports-$(id -u)"
 # pick_ports <preferred>...: prints one free port per argument (the preferred
 # one, or the next free above it). Each port is recorded in $PORT_CLAIMS as a
 # file named after the port holding this script's PID; claims of dead processes
-# are reclaimed. Claim files are created with an atomic link so two workspaces
-# starting at the same instant never pick the same port.
+# are reclaimed. Checking and claiming happen under an advisory lock that the
+# kernel releases if its holder dies, so concurrent Run commands never pick the
+# same port, even while reclaiming a stale claim.
 pick_ports() {
   "$VENV_PY" - "$PORT_CLAIMS" "$$" "$@" <<'PY'
-import errno, os, socket, sys, tempfile
+import errno, fcntl, os, socket, sys
 
 claims_dir, owner_pid, preferred = sys.argv[1], sys.argv[2], sys.argv[3:]
 os.makedirs(claims_dir, mode=0o700, exist_ok=True)
@@ -61,40 +62,28 @@ def is_alive(pid):
 
 def claim(port):
     path = os.path.join(claims_dir, str(port))
-    fd, tmp = tempfile.mkstemp(dir=claims_dir, prefix=".claim-")
     try:
-        os.write(fd, (owner_pid + "\n").encode())
-        os.close(fd)
-        for _ in range(3):
-            try:
-                os.link(tmp, path)
-                return True
-            except FileExistsError:
-                try:
-                    with open(path) as fh:
-                        holder = int(fh.read().strip() or 0)
-                except (OSError, ValueError):
-                    holder = 0
-                if holder and is_alive(holder):
-                    return False
-                try:
-                    os.unlink(path)  # stale claim left by a dead process
-                except OSError:
-                    pass
+        with open(path) as fh:
+            holder = int(fh.read().strip() or 0)
+    except FileNotFoundError:
+        holder = 0
+    except (OSError, ValueError):
+        holder = 0  # unreadable or garbage: no live process can rely on it
+    if holder and holder != int(owner_pid) and is_alive(holder):
         return False
-    finally:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+    with open(path, "w") as fh:
+        fh.write(owner_pid + "\n")
+    return True
 
 
 chosen = []
-for wanted in preferred:
-    port = int(wanted)
-    while port in chosen or not (is_free(port) and claim(port)):
-        port += 1
-    chosen.append(port)
+with open(os.path.join(claims_dir, ".lock"), "a+") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    for wanted in preferred:
+        port = int(wanted)
+        while port in chosen or not (is_free(port) and claim(port)):
+            port += 1
+        chosen.append(port)
 print(" ".join(map(str, chosen)))
 PY
 }

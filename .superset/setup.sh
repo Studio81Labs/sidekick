@@ -3,8 +3,9 @@
 #
 # Runs once for every new workspace (a fresh git worktree). It mirrors
 # scripts/bootstrap.sh but is tuned for worktrees:
-#   - the main checkout's Cargo target dir is reused as a shared build cache,
-#     so the solver's dependencies compile once per machine, not per workspace
+#   - workspaces with identical solver sources share one Cargo build cache
+#     (keyed by the solver's git tree hash), so the solver compiles once per
+#     source version rather than once per workspace
 #   - local env files are carried over from the main checkout when present
 #   - the Rust solver build is best-effort: without cargo the workspace still
 #     comes up and the backend uses its built-in recommendation fallback
@@ -24,7 +25,7 @@ step() { printf '\n==> %s\n' "$*"; }
 warn() { printf '!!  %s\n' "$*" >&2; }
 fail() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-# Main checkout: source of local env files and the shared Cargo target cache.
+# Main checkout: source of local env files.
 MAIN_DIR="${SUPERSET_ROOT_PATH:-}"
 if [ -z "$MAIN_DIR" ]; then
   common_dir=$(git -C "$ROOT_DIR" rev-parse --git-common-dir 2>/dev/null || echo .git)
@@ -88,18 +89,26 @@ VENV_PY="$BACKEND_DIR/.venv/bin/python"
 
 # --- Rust solver (best-effort) -----------------------------------------------
 step "Building the postflop solver"
-SHARED_TARGET="$MAIN_DIR/solver-plugins/postflop/target"
 if command -v cargo >/dev/null 2>&1; then
-  if [ "$SHARED_TARGET" = "$SOLVER_DIR/target" ]; then
-    cargo build --locked --release --manifest-path "$SOLVER_DIR/Cargo.toml"
+  # Workspaces whose solver sources are identical (same git tree hash, no
+  # local changes) share one Cargo target dir under the user's cache, so the
+  # common case is a no-op build plus a copy of the binary into this worktree
+  # (the path `pnpm backend:dev` expects). Any other state builds privately in
+  # the worktree. Different sources never share a target dir, so cargo's
+  # mtime-based freshness and the post-build copy cannot mix up workspaces.
+  # The cache (~/.cache/poker-hero/solver-target) is safe to delete anytime.
+  solver_tree=$(git -C "$ROOT_DIR" rev-parse "HEAD:solver-plugins/postflop" 2>/dev/null || true)
+  if [ -n "$solver_tree" ] \
+    && [ -z "$(git -C "$ROOT_DIR" status --porcelain -- solver-plugins/postflop)" ]; then
+    target_dir="${XDG_CACHE_HOME:-$HOME/.cache}/poker-hero/solver-target/$solver_tree"
   else
-    # Compile in the main checkout's target dir (cargo serialises concurrent
-    # builds with a lock), then snapshot the binary into this worktree so each
-    # workspace keeps its own copy at the path `pnpm backend:dev` expects.
-    CARGO_TARGET_DIR="$SHARED_TARGET" \
-      cargo build --locked --release --manifest-path "$SOLVER_DIR/Cargo.toml"
+    target_dir="$SOLVER_DIR/target"
+  fi
+  CARGO_TARGET_DIR="$target_dir" \
+    cargo build --locked --release --manifest-path "$SOLVER_DIR/Cargo.toml"
+  if [ "$target_dir" != "$SOLVER_DIR/target" ]; then
     mkdir -p "$SOLVER_DIR/target/release"
-    cp -f "$SHARED_TARGET/release/$SOLVER_BIN_NAME" "$SOLVER_BIN"
+    cp -f "$target_dir/release/$SOLVER_BIN_NAME" "$SOLVER_BIN"
   fi
   [ -x "$SOLVER_BIN" ] || fail "solver build did not produce $SOLVER_BIN"
 else
