@@ -2305,14 +2305,14 @@ class ImportedHandRecord(ImportedHandModel):
                     )
 
         if self.lifecycle.status == "pending_review":
+            latest_event = _latest_retained_audit_event(self)
             if (
-                revisions
-                and self.lifecycle.changed_at
-                < self.canonical_revisions[-1].approved_at
+                latest_event is not None
+                and self.lifecycle.changed_at < latest_event[0]
             ):
                 raise ValueError(
                     "pending_review lifecycle changed_at cannot precede the"
-                    " latest canonical revision approved_at"
+                    f" latest retained {latest_event[1]}"
                 )
         elif self.lifecycle.status in {"withdrawn", "rejected"}:
             if not revisions:
@@ -2476,7 +2476,7 @@ def classify_restore(
 
     if not all(
         _record_conflict_resolution_is_valid(record)
-        and _record_pending_review_revision_chronology_is_valid(record)
+        and _record_pending_review_chronology_is_valid(record)
         for record in (current, candidate)
     ):
         return RestoreDisposition(kind="conflict_merge_required")
@@ -2757,14 +2757,41 @@ def _record_conflict_resolution_is_valid(
     return True
 
 
-def _record_pending_review_revision_chronology_is_valid(
+def _latest_retained_audit_event(
+    record: ImportedHandRecord,
+) -> tuple[datetime, str] | None:
+    events = [
+        (
+            raw.provenance.imported_at,
+            f"raw source {raw.raw_source_id} imported_at",
+        )
+        for raw in record.raw_sources
+    ]
+    events.extend(
+        (
+            detected.detected_at,
+            f"detection {detected.detection_id} detected_at",
+        )
+        for detected in record.detections
+    )
+    events.extend(
+        (
+            revision.approved_at,
+            f"canonical revision {revision.revision} approved_at",
+        )
+        for revision in record.canonical_revisions
+    )
+    return max(events, key=lambda event: event[0]) if events else None
+
+
+def _record_pending_review_chronology_is_valid(
     record: ImportedHandRecord,
 ) -> bool:
+    latest_event = _latest_retained_audit_event(record)
     return (
         record.lifecycle.status != "pending_review"
-        or not record.canonical_revisions
-        or record.lifecycle.changed_at
-        >= record.canonical_revisions[-1].approved_at
+        or latest_event is None
+        or record.lifecycle.changed_at >= latest_event[0]
     )
 
 

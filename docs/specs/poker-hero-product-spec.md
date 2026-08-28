@@ -297,6 +297,9 @@ neither silently overwrites the active approved revision or counts twice.
 Resolving any retained conflict advances the aggregate lifecycle freshness
 marker to at least the resolution time so backup/restore ordering cannot rank a
 post-resolution record by stale pre-resolution state.
+Pending-review freshness likewise advances through every retained import,
+detection, and approval, including first-time detections without a canonical
+revision.
 
 **Correctness oracle:** re-derive the pot from the action stream and reconcile
 against the file's stated pot (accounting for rake, uncalled bets, side pots).

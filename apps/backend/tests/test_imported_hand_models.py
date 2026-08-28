@@ -911,7 +911,7 @@ def test_detection_cannot_precede_its_referenced_raw_import(
         "detections": [source_detection],
         "lifecycle": {
             "status": "pending_review",
-            "changed_at": NOW,
+            "changed_at": max(NOW, detected_at),
         },
     }
 
@@ -12105,6 +12105,101 @@ def test_pending_review_lifecycle_accepts_equal_or_later_latest_approval_time(
     assert record.lifecycle.changed_at == approved_at + offset
 
 
+@pytest.mark.parametrize("latest_event", ["raw_import", "detection"])
+def test_pending_review_without_revisions_cannot_precede_retained_evidence(
+    latest_event: str,
+) -> None:
+    event_at = NOW + timedelta(minutes=1)
+    source = raw_source()
+    detections: list[DetectedImportedHand] = []
+    expected_timestamp = "imported_at"
+    if latest_event == "raw_import":
+        source = source.model_copy(
+            update={
+                "provenance": source.provenance.model_copy(
+                    update={"imported_at": event_at}
+                )
+            }
+        )
+    else:
+        detections = [detected().model_copy(update={"detected_at": event_at})]
+        expected_timestamp = "detected_at"
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "pending_review lifecycle changed_at cannot precede the latest"
+            f" retained .* {expected_timestamp}"
+        ),
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[source],
+            detections=detections,
+            lifecycle={"status": "pending_review", "changed_at": NOW},
+        )
+
+
+@pytest.mark.parametrize("latest_event", ["raw_import", "detection"])
+def test_pending_review_without_revisions_accepts_latest_evidence_time(
+    latest_event: str,
+) -> None:
+    event_at = NOW + timedelta(minutes=1)
+    source = raw_source()
+    detections: list[DetectedImportedHand] = []
+    if latest_event == "raw_import":
+        source = source.model_copy(
+            update={
+                "provenance": source.provenance.model_copy(
+                    update={"imported_at": event_at}
+                )
+            }
+        )
+    else:
+        detections = [detected().model_copy(update={"detected_at": event_at})]
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[source],
+        detections=detections,
+        lifecycle={"status": "pending_review", "changed_at": event_at},
+    )
+
+    assert record.lifecycle.changed_at == event_at
+
+
+def test_pending_review_uses_a_later_unparsed_import_after_an_approval() -> None:
+    approved_at = NOW + timedelta(minutes=1)
+    later_source = raw_source(
+        raw_source_id="file-2",
+        raw_text="PokerStars Hand #123456789 later source\n",
+    )
+    later_source = later_source.model_copy(
+        update={
+            "provenance": later_source.provenance.model_copy(
+                update={"imported_at": approved_at + timedelta(minutes=1)}
+            )
+        }
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="latest retained raw source file-2 imported_at",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source(), later_source],
+            detections=[detected()],
+            canonical_revisions=[
+                revision().model_copy(update={"approved_at": approved_at})
+            ],
+            lifecycle={
+                "status": "pending_review",
+                "changed_at": approved_at,
+            },
+        )
+
+
 def test_pending_review_without_a_canonical_revision_remains_valid() -> None:
     record = ImportedHandRecord(
         identity=IDENTITY,
@@ -13116,6 +13211,85 @@ def test_restore_rejects_unsafe_pending_review_approval_chronology(
         )
 
     assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+@pytest.mark.parametrize("latest_event", ["raw_import", "detection"])
+def test_restore_rejects_unsafe_pending_review_evidence_chronology(
+    invalid_side: str,
+    latest_event: str,
+) -> None:
+    event_at = NOW + timedelta(minutes=1)
+    source = raw_source()
+    detections: list[DetectedImportedHand] = []
+    if latest_event == "raw_import":
+        source = source.model_copy(
+            update={
+                "provenance": source.provenance.model_copy(
+                    update={"imported_at": event_at}
+                )
+            }
+        )
+    else:
+        detections = [detected().model_copy(update={"detected_at": event_at})]
+    valid = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[source],
+        detections=detections,
+        lifecycle={"status": "pending_review", "changed_at": event_at},
+    )
+    invalid = valid.model_copy(
+        update={
+            "lifecycle": valid.lifecycle.model_copy(update={"changed_at": NOW})
+        }
+    )
+    current, candidate = (
+        (invalid, valid) if invalid_side == "current" else (valid, invalid)
+    )
+
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
+def test_restore_uses_freshness_that_includes_new_pending_review_evidence() -> None:
+    current_source, current_detection = retained_audit_source(
+        "file-1",
+        raw_text="PokerStars Hand #123456789 original source\n",
+        imported_at=NOW - timedelta(minutes=2),
+        detected_at=NOW - timedelta(minutes=1),
+    )
+    candidate_source, candidate_detection = retained_audit_source(
+        "file-2",
+        raw_text="PokerStars Hand #123456789 newer source\n",
+        imported_at=NOW + timedelta(minutes=1),
+        detected_at=NOW + timedelta(minutes=2),
+    )
+    current = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[current_source],
+        detections=[current_detection],
+        lifecycle={"status": "pending_review", "changed_at": NOW},
+    )
+    valid_candidate = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[current_source, candidate_source],
+        detections=[current_detection, candidate_detection],
+        lifecycle={
+            "status": "pending_review",
+            "changed_at": candidate_detection.detected_at,
+        },
+    )
+    stale_candidate = valid_candidate.model_copy(
+        update={
+            "lifecycle": valid_candidate.lifecycle.model_copy(
+                update={"changed_at": NOW - timedelta(microseconds=1)}
+            )
+        }
+    )
+
+    assert classify_restore(current, stale_candidate).kind == (
+        "conflict_merge_required"
+    )
+    assert classify_restore(current, valid_candidate).kind == "allow"
 
 
 def test_higher_generation_restore_rejects_a_different_retained_identity() -> None:
