@@ -2278,6 +2278,15 @@ class ImportedHandRecord(ImportedHandModel):
                     "active lifecycle changed_at cannot precede the selected"
                     " canonical revision approved_at"
                 )
+            latest_event = _latest_retained_audit_event(self)
+            if (
+                latest_event is not None
+                and self.lifecycle.changed_at < latest_event[0]
+            ):
+                raise ValueError(
+                    "active lifecycle changed_at cannot precede the"
+                    f" latest retained {latest_event[1]}"
+                )
             active_source_id = detection_by_id[
                 active_revision.detection_id
             ].raw_source_id
@@ -2317,10 +2326,12 @@ class ImportedHandRecord(ImportedHandModel):
         elif self.lifecycle.status in {"withdrawn", "rejected"}:
             if not revisions:
                 raise ValueError("withdrawal/rejection audit requires a canonical revision")
-            if self.lifecycle.changed_at < self.canonical_revisions[-1].approved_at:
+            latest_event = _latest_retained_audit_event(self)
+            assert latest_event is not None
+            if self.lifecycle.changed_at < latest_event[0]:
                 raise ValueError(
                     "withdrawn/rejected lifecycle changed_at cannot precede the"
-                    " latest canonical revision approved_at"
+                    f" latest retained {latest_event[1]}"
                 )
         elif self.lifecycle.status == "deletion_pending":
             deletion_request = self.lifecycle.deletion_request
@@ -2476,7 +2487,7 @@ def classify_restore(
 
     if not all(
         _record_conflict_resolution_is_valid(record)
-        and _record_pending_review_chronology_is_valid(record)
+        and _record_lifecycle_audit_chronology_is_valid(record)
         for record in (current, candidate)
     ):
         return RestoreDisposition(kind="conflict_merge_required")
@@ -2784,15 +2795,31 @@ def _latest_retained_audit_event(
     return max(events, key=lambda event: event[0]) if events else None
 
 
-def _record_pending_review_chronology_is_valid(
+def _record_lifecycle_audit_chronology_is_valid(
     record: ImportedHandRecord,
 ) -> bool:
     latest_event = _latest_retained_audit_event(record)
-    return (
-        record.lifecycle.status != "pending_review"
-        or latest_event is None
-        or record.lifecycle.changed_at >= latest_event[0]
-    )
+    if record.lifecycle.status == "deletion_pending":
+        deletion_request = record.lifecycle.deletion_request
+        return (
+            deletion_request is not None
+            and record.lifecycle.changed_at >= deletion_request.requested_at
+            and (
+                latest_event is None
+                or deletion_request.requested_at >= latest_event[0]
+            )
+        )
+    if record.lifecycle.status in {
+        "active",
+        "pending_review",
+        "withdrawn",
+        "rejected",
+    }:
+        return (
+            latest_event is None
+            or record.lifecycle.changed_at >= latest_event[0]
+        )
+    return True
 
 
 def imported_hand_state_sha256(state: ImportedHandState) -> str:

@@ -12320,6 +12320,105 @@ def retained_audit_source(
     return source, source_detection
 
 
+def record_with_later_retained_audit(
+    *,
+    status: str,
+    latest_event: str = "detection",
+    changed_at: datetime,
+    unresolved_conflict: bool = False,
+) -> ImportedHandRecord:
+    base = active_record()
+    evidence_at = NOW + timedelta(minutes=2)
+    later_source, later_detection = retained_audit_source(
+        "file-2",
+        raw_text="PokerStars Hand #123456789 later conflicting source\n",
+        imported_at=(
+            evidence_at if latest_event == "raw_import" else NOW + timedelta(minutes=1)
+        ),
+        detected_at=evidence_at,
+    )
+    detections = list(base.detections)
+    if latest_event == "detection":
+        detections.append(later_detection)
+    conflicts: list[dict[str, object]] = []
+    if unresolved_conflict:
+        conflicts.append(
+            {
+                "conflict_id": "conflict-1",
+                "raw_source_ids": ["file-1", "file-2"],
+                "detected_ids": [
+                    detection.detection_id for detection in detections
+                ],
+                "active_canonical_revision_at_creation": 1,
+                "status": "unresolved",
+            }
+        )
+    return ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[*base.raw_sources, later_source],
+        detections=detections,
+        conflicts=conflicts,
+        canonical_revisions=base.canonical_revisions,
+        lifecycle={
+            "status": status,
+            "active_canonical_revision": 1 if status == "active" else None,
+            "changed_at": changed_at,
+        },
+    )
+
+
+@pytest.mark.parametrize("latest_event", ["raw_import", "detection"])
+@pytest.mark.parametrize("status", ["active", "withdrawn", "rejected"])
+def test_retained_lifecycle_cannot_precede_later_audit_evidence(
+    status: str,
+    latest_event: str,
+) -> None:
+    expected_status = "active" if status == "active" else "withdrawn/rejected"
+    expected_timestamp = (
+        "imported_at" if latest_event == "raw_import" else "detected_at"
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            f"{expected_status} lifecycle changed_at cannot precede the latest"
+            f" retained .* {expected_timestamp}"
+        ),
+    ):
+        record_with_later_retained_audit(
+            status=status,
+            latest_event=latest_event,
+            changed_at=NOW + timedelta(minutes=1),
+        )
+
+
+@pytest.mark.parametrize("status", ["active", "withdrawn", "rejected"])
+def test_retained_lifecycle_accepts_latest_audit_evidence_time(
+    status: str,
+) -> None:
+    evidence_at = NOW + timedelta(minutes=2)
+
+    record = record_with_later_retained_audit(
+        status=status,
+        changed_at=evidence_at,
+        unresolved_conflict=status == "active",
+    )
+
+    assert record.lifecycle.changed_at == evidence_at
+
+
+def test_active_unresolved_conflict_requires_latest_audit_evidence_time() -> None:
+    with pytest.raises(
+        ValidationError,
+        match="active lifecycle changed_at cannot precede.*detected_at",
+    ):
+        record_with_later_retained_audit(
+            status="active",
+            changed_at=NOW + timedelta(minutes=1),
+            unresolved_conflict=True,
+        )
+
+
 def conflict_chronology_record(
     *,
     source_times: tuple[tuple[datetime, datetime], ...] = (
@@ -13286,10 +13385,118 @@ def test_restore_uses_freshness_that_includes_new_pending_review_evidence() -> N
         }
     )
 
+    assert stale_candidate.lifecycle.changed_at < current.lifecycle.changed_at
+    assert (
+        stale_candidate.raw_sources[-1].provenance.imported_at
+        > current.lifecycle.changed_at
+    )
     assert classify_restore(current, stale_candidate).kind == (
         "conflict_merge_required"
     )
     assert classify_restore(current, valid_candidate).kind == "allow"
+
+
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+@pytest.mark.parametrize("status", ["active", "withdrawn", "rejected"])
+def test_restore_rejects_unsafe_retained_audit_chronology(
+    status: str,
+    invalid_side: str,
+) -> None:
+    valid = record_with_later_retained_audit(
+        status=status,
+        changed_at=NOW + timedelta(minutes=2),
+    )
+    invalid = valid.model_copy(
+        update={
+            "lifecycle": valid.lifecycle.model_copy(
+                update={"changed_at": NOW + timedelta(minutes=1)}
+            )
+        }
+    )
+    current, candidate = (
+        (invalid, valid) if invalid_side == "current" else (valid, invalid)
+    )
+
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
+
+
+def test_restore_does_not_discard_new_active_conflict_evidence_as_stale() -> None:
+    current = active_record()
+    current = current.model_copy(
+        update={
+            "lifecycle": current.lifecycle.model_copy(
+                update={"changed_at": NOW + timedelta(minutes=1)}
+            )
+        }
+    )
+    valid_candidate = record_with_later_retained_audit(
+        status="active",
+        changed_at=NOW + timedelta(minutes=2),
+        unresolved_conflict=True,
+    )
+    stale_candidate = valid_candidate.model_copy(
+        update={
+            "lifecycle": valid_candidate.lifecycle.model_copy(
+                update={"changed_at": NOW}
+            )
+        }
+    )
+
+    assert classify_restore(current, stale_candidate).kind == (
+        "conflict_merge_required"
+    )
+    assert classify_restore(current, valid_candidate).kind == "allow"
+
+
+@pytest.mark.parametrize("invalid_side", ["current", "candidate"])
+@pytest.mark.parametrize(
+    "invalid_chronology",
+    ["changed_before_request", "request_before_audit"],
+)
+def test_restore_rejects_unsafe_deletion_pending_chronology(
+    invalid_side: str,
+    invalid_chronology: str,
+) -> None:
+    evidence_at = NOW + timedelta(minutes=2)
+    audit = record_with_later_retained_audit(
+        status="active",
+        changed_at=evidence_at,
+    )
+    valid = ImportedHandRecord(
+        identity=audit.identity,
+        raw_sources=audit.raw_sources,
+        detections=audit.detections,
+        canonical_revisions=audit.canonical_revisions,
+        lifecycle={
+            "status": "deletion_pending",
+            "deletion_generation": 1,
+            "changed_at": evidence_at,
+            "deletion_request": {
+                "generation": 1,
+                "requested_at": evidence_at,
+                "cleanup_status": "pending",
+            },
+        },
+    )
+    if invalid_chronology == "changed_before_request":
+        invalid_lifecycle = valid.lifecycle.model_copy(
+            update={"changed_at": NOW + timedelta(minutes=1)}
+        )
+    else:
+        assert valid.lifecycle.deletion_request is not None
+        invalid_lifecycle = valid.lifecycle.model_copy(
+            update={
+                "deletion_request": valid.lifecycle.deletion_request.model_copy(
+                    update={"requested_at": NOW + timedelta(minutes=1)}
+                )
+            }
+        )
+    invalid = valid.model_copy(update={"lifecycle": invalid_lifecycle})
+    current, candidate = (
+        (invalid, valid) if invalid_side == "current" else (valid, invalid)
+    )
+
+    assert classify_restore(current, candidate).kind == "conflict_merge_required"
 
 
 def test_higher_generation_restore_rejects_a_different_retained_identity() -> None:
