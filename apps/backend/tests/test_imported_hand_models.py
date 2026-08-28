@@ -2029,6 +2029,67 @@ def test_unresolved_candidate_source_can_remain_review_only_while_old_source_is_
     assert record.active_state_for_extraction == file_1_detection.state
 
 
+def test_additional_materially_distinct_source_requires_conflict_audit_state(
+) -> None:
+    record = active_record()
+    candidate_source = raw_source(
+        raw_source_id="file-2",
+        raw_text="materially different source\n",
+    )
+    candidate_detection = detected_for_source(
+        "file-2",
+        hero_player_id="villain",
+    )
+    unsafe_record = record.model_copy(
+        update={
+            "raw_sources": [*record.raw_sources, candidate_source],
+            "detections": [*record.detections, candidate_detection],
+        }
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="materially distinct retained raw source.*conflict audit state",
+    ):
+        unsafe_record.revalidated_snapshot()
+
+    assert unsafe_record.active_state_for_extraction is None
+    assert unsafe_record.active_hero_actions_for_extraction == []
+
+
+def test_pending_additional_source_without_detection_still_requires_conflict_audit(
+) -> None:
+    sources = [
+        raw_source(raw_source_id="file-1", raw_text="source one\n"),
+        raw_source(raw_source_id="file-2", raw_text="source two\n"),
+    ]
+
+    with pytest.raises(
+        ValidationError,
+        match="materially distinct retained raw source.*conflict audit state",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=sources,
+            lifecycle={"status": "pending_review", "changed_at": NOW},
+        )
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=sources,
+        conflicts=[
+            {
+                "conflict_id": "conflict-1",
+                "raw_source_ids": ["file-1", "file-2"],
+                "active_canonical_revision_at_creation": None,
+            }
+        ],
+        lifecycle={"status": "pending_review", "changed_at": NOW},
+    )
+
+    assert record.conflicts[0].status == "unresolved"
+
+
 def test_each_multi_hop_source_change_requires_its_own_resolved_conflict() -> None:
     detections = [
         detected_for_source(source_id, hero_player_id="hero")
@@ -12879,6 +12940,87 @@ def test_missing_stated_rake_preserves_cash_extraction_behavior() -> None:
     ] == ["hero"]
 
 
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        {
+            "percentage": Decimal(0),
+            "cap": Decimal(0),
+            "fixed_drop": Decimal(0),
+        },
+        {
+            "percentage": Decimal("0.05"),
+            "cap": Decimal("3"),
+            "fixed_drop": Decimal(0),
+        },
+    ],
+    ids=["zero-schedule", "nonzero-schedule"],
+)
+@pytest.mark.parametrize("gross_field", ["gross_total", "gross_pots"])
+def test_missing_stated_rake_with_gross_net_deduction_blocks_cash_extraction(
+    schedule: dict[str, Decimal],
+    gross_field: str,
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["economics"]["rake"] = schedule
+    stated_pot: dict[str, object] = {
+        gross_field: (
+            Decimal("2")
+            if gross_field == "gross_total"
+            else [Decimal("2")]
+        ),
+        "net_total": Decimal("1.9"),
+    }
+    payload["results"] = {
+        "stated_pot": stated_pot,
+        "awards": [
+            {
+                "player_id": "hero",
+                "amount": Decimal("1.9"),
+                "pot_index": 0,
+                "evidence": [evidence()],
+            }
+        ],
+    }
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert record.active_state_for_extraction == state
+    assert record.active_hero_actions_for_extraction == []
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        {
+            "percentage": Decimal(0),
+            "cap": Decimal(0),
+            "fixed_drop": Decimal(0),
+        },
+        {
+            "percentage": Decimal("0.05"),
+            "cap": Decimal("3"),
+            "fixed_drop": Decimal(0),
+        },
+    ],
+    ids=["zero-schedule", "nonzero-schedule"],
+)
+def test_missing_stated_rake_with_equal_gross_and_net_remains_extractable(
+    schedule: dict[str, Decimal],
+) -> None:
+    payload = extraction_ready_state_payload()
+    payload["game"]["economics"]["rake"] = schedule
+    payload["results"]["stated_pot"]["net_total"] = Decimal("2")
+    state = ImportedHandState.model_validate(payload)
+    record = extraction_record_for_state(state)
+
+    assert reconcile_pot(state).status == "pass"
+    assert [
+        action.actor_id for action in record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
 def test_nonzero_cash_schedule_with_stated_rake_fails_closed_for_extraction(
 ) -> None:
     payload = extraction_payload_with_stated_rake(
@@ -12894,13 +13036,18 @@ def test_nonzero_cash_schedule_with_stated_rake_fails_closed_for_extraction(
     assert record.active_hero_actions_for_extraction == []
 
 
-def test_tournament_extraction_does_not_apply_cash_rake_schedule_gate() -> None:
+@pytest.mark.parametrize("explicit_rake", [True, False], ids=["explicit", "implied"])
+def test_tournament_extraction_does_not_apply_cash_rake_schedule_gate(
+    explicit_rake: bool,
+) -> None:
     payload = extraction_payload_with_stated_rake(
         percentage=Decimal(0),
         cap=Decimal(0),
         fixed_drop=Decimal(0),
         stated_rake=Decimal("0.1"),
     )
+    if not explicit_rake:
+        payload["results"]["stated_pot"].pop("rake")
     payload["game"]["economics"] = complete_route_tournament_economics()
     state = ImportedHandState.model_validate(payload)
     record = extraction_record_for_state(state)
@@ -15111,7 +15258,6 @@ def record_with_later_retained_audit(
     status: str,
     latest_event: str = "detection",
     changed_at: datetime,
-    unresolved_conflict: bool = False,
 ) -> ImportedHandRecord:
     base = active_record()
     evidence_at = NOW + timedelta(minutes=2)
@@ -15126,19 +15272,15 @@ def record_with_later_retained_audit(
     detections = list(base.detections)
     if latest_event == "detection":
         detections.append(later_detection)
-    conflicts: list[dict[str, object]] = []
-    if unresolved_conflict:
-        conflicts.append(
-            {
-                "conflict_id": "conflict-1",
-                "raw_source_ids": ["file-1", "file-2"],
-                "detected_ids": [
-                    detection.detection_id for detection in detections
-                ],
-                "active_canonical_revision_at_creation": 1,
-                "status": "unresolved",
-            }
-        )
+    conflicts: list[dict[str, object]] = [
+        {
+            "conflict_id": "conflict-1",
+            "raw_source_ids": ["file-1", "file-2"],
+            "detected_ids": [detection.detection_id for detection in detections],
+            "active_canonical_revision_at_creation": 1,
+            "status": "unresolved",
+        }
+    ]
     return ImportedHandRecord(
         identity=IDENTITY,
         raw_sources=[*base.raw_sources, later_source],
@@ -15187,7 +15329,6 @@ def test_retained_lifecycle_accepts_latest_audit_evidence_time(
     record = record_with_later_retained_audit(
         status=status,
         changed_at=evidence_at,
-        unresolved_conflict=status == "active",
     )
 
     assert record.lifecycle.changed_at == evidence_at
@@ -15201,7 +15342,6 @@ def test_active_unresolved_conflict_requires_latest_audit_evidence_time() -> Non
         record_with_later_retained_audit(
             status="active",
             changed_at=NOW + timedelta(minutes=1),
-            unresolved_conflict=True,
         )
 
 
@@ -15218,6 +15358,7 @@ def conflict_chronology_record(
     selected_raw_source_id: str | None = None,
     resolved_at: datetime | None = NOW,
     lifecycle_changed_at: datetime = NOW + timedelta(days=1),
+    additional_conflicts: list[dict[str, object]] | None = None,
 ) -> ImportedHandRecord:
     retained = [
         retained_audit_source(
@@ -15267,7 +15408,7 @@ def conflict_chronology_record(
         identity=IDENTITY,
         raw_sources=sources,
         detections=detections,
-        conflicts=[conflict],
+        conflicts=[conflict, *(additional_conflicts or [])],
         canonical_revisions=revisions,
         lifecycle={
             "status": "pending_review",
@@ -15539,6 +15680,12 @@ def test_restore_rejects_a_deletion_request_before_conflict_resolution(
 
 def test_conflict_resolution_ignores_unreferenced_later_audit_evidence() -> None:
     unrelated_at = NOW + timedelta(minutes=10)
+    unrelated_conflict = {
+        "conflict_id": "conflict-2",
+        "raw_source_ids": ["file-3", "file-4"],
+        "detected_ids": ["detection-file-3", "detection-file-4"],
+        "active_canonical_revision_at_creation": None,
+    }
 
     record = conflict_chronology_record(
         source_times=(
@@ -15548,20 +15695,7 @@ def test_conflict_resolution_ignores_unreferenced_later_audit_evidence() -> None
             (unrelated_at, unrelated_at),
         ),
         resolved_at=NOW,
-    )
-    unrelated_conflict = type(record.conflicts[0]).model_validate(
-        {
-            "conflict_id": "conflict-2",
-            "raw_source_ids": ["file-3", "file-4"],
-            "detected_ids": ["detection-file-3", "detection-file-4"],
-            "active_canonical_revision_at_creation": None,
-        }
-    )
-    record = ImportedHandRecord.model_validate(
-        {
-            **record.model_dump(),
-            "conflicts": [record.conflicts[0], unrelated_conflict],
-        }
+        additional_conflicts=[unrelated_conflict],
     )
 
     assert record.conflicts[0].resolved_at == NOW
@@ -15818,6 +15952,14 @@ def test_revisionless_deletion_request_accepts_latest_retained_audit_time(
         identity=IDENTITY,
         raw_sources=[first_source, second_source],
         detections=[first_detection, second_detection],
+        conflicts=[
+            {
+                "conflict_id": "conflict-1",
+                "raw_source_ids": ["file-1", "file-2"],
+                "detected_ids": ["detection-file-1", "detection-file-2"],
+                "active_canonical_revision_at_creation": None,
+            }
+        ],
         lifecycle={
             "status": "deletion_pending",
             "deletion_generation": 1,
@@ -16265,6 +16407,14 @@ def test_restore_uses_freshness_that_includes_new_pending_review_evidence() -> N
         identity=IDENTITY,
         raw_sources=[current_source, candidate_source],
         detections=[current_detection, candidate_detection],
+        conflicts=[
+            {
+                "conflict_id": "conflict-1",
+                "raw_source_ids": ["file-1", "file-2"],
+                "detected_ids": ["detection-file-1", "detection-file-2"],
+                "active_canonical_revision_at_creation": None,
+            }
+        ],
         lifecycle={
             "status": "pending_review",
             "changed_at": candidate_detection.detected_at,
@@ -16325,7 +16475,6 @@ def test_restore_does_not_discard_new_active_conflict_evidence_as_stale() -> Non
     valid_candidate = record_with_later_retained_audit(
         status="active",
         changed_at=NOW + timedelta(minutes=2),
-        unresolved_conflict=True,
     )
     stale_candidate = valid_candidate.model_copy(
         update={
@@ -16359,6 +16508,7 @@ def test_restore_rejects_unsafe_deletion_pending_chronology(
         identity=audit.identity,
         raw_sources=audit.raw_sources,
         detections=audit.detections,
+        conflicts=audit.conflicts,
         canonical_revisions=audit.canonical_revisions,
         lifecycle={
             "status": "deletion_pending",

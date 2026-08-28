@@ -305,6 +305,9 @@ provenance may be appended for audit without multiplying learning data. If the
 same stable identity arrives with materially different source or detected
 content, both inputs are preserved as a conflict for explicit user resolution;
 neither silently overwrites the active approved revision or counts twice. An
+additional materially distinct retained raw source remains covered by a
+retained conflict whose scope includes another retained source, even before it
+has a detection or participates in a canonical-source switch. An
 approved revision may become active from a different retained raw source only
 after a `resolved_use_source` conflict binds the prior canonical source and
 explicitly selects the new source. Same-source corrections and reapprovals stay
@@ -347,8 +350,11 @@ An all-zero schedule permits only stated rake zero. If stated rake is present an
 any schedule component is nonzero, extraction fails closed until the canonical
 economics contract declares the calculation basis, cap/drop ordering and
 applicability, and rounding policy required to derive an exact allowed value.
-An absent stated rake preserves gross-only reconciliation and extraction
-behavior; tournament economics do not use this cash-rake gate.
+When stated rake is absent but stated gross and net totals differ, their
+difference is material rake evidence and follows the same fail-closed schedule
+gate. An absent stated rake preserves gross-only reconciliation and extraction
+behavior only when no gross-to-net deduction is stated; tournament economics do
+not use this cash-rake gate.
 
 An uncalled return closes a betting round only when it exactly removes the
 actor's unique unmatched live commitment after every other actionable opponent
@@ -605,13 +611,16 @@ uses separate validated state copies for readiness inspection and execution, and
 rejects any retained execution-state mutation before reading runtime trust
 metadata or scoring the result. A structurally invalid dataset snapshot fails
 before the binding catalog, required-field inspection, or provider is called. A
-non-serializable nested case instead fails in isolation before its case-scoped
-provider hooks; unrelated valid cases continue from the deep snapshot, and the
-report omits the unprovable corpus fingerprint so it cannot become an attested
-baseline. The declared schema version remains in the report and controls this
-trust boundary: a version-5 corpus whose version is mutated or whose evidence
-envelope becomes invalid or missing cannot downgrade itself to version-4
-execution or baseline rules.
+separately serialized and revalidated dataset-level trust snapshot plus a shared
+validation pass over corpus-wide case rules prevents a non-serializable nested
+case from masking a schema-version, tagged/range expectation, or grading-evidence
+mutation. Once those global rules pass, a non-serializable nested case fails in
+isolation before its case-scoped provider hooks; unrelated valid cases continue
+from the deep snapshot, and the report omits the unprovable corpus fingerprint
+so it cannot become an attested baseline. The declared schema version remains in
+the report and controls this trust boundary: a version-5 corpus whose version is
+mutated or whose evidence envelope becomes invalid or missing cannot downgrade
+itself to version-4 execution or baseline rules.
 After execution, a version-5 benchmark case completes only when the provider
 reports the exact engine selected by that binding and no fallback metadata. A
 missing, malformed, or different runtime engine and every explicit fallback are

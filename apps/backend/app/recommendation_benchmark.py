@@ -1118,7 +1118,7 @@ class RecommendationBenchmarkCase(BaseModel):
         return self
 
 
-class RecommendationBenchmarkDataset(BaseModel):
+class _RecommendationBenchmarkDatasetMetadata(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_name: Literal[RECOMMENDATION_BENCHMARK_SCHEMA] = Field(alias="schema")
@@ -1134,10 +1134,6 @@ class RecommendationBenchmarkDataset(BaseModel):
     grading_reference: RecommendationGradingReference | None = None
     sizing_tolerance_bb: PositiveFiniteNumber = 0.01
     minimum_policy_frequency: PositiveProbability = 0.05
-    cases: list[RecommendationBenchmarkCase] = Field(
-        min_length=1,
-        max_length=MAX_RECOMMENDATION_BENCHMARK_CASES,
-    )
 
     @field_validator("schema_version", mode="before")
     @classmethod
@@ -1147,92 +1143,110 @@ class RecommendationBenchmarkDataset(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_cases(self) -> Self:
-        if self.schema_version == RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION:
-            if self.reference_source is not None or any(
-                case.tags for case in self.cases
-            ):
-                raise ValueError(
-                    "Reference source and case tags require schema version 2"
-                )
+    def validate_trust_metadata(self) -> Self:
         if (
-            self.schema_version < RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION
-            and any(
-                case.expected_range_conditioning is not None
-                for case in self.cases
-            )
+            self.schema_version == RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION
+            and self.reference_source is not None
         ):
-            raise ValueError(
-                "Range conditioning expectations require schema version 3"
-            )
-        if (
-            self.schema_version < RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION
-            and any(case.expected_range_source is not None for case in self.cases)
-        ):
-            raise ValueError("Range source expectations require schema version 4")
+            raise ValueError("Reference source and case tags require schema version 2")
         if self.schema_version < RECOMMENDATION_BENCHMARK_SCHEMA_VERSION:
             if self.grading_reference is not None:
                 raise ValueError("Grading reference evidence requires schema version 5")
         elif self.grading_reference is None:
             raise ValueError("Schema version 5 requires grading reference evidence")
-        if self.grading_reference is not None:
-            if self.reference_source is None:
-                raise ValueError(
-                    "Grading reference evidence requires a reference source"
-                )
-            if self.grading_reference.ev_unit != "bb" and any(
-                line.ev_bb is not None
-                for case in self.cases
+        if self.grading_reference is not None and self.reference_source is None:
+            raise ValueError("Grading reference evidence requires a reference source")
+        return self
+
+
+def _validate_recommendation_benchmark_case_collection(
+    metadata: _RecommendationBenchmarkDatasetMetadata,
+    cases: Sequence[RecommendationBenchmarkCase],
+) -> None:
+    """Validate corpus-wide case rules without requiring case serialization."""
+
+    if not 1 <= len(cases) <= MAX_RECOMMENDATION_BENCHMARK_CASES:
+        raise ValueError(
+            "Recommendation benchmark must contain between 1 and"
+            f" {MAX_RECOMMENDATION_BENCHMARK_CASES} cases"
+        )
+    if (
+        metadata.schema_version == RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION
+        and any(case.tags for case in cases)
+    ):
+        raise ValueError("Reference source and case tags require schema version 2")
+    if (
+        metadata.schema_version < RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION
+        and any(case.expected_range_conditioning is not None for case in cases)
+    ):
+        raise ValueError("Range conditioning expectations require schema version 3")
+    if (
+        metadata.schema_version
+        < RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION
+        and any(case.expected_range_source is not None for case in cases)
+    ):
+        raise ValueError("Range source expectations require schema version 4")
+    if metadata.grading_reference is not None:
+        if metadata.grading_reference.ev_unit != "bb" and any(
+            line.ev_bb is not None
+            for case in cases
+            for line in case.reference_lines
+        ):
+            raise ValueError(
+                "ev_bb reference labels require a BB grading-reference EV unit"
+            )
+        for case in cases:
+            _validate_case_within_grading_coverage(
+                case,
+                metadata.grading_reference.coverage,
+                metadata.grading_reference.economic_model,
+                metadata.grading_reference.utility_model,
+            )
+    case_ids = [case.id for case in cases]
+    if len(case_ids) != len(set(case_ids)):
+        raise ValueError("Recommendation benchmark case IDs must be unique")
+    for case in cases:
+        if (
+            case.expected_range_conditioning is not None
+            and case.state.street not in {"turn", "river"}
+        ):
+            raise ValueError(
+                f"Case {case.id} can expect range conditioning only on turn or river"
+            )
+        if (
+            case.expected_range_source is not None
+            and case.state.street not in {"flop", "turn", "river"}
+        ):
+            raise ValueError(
+                f"Case {case.id} can expect a range source only postflop"
+            )
+        if not any(
+            line.frequency >= metadata.minimum_policy_frequency
+            for line in case.reference_lines
+        ):
+            raise ValueError(f"Case {case.id} has no line at the supported frequency")
+        for action in WAGER_ACTIONS:
+            sizings = sorted(
+                line.sizing
                 for line in case.reference_lines
-            ):
-                raise ValueError(
-                    "ev_bb reference labels require a BB grading-reference EV unit"
-                )
-            for case in self.cases:
-                _validate_case_within_grading_coverage(
-                    case,
-                    self.grading_reference.coverage,
-                    self.grading_reference.economic_model,
-                    self.grading_reference.utility_model,
-                )
-        case_ids = [case.id for case in self.cases]
-        if len(case_ids) != len(set(case_ids)):
-            raise ValueError("Recommendation benchmark case IDs must be unique")
-        for case in self.cases:
-            if (
-                case.expected_range_conditioning is not None
-                and case.state.street not in {"turn", "river"}
-            ):
-                raise ValueError(
-                    f"Case {case.id} can expect range conditioning only on turn or river"
-                )
-            if (
-                case.expected_range_source is not None
-                and case.state.street not in {"flop", "turn", "river"}
-            ):
-                raise ValueError(
-                    f"Case {case.id} can expect a range source only postflop"
-                )
-            if not any(
-                line.frequency >= self.minimum_policy_frequency
-                for line in case.reference_lines
-            ):
-                raise ValueError(
-                    f"Case {case.id} has no line at the supported frequency"
-                )
-            for action in WAGER_ACTIONS:
-                sizings = sorted(
-                    line.sizing
-                    for line in case.reference_lines
-                    if line.action == action and line.sizing is not None
-                )
-                for left, right in zip(sizings, sizings[1:], strict=False):
-                    sizing_gap = Decimal(str(right)) - Decimal(str(left))
-                    minimum_gap = Decimal(str(self.sizing_tolerance_bb)) * 2
-                    if sizing_gap < minimum_gap:
-                        raise ValueError(
-                            f"Case {case.id} has ambiguous {action} sizings"
-                        )
+                if line.action == action and line.sizing is not None
+            )
+            for left, right in zip(sizings, sizings[1:], strict=False):
+                sizing_gap = Decimal(str(right)) - Decimal(str(left))
+                minimum_gap = Decimal(str(metadata.sizing_tolerance_bb)) * 2
+                if sizing_gap < minimum_gap:
+                    raise ValueError(f"Case {case.id} has ambiguous {action} sizings")
+
+
+class RecommendationBenchmarkDataset(_RecommendationBenchmarkDatasetMetadata):
+    cases: list[RecommendationBenchmarkCase] = Field(
+        min_length=1,
+        max_length=MAX_RECOMMENDATION_BENCHMARK_CASES,
+    )
+
+    @model_validator(mode="after")
+    def validate_cases(self) -> Self:
+        _validate_recommendation_benchmark_case_collection(self, self.cases)
         return self
 
 
@@ -2083,10 +2097,38 @@ def run_recommendation_benchmark(
             dataset.model_dump_json(by_alias=True)
         )
     except PydanticSerializationError:
-        # Preserve queue independence for one unsafely mutated case. Each case
-        # is still reserialized in _run_case before any case-scoped provider
-        # hook, and providers never receive the caller-owned corpus object.
         dataset_snapshot = dataset.model_copy(deep=True)
+        try:
+            metadata_snapshot = (
+                _RecommendationBenchmarkDatasetMetadata.model_validate_json(
+                    dataset.model_dump_json(by_alias=True, exclude={"cases"})
+                )
+            )
+            _validate_recommendation_benchmark_case_collection(
+                metadata_snapshot,
+                dataset.cases,
+            )
+        except PydanticSerializationError as exc:
+            dataset_snapshot_error = (
+                "Recommendation benchmark snapshot is invalid: "
+                f"{str(exc) or exc.__class__.__name__}"
+            )
+        except ValidationError as exc:
+            first_error = exc.errors(include_url=False)[0]
+            location = (
+                ".".join(str(part) for part in first_error["loc"]) or "dataset"
+            )
+            dataset_snapshot_error = (
+                f"Recommendation benchmark snapshot is invalid at {location}:"
+                f" {first_error['msg']}"
+            )
+        except (AttributeError, TypeError, ValueError) as exc:
+            dataset_snapshot_error = (
+                "Recommendation benchmark snapshot is invalid at dataset: "
+                f"{str(exc) or exc.__class__.__name__}"
+            )
+        # With global rules independently validated, one non-JSON case may
+        # still fail in isolation before its case-scoped provider hooks.
     except ValidationError as exc:
         # Unsafe in-memory model copies are still reviewed by the existing
         # fail-closed per-case validators, but provider hooks never receive the

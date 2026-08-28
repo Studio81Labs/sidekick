@@ -2521,6 +2521,17 @@ class ImportedHandRecord(ImportedHandModel):
                         "deletion request requested_at cannot precede the latest"
                         " canonical revision approved_at"
                     )
+        if len(raw_ids) > 1:
+            conflict_source_ids = {
+                raw_source_id
+                for conflict in self.conflicts
+                for raw_source_id in conflict.raw_source_ids
+            }
+            if conflict_source_ids != raw_ids:
+                raise ValueError(
+                    "every materially distinct retained raw source must be covered"
+                    " by retained conflict audit state"
+                )
         return self
 
     def _active_extraction_context(
@@ -3950,8 +3961,18 @@ def _cash_rake_consistent_for_extraction(state: ImportedHandState) -> bool:
     if not isinstance(economics, CashEconomics):
         return True
     stated_pot = state.results.stated_pot if state.results is not None else None
-    if stated_pot is None or stated_pot.rake is None:
+    if stated_pot is None:
         return True
+    stated_rake = stated_pot.rake
+    if stated_rake is None:
+        stated_gross = stated_pot.gross_total
+        if stated_gross is None and stated_pot.gross_pots:
+            stated_gross = sum(stated_pot.gross_pots, Decimal(0))
+        if stated_gross is None or stated_pot.net_total is None:
+            return True
+        stated_rake = stated_gross - stated_pot.net_total
+        if stated_rake == 0:
+            return True
     schedule = economics.rake
     if schedule is None:
         return False
@@ -3967,7 +3988,7 @@ def _cash_rake_consistent_for_extraction(state: ImportedHandState) -> bool:
         # ordering, applicability, or rounding policy needed to derive a
         # nonzero schedule's exact per-hand rake.
         return False
-    return stated_pot.rake == 0
+    return stated_rake == 0
 
 
 def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:

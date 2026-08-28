@@ -24,9 +24,14 @@ from app.providers.local_solver import LocalSolverProvider
 from app.providers.registry import build_provider
 from app.recommendation_benchmark import (
     MAX_RECOMMENDATION_BENCHMARK_BYTES,
+    MAX_RECOMMENDATION_BENCHMARK_CASES,
     MAX_RECOMMENDATION_BENCHMARK_REPORT_BYTES,
+    RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION,
+    RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION,
+    RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION,
     RECOMMENDATION_BENCHMARK_SCHEMA,
     RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+    RECOMMENDATION_BENCHMARK_TAGGED_SCHEMA_VERSION,
     RecommendationBenchmarkCase,
     RecommendationBenchmarkDataset,
     RecommendationBenchmarkError,
@@ -2189,6 +2194,205 @@ def test_nonserializable_case_snapshot_is_isolated_before_provider_hooks() -> No
     assert provider.requests[0].state.hero_cards == valid_case.state.hero_cards
     assert provider.events == ["bindings", "recommend"]
     assert provider.outcomes == []
+
+
+@pytest.mark.parametrize(
+    ("version_mutation", "expected_error"),
+    [
+        (
+            "schema_five_to_four",
+            "Grading reference evidence requires schema version 5",
+        ),
+        (
+            "schema_four_to_five",
+            "Schema version 5 requires grading reference evidence",
+        ),
+    ],
+)
+def test_nonserializable_case_cannot_mask_dataset_trust_version_mutation(
+    version_mutation: str,
+    expected_error: str,
+) -> None:
+    class HookTrackingProvider(SequenceProvider):
+        required_fields = ["street"]
+
+        def __init__(self) -> None:
+            super().__init__([recommendation("check"), recommendation("check")])
+            self.required_fields_calls = 0
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            self.required_fields_calls += 1
+            return super().required_fields_for(state)
+
+    invalid_case = covered_preflop_case("nonserializable")
+    valid_case = covered_preflop_case("valid")
+    if version_mutation == "schema_five_to_four":
+        dataset = benchmark_dataset(
+            [invalid_case, valid_case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+        dataset.schema_version = 4
+    else:
+        dataset = benchmark_dataset(
+            [invalid_case, valid_case],
+            schema_version=4,
+        )
+        dataset.schema_version = RECOMMENDATION_BENCHMARK_SCHEMA_VERSION
+    dataset.cases[0].state.hero_cards[0] = object()  # type: ignore[assignment]
+    provider = HookTrackingProvider()
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.dataset_fingerprint is None
+    assert report.completed_cases == 0
+    assert report.failed_cases == 2
+    assert all(result.status == "error" for result in report.cases)
+    assert all(
+        result.error is not None
+        and "Recommendation benchmark snapshot is invalid" in result.error
+        and expected_error in result.error
+        for result in report.cases
+    )
+    assert provider.binding_catalog_calls == 0
+    assert provider.required_fields_calls == 0
+    assert provider.requests == []
+    assert provider.events == []
+    assert len(provider.outcomes) == 2
+
+
+@pytest.mark.parametrize(
+    ("corpus_violation", "expected_error"),
+    [
+        (
+            "tagged_schema_one",
+            "Reference source and case tags require schema version 2",
+        ),
+        (
+            "range_source_schema_three",
+            "Range source expectations require schema version 4",
+        ),
+        (
+            "non_bb_ev_unit",
+            "ev_bb reference labels require a BB grading-reference EV unit",
+        ),
+    ],
+)
+def test_nonserializable_case_cannot_mask_case_dependent_corpus_rules(
+    corpus_violation: str,
+    expected_error: str,
+) -> None:
+    class HookTrackingProvider(SequenceProvider):
+        required_fields = ["street"]
+
+        def __init__(self) -> None:
+            super().__init__([recommendation("check"), recommendation("check")])
+            self.required_fields_calls = 0
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            self.required_fields_calls += 1
+            return super().required_fields_for(state)
+
+    invalid_case = covered_preflop_case("nonserializable")
+    valid_case = covered_preflop_case("valid")
+    if corpus_violation == "tagged_schema_one":
+        valid_case.tags = ["cash"]
+        dataset = benchmark_dataset(
+            [invalid_case, valid_case],
+            schema_version=RECOMMENDATION_BENCHMARK_TAGGED_SCHEMA_VERSION,
+        )
+        dataset.schema_version = RECOMMENDATION_BENCHMARK_LEGACY_SCHEMA_VERSION
+    elif corpus_violation == "range_source_schema_three":
+        valid_case = covered_heads_up_postflop_case("valid")
+        valid_case.expected_range_source = "configured"
+        dataset = benchmark_dataset(
+            [invalid_case, valid_case],
+            schema_version=RECOMMENDATION_BENCHMARK_RANGE_SOURCE_SCHEMA_VERSION,
+        )
+        dataset.schema_version = RECOMMENDATION_BENCHMARK_PREVIOUS_SCHEMA_VERSION
+    else:
+        dataset = benchmark_dataset(
+            [invalid_case, valid_case],
+            schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+            reference_source={"name": "Independent solver export"},
+            grading_reference=grading_reference_evidence(),
+        )
+        assert dataset.grading_reference is not None
+        dataset.grading_reference.ev_unit = "utility"
+    dataset.cases[0].state.hero_cards[0] = object()  # type: ignore[assignment]
+    provider = HookTrackingProvider()
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.dataset_fingerprint is None
+    assert report.completed_cases == 0
+    assert report.failed_cases == 2
+    assert all(
+        result.error is not None
+        and "Recommendation benchmark snapshot is invalid" in result.error
+        and expected_error in result.error
+        for result in report.cases
+    )
+    assert provider.binding_catalog_calls == 0
+    assert provider.required_fields_calls == 0
+    assert provider.requests == []
+    assert provider.events == []
+    assert len(provider.outcomes) == 2
+
+
+def test_nonserializable_case_cannot_mask_case_count_limit() -> None:
+    class HookTrackingProvider(SequenceProvider):
+        required_fields = ["street"]
+
+        def __init__(self) -> None:
+            super().__init__([recommendation("check")])
+            self.required_fields_calls = 0
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            self.required_fields_calls += 1
+            return super().required_fields_for(state)
+
+    seed = covered_preflop_case()
+    cases = [
+        seed.model_copy(update={"id": f"case-{index}"}, deep=True)
+        for index in range(MAX_RECOMMENDATION_BENCHMARK_CASES)
+    ]
+    dataset = benchmark_dataset(cases)
+    dataset.cases.append(
+        seed.model_copy(
+            update={"id": f"case-{MAX_RECOMMENDATION_BENCHMARK_CASES}"},
+            deep=True,
+        )
+    )
+    dataset.cases[0].state.hero_cards[0] = object()  # type: ignore[assignment]
+    provider = HookTrackingProvider()
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.dataset_fingerprint is None
+    assert report.completed_cases == 0
+    assert report.failed_cases == MAX_RECOMMENDATION_BENCHMARK_CASES + 1
+    assert all(
+        result.error is not None
+        and "Recommendation benchmark snapshot is invalid" in result.error
+        and "must contain between 1 and 1000 cases" in result.error
+        for result in report.cases
+    )
+    assert provider.binding_catalog_calls == 0
+    assert provider.required_fields_calls == 0
+    assert provider.requests == []
+    assert provider.events == []
+    assert len(provider.outcomes) == 1
 
 
 @pytest.mark.parametrize(

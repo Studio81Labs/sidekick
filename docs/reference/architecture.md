@@ -180,7 +180,11 @@ total. Decision extraction proves that independence from the active detection's 
 stated-pot-scoped raw field evidence or from a value-changing correction on the
 active canonical revision; decimal formatting alone is not a value change.
 Numeric agreement without that provenance remains
-reviewable but is not extractable. Tournament extraction treats identified
+reviewable but is not extractable. Cash extraction treats either explicit rake
+or a positive difference between stated gross and net totals as material rake
+evidence. Zero schedules accept only zero deductions; nonzero schedules fail
+closed until their calculation semantics are modeled. Tournament extraction
+treats identified
 `remaining_stacks` as the same hand-start snapshot
 and absolute tournament-chip unit as the dealt-in seats' `starting_stack`
 values, and binds each pair exactly; unrelated remaining field players may
@@ -189,14 +193,15 @@ revision for later decision extraction. Activation, extraction, and restore
 preflight all verify canonical raw-source lineage: a transition to another
 retained source requires a resolved conflict that binds the preserved canonical
 source and selects the new one, while same-source corrections remain ordinary
-revisions. Because nested audit collections remain mutable while a transition is
-assembled, every aggregate serialization, extraction, and restore comparison
-first rebuilds and validates a complete snapshot; an invalid graph cannot be
-persisted or exposed as learning evidence. Conflict resolutions are retained
-audit events, so a deletion request must be ordered after them before deletion
-can proceed. These contracts are not yet connected to V1 routes or file-backed
-storage, so they do not make the hosted screenshot workflow a V2 player-data
-path.
+revisions. Every additional materially distinct retained raw source must also
+remain covered by a retained conflict, even before detection or approval. Because
+nested audit collections remain mutable while a transition is assembled, every
+aggregate serialization, extraction, and restore comparison first rebuilds and
+validates a complete snapshot; an invalid graph cannot be persisted or exposed
+as learning evidence. Conflict resolutions are retained audit events, so a
+deletion request must be ordered after them before deletion can proceed. These
+contracts are not yet connected to V1 routes or file-backed storage, so they do
+not make the hosted screenshot workflow a V2 player-data path.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, benchmarks, and
@@ -497,11 +502,14 @@ ante with an omitted or unknown poster scheme fails before route matching. The
 corpus and its fingerprint are snapshotted before provider hooks, and the report
 retains the declared schema version. A structurally invalid dataset snapshot
 fails without calling the catalog, required-field inspection, or provider. A
-non-serializable nested case fails before its own case-scoped hooks while valid
-cases continue from the deep snapshot; the report omits the unavailable corpus
-fingerprint and cannot be an attested baseline. Mutating a v5 corpus's version
-or removing its grading reference cannot select legacy execution or baseline
-behavior.
+separately serialized and revalidated dataset-level trust snapshot plus a shared
+validation pass over corpus-wide case rules prevents a non-serializable nested
+case from masking a schema-version, tagged/range expectation, or grading-evidence
+mutation. After those global rules pass, a non-serializable nested case fails
+before its own case-scoped hooks while valid cases continue from the deep
+snapshot; the report omits the unavailable corpus fingerprint and cannot be an
+attested baseline. Mutating a v5 corpus's version or removing its grading
+reference cannot select legacy execution or baseline behavior.
 Required-field inspection and execution receive separate validated state copies,
 and the complete execution copy must remain byte-for-byte canonically equivalent
 to its pre-call snapshot after the provider returns. The selected route context
