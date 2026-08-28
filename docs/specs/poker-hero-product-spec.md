@@ -587,6 +587,9 @@ Poker Hero canonicalizes and hashes the raw configured route context itself and
 retains the selected route, engine revision, configuration artifact, and adapter
 binding identities. A provider-computed echo of case input is not an attestation;
 missing, ambiguous, or changed bindings fail closed before grading.
+Every schema-v5 case also requires exactly two distinct hero hole cards and the
+exact board cardinality for its street; provider-declared required fields and an
+exact-shape route binding cannot substitute for this semantic completeness.
 The bound context includes every canonical decision-state field exposed to the
 provider—cards, board, pot, wagers, stacks, players, positions, opener/action
 context, and current/completed action histories—plus structural actor mapping,

@@ -1519,6 +1519,10 @@ def _validate_case_within_grading_coverage(
             f"Case {case.id} utility_model.configuration does not match the"
             " declared grading-reference route-critical configuration"
         )
+    if len(state.hero_cards) != 2:
+        raise ValueError(
+            f"Case {case.id} requires exactly two hero cards for grading coverage"
+        )
     if state.street is None or state.street not in coverage.streets:
         raise ValueError(
             f"Case {case.id} street {state.street!r} is outside declared"

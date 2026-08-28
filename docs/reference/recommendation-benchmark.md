@@ -312,7 +312,10 @@ real evidence, license conclusions, benchmark results, or strategy claims.
   display label, including the heads-up button/small-blind special case. Every
   version-5 case supplies its exact `hero_structural_position`; its street,
   decision-time `effective_stack`, dealt-in count, and position must fall inside
-  the declared envelope. `players_in_hand` is the number of current survivors,
+  the declared envelope. It also supplies exactly two distinct hero hole cards
+  and the street's exact board cardinality (0/3/4/5); provider-required fields
+  and exact-shape route matching cannot replace this semantic completeness.
+  `players_in_hand` is the number of current survivors,
   so it may be lower than the dealt-in count but cannot exceed it. A populated
   `hero_stack` or `opponent_stack` cannot be below `effective_stack`. When
   `players_in_hand` is exactly 2 and both visible stacks are populated,

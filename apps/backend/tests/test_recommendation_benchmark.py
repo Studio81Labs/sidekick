@@ -2097,6 +2097,52 @@ def test_invalid_schema_five_top_level_state_blocks_all_provider_hooks() -> None
 
 
 @pytest.mark.parametrize(
+    "hero_cards",
+    [[], [Card.from_code("Ah")]],
+    ids=["missing", "one-card"],
+)
+def test_invalid_schema_five_hero_cards_block_all_provider_hooks(
+    hero_cards: list[Card],
+) -> None:
+    class HookTrackingProvider(SequenceProvider):
+        required_fields = ["street"]
+
+        def __init__(self) -> None:
+            super().__init__([recommendation("check")])
+            self.required_fields_calls = 0
+
+        def required_fields_for(
+            self,
+            state: RecommendationBenchmarkState,
+        ) -> list[str]:
+            self.required_fields_calls += 1
+            return super().required_fields_for(state)
+
+    case = covered_preflop_case()
+    dataset = benchmark_dataset(
+        [case],
+        schema_version=RECOMMENDATION_BENCHMARK_SCHEMA_VERSION,
+        reference_source={"name": "Independent solver export"},
+        grading_reference=grading_reference_evidence(),
+    )
+    dataset.cases[0].state.hero_cards = hero_cards
+    provider = HookTrackingProvider()
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 0
+    assert report.failed_cases == 1
+    assert report.cases[0].error is not None
+    assert "Recommendation benchmark snapshot is invalid" in report.cases[0].error
+    assert "requires exactly two hero cards" in report.cases[0].error
+    assert provider.binding_catalog_calls == 0
+    assert provider.required_fields_calls == 0
+    assert provider.requests == []
+    assert provider.events == []
+    assert len(provider.outcomes) == 1
+
+
+@pytest.mark.parametrize(
     "version_mutation",
     ["schema_five_to_four", "schema_four_to_five"],
 )
@@ -2241,6 +2287,36 @@ def test_legacy_schema_still_allows_an_unbound_provider() -> None:
     assert report.completed_cases == 1
     assert report.dataset_schema_version == 4
     assert report.cases[0].grading_context_sha256 is None
+
+
+@pytest.mark.parametrize(
+    "hero_cards",
+    [[], [Card.from_code("Ah")]],
+    ids=["missing", "one-card"],
+)
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
+def test_legacy_provider_controls_incomplete_hero_card_readiness(
+    hero_cards: list[Card],
+    schema_version: int,
+) -> None:
+    provider = SequenceProvider([recommendation("check")])
+    provider.required_fields = ["street"]
+    dataset = benchmark_dataset(
+        [
+            benchmark_case(
+                "legacy-incomplete-cards",
+                [reference_line("check")],
+                hero_cards=hero_cards,
+            )
+        ],
+        schema_version=schema_version,
+    )
+
+    report = run_recommendation_benchmark(dataset, provider)
+
+    assert report.completed_cases == 1
+    assert report.failed_cases == 0
+    assert len(provider.requests) == 1
 
 
 @pytest.mark.parametrize("schema_version", [1, 2, 3, 4])
@@ -3745,6 +3821,11 @@ def test_schema_five_economic_model_mismatch_fails_before_provider_execution(
             "street 'flop' is outside declared",
         ),
         ({"street": None, "board_cards": []}, "street None is outside declared"),
+        ({"hero_cards": []}, "requires exactly two hero cards"),
+        (
+            {"hero_cards": [Card.from_code("Ah")]},
+            "requires exactly two hero cards",
+        ),
         ({"effective_stack": 99.999}, "effective stack 99.999 BB is outside"),
         ({"effective_stack": None}, "requires an effective stack"),
         ({"hero_structural_position": None}, "requires a structural position"),

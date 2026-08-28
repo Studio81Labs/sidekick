@@ -482,6 +482,9 @@ contexts itself. Each context contains the complete provider-visible canonical
 decision state—cards, board, pot, wager and stack amounts, player counts,
 positions, opener and action context, current and completed action histories,
 street, and approval state—plus structural actor mapping, economics, and utility.
+Trusted schema-v5 cases require exactly two distinct hero hole cards and the
+street's exact board cardinality independently of provider-required fields or
+route-shape matching.
 Catalog JSON must match the benchmark-generated recursive shape exactly. Every
 canonical decision-state null, empty, and default-valued key remains explicit;
 the surrounding structural, economic, and utility objects must mirror the
