@@ -274,6 +274,7 @@ def import_parser_dataset(
                     recommendation_provider=recommendation_provider,
                     recommendation_engine=recommendation_engine,
                     job_id=case.job_id,
+                    input_context="administrative_test",
                 )
                 job.approved_state = case.approved_state
                 job.benchmark_included = True
@@ -290,6 +291,7 @@ def import_parser_dataset(
                     recommendation_engine=recommendation_engine,
                     approved_state=case.approved_state,
                     import_request_id=import_request_id,
+                    input_context="administrative_test",
                 )
         except FileExistsError as exc:
             raise DatasetImportConflictError(

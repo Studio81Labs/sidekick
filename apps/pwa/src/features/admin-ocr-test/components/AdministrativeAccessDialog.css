@@ -1,0 +1,38 @@
+.administrative-access-body {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.administrative-access-body > p {
+  margin: 0;
+}
+
+.administrative-access-status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.administrative-access-form {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.administrative-access-form .form-field-control {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+}
+
+.administrative-access-unlocked {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.administrative-access-validation {
+  color: var(--accent-dark);
+  font-size: 12px;
+  margin: 0;
+}

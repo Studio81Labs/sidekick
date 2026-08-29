@@ -155,6 +155,8 @@ class Settings(BaseSettings):
     api_rate_limit_data_transfers_per_minute: int = Field(default=6, gt=0, le=10_000)
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])
     proxy_shared_secret: SecretStr | None = Field(default=None)
+    admin_ocr_test_enabled: bool = Field(default=False)
+    admin_ocr_test_token: SecretStr | None = Field(default=None)
     mcp_enabled: bool = Field(default=False)
     mcp_public_url: str | None = Field(default=None)
     mcp_allowed_origins: list[str] = Field(default_factory=list)
@@ -228,6 +230,7 @@ class Settings(BaseSettings):
         "external_provider_bearer_token",
         "llm_advice_bearer_token",
         "proxy_shared_secret",
+        "admin_ocr_test_token",
         "sentry_dsn",
         mode="before",
     )
@@ -242,6 +245,7 @@ class Settings(BaseSettings):
         "external_parser_bearer_token",
         "external_provider_bearer_token",
         "llm_advice_bearer_token",
+        "admin_ocr_test_token",
     )
     @classmethod
     def validate_bearer_token(
@@ -270,6 +274,16 @@ class Settings(BaseSettings):
             raise ValueError("proxy_shared_secret must contain at least 32 characters")
         return value
 
+    @field_validator("admin_ocr_test_token")
+    @classmethod
+    def validate_admin_ocr_test_token(
+        cls,
+        value: SecretStr | None,
+    ) -> SecretStr | None:
+        if value is not None and len(value.get_secret_value()) < 32:
+            raise ValueError("admin_ocr_test_token must contain at least 32 characters")
+        return value
+
     @field_validator("sentry_release", mode="before")
     @classmethod
     def validate_sentry_release(cls, value: object) -> object:
@@ -291,6 +305,20 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_authenticated_external_urls(self) -> Self:
+        if self.admin_ocr_test_enabled and self.admin_ocr_test_token is None:
+            raise ValueError(
+                "POKER_ADMIN_OCR_TEST_TOKEN is required when "
+                "POKER_ADMIN_OCR_TEST_ENABLED is true"
+            )
+        if (
+            self.admin_ocr_test_token is not None
+            and self.proxy_shared_secret is not None
+            and self.admin_ocr_test_token.get_secret_value()
+            == self.proxy_shared_secret.get_secret_value()
+        ):
+            raise ValueError(
+                "POKER_ADMIN_OCR_TEST_TOKEN must differ from POKER_PROXY_SHARED_SECRET"
+            )
         authenticated_urls = (
             (
                 "POKER_EXTERNAL_PARSER_URL",

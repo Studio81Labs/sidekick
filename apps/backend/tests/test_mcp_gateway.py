@@ -17,8 +17,14 @@ from app.mcp_gateway import (
     PokerMcpGateway,
     build_mcp_server,
 )
+from app.domain.hands import JobRecord
 from app.domain.poker import CanonicalState
 from app.domain.training import TrainingDecisionRequest
+from api_test_support import (
+    ADMIN_OCR_TEST_HEADERS,
+    ADMIN_OCR_TEST_TOKEN,
+    mark_legacy_player,
+)
 
 VALID_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
@@ -36,6 +42,7 @@ def make_gateway(
     gateway_environment: str = "staging",
     backend_environment: str = "staging",
     allow_writes: bool = False,
+    admin_ocr_test_enabled: bool = False,
 ) -> tuple[PokerMcpGateway, httpx.AsyncClient]:
     app = create_app(
         Settings(
@@ -44,6 +51,10 @@ def make_gateway(
             parser_provider="mock",
             recommendation_provider="mock",
             api_rate_limit_enabled=False,
+            admin_ocr_test_enabled=admin_ocr_test_enabled,
+            admin_ocr_test_token=(
+                ADMIN_OCR_TEST_TOKEN if admin_ocr_test_enabled else None
+            ),
         )
     )
     http_client = httpx.AsyncClient(
@@ -255,32 +266,78 @@ def test_api_client_withholds_api_credentials_until_identity_matches() -> None:
     run(http_client.aclose())
 
 
-def test_staging_gateway_completes_training_workflow(tmp_path: Path) -> None:
+def test_staging_gateway_refuses_screenshot_upload_when_administrative_mode_is_disabled(
+    tmp_path: Path,
+) -> None:
+    # Issue #413: screenshot upload is an administrator-only OCR test surface. The
+    # local gateway holds no administrator credential and must not learn one, so
+    # the tool surfaces the backend denial instead of creating a job.
     image_path = tmp_path / "table.png"
     image_path.write_bytes(VALID_PNG)
     gateway, http_client = make_gateway(tmp_path, allow_writes=True)
 
-    submitted = run(gateway.submit_screenshot(str(image_path), "mcp-upload-1"))
-    assert submitted.environment == "staging"
-    assert submitted.job.status == "parsed"
-    assert submitted.job.upload_request_id == "mcp-upload-1"
-    assert submitted.job.parser_result is not None
+    with pytest.raises(PokerApiError) as error:
+        run(gateway.submit_screenshot(str(image_path), "mcp-upload-1"))
+
+    assert error.value.status_code == 403
+    assert error.value.detail == "Administrative OCR test mode is disabled"
+    assert run(gateway.list_processing_jobs()).queue.total == 0
+    run(http_client.aclose())
+
+
+def test_staging_gateway_completes_training_workflow(tmp_path: Path) -> None:
+    image_path = tmp_path / "table.png"
+    image_path.write_bytes(VALID_PNG)
+    gateway, http_client = make_gateway(
+        tmp_path,
+        allow_writes=True,
+        admin_ocr_test_enabled=True,
+    )
+
+    # Issue #413: even where the deployment enables the administrative OCR test
+    # surface, the gateway sends no administrator bearer and is refused, so the
+    # training workflow starts from a job seeded with the administrator credential.
+    with pytest.raises(PokerApiError) as upload_error:
+        run(gateway.submit_screenshot(str(image_path), "mcp-upload-1"))
+    assert upload_error.value.status_code == 401
+    assert upload_error.value.detail == (
+        "Administrative OCR test authorization is required"
+    )
+
+    uploaded = run(
+        http_client.post(
+            "/api/jobs",
+            files={"file": ("table.png", VALID_PNG, "image/png")},
+            data={"upload_request_id": "mcp-upload-1"},
+            headers=ADMIN_OCR_TEST_HEADERS,
+        )
+    )
+    assert uploaded.status_code == 201
+    submitted_job = JobRecord.model_validate(uploaded.json())
+    # The seeded upload is an administrative OCR test input, which may never
+    # feed training. The gateway's training workflow runs on player-captured
+    # records, so the seeded job is re-persisted as one.
+    mark_legacy_player(tmp_path / "data", submitted_job.id)
+    assert submitted_job.status == "parsed"
+    assert submitted_job.upload_request_id == "mcp-upload-1"
+    assert submitted_job.parser_result is not None
 
     queue = run(gateway.list_processing_jobs())
+    assert queue.environment == "staging"
     assert queue.queue.total == 1
-    assert queue.queue.jobs[0].id == submitted.job.id
+    assert queue.queue.jobs[0].id == submitted_job.id
 
     state = CanonicalState.model_validate(
-        submitted.job.parser_result.state.model_dump(mode="json")
+        submitted_job.parser_result.state.model_dump(mode="json")
     )
-    approved = run(gateway.approve_hand_state(submitted.job.id, state))
+    approved = run(gateway.approve_hand_state(submitted_job.id, state))
     assert approved.job.status == "approved"
     assert approved.job.approved_state is not None
     assert approved.job.approved_state.user_approved is True
 
     decision = run(
         gateway.record_training_decision(
-            submitted.job.id,
+            submitted_job.id,
             TrainingDecisionRequest(action="fold", certainty="high"),
         )
     )
@@ -289,7 +346,7 @@ def test_staging_gateway_completes_training_workflow(tmp_path: Path) -> None:
 
     recommended = run(
         gateway.request_recommendation(
-            submitted.job.id,
+            submitted_job.id,
             "mcp-recommend-1",
         )
     )
@@ -297,7 +354,7 @@ def test_staging_gateway_completes_training_workflow(tmp_path: Path) -> None:
     assert recommended.job.recommendation is not None
     assert recommended.job.recommendation_request_id == "mcp-recommend-1"
 
-    reviewed = run(gateway.save_training_review(submitted.job.id, "Review pot odds"))
+    reviewed = run(gateway.save_training_review(submitted_job.id, "Review pot odds"))
     assert reviewed.job.training_reviewed_at is not None
     assert reviewed.job.training_review_note == "Review pot odds"
 

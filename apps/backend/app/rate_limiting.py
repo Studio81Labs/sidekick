@@ -141,6 +141,9 @@ def rate_limit_category(method: str, path: str) -> RateLimitCategory | None:
     normalized_method = method.upper()
     if normalized_method == "POST" and path == "/api/jobs":
         return "uploads"
+    if normalized_method == "GET" and path == "/api/admin/ocr-test/session":
+        # Credential probing shares the upload budget it guards.
+        return "uploads"
     if normalized_method == "POST" and _RECOMMENDATION_PATH.fullmatch(path):
         return "recommendations"
     if normalized_method == "POST" and path == "/api/benchmarks/run":

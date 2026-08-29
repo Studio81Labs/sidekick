@@ -11,6 +11,7 @@ function dialogProps(
   overrides: Partial<BenchmarkDialogProps> = {},
 ): BenchmarkDialogProps {
   return {
+    administrativeUnlocked: true,
     busy: false,
     comparisonProgress: null,
     comparisonReport: null,

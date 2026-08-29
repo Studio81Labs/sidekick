@@ -8,6 +8,7 @@ EXPECTED_OPERATION_IDS = {
     ("DELETE", "/api/jobs/{job_id}"): "job_delete",
     ("DELETE", "/api/jobs/{job_id}/training-review"): "job_training_review_reopen",
     ("DELETE", "/api/mcp/principals/{principal_id}"): "mcp_principal_revoke",
+    ("GET", "/api/admin/ocr-test/session"): "admin_ocr_test_session_get",
     ("GET", "/api/backups/export"): "backups_export",
     ("GET", "/api/benchmarks"): "benchmarks_get",
     ("GET", "/api/benchmarks/export"): "benchmarks_export",

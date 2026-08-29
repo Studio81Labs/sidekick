@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass
 
+from app.application.admin_ocr_test import AuthorizeAdministrator
 from app.domain.backups import ApplicationBackupRestoreResult
 
 
@@ -21,6 +22,7 @@ class BackupService:
     max_upload_bytes: int
     export_backup: Callable[[], Awaitable[ApplicationBackupExport]]
     restore_backup: Callable[[bytes], ApplicationBackupRestoreResult]
+    authorize_administrator: AuthorizeAdministrator
 
 
 __all__ = ["ApplicationBackupExport", "BackupService"]

@@ -36,6 +36,7 @@ const capabilities = {
       unavailable_reason: null,
     },
   ],
+  administrative_ocr_test: { enabled: false },
   recommendation_engines: [
     {
       available: true,
@@ -76,6 +77,45 @@ describe("usePipelineSelection", () => {
 
     await result.current.loadCapabilities();
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("serves a cached answer instead of asking the server again", async () => {
+    const onError = vi.fn();
+    // A fresh Response per call: a single instance can only be read once.
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse(capabilities)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => usePipelineSelection({ onError }), {
+      wrapper,
+    });
+
+    await expect(result.current.loadCapabilities()).resolves.toEqual(
+      capabilities,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(result.current.capabilities).toEqual(capabilities),
+    );
+
+    await expect(result.current.loadCapabilities()).resolves.toEqual(
+      capabilities,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("reports an unreachable server through the shared error channel", async () => {
+    const onError = vi.fn();
+    const fetchMock = vi.fn().mockRejectedValueOnce(new TypeError("offline"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => usePipelineSelection({ onError }), {
+      wrapper,
+    });
+
+    await expect(result.current.loadCapabilities()).resolves.toBeNull();
+
+    expect(onError).toHaveBeenCalledWith("offline");
   });
 
   it("reports a human-readable error and lets a later load retry", async () => {

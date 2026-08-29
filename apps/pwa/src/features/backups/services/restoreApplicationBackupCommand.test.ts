@@ -46,6 +46,7 @@ describe("restore application backup command", () => {
     const file = new File(["backup"], "backup.zip");
 
     const outcome = await restoreApplicationBackupCommand(seeded.queryClient, {
+      administratorToken: "administrator-token",
       file,
     });
 
@@ -66,6 +67,9 @@ describe("restore application backup command", () => {
     expect(seeded.queryClient.getQueryData(seeded.systemKey)).toBe(
       seeded.system,
     );
+    expect(fetchMock.mock.calls[0]?.[1]?.headers).toEqual({
+      Authorization: "Bearer administrator-token",
+    });
     const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
     expect(form.get("file")).toBe(file);
   });
@@ -80,14 +84,20 @@ describe("restore application backup command", () => {
     const file = new File(["backup"], "backup.zip");
 
     await expect(
-      restoreApplicationBackupCommand(seeded.queryClient, { file }),
+      restoreApplicationBackupCommand(seeded.queryClient, {
+        administratorToken: "administrator-token",
+        file,
+      }),
     ).rejects.toThrow("offline");
     seeded.affected.forEach((queryKey) =>
       expect(seeded.queryClient.getQueryData(queryKey)).toEqual({}),
     );
 
     await expect(
-      restoreApplicationBackupCommand(seeded.queryClient, { file }),
+      restoreApplicationBackupCommand(seeded.queryClient, {
+        administratorToken: "administrator-token",
+        file,
+      }),
     ).resolves.toMatchObject({ result: restoreResult });
     seeded.affected.forEach((queryKey) =>
       expect(seeded.queryClient.getQueryState(queryKey)).toBeUndefined(),

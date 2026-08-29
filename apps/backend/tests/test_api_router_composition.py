@@ -59,7 +59,11 @@ from app.domain.hands import (
     ScreenshotMetadataRequest,
 )
 from app.domain.health import HealthResponse
-from app.domain.pipeline import PipelineCapabilities, PipelineSelection
+from app.domain.pipeline import (
+    AdministrativeOcrTestCapability,
+    PipelineCapabilities,
+    PipelineSelection,
+)
 from app.domain.poker import CanonicalState
 from app.domain.training import (
     TrainingDecisionRequest,
@@ -67,6 +71,10 @@ from app.domain.training import (
     TrainingReviewRequest,
 )
 from app.domain.training.aggregation import summarize_training
+from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
+from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
+
+ADMIN_OCR_TEST_POLICY = AdminOcrTestAccessPolicy.for_token(ADMIN_OCR_TEST_TOKEN)
 
 
 def pipeline_capabilities() -> PipelineCapabilities:
@@ -82,6 +90,7 @@ def pipeline_capabilities() -> PipelineCapabilities:
         parser_layout_compatibility={},
         recommendation_providers=[],
         recommendation_engines=[],
+        administrative_ocr_test=AdministrativeOcrTestCapability(enabled=True),
     )
 
 
@@ -150,6 +159,7 @@ def default_jobs_upload_runtime() -> JobsUploadRuntime:
             recommendation_engine="local_solver",
         ),
         process_upload=lambda _request: job_record(),
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
 
 
@@ -508,6 +518,7 @@ def test_job_upload_router_delegates_defaults_and_all_form_values() -> None:
         max_upload_bytes=1024,
         resolve_pipeline=resolve_pipeline,
         process_upload=process_upload,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     with make_client(jobs_upload_runtime=runtime) as client:
         default_upload = client.post(
@@ -519,7 +530,10 @@ def test_job_upload_router_delegates_defaults_and_all_form_values() -> None:
                 b"default image\r\n"
                 b"--upload-boundary--\r\n"
             ),
-            headers={"content-type": "multipart/form-data; boundary=upload-boundary"},
+            headers={
+                "content-type": "multipart/form-data; boundary=upload-boundary",
+                **ADMIN_OCR_TEST_HEADERS,
+            },
         )
         configured_upload = client.post(
             "/api/jobs",
@@ -531,6 +545,7 @@ def test_job_upload_router_delegates_defaults_and_all_form_values() -> None:
                 "recommendation_provider": "external",
                 "recommendation_engine": "solver_v2",
             },
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
 
     assert [response.status_code for response in (default_upload, configured_upload)] == [
@@ -568,6 +583,7 @@ def test_job_upload_router_validates_each_form_field_without_delegating() -> Non
             recommendation_engine="local_solver",
         ),
         process_upload=lambda _request: calls.append("upload") or job_record(),
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     invalid_fields = [
         {"upload_request_id": "invalid request"},
@@ -583,6 +599,7 @@ def test_job_upload_router_validates_each_form_field_without_delegating() -> Non
                 "/api/jobs",
                 files={"file": ("table.png", b"image", "image/png")},
                 data=data,
+                headers=ADMIN_OCR_TEST_HEADERS,
             )
             for data in invalid_fields
         ]
@@ -602,12 +619,14 @@ def test_job_upload_router_rejects_oversize_before_processing() -> None:
             recommendation_engine="local_solver",
         ),
         process_upload=lambda _request: calls.append("upload") or job_record(),
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
 
     with make_client(jobs_upload_runtime=runtime) as client:
         response = client.post(
             "/api/jobs",
             files={"file": ("table.png", b"four", "image/png")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
 
     assert (response.status_code, response.json()) == (
@@ -645,32 +664,39 @@ def test_job_upload_router_maps_typed_errors() -> None:
         max_upload_bytes=1024,
         resolve_pipeline=resolve_pipeline,
         process_upload=process_upload,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     with make_client(jobs_upload_runtime=runtime) as client:
         selection_error = client.post(
             "/api/jobs",
             files={"file": ("table.png", b"image", "image/png")},
             data={"parser_provider": "invalid"},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
         invalid_image = client.post(
             "/api/jobs",
             files={"file": ("invalid.png", b"image", "image/png")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
         deleted = client.post(
             "/api/jobs",
             files={"file": ("deleted.png", b"image", "image/png")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
         configuration = client.post(
             "/api/jobs",
             files={"file": ("configuration.png", b"image", "image/png")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
         provider = client.post(
             "/api/jobs",
             files={"file": ("provider.png", b"image", "image/png")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
         unexpected = client.post(
             "/api/jobs",
             files={"file": ("unexpected.png", b"image", "image/png")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
 
     assert (selection_error.status_code, selection_error.json()) == (

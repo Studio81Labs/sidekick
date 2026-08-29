@@ -13,6 +13,7 @@ from api_test_support import (
     approve_job,
     load_only_job,
     make_client,
+    mark_legacy_player,
     upload_job,
 )
 
@@ -24,6 +25,7 @@ def test_app_startup_recovers_interrupted_parser_job(tmp_path: Path) -> None:
         image_bytes=VALID_PNG,
         parser_provider="mock",
         recommendation_provider="mock",
+        input_context="administrative_test",
     )
 
     restarted_client = make_client(tmp_path)
@@ -175,6 +177,7 @@ def test_late_parser_failure_preserves_newer_approved_state(
     upload_thread.start()
     assert parse_started.wait(timeout=2)
     job_id = FileJobStore(tmp_path).list()[0].id
+    mark_legacy_player(tmp_path, job_id)
 
     try:
         approved = approve_job(client, job_id)

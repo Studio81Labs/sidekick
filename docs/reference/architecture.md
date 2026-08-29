@@ -77,6 +77,26 @@ Screenshot parsing runs outside those stripes, then reloads and merges into the
 latest job record so slow OCR does not block unrelated jobs and deleted uploads
 cannot be recreated by parser completion.
 
+Screenshot upload is an administrative OCR test surface, not a player data
+path (ADR 0046). `POST /api/jobs` fails closed unless
+`POKER_ADMIN_OCR_TEST_ENABLED` is set and the request carries the deployment's
+`POKER_ADMIN_OCR_TEST_TOKEN` as a bearer credential; the application-layer
+`AdminOcrTestAccessPolicy` compares it in constant time.
+`POST /api/benchmarks/import` and `POST /api/backups/restore` share that gate,
+because both persist screenshots the boundary would otherwise refuse, and both
+check it before the application reads the archive or opens any store (the
+framework still parses the multipart body first). `GET /api/admin/ocr-test/session`
+lets a client confirm a credential before it reveals any capture control; it
+answers `no-store` and shares the upload rate-limit budget. Every job records an
+explicit `input_context`: uploads and benchmark dataset imports are
+`administrative_test`, while records persisted before the boundary load as
+`legacy_player`. Recommendation, training-decision, and training-review
+transitions refuse administrative jobs with `403`, and training progress and
+lesson exports exclude them, so administrative inputs never become learning
+evidence. The local stdio MCP gateway's screenshot tool receives the same
+denial. `GET /api/pipeline` advertises `administrative_ocr_test.enabled` so
+operators can see the deployment state.
+
 FastAPI composition remains in `app/bootstrap.py`, while extracted transport
 adapters live under `app/api/routers`. Health and pipeline queries dispatch
 through `app/application/system.py`; MCP configuration and principal operations
@@ -141,13 +161,26 @@ detail and invalidate processing/history/training. Cache seeding preserves newer
 concurrent screenshot metadata from an older workflow response, while a
 delete-superseded write generation prevents late approval/recommendation
 responses from recreating permanently removed detail entries. Analyzer
-composition retains automation,
-lease handoff, abort registration, and optional training-decision sequencing.
+composition retains lease handoff, abort registration, and optional
+training-decision sequencing; control-panel automation was removed with the
+import-first boundary.
 Screenshot upload now uses a capture-owned command over the generated jobs
 adapter. It preserves the caller upload request ID, selected pipeline, and abort
 signal, seeds confirmed job detail, and invalidates processing only. Analyzer
 composition continues to own per-file queue progress, independent failures,
-projection leases, capture sources, and optional post-upload automation.
+projection leases, and capture sources while the administrator OCR test tools
+are unlocked.
+
+The player workspace is import-first: the control rail shows an import-first
+notice instead of capture controls. An operator can unlock the administrative
+OCR test tools from the toolbar **Administrator tools** dialog; the token is
+held only in component state and sent as `Authorization: Bearer ...` with each
+upload or capture. While unlocked, the capture panel renders under an explicit
+administrative banner; a `401`/`403` upload response re-locks the tools. Jobs
+with `input_context: "administrative_test"` carry an `Admin test` badge in the
+queue, history, details, and review panels, and their recommendation and
+training-decision controls are withheld.
+
 Training decisions and review completion/reopen operations now use a
 training-owned command family. The generated-contract adapters preserve the
 legacy positional function signatures, and confirmed responses update job
@@ -616,15 +649,15 @@ recorded in
 
 ### PWA
 
-`apps/pwa` owns screenshot upload and capture, queue navigation, review and
-correction, automation controls, pre-reveal training decisions, recommendations,
+`apps/pwa` owns administrator-only screenshot upload and capture, queue
+navigation, review and correction, pre-reveal training decisions, recommendations,
 decision-evidence presentation, aggregate training progress, and history. It
 is organized into application, page, feature, and shared layers. `src/app`
 contains the browser-router shell, route registry, top-level error monitoring,
 and other application-wide concerns. `src/pages/analyzer/AnalyzerPage.tsx` is a
 route-scoped provider wrapper. `useAnalyzerWorkspaceController.ts` retains the
 queue/history mutation protocol because those transactions span capture,
-automation, review, benchmark labels, and recovery, while
+review, benchmark labels, and recovery, while
 `AnalyzerWorkspaceComposition.tsx` owns only the grouped feature render tree.
 The controller invokes Query-aware commands and consumes an injected workflow
 projection interface; it neither owns raw HTTP transport nor imports concrete
@@ -715,7 +748,7 @@ Cross-feature error formatting, abort classification, uncertain-write
 classification, and stable toast IDs live in `src/shared/lib/errors.ts`.
 Feature hooks import those primitives downward instead of depending on the
 workspace feature; workspace workflow helpers retain only workspace-specific
-automation and job-state behavior.
+job-state behavior.
 
 Preflop position labels, aliases, and normalization live in
 `domains/poker/model/preflopPosition.ts`. Hand-review and benchmark features
@@ -749,7 +782,8 @@ authentication pages should enter through `src/app/routes.tsx` and a dedicated
 directory under `src/pages`.
 
 The review workspace is split into hand-state editing, training-decision, and
-recommendation panels. Capture, automation, parser/recommendation selection,
+recommendation panels. Capture, administrator access, parser/recommendation
+selection,
 training progress, benchmarks, screenshot details, and system information each
 have a dedicated state hook or controller. Dialogs and panels receive explicit
 values and commands from those boundaries, which keeps them independently
@@ -1063,20 +1097,21 @@ benchmark matcher.
 1. A capture or upload creates an independent job.
 2. The configured parser returns detected state, confidence, warnings, and raw
    metadata. Field confidence values must be finite JSON numbers between zero
-   and one; boolean and string coercion is rejected before automation evaluates
-   them. The backend records whether the result met the deployment's configured
-   auto-approval thresholds so browser automation can require that decision
-   without duplicating policy. Detected pot, bet, and stack values must be finite
+   and one; boolean and string coercion is rejected before approval evaluates
+   them. The backend still records whether the result met the deployment's
+   configured auto-approval thresholds as reviewable evidence; no browser
+   automation consumes it any more. Detected pot, bet, and stack values must be
+   finite
    non-negative JSON numbers, detected preflop open size must be positive, and
    player count must be a positive JSON integer. Boolean and string coercion is
    rejected.
-3. The user or automation approves a canonical state when requirements are met.
-   Approved numeric table state follows the same finite-number and integer
-   contract as detected state; rejected input leaves the parsed job unchanged.
-   Deployment auto-approval always leaves warning-bearing parser results for
-   browser review. Control-panel automation may pass those warnings only when
-   the user explicitly enables its warning policy and confidence eligibility
-   still passes.
+3. The user approves a canonical state when requirements are met; deployment
+   auto-approval may approve a confidence-eligible, warning-free parse. Approved
+   numeric table state follows the same finite-number and integer contract as
+   detected state; rejected input leaves the parsed job unchanged. Deployment
+   auto-approval always leaves warning-bearing parser results for browser
+   review; control-panel automation no longer exists, so every other approval
+   is an explicit user action.
 4. The user may lock an action, optional sizing, and optional self-rated
    certainty before revealing provider output.
 5. The configured provider returns an educational action, sizing, confidence,
@@ -1197,8 +1232,9 @@ candidate and reports non-negative per-hand and average EV loss. Missing,
 implicit, or malformed action/sizing/EV metadata leaves the hand ungraded for EV
 without changing its action-policy outcome. A grade also requires the provider's
 recommended line and at least one distinct valid alternative, preventing a
-partial candidate payload from claiming zero loss. Hands processed only by
-automation are excluded because they have no player answer to evaluate. A
+partial candidate payload from claiming zero loss. Hands approved only by
+deployment auto-approval are excluded because they have no player answer to
+evaluate. A
 separate bounded queue returns unsupported actions and sizing differences so the
 PWA can review them without hiding older differences behind supported
 lines. It defaults to newest-first order. An explicit EV-loss order ranks
@@ -1259,8 +1295,10 @@ only and leaves other queue items free to continue.
 ## Persistence
 
 The backend stores jobs, images, and benchmark reports under `POKER_DATA_DIR`.
-The PWA retains automation preferences in versioned browser-local storage;
-invalid or unavailable storage falls back to the established application defaults.
+The PWA retains no automation preferences (control-panel automation was removed
+with the import-first boundary); browser-local storage holds only the queue,
+history, and recovery projections described below, and invalid or unavailable
+storage falls back to the established application defaults.
 Unarchived upload and capture jobs are exposed through a stable oldest-first,
 offset-paged processing projection with a snapshot hash. The PWA caches at
 most 100 of those records for immediate reload display, retains the complete
@@ -1284,7 +1322,8 @@ projection, the PWA revalidates it by ID before settling or removing it
 from the workspace. Legacy single-job leases without operation-specific
 evidence remain conservative until their bounded expiry.
 Upload and capture leases carry the baseline queue plus client-generated upload
-and solver request IDs and the last required automation stage for each file.
+and solver request IDs; every upload now targets the parsed stage for each
+file.
 The upload ID is sent with the multipart request and both
 identities are persisted on the backend job, allowing a replacement document to
 distinguish a completed correctable solver attempt from work that never began.

@@ -193,4 +193,23 @@ describe("ScreenshotQueuePanel", () => {
       screen.getByRole("button", { name: "Manage screenshot 1: table.png" }),
     ).toBeEnabled();
   });
+
+  it("marks administrative test jobs and leaves legacy jobs unmarked", () => {
+    const administrativeJob = jobRecord({
+      input_context: "administrative_test",
+    });
+    const { rerender } = render(
+      <ScreenshotQueuePanel {...panelProps({ jobs: [administrativeJob] })} />,
+    );
+
+    expect(
+      screen.getByLabelText("Administrative OCR test input"),
+    ).toBeInTheDocument();
+
+    rerender(<ScreenshotQueuePanel {...panelProps()} />);
+
+    expect(
+      screen.queryByLabelText("Administrative OCR test input"),
+    ).not.toBeInTheDocument();
+  });
 });

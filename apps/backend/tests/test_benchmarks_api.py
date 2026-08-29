@@ -22,6 +22,7 @@ from api_test_support import (
     VALID_PNG,
     approve_job,
     archive_with_unsupported_compression,
+    import_benchmark_dataset,
     make_client,
     rebuild_zip_archive,
     upload_job,
@@ -208,14 +209,8 @@ def test_benchmark_dataset_import_round_trips_and_reuses_existing_cases(
         local_solver_engine="local_ev",
     )
 
-    imported = target_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
-    repeated = target_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    imported = import_benchmark_dataset(target_client, archive)
+    repeated = import_benchmark_dataset(target_client, archive)
 
     assert imported.status_code == 200
     assert imported.json() == {
@@ -268,21 +263,9 @@ def test_benchmark_dataset_import_rejects_cross_layout_job_reuse(
     )
     target_dir = tmp_path / "target"
     target_client = make_client(target_dir)
-    imported = target_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    imported = import_benchmark_dataset(target_client, archive)
 
-    response = target_client.post(
-        "/api/benchmarks/import",
-        files={
-            "file": (
-                "cross-layout.zip",
-                cross_layout_archive,
-                "application/zip",
-            )
-        },
-    )
+    response = import_benchmark_dataset(target_client, cross_layout_archive)
 
     assert imported.status_code == 200
     assert response.status_code == 409
@@ -329,10 +312,7 @@ def test_benchmark_dataset_import_rejects_coerced_manifest_integers(
     target_dir = tmp_path / "target"
     target_client = make_client(target_dir)
 
-    response = target_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("coerced-manifest.zip", modified, "application/zip")},
-    )
+    response = import_benchmark_dataset(target_client, modified)
 
     assert response.status_code == 400
     assert f"invalid at {field_name}" in response.json()["detail"]
@@ -357,19 +337,10 @@ def test_benchmark_dataset_import_persists_request_receipt_for_recovery(
         local_solver_engine="local_ev",
     )
     request_id = "benchmark-import-request-123"
-    headers = {"X-Benchmark-Import-Request-ID": request_id}
 
-    imported = target_client.post(
-        "/api/benchmarks/import",
-        headers=headers,
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    imported = import_benchmark_dataset(target_client, archive, request_id=request_id)
     recovered = target_client.get(f"/api/benchmarks/imports/{request_id}")
-    repeated = target_client.post(
-        "/api/benchmarks/import",
-        headers=headers,
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    repeated = import_benchmark_dataset(target_client, archive, request_id=request_id)
     missing = target_client.get("/api/benchmarks/imports/unknown-request")
 
     assert imported.status_code == 200
@@ -405,11 +376,7 @@ def test_benchmark_dataset_import_rejects_dot_segment_request_ids(
 ) -> None:
     client = make_client(tmp_path)
 
-    response = client.post(
-        "/api/benchmarks/import",
-        headers={"X-Benchmark-Import-Request-ID": request_id},
-        files={"file": ("dataset.zip", b"not a zip", "application/zip")},
-    )
+    response = import_benchmark_dataset(client, b"not a zip", request_id=request_id)
     benchmark_store = FileBenchmarkStore(tmp_path)
 
     assert response.status_code == 422
@@ -452,11 +419,7 @@ def test_benchmark_dataset_import_blocks_runs_until_partial_case_recovers(
 
     monkeypatch.setattr(FileJobStore, "write_image", interrupt_first_import_image)
     with pytest.raises(OSError, match="simulated process interruption"):
-        target_client.post(
-            "/api/benchmarks/import",
-            headers={"X-Benchmark-Import-Request-ID": request_id},
-            files={"file": ("dataset.zip", archive, "application/zip")},
-        )
+        import_benchmark_dataset(target_client, archive, request_id=request_id)
 
     interrupted_store = FileJobStore(target_dir)
     partial_job = interrupted_store.get(source_job_id)
@@ -472,10 +435,10 @@ def test_benchmark_dataset_import_blocks_runs_until_partial_case_recovers(
         f"/api/jobs/{source_job_id}/benchmark",
         json={"included": False},
     )
-    blocked_import = recovery_client.post(
-        "/api/benchmarks/import",
-        headers={"X-Benchmark-Import-Request-ID": "second-pending-import"},
-        files={"file": ("dataset.zip", archive, "application/zip")},
+    blocked_import = import_benchmark_dataset(
+        recovery_client,
+        archive,
+        request_id="second-pending-import",
     )
 
     assert blocked_run.status_code == 409
@@ -547,11 +510,7 @@ def test_benchmark_dataset_import_journals_before_parsing_and_resumes(
 
     def run_import() -> None:
         try:
-            target_client.post(
-                "/api/benchmarks/import",
-                headers={"X-Benchmark-Import-Request-ID": request_id},
-                files={"file": ("dataset.zip", archive, "application/zip")},
-            )
+            import_benchmark_dataset(target_client, archive, request_id=request_id)
         except Exception as exc:
             import_errors.append(exc)
 
@@ -591,17 +550,9 @@ def test_benchmark_dataset_import_persists_validation_failure_receipt(
     client = make_client(tmp_path)
     request_id = "invalid-archive-import"
 
-    response = client.post(
-        "/api/benchmarks/import",
-        headers={"X-Benchmark-Import-Request-ID": request_id},
-        files={"file": ("dataset.zip", b"not a zip", "application/zip")},
-    )
+    response = import_benchmark_dataset(client, b"not a zip", request_id=request_id)
     receipt = client.get(f"/api/benchmarks/imports/{request_id}")
-    repeated = client.post(
-        "/api/benchmarks/import",
-        headers={"X-Benchmark-Import-Request-ID": request_id},
-        files={"file": ("dataset.zip", b"not a zip", "application/zip")},
-    )
+    repeated = import_benchmark_dataset(client, b"not a zip", request_id=request_id)
 
     assert response.status_code == 400
     assert response.json()["detail"] == "Upload must be a valid dataset ZIP"
@@ -631,15 +582,9 @@ def test_benchmark_dataset_import_rejects_unsupported_compression(
     archive = source_client.get("/api/benchmarks/export").content
     unsupported_archive = archive_with_unsupported_compression(archive)
 
-    response = make_client(tmp_path / "target").post(
-        "/api/benchmarks/import",
-        files={
-            "file": (
-                "unsupported.zip",
-                unsupported_archive,
-                "application/zip",
-            ),
-        },
+    response = import_benchmark_dataset(
+        make_client(tmp_path / "target"),
+        unsupported_archive,
     )
 
     assert response.status_code == 400
@@ -703,17 +648,11 @@ def test_benchmark_dataset_import_rejects_conflicts_without_overwriting(
     archive = source_client.get("/api/benchmarks/export").content
     target_dir = tmp_path / "target"
     target_client = make_client(target_dir)
-    target_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    import_benchmark_dataset(target_client, archive)
     changed_state = {**APPROVED_STATE, "pot_size": 20.0}
     approve_job(target_client, job_id, changed_state)
 
-    response = target_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    response = import_benchmark_dataset(target_client, archive)
 
     assert response.status_code == 409
     assert response.json()["detail"] == (
@@ -746,10 +685,7 @@ def test_benchmark_dataset_import_enforces_resulting_corpus_limit(
     )
     monkeypatch.setattr(dataset_import_module, "MAX_DATASET_CASES", 1)
 
-    response = target_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    response = import_benchmark_dataset(target_client, archive)
 
     assert response.status_code == 409
     assert response.json()["detail"] == "Parser datasets support at most 1 case"
@@ -782,10 +718,7 @@ def test_benchmark_dataset_import_serializes_reuse_with_corrections(
     monkeypatch.setattr(bootstrap_module, "import_parser_dataset", paused_import)
 
     def run_import() -> None:
-        responses["import"] = client.post(
-            "/api/benchmarks/import",
-            files={"file": ("dataset.zip", archive, "application/zip")},
-        )
+        responses["import"] = import_benchmark_dataset(client, archive)
 
     corrected_state = {**APPROVED_STATE, "pot_size": 21.0}
 
@@ -860,10 +793,7 @@ def test_benchmark_run_waits_for_dataset_import_corpus_update(
 
     import_thread = Thread(
         target=lambda: responses.update(
-            imported=target_client.post(
-                "/api/benchmarks/import",
-                files={"file": ("dataset.zip", archive, "application/zip")},
-            ),
+            imported=import_benchmark_dataset(target_client, archive),
         ),
     )
 
@@ -959,10 +889,7 @@ def test_benchmark_dataset_import_rejects_invalid_and_oversized_archives(
     tmp_path: Path,
 ) -> None:
     client = make_client(tmp_path / "invalid")
-    invalid = client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", b"not a zip", "application/zip")},
-    )
+    invalid = import_benchmark_dataset(client, b"not a zip")
 
     assert invalid.status_code == 400
     assert invalid.json()["detail"] == "Upload must be a valid dataset ZIP"
@@ -977,10 +904,7 @@ def test_benchmark_dataset_import_rejects_invalid_and_oversized_archives(
         max_dataset_upload_bytes=len(archive) - 1,
     )
 
-    oversized = limited_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    oversized = import_benchmark_dataset(limited_client, archive)
 
     assert oversized.status_code == 413
     assert oversized.json()["detail"] == "Dataset ZIP exceeds maximum size"
@@ -1020,10 +944,7 @@ def test_benchmark_dataset_import_rejects_a_combined_corpus_over_archive_limit(
     )
     assert inclusion.status_code == 200
 
-    imported = target_client.post(
-        "/api/benchmarks/import",
-        files={"file": ("dataset.zip", archive, "application/zip")},
-    )
+    imported = import_benchmark_dataset(target_client, archive)
 
     assert imported.status_code == 409
     assert imported.json()["detail"] == (
@@ -1051,15 +972,9 @@ def test_benchmark_dataset_import_rejects_unsafe_image_paths(tmp_path: Path) -> 
         unsafe_archive.writestr("manifest.json", json.dumps(manifest))
         unsafe_archive.writestr(f"../{job_id}.png", image_bytes)
 
-    response = make_client(tmp_path / "target").post(
-        "/api/benchmarks/import",
-        files={
-            "file": (
-                "dataset.zip",
-                unsafe_buffer.getvalue(),
-                "application/zip",
-            )
-        },
+    response = import_benchmark_dataset(
+        make_client(tmp_path / "target"),
+        unsafe_buffer.getvalue(),
     )
 
     assert response.status_code == 400

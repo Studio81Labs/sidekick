@@ -89,7 +89,7 @@
 .button-control.history-item-open {
   display: grid;
   gap: 8px;
-  grid-template-columns: auto minmax(0, 1fr) 24px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   min-height: 42px;
   padding: 6px 8px;
 }
@@ -163,11 +163,18 @@
   text-transform: none;
 }
 
+.history-status {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
 .history-result {
   align-items: center;
   background: #d7d3d3;
   color: #575454;
   display: inline-flex;
+  flex: 0 0 auto;
   font-size: 9px;
   font-weight: 800;
   height: 22px;

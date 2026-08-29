@@ -2,7 +2,9 @@
 from argparse import ArgumentParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
+import re
 from threading import Event, Lock
 
 
@@ -12,7 +14,8 @@ RECOMMENDATION_FALLBACK_REASON = "E2E fallback: unsupported postflop tree"
 
 
 class ProviderState:
-    def __init__(self) -> None:
+    def __init__(self, data_dir: Path | None = None) -> None:
+        self.data_dir = data_dir
         self._fail_next_parser = False
         self._fail_next_recommendation = False
         self._next_recommendation_variant: str | None = None
@@ -231,6 +234,30 @@ def build_handler(state: ProviderState) -> type[BaseHTTPRequestHandler]:
             if self.path == "/control/release-recommendation":
                 state.release_recommendation()
                 self._send_json(200, {"released": True})
+                return
+            if self.path == "/control/legacy-jobs":
+                if state.data_dir is None:
+                    self._send_json(400, {"detail": "data directory unavailable"})
+                    return
+                payload = json.loads(self._read_body() or b"{}")
+                job_ids = payload.get("job_ids")
+                if not isinstance(job_ids, list) or not all(
+                    isinstance(job_id, str) and re.fullmatch(r"[0-9a-f]{32}", job_id)
+                    for job_id in job_ids
+                ):
+                    self._send_json(400, {"detail": "job_ids must be 32-hex identifiers"})
+                    return
+                for job_id in job_ids:
+                    record_path = state.data_dir / "jobs" / job_id / "job.json"
+                    if not record_path.is_file():
+                        self._send_json(404, {"detail": f"unknown job {job_id}"})
+                        return
+                    record = json.loads(record_path.read_text())
+                    record.pop("input_context", None)
+                    temporary = record_path.with_suffix(".json.tmp")
+                    temporary.write_text(json.dumps(record))
+                    os.replace(temporary, record_path)
+                self._send_json(200, {"legacy_job_ids": job_ids})
                 return
             if self.path == "/parse":
                 self._handle_parser_request()
@@ -558,12 +585,13 @@ def main() -> None:
     parser = ArgumentParser()
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8011)
+    parser.add_argument("--data-dir", type=Path, default=None)
     parser.add_argument("--ready-file", type=Path, required=True)
     args = parser.parse_args()
 
     server = ThreadingHTTPServer(
         (args.host, args.port),
-        build_handler(ProviderState()),
+        build_handler(ProviderState(args.data_dir)),
     )
     server.daemon_threads = True
     args.ready_file.touch()

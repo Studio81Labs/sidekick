@@ -35,6 +35,9 @@ export function toPipelineCapabilities(
   response: PipelineCapabilitiesResponse,
 ): PipelineCapabilities {
   return {
+    administrative_ocr_test: {
+      enabled: response.administrative_ocr_test.enabled,
+    },
     defaults: toPipelineSelection(response.defaults),
     parser_layout_compatibility: response.parser_layout_compatibility,
     parser_layout_profiles:

@@ -1,11 +1,72 @@
 import { expect, test, type Page } from "@playwright/test";
 
 const BACKEND_URL = "http://127.0.0.1:8010";
+const PROVIDER_URL = "http://127.0.0.1:8011";
+const ADMINISTRATOR_TOKEN = "e2e-administrative-ocr-test-token-0123456789";
 const VALID_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ" +
     "AAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==",
   "base64",
 );
+
+// The specs do not share modules today, so the administrative helpers are
+// duplicated from `analyzer.spec.ts`.
+async function unlockAdministrativeAccess(page: Page): Promise<void> {
+  const banner = page.getByRole("note", {
+    name: "Administrative OCR test mode",
+  });
+  if (await banner.isVisible()) {
+    return;
+  }
+  await page.getByRole("button", { name: "Administrator tools" }).click();
+  const dialog = page.getByRole("dialog", { name: "Administrator tools" });
+  await dialog
+    .getByLabel("Administrative OCR test token")
+    .fill(ADMINISTRATOR_TOKEN);
+  await dialog.getByRole("button", { name: "Unlock" }).click();
+  // The deployment verifies the credential before any capture control appears,
+  // so the dialog only reports the unlocked state once that round trip lands.
+  await expect(
+    dialog.getByRole("button", { name: "Lock administrator tools" }),
+  ).toBeVisible();
+  await dialog
+    .getByRole("button", { name: "Close administrator tools" })
+    .click();
+  await expect(banner).toBeVisible();
+}
+
+// Records persisted before #413 deserialize as `legacy_player`, so the provider
+// stub drops the `input_context` key to produce a player-owned hand without
+// adding a test switch to the product.
+async function markLegacyJobs(
+  page: Page,
+  jobIds: readonly string[],
+): Promise<void> {
+  const response = await page.request.post(
+    `${PROVIDER_URL}/control/legacy-jobs`,
+    { data: { job_ids: jobIds } },
+  );
+  expect(response.ok()).toBe(true);
+}
+
+// The workspace serves its cached processing snapshot while the session is
+// marked synced, so a record the provider stub rewrote behind the app's back is
+// only read again once those markers are gone.
+const QUEUE_REVALIDATION_FLAG = "poker-hero-e2e-force-queue-revalidation";
+
+async function forceQueueRevalidation(page: Page): Promise<void> {
+  await page.addInitScript((flag) => {
+    if (sessionStorage.getItem(flag) === null) {
+      return;
+    }
+    sessionStorage.removeItem(flag);
+    sessionStorage.removeItem("poker-training-processing-synced");
+    sessionStorage.removeItem("poker-training-history-synced");
+  }, QUEUE_REVALIDATION_FLAG);
+  await page.evaluate((flag) => {
+    sessionStorage.setItem(flag, "1");
+  }, QUEUE_REVALIDATION_FLAG);
+}
 
 async function openControlledApp(page: Page): Promise<string> {
   await page.goto("/");
@@ -229,7 +290,7 @@ test("keeps uploads and recommendations network-only and retryable", async ({
   page,
 }) => {
   await openControlledApp(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
+  await unlockAdministrativeAccess(page);
   await page.getByRole("button", { name: "Upload", exact: true }).click();
   const file = {
     name: "offline-retry.png",
@@ -253,6 +314,7 @@ test("keeps uploads and recommendations network-only and retryable", async ({
   ).toBeVisible();
   await expectProcessingRecoverySettled(page);
 
+  await unlockAdministrativeAccess(page);
   await page.getByRole("button", { name: "Upload", exact: true }).click();
   await page.getByLabel("Choose screenshots").setInputFiles(file);
   const uploaded = page.waitForResponse(
@@ -262,7 +324,15 @@ test("keeps uploads and recommendations network-only and retryable", async ({
       response.ok(),
   );
   await page.getByRole("button", { name: "Upload and parse" }).click();
-  const uploadedJob = (await uploaded).json() as Promise<{ id: string }>;
+  const uploadedJob = (await (await uploaded).json()) as { id: string };
+  // Administrative test inputs never request recommendations, so the upload is
+  // reloaded as a legacy player record before the retry is exercised.
+  await markLegacyJobs(page, [uploadedJob.id]);
+  await forceQueueRevalidation(page);
+  await page.goto(`/analyzer/jobs/${uploadedJob.id}`);
+  await expect(
+    page.getByRole("region", { name: "Analyzer controls" }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Approve state" }),
   ).toBeEnabled();
@@ -281,7 +351,7 @@ test("keeps uploads and recommendations network-only and retryable", async ({
     await context.setOffline(false);
   }
   await expireUncertainProcessingRecovery(page);
-  await page.goto(`/analyzer/jobs/${(await uploadedJob).id}`);
+  await page.goto(`/analyzer/jobs/${uploadedJob.id}`);
 
   await expectProcessingRecoverySettled(page);
   await expect(recommendationButton).toBeEnabled({ timeout: 10_000 });
@@ -302,6 +372,7 @@ test("keeps a waiting update blocked while an upload is active", async ({
   page,
 }) => {
   await openControlledApp(page);
+  await unlockAdministrativeAccess(page);
   await installWaitingUpdate(page);
   await expect(
     page.getByRole("button", { name: "Reload update" }),
@@ -353,6 +424,7 @@ test("requires fresh confirmation when a draft changes during activation", async
   page,
 }) => {
   await openControlledApp(page);
+  await unlockAdministrativeAccess(page);
   const filename = "dirty-update.png";
   await page.getByRole("button", { name: "Upload", exact: true }).click();
   const fileInput = page.getByLabel("Choose screenshots");
@@ -389,6 +461,7 @@ test("requires fresh confirmation when a draft changes during activation", async
   await page.getByRole("button", { name: "Discard and reload" }).click();
 
   await expect(page).toHaveURL(/\/analyzer$/);
+  await unlockAdministrativeAccess(page);
   await page.getByRole("button", { name: "Upload", exact: true }).click();
   await expect(page.getByLabel("Choose screenshots")).toHaveValue("");
   expect(dialogs).toEqual(["confirm", "confirm"]);

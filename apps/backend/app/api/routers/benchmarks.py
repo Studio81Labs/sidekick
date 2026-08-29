@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.application.benchmarks import BenchmarkService
+from app.api.administrative_access import require_administrator
 from app.api.dependencies import (
     BACKGROUND_TASK_STATE_KEY,
     BenchmarkConfigurationError,
@@ -128,7 +129,14 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             max_length=128,
             pattern=BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
         ),
+        authorization: str | None = Header(
+            default=None,
+            alias="Authorization",
+            include_in_schema=False,
+        ),
     ) -> BenchmarkDatasetImportResult:
+        require_administrator(runtime.authorize_administrator(authorization))
+
         archive_bytes = await file.read(runtime.max_dataset_upload_bytes + 1)
         if len(archive_bytes) > runtime.max_dataset_upload_bytes:
             raise HTTPException(

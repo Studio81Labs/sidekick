@@ -13,6 +13,7 @@ export interface PipelineSelection {
 }
 
 export interface PipelineCapabilities {
+  administrative_ocr_test: { enabled: boolean };
   defaults: PipelineSelection;
   parser_providers: PipelineOption[];
   parser_layout_profiles: PipelineOption[];

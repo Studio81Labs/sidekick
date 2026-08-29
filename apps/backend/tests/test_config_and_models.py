@@ -384,6 +384,63 @@ def test_settings_normalizes_and_validates_proxy_shared_secret() -> None:
         Settings(proxy_shared_secret="too-short")
 
 
+def test_settings_default_to_disabled_administrative_ocr_test_mode(tmp_path: Path) -> None:
+    settings = Settings(data_dir=tmp_path)
+
+    assert settings.admin_ocr_test_enabled is False
+    assert settings.admin_ocr_test_token is None
+
+
+def test_settings_require_token_when_administrative_ocr_test_mode_is_enabled(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValidationError, match="POKER_ADMIN_OCR_TEST_TOKEN is required"):
+        Settings(data_dir=tmp_path, admin_ocr_test_enabled=True)
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["short-token", "x" * 31, "has space " + "x" * 30, "tab\t" + "x" * 32, "ünïcode" + "x" * 30],
+)
+def test_settings_reject_weak_administrative_ocr_test_tokens(
+    tmp_path: Path,
+    token: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        Settings(
+            data_dir=tmp_path,
+            admin_ocr_test_enabled=True,
+            admin_ocr_test_token=token,
+        )
+
+
+def test_settings_normalize_and_mask_administrative_ocr_test_token(tmp_path: Path) -> None:
+    settings = Settings(
+        data_dir=tmp_path,
+        admin_ocr_test_enabled=True,
+        admin_ocr_test_token="  " + "a" * 40 + "  ",
+    )
+
+    assert settings.admin_ocr_test_token is not None
+    assert settings.admin_ocr_test_token.get_secret_value() == "a" * 40
+    assert "a" * 40 not in repr(settings)
+    assert Settings(data_dir=tmp_path, admin_ocr_test_token="   ").admin_ocr_test_token is None
+
+
+def test_settings_reject_administrative_ocr_test_token_reusing_proxy_secret(
+    tmp_path: Path,
+) -> None:
+    secret = "b" * 40
+
+    with pytest.raises(ValidationError, match="must differ from POKER_PROXY_SHARED_SECRET"):
+        Settings(
+            data_dir=tmp_path,
+            proxy_shared_secret=secret,
+            admin_ocr_test_enabled=True,
+            admin_ocr_test_token=secret,
+        )
+
+
 def test_settings_normalizes_and_masks_external_bearer_tokens() -> None:
     assert Settings(external_parser_bearer_token="").external_parser_bearer_token is None
     token = Settings(external_parser_bearer_token="  parser-token  ").external_parser_bearer_token

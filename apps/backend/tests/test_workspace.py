@@ -17,6 +17,7 @@ def create_job(store: FileJobStore, filename: str) -> JobRecord:
         image_bytes=b"image",
         parser_provider="mock",
         recommendation_provider="mock",
+        input_context="legacy_player",
     )
 
 

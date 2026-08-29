@@ -4,7 +4,13 @@ from threading import Event, Thread
 import pytest
 
 from app.storage.file_job_store import FileJobStore
-from api_test_support import APPROVED_STATE, approve_job, make_client, upload_job
+from api_test_support import (
+    APPROVED_STATE,
+    approve_job,
+    make_client,
+    mark_legacy_player,
+    upload_job,
+)
 
 
 def test_history_persists_only_explicitly_archived_ready_jobs(tmp_path: Path) -> None:
@@ -12,9 +18,10 @@ def test_history_persists_only_explicitly_archived_ready_jobs(tmp_path: Path) ->
     parsed_id = upload_job(client, filename="parsed.png").json()["id"]
     first_id = upload_job(client, filename="first.png").json()["id"]
     second_id = upload_job(client, filename="second.png").json()["id"]
+    mark_legacy_player(tmp_path, second_id)
     approve_job(client, first_id)
     approve_job(client, second_id)
-    client.post(f"/api/jobs/{second_id}/recommend")
+    assert client.post(f"/api/jobs/{second_id}/recommend").status_code == 200
 
     empty_history = client.get("/api/history")
     rejected = client.put("/api/history", json={"job_ids": [parsed_id]})
@@ -266,6 +273,8 @@ def test_history_searches_archived_poker_context_before_paging(
     client = make_client(tmp_path)
     matching_id = upload_job(client, filename="river-bluff.png").json()["id"]
     other_id = upload_job(client, filename="value-line.png").json()["id"]
+    mark_legacy_player(tmp_path, matching_id)
+    mark_legacy_player(tmp_path, other_id)
     matching_state = {
         **APPROVED_STATE,
         "hero_cards": [
@@ -276,7 +285,7 @@ def test_history_searches_archived_poker_context_before_paging(
     }
     approve_job(client, matching_id, matching_state)
     approve_job(client, other_id)
-    client.post(f"/api/jobs/{matching_id}/recommend")
+    assert client.post(f"/api/jobs/{matching_id}/recommend").status_code == 200
     client.post(f"/api/jobs/{other_id}/recommend")
     client.put(
         "/api/history",
@@ -321,6 +330,8 @@ def test_history_card_queries_do_not_match_recommendation_prose(
     client = make_client(tmp_path, recommendation_provider="rule_based")
     ace_spades_id = upload_job(client, filename="ace-spades.png").json()["id"]
     other_id = upload_job(client, filename="other-hand.png").json()["id"]
+    mark_legacy_player(tmp_path, ace_spades_id)
+    mark_legacy_player(tmp_path, other_id)
     ace_spades_state = {
         **APPROVED_STATE,
         "hero_cards": [

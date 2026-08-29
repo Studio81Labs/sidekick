@@ -7,7 +7,12 @@ from app.api.dependencies import (
     BackupsRuntime,
 )
 from app.api.routers.backups import create_backups_router
+from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
 from app.domain.backups import ApplicationBackupRestoreResult
+from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
+
+
+ADMIN_OCR_TEST_POLICY = AdminOcrTestAccessPolicy.for_token(ADMIN_OCR_TEST_TOKEN)
 
 
 def restore_result() -> ApplicationBackupRestoreResult:
@@ -37,6 +42,7 @@ def default_runtime() -> BackupsRuntime:
         max_upload_bytes=1024,
         export_backup=export_backup,
         restore_backup=restore_backup,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
 
 
@@ -63,12 +69,14 @@ def test_backups_router_streams_export_and_restores_uploaded_bytes() -> None:
         max_upload_bytes=1024,
         export_backup=export,
         restore_backup=restore,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     with make_client(runtime) as client:
         exported = client.get("/api/backups/export")
         restored = client.post(
             "/api/backups/restore",
             files={"file": ("backup.zip", b"restore archive", "application/zip")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
 
     assert exported.status_code == 200
@@ -93,12 +101,14 @@ def test_backups_router_rejects_oversize_upload_without_restoring() -> None:
         max_upload_bytes=3,
         export_backup=export_backup,
         restore_backup=should_not_restore,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
 
     with make_client(runtime) as client:
         response = client.post(
             "/api/backups/restore",
             files={"file": ("backup.zip", b"four", "application/zip")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
 
     assert (response.status_code, response.json()) == (
@@ -119,12 +129,14 @@ def test_backups_router_accepts_upload_at_exact_size_limit() -> None:
         max_upload_bytes=4,
         export_backup=export_backup,
         restore_backup=restore,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
 
     with make_client(runtime) as client:
         response = client.post(
             "/api/backups/restore",
             files={"file": ("backup.zip", b"four", "application/zip")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
 
     assert response.status_code == 200
@@ -142,12 +154,14 @@ def test_backups_router_maps_typed_transport_errors() -> None:
         max_upload_bytes=1024,
         export_backup=unavailable_export,
         restore_backup=invalid_restore,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     with make_client(runtime) as client:
         export_response = client.get("/api/backups/export")
         restore_response = client.post(
             "/api/backups/restore",
             files={"file": ("backup.zip", b"invalid", "application/zip")},
+            headers=ADMIN_OCR_TEST_HEADERS,
         )
 
     assert (export_response.status_code, export_response.json()) == (
@@ -158,6 +172,72 @@ def test_backups_router_maps_typed_transport_errors() -> None:
         400,
         {"detail": "Backup archive is invalid"},
     )
+
+
+def test_backups_router_refuses_restore_without_the_administrator_credential() -> None:
+    restore_calls: list[bytes] = []
+
+    def should_not_restore(archive_bytes: bytes) -> ApplicationBackupRestoreResult:
+        restore_calls.append(archive_bytes)
+        return restore_result()
+
+    def runtime_deciding(decision: str) -> BackupsRuntime:
+        return BackupsRuntime(
+            max_upload_bytes=1024,
+            export_backup=export_backup,
+            restore_backup=should_not_restore,
+            authorize_administrator=lambda _authorization_header: decision,
+        )
+
+    with make_client(runtime_deciding("disabled")) as client:
+        disabled = client.post(
+            "/api/backups/restore",
+            files={"file": ("backup.zip", b"restore archive", "application/zip")},
+            headers=ADMIN_OCR_TEST_HEADERS,
+        )
+    with make_client() as client:
+        missing = client.post(
+            "/api/backups/restore",
+            files={"file": ("backup.zip", b"restore archive", "application/zip")},
+        )
+    with make_client(runtime_deciding("expired")) as client:
+        unexpected = client.post(
+            "/api/backups/restore",
+            files={"file": ("backup.zip", b"restore archive", "application/zip")},
+            headers=ADMIN_OCR_TEST_HEADERS,
+        )
+
+    assert (disabled.status_code, disabled.json()) == (
+        403,
+        {"detail": "Administrative OCR test mode is disabled"},
+    )
+    assert (missing.status_code, missing.json()) == (
+        401,
+        {"detail": "Administrative OCR test authorization is required"},
+    )
+    assert missing.headers["WWW-Authenticate"] == "Bearer"
+    assert (unexpected.status_code, unexpected.json()) == (
+        403,
+        {"detail": "Administrative OCR test authorization was refused"},
+    )
+    assert restore_calls == []
+
+
+def test_backups_router_denies_before_reading_an_oversize_archive() -> None:
+    runtime = BackupsRuntime(
+        max_upload_bytes=4,
+        export_backup=export_backup,
+        restore_backup=restore_backup,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
+    )
+
+    with make_client(runtime) as client:
+        response = client.post(
+            "/api/backups/restore",
+            files={"file": ("backup.zip", b"far too large", "application/zip")},
+        )
+
+    assert response.status_code == 401
 
 
 def test_backups_router_preserves_public_openapi_contract() -> None:

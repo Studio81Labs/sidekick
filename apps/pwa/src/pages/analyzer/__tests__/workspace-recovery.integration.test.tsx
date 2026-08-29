@@ -13,7 +13,7 @@ import {
   canonicalState,
   deferredResponse,
   detectedState,
-  disableAutomation,
+  unlockAdministrativeAccess,
   fetchMock,
   jobRecord,
   jsonResponse,
@@ -2583,7 +2583,7 @@ describe("Analyzer workspace recovery", () => {
     const firstRender = render(<App />);
     const user = userEvent.setup();
 
-    await disableAutomation(user);
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(
       screen.getByLabelText("Choose screenshots"),
@@ -2668,7 +2668,7 @@ describe("Analyzer workspace recovery", () => {
     const firstRender = render(<App />);
     const user = userEvent.setup();
 
-    await disableAutomation(user);
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(
       screen.getByLabelText("Choose screenshots"),
@@ -2718,6 +2718,7 @@ describe("Analyzer workspace recovery", () => {
     render(<App />);
     const user = userEvent.setup();
 
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(screen.getByLabelText("Choose screenshots"), [
       new File(["first"], "batch-first.png", { type: "image/png" }),
@@ -2737,13 +2738,13 @@ describe("Analyzer workspace recovery", () => {
     ).toEqual([
       {
         requestId: expect.any(String),
-        target: "recommended",
-        recommendationRequestId: expect.any(String),
+        target: "parsed",
+        recommendationRequestId: null,
       },
       {
         requestId: expect.any(String),
-        target: "recommended",
-        recommendationRequestId: expect.any(String),
+        target: "parsed",
+        recommendationRequestId: null,
       },
     ]);
 
@@ -2755,7 +2756,7 @@ describe("Analyzer workspace recovery", () => {
     });
     expect(
       await screen.findByText(
-        "2 screenshots need attention. Check the highlighted queue items.",
+        "2 screenshots need attention. Check the failed queue items.",
       ),
     ).toBeInTheDocument();
   });
@@ -2774,6 +2775,7 @@ describe("Analyzer workspace recovery", () => {
     const firstRender = render(<App />);
     const user = userEvent.setup();
 
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(
       screen.getByLabelText("Choose screenshots"),
@@ -2816,8 +2818,8 @@ describe("Analyzer workspace recovery", () => {
     expect(retainedLease.expectedUploads).toEqual([
       {
         requestId: expect.any(String),
-        target: "recommended",
-        recommendationRequestId: expect.any(String),
+        target: "parsed",
+        recommendationRequestId: null,
       },
     ]);
   });
@@ -4374,7 +4376,7 @@ describe("Analyzer workspace recovery", () => {
           { credentials: "include" },
         ),
       );
-      await disableAutomation(user);
+      await unlockAdministrativeAccess(user);
       await switchToUploadMode(user);
       await user.upload(
         screen.getByLabelText("Choose screenshots"),
@@ -4444,7 +4446,7 @@ describe("Analyzer workspace recovery", () => {
     const user = userEvent.setup();
 
     expect(fetchMock()).not.toHaveBeenCalled();
-    await disableAutomation(user);
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(
       screen.getByLabelText("Choose screenshots"),

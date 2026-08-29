@@ -153,15 +153,18 @@ describe("benchmark API adapter", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(importResult));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(importBenchmarkDataset(file, "request-1")).resolves.toEqual(
-      importResult,
-    );
+    await expect(
+      importBenchmarkDataset(file, "request-1", "administrator-token"),
+    ).resolves.toEqual(importResult);
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/api/benchmarks/import",
       expect.objectContaining({
         method: "POST",
-        headers: { "X-Benchmark-Import-Request-ID": "request-1" },
+        headers: {
+          Authorization: "Bearer administrator-token",
+          "X-Benchmark-Import-Request-ID": "request-1",
+        },
         credentials: "include",
       }),
     );

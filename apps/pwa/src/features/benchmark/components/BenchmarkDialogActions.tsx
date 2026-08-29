@@ -11,6 +11,7 @@ import {
 import type { PipelineSelection } from "../../../shared/types/pipeline";
 
 export interface BenchmarkDialogActionsProps {
+  administrativeUnlocked: boolean;
   closeDisabled: boolean;
   datasetExportDisabled: boolean;
   datasetInputRef: Ref<HTMLInputElement>;
@@ -29,6 +30,7 @@ export interface BenchmarkDialogActionsProps {
 }
 
 export function BenchmarkDialogActions({
+  administrativeUnlocked,
   closeDisabled,
   datasetExportDisabled,
   datasetInputRef,
@@ -43,6 +45,10 @@ export function BenchmarkDialogActions({
   running,
   targetLayoutLabel,
 }: BenchmarkDialogActionsProps) {
+  // Dataset import writes ground truth, so the server requires the same
+  // administrator credential the upload path uses.
+  const datasetImportDisabled = operationsLocked || !administrativeUnlocked;
+
   return (
     <DialogFooter className="benchmark-dialog-footer">
       <span>
@@ -54,7 +60,7 @@ export function BenchmarkDialogActions({
         variant="secondary"
         className="benchmark-dataset-action"
         onClick={onChooseDatasetImport}
-        disabled={operationsLocked}
+        disabled={datasetImportDisabled}
         aria-label="Import dataset"
         title="Import dataset"
       >
@@ -65,7 +71,7 @@ export function BenchmarkDialogActions({
         ref={datasetInputRef}
         accept=".zip,application/zip"
         aria-label="Parser dataset ZIP"
-        disabled={operationsLocked}
+        disabled={datasetImportDisabled}
         onChange={(event) => void onDatasetImport(event)}
       />
       <DownloadLinkControl
@@ -93,6 +99,11 @@ export function BenchmarkDialogActions({
       >
         Done
       </ButtonControl>
+      {administrativeUnlocked ? null : (
+        <p className="benchmark-dataset-lock-note">
+          Unlock administrator tools to import datasets.
+        </p>
+      )}
     </DialogFooter>
   );
 }

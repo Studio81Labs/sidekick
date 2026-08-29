@@ -25,6 +25,7 @@ const jobResponse = {
   error: null,
   id: "job/123",
   image_filename: "table.png",
+  input_context: "legacy_player",
   notes: null,
   original_filename: "table.png",
   parser_auto_approval_eligible: null,
@@ -106,7 +107,7 @@ describe("jobs API adapter", () => {
     const controller = new AbortController();
 
     await expect(
-      uploadScreenshot(file, "upload-1", controller.signal, {
+      uploadScreenshot(file, "upload-1", "secret-token", controller.signal, {
         parser_provider: "ocr_cv",
         parser_layout_profile: "fortuna_nations",
         recommendation_provider: "local_solver",
@@ -129,6 +130,21 @@ describe("jobs API adapter", () => {
     expect(form.get("parser_layout_profile")).toBe("fortuna_nations");
     expect(form.get("recommendation_provider")).toBe("local_solver");
     expect(form.get("recommendation_engine")).toBe("postflop_solver");
+  });
+
+  it("authorizes the upload with the administrative OCR test credential", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File(["screenshot"], "table.png", { type: "image/png" });
+
+    await uploadScreenshot(file, "upload-1", "secret-token");
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("Authorization")).toBe(
+      "Bearer secret-token",
+    );
+    expect(init.body).toBeInstanceOf(FormData);
+    expect((init.body as FormData).get("file")).toBe(file);
   });
 
   it("updates screenshot metadata through the shared transport", async () => {

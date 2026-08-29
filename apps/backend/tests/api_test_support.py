@@ -1,4 +1,5 @@
 import base64
+import json
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
@@ -16,6 +17,9 @@ VALID_PNG = (
         "AAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
     )
 )
+
+ADMIN_OCR_TEST_TOKEN = "test-administrative-ocr-token-0123456789abcdef"
+ADMIN_OCR_TEST_HEADERS = {"Authorization": f"Bearer {ADMIN_OCR_TEST_TOKEN}"}
 
 APPROVED_STATE = {
     "hero_cards": [{"rank": "A", "suit": "hearts"}, {"rank": "K", "suit": "diamonds"}],
@@ -42,6 +46,8 @@ def make_client(tmp_path: Path, **settings_overrides: object) -> TestClient:
         "data_dir": tmp_path,
         "parser_provider": "mock",
         "recommendation_provider": "mock",
+        "admin_ocr_test_enabled": True,
+        "admin_ocr_test_token": ADMIN_OCR_TEST_TOKEN,
     }
     settings_values.update(settings_overrides)
     app = create_app(Settings(**settings_values))
@@ -64,6 +70,7 @@ def upload_job(
         "/api/jobs",
         files={"file": (filename, content, content_type)},
         data=data,
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
 
 
@@ -86,11 +93,67 @@ def upload_job_with_pipeline(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         data=data,
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
 
 
 def approve_job(client: TestClient, job_id: str, state: dict[str, object] | None = None):
     return client.post(f"/api/jobs/{job_id}/approve", json=state or APPROVED_STATE)
+
+
+def import_benchmark_dataset(
+    client: TestClient,
+    archive_bytes: bytes,
+    *,
+    request_id: str | None = None,
+    headers: dict[str, str] | None = None,
+):
+    """Post a parser dataset archive with the administrator credential.
+
+    Dataset import mints administrative test jobs, so it shares the upload
+    boundary's bearer. Pass `headers={}` to exercise the unauthenticated path.
+    """
+    request_headers = dict(ADMIN_OCR_TEST_HEADERS if headers is None else headers)
+    if request_id is not None:
+        request_headers["X-Benchmark-Import-Request-ID"] = request_id
+    return client.post(
+        "/api/benchmarks/import",
+        files={"file": ("dataset.zip", archive_bytes, "application/zip")},
+        headers=request_headers,
+    )
+
+
+def restore_application_backup(
+    client: TestClient,
+    archive_bytes: bytes,
+    *,
+    headers: dict[str, str] | None = None,
+):
+    """Post an application backup archive with the administrator credential.
+
+    Restore can re-persist screenshots captured before the boundary, so it
+    shares the upload bearer. Pass `headers={}` for the unauthenticated path.
+    """
+    return client.post(
+        "/api/backups/restore",
+        files={"file": ("backup.zip", archive_bytes, "application/zip")},
+        headers=dict(ADMIN_OCR_TEST_HEADERS if headers is None else headers),
+    )
+
+
+def mark_legacy_player(data_dir: Path, job_id: str) -> None:
+    """Re-persist a stored job as a player-captured record.
+
+    Screenshot upload is an administrator-only OCR test surface since #413, so
+    every uploaded job is an administrative test input that may not feed
+    recommendations or training. Tests that exercise the player learning paths
+    reproduce a record captured before that boundary instead of relaxing the
+    denial.
+    """
+    path = data_dir / "jobs" / job_id / "job.json"
+    payload = json.loads(path.read_text())
+    payload["input_context"] = "legacy_player"
+    path.write_text(json.dumps(payload))
 
 
 def load_only_job(tmp_path: Path):

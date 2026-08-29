@@ -1,0 +1,36 @@
+.administrative-test-banner {
+  align-items: center;
+  background: rgba(192, 129, 55, 0.1);
+  border: 1px solid rgba(192, 129, 55, 0.35);
+  border-radius: 10px;
+  color: var(--accent-dark);
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.administrative-test-banner-copy {
+  display: grid;
+  flex: 1 1 auto;
+  gap: 2px;
+  min-width: 0;
+}
+
+.administrative-test-banner-copy strong {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.administrative-test-banner-copy p {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0;
+}
+
+.administrative-test-banner .button-control {
+  flex: 0 0 auto;
+  font-size: 11px;
+  min-height: 30px;
+  padding: 6px 10px;
+}

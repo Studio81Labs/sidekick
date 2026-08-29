@@ -105,3 +105,9 @@
   opacity: 0.5;
   pointer-events: none;
 }
+
+.data-recovery-lock-note {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 8px 0 0;
+}

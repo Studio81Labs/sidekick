@@ -18,12 +18,17 @@ export function toApplicationBackupRestoreResult(
 
 export async function restoreApplicationBackup(
   file: File,
+  administratorToken: string,
 ): Promise<ApplicationBackupRestoreResult> {
   const form = new FormData();
   form.append("file", file);
   const response = await requestJson<ApplicationBackupRestoreResponse>(
     "/api/backups/restore",
-    { method: "POST", body: form },
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${administratorToken}` },
+      body: form,
+    },
   );
   return toApplicationBackupRestoreResult(response);
 }

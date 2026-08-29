@@ -126,6 +126,7 @@ export async function runParserBenchmark(
 export async function importBenchmarkDataset(
   file: File,
   requestId: string,
+  administratorToken: string,
 ): Promise<BenchmarkDatasetImportResult> {
   const form = new FormData();
   form.append("file", file);
@@ -133,7 +134,10 @@ export async function importBenchmarkDataset(
     "/api/benchmarks/import",
     {
       method: "POST",
-      headers: { "X-Benchmark-Import-Request-ID": requestId },
+      headers: {
+        Authorization: `Bearer ${administratorToken}`,
+        "X-Benchmark-Import-Request-ID": requestId,
+      },
       body: form,
     },
   );

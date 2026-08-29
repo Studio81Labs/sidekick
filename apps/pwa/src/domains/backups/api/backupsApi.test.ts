@@ -35,7 +35,7 @@ describe("backup API adapter", () => {
     );
   });
 
-  it("uploads the selected ZIP as multipart form data", async () => {
+  it("uploads the selected ZIP as multipart form data under the administrator credential", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse(restoreResponse));
@@ -44,13 +44,17 @@ describe("backup API adapter", () => {
       type: "application/zip",
     });
 
-    await expect(restoreApplicationBackup(file)).resolves.toEqual(
-      restoreResponse,
-    );
+    await expect(
+      restoreApplicationBackup(file, "administrator-token"),
+    ).resolves.toEqual(restoreResponse);
 
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/api/backups/restore",
-      expect.objectContaining({ method: "POST", credentials: "include" }),
+      expect.objectContaining({
+        method: "POST",
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      }),
     );
     const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
     expect(form.get("file")).toBe(file);

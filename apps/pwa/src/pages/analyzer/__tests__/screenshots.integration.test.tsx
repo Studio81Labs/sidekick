@@ -6,7 +6,7 @@ import {
   AnalyzerTestApp as App,
   approvedJob,
   deferredResponse,
-  disableAutomation,
+  unlockAdministrativeAccess,
   fetchMock,
   jobRecord,
   jsonResponse,
@@ -774,7 +774,7 @@ describe("Analyzer screenshot management", () => {
     render(<App />);
     const user = userEvent.setup();
 
-    await disableAutomation(user);
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(
       screen.getByLabelText("Choose screenshots"),
@@ -1135,6 +1135,7 @@ describe("Analyzer screenshot management", () => {
                 unavailable_reason: null,
               },
             ],
+            administrative_ocr_test: { enabled: false },
             recommendation_engines: [],
           }),
         );

@@ -1,6 +1,34 @@
 {
   "components": {
     "schemas": {
+      "AdminOcrTestSession": {
+        "description": "Server confirmation that a presented administrator credential is valid.",
+        "properties": {
+          "authorized": {
+            "title": "Authorized",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": ["enabled", "authorized"],
+        "title": "AdminOcrTestSession",
+        "type": "object"
+      },
+      "AdministrativeOcrTestCapability": {
+        "description": "Whether this deployment enables the administrator-only OCR test surface.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": ["enabled"],
+        "title": "AdministrativeOcrTestCapability",
+        "type": "object"
+      },
       "ApplicationBackupRestoreResult": {
         "properties": {
           "imported_benchmark_reports": {
@@ -1542,6 +1570,12 @@
             "title": "Image Filename",
             "type": "string"
           },
+          "input_context": {
+            "default": "legacy_player",
+            "enum": ["legacy_player", "administrative_test"],
+            "title": "Input Context",
+            "type": "string"
+          },
           "notes": {
             "anyOf": [
               {
@@ -1908,6 +1942,9 @@
       },
       "PipelineCapabilities": {
         "properties": {
+          "administrative_ocr_test": {
+            "$ref": "#/components/schemas/AdministrativeOcrTestCapability"
+          },
           "defaults": {
             "$ref": "#/components/schemas/PipelineSelection"
           },
@@ -1956,7 +1993,8 @@
           "parser_layout_profiles",
           "parser_layout_compatibility",
           "recommendation_providers",
-          "recommendation_engines"
+          "recommendation_engines",
+          "administrative_ocr_test"
         ],
         "title": "PipelineCapabilities",
         "type": "object"
@@ -3324,6 +3362,34 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/admin/ocr-test/session": {
+      "get": {
+        "operationId": "admin_ocr_test_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOcrTestSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Admin Ocr Test Session"
+      }
+    },
     "/api/backups/export": {
       "get": {
         "operationId": "backups_export",

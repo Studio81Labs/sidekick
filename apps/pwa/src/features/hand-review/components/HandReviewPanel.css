@@ -13,6 +13,12 @@
   text-transform: uppercase;
 }
 
+.panel-header-status {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+}
+
 .review-column {
   display: flex;
   flex-direction: column;
@@ -52,10 +58,18 @@
   margin-left: 0;
 }
 
+.review-hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin: 0;
+  padding: 0 18px 12px;
+}
+
 @media (max-width: 1180px) {
   .panel-header,
   .review-scroll,
-  .review-actions {
+  .review-actions,
+  .review-hint {
     padding-left: 12px;
     padding-right: 12px;
   }

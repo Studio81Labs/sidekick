@@ -12,6 +12,11 @@ from fastapi.testclient import TestClient
 from app.bootstrap import create_app
 from app.config import Settings
 from app.storage.file_job_store import FileJobStore
+from api_test_support import (
+    ADMIN_OCR_TEST_HEADERS,
+    ADMIN_OCR_TEST_TOKEN,
+    mark_legacy_player,
+)
 
 
 VALID_PNG = base64.b64decode(
@@ -71,15 +76,18 @@ def external_solver_service() -> Iterator[tuple[str, list[dict[str, Any]]]]:
 
 def create_approved_job(
     client: TestClient,
+    data_dir: Path,
     *,
     opponents_at_current_bet: int | None = None,
 ) -> str:
     upload = client.post(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
     assert upload.status_code == 201
     job = upload.json()
+    mark_legacy_player(data_dir, job["id"])
     approved_state = {
         **job["parser_result"]["state"],
         "user_approved": True,
@@ -103,10 +111,12 @@ def test_local_solver_subprocess_completes_api_recommendation(
         parser_provider="mock",
         recommendation_provider="local_solver",
         local_solver_engine="local_ev",
+        admin_ocr_test_enabled=True,
+        admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
     )
 
     with TestClient(create_app(settings)) as client:
-        job_id = create_approved_job(client, opponents_at_current_bet=1)
+        job_id = create_approved_job(client, tmp_path, opponents_at_current_bet=1)
         response = client.post(f"/api/jobs/{job_id}/recommend")
 
     assert response.status_code == 200
@@ -132,10 +142,12 @@ def test_external_solver_http_service_completes_api_recommendation(
         recommendation_provider="external_solver",
         external_provider_url=service_url,
         external_request_timeout_seconds=5,
+        admin_ocr_test_enabled=True,
+        admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
     )
 
     with TestClient(create_app(settings)) as client:
-        job_id = create_approved_job(client)
+        job_id = create_approved_job(client, tmp_path)
         response = client.post(f"/api/jobs/{job_id}/recommend")
 
     assert response.status_code == 200

@@ -709,6 +709,13 @@
   margin-left: 0;
 }
 
+.benchmark-dataset-lock-note {
+  color: var(--muted);
+  flex: 1 0 100%;
+  font-size: 12px;
+  margin: 0;
+}
+
 .benchmark-dialog-footer > .benchmark-dataset-action {
   align-items: center;
   border: 1px solid var(--line);

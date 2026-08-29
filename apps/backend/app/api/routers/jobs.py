@@ -13,7 +13,9 @@ from fastapi import (
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
+from app.api.administrative_access import require_administrator
 from app.api.dependencies import (
+    JobInputContextError,
     JobMutationConflictError,
     JobRecommendationConfigurationError,
     JobRecommendationInputError,
@@ -79,7 +81,7 @@ def create_jobs_router(runtime: JobQueryService) -> APIRouter:
 
 
 def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
-    """Build the multipart processing-job upload router."""
+    """Build the multipart processing-job upload router (administrative OCR test surface)."""
 
     router = APIRouter()
 
@@ -121,7 +123,14 @@ def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
             max_length=64,
             pattern=r"^[a-z0-9_]+$",
         ),
+        authorization: str | None = Header(
+            default=None,
+            alias="Authorization",
+            include_in_schema=False,
+        ),
     ) -> JobRecord:
+        require_administrator(runtime.authorize_administrator(authorization))
+
         pipeline_request = JobUploadPipelineRequest(
             parser_provider=parser_provider,
             parser_layout_profile=parser_layout_profile,
@@ -220,6 +229,8 @@ def create_job_mutations_router(runtime: JobMutationService) -> APIRouter:
     ) -> JobRecord:
         try:
             return runtime.record_training_decision(job_id, decision)
+        except JobInputContextError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except JobTransportNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except JobMutationConflictError as exc:
@@ -252,6 +263,8 @@ def create_job_recommendation_router(
     ) -> JobRecord:
         try:
             return runtime.recommend(job_id, recommendation_request_id)
+        except JobInputContextError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except JobTransportNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except JobMutationConflictError as exc:

@@ -49,6 +49,10 @@ class JobMutationConflictError(Exception):
     """A requested job mutation conflicts with its current persisted state."""
 
 
+class JobInputContextError(Exception):
+    """The job's input context forbids the requested transition."""
+
+
 class JobUploadInputError(Exception):
     """An uploaded image or pipeline selection is not valid for processing."""
 

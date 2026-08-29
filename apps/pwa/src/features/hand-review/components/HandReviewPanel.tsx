@@ -4,6 +4,8 @@ import "./HandReviewPanel.css";
 
 import { ButtonControl } from "../../../shared/components/FormControls";
 import { HandStateEditor, type HandStateEditorProps } from "./HandStateEditor";
+import { isAdministrativeTestJob } from "../../../shared/lib/jobInputContext";
+import { JobInputContextBadge } from "../../../shared/components/JobInputContextBadge";
 import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
 import type { JobRecord } from "../../../shared/types/jobs";
 
@@ -34,7 +36,12 @@ export function HandReviewPanel({
     <section className="review-column" aria-label="Hand review">
       <div className="panel-header">
         <h2>Detected state</h2>
-        {job ? <JobStatusBadge status={job.status} /> : null}
+        {job ? (
+          <span className="panel-header-status">
+            <JobInputContextBadge job={job} />
+            <JobStatusBadge status={job.status} />
+          </span>
+        ) : null}
       </div>
 
       <div className="review-scroll">
@@ -71,6 +78,13 @@ export function HandReviewPanel({
           <RefreshCcw size={14} aria-hidden="true" />
         </ButtonControl>
       </div>
+      {job && isAdministrativeTestJob(job) ? (
+        <p className="review-hint">
+          {
+            "Administrative test inputs never request recommendations or enter training."
+          }
+        </p>
+      ) : null}
     </section>
   );
 }

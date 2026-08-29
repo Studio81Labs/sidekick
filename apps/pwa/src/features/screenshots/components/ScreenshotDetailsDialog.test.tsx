@@ -134,4 +134,24 @@ describe("ScreenshotDetailsDialog", () => {
       screen.queryByRole("button", { name: "Save details" }),
     ).not.toBeInTheDocument();
   });
+
+  it("marks an administrative test job and leaves a legacy job unmarked", () => {
+    const { rerender } = render(
+      <ScreenshotDetailsDialog
+        {...dialogProps({
+          job: jobRecord({ input_context: "administrative_test" }),
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByLabelText("Administrative OCR test input"),
+    ).toBeInTheDocument();
+
+    rerender(<ScreenshotDetailsDialog {...dialogProps()} />);
+
+    expect(
+      screen.queryByLabelText("Administrative OCR test input"),
+    ).not.toBeInTheDocument();
+  });
 });

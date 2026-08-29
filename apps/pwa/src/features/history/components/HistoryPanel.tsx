@@ -16,6 +16,7 @@ import {
   type HistoryItem,
   relativeTimeLabel,
 } from "../lib/historyPresentation";
+import { JobInputContextBadge } from "../../../shared/components/JobInputContextBadge";
 import { ScreenshotRailItem } from "../../../shared/components/ScreenshotRailItem";
 import { screenshotLabel } from "../../../shared/lib/screenshotPresentation";
 import { StateMessage } from "../../../shared/components/StateMessage";
@@ -184,10 +185,13 @@ export function HistoryPanel({
                       : relativeTimeLabel(item.savedAt)}
                   </small>
                 </span>
-                <span className="history-result">
-                  {item.job.recommendation
-                    ? `${Math.round(item.job.recommendation.confidence * 100)}%`
-                    : item.job.status.slice(0, 1).toUpperCase()}
+                <span className="history-status">
+                  <JobInputContextBadge density="compact" job={item.job} />
+                  <span className="history-result">
+                    {item.job.recommendation
+                      ? `${Math.round(item.job.recommendation.confidence * 100)}%`
+                      : item.job.status.slice(0, 1).toUpperCase()}
+                  </span>
                 </span>
               </ScreenshotRailItem>
             );
