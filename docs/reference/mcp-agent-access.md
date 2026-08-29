@@ -89,19 +89,13 @@ history, screenshots, pull requests, or chat transcripts.
 ## Tool surface
 
 Read access covers environment status, the processing queue, individual jobs,
-history search, training progress, and benchmark summaries. Staging write
-access covers reviewed-state approval, pre-reveal decision recording,
-educational recommendation requests, and lesson review for existing jobs.
+history search, and benchmark summaries. Staging write access covers only
+ground-truth approval for an existing job's reviewed state.
 
-The hosted endpoint does not accept a local image path. Upload screenshots in
-the Poker Hero UI first, then let the agent inspect or continue the resulting
-job. Backup restore, dataset import, benchmark execution, and bulk archival are
+The gateway does not accept a local image path. Upload screenshots in the
+Poker Hero UI first, then let the agent inspect or approve the resulting job.
+Backup restore, dataset import, benchmark execution, and bulk archival are
 not exposed.
-
-The local stdio gateway's screenshot upload tool now targets the administrative
-OCR test boundary and is denied unless the deployment enables that mode; the
-gateway does not carry the administrative token, so screenshot uploads are made
-through the PWA administrator tools instead.
 
 ## Incident containment
 

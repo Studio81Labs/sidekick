@@ -208,8 +208,10 @@ parent owns the decision and resulting write.
 Poker Hero / Sidekick is a post-hand Texas Hold'em training analyzer.
 
 It extracts table state from screenshots or other supported inputs, asks the
-user to verify uncertain fields, analyzes the approved hand state, and returns
-educational recommendations through configurable providers.
+user to verify uncertain fields, and requires the reviewed state to be
+explicitly approved as ground truth. Recommendations are produced only by the
+offline recommendation benchmark until the V2 learning loop replaces this
+surface.
 
 Current primary technologies:
 

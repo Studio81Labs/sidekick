@@ -77,15 +77,17 @@ against representative screenshots, set `POKER_ADMIN_OCR_TEST_ENABLED=true` and
 a dedicated `POKER_ADMIN_OCR_TEST_TOKEN` (`openssl rand -hex 32`; at least 32
 printable ASCII characters, never equal to `POKER_PROXY_SHARED_SECRET`). The
 backend requires that token as `Authorization: Bearer ...` on every upload,
-every benchmark dataset import, and every backup restore, and marks the
-resulting jobs as administrative test inputs, which cannot request
-recommendations, record training decisions, or enter training progress. Enter
-the token only in the PWA **Administrator tools** dialog; it stays in browser
-memory until locked or reloaded. The PWA verifies the token with the backend
+every benchmark dataset import, and every backup restore. Enter the token
+only in the PWA **Administrator tools** dialog; it stays in browser memory
+until locked or reloaded. The PWA verifies the token with the backend
 through `GET /api/admin/ocr-test/session` before it unlocks any capture control.
 Rollback is `POKER_ADMIN_OCR_TEST_ENABLED=false`, which also disables dataset
 import and backup restore until the mode is enabled again; no setting restores
 player-accessible capture or automatic recommendations.
+
+This release removes the V1 recommendation and training routes and the
+"recommended" job status; reset the staging `POKER_DATA_DIR` (or delete jobs
+in that status) before deploying, because no migration is provided.
 
 After deployment, verify:
 
@@ -124,12 +126,10 @@ access can use `POKER_MCP_API_PROXY_SECRET` only from a trusted gateway process;
 the value matches `POKER_PROXY_SHARED_SECRET` but remains an internal service
 credential, not agent identity. All credential-bearing targets require HTTPS.
 
-Screenshot submission accepts only resolved files below
-`POKER_MCP_IMAGE_ROOT`; enabling writes without explicitly setting that variable
-fails closed. Use a directory dedicated to completed-hand screenshots rather
-than the workspace or a home-directory root. The gateway deliberately does not
-expose backup restore, dataset import, benchmark execution, or bulk archive
-operations.
+The gateway's only staging write tool approves a reviewed hand's canonical
+state (`approve_hand_state`); screenshots must be uploaded through the app.
+The gateway deliberately does not expose backup restore, dataset import,
+benchmark execution, or bulk archive operations.
 
 ## Hosted Agent MCP Access
 
@@ -248,10 +248,10 @@ python -m app.backup_cli export /app/backups --retain 14
 ```
 
 The command prints the absolute archive path on success. It waits for live API
-mutations to finish and exits nonzero if persisted active parsing or
-recommendation work or a resumable benchmark import still prevents a consistent
-export. Configure the scheduler to alert on a nonzero exit and retry later; do
-not delete the last known-good off-host archive after a failed run. Retention
+mutations to finish and exits nonzero if persisted active parsing work or a
+resumable benchmark import still prevents a consistent export. Configure the
+scheduler to alert on a nonzero exit and retry later; do not delete the last
+known-good off-host archive after a failed run. Retention
 only removes older files created with Poker Hero's timestamped backup filename
 pattern.
 
@@ -366,7 +366,7 @@ curl --fail https://<pwa-origin>/manifest.webmanifest | jq '{id, scope, start_ur
 and missing asset responses—including an HTML SPA fallback—must revalidate. In
 Chromium DevTools, confirm the worker scope is the complete origin, launch once
 online, then disable the network and open another application route. The shell
-and offline notice must render, while an upload and recommendation fail visibly
+and offline notice must render, while an upload and approval fail visibly
 and can be retried after reconnecting.
 Also simulate an unreachable PWA origin while retaining another working network
 connection; the manifest reachability probe must show the same notice even when
