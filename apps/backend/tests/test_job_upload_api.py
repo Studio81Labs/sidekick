@@ -13,7 +13,6 @@ from api_test_support import (
     approve_job,
     load_only_job,
     make_client,
-    mark_legacy_player,
     upload_job,
 )
 
@@ -24,8 +23,6 @@ def test_app_startup_recovers_interrupted_parser_job(tmp_path: Path) -> None:
         original_filename="interrupted-parser.png",
         image_bytes=VALID_PNG,
         parser_provider="mock",
-        recommendation_provider="mock",
-        input_context="administrative_test",
     )
 
     restarted_client = make_client(tmp_path)
@@ -33,7 +30,6 @@ def test_app_startup_recovers_interrupted_parser_job(tmp_path: Path) -> None:
     recovered_response = restarted_client.get(f"/api/jobs/{interrupted_job.id}")
     assert recovered_response.status_code == 200
     recovered_job = recovered_response.json()
-    assert recovered_job["recommendation_pending"] is False
     assert recovered_job["status"] == "error"
     assert recovered_job["error"] == (
         "Parsing was interrupted by a backend restart; upload the screenshot again"
@@ -144,15 +140,9 @@ def test_metadata_update_during_active_parser_is_preserved(
     assert persisted.tags == ["turn", "bluff"]
 
 
-@pytest.mark.parametrize(
-    ("complete_recommendation", "expected_status"),
-    [(False, "approved"), (True, "recommended")],
-)
 def test_late_parser_failure_preserves_newer_approved_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    complete_recommendation: bool,
-    expected_status: str,
 ) -> None:
     parse_started = Event()
     release_parse = Event()
@@ -177,18 +167,10 @@ def test_late_parser_failure_preserves_newer_approved_state(
     upload_thread.start()
     assert parse_started.wait(timeout=2)
     job_id = FileJobStore(tmp_path).list()[0].id
-    mark_legacy_player(tmp_path, job_id)
 
     try:
         approved = approve_job(client, job_id)
-        recommendation = (
-            client.post(f"/api/jobs/{job_id}/recommend")
-            if complete_recommendation
-            else None
-        )
         assert approved.status_code == 200
-        if recommendation is not None:
-            assert recommendation.status_code == 200
     finally:
         release_parse.set()
         upload_thread.join(timeout=5)
@@ -196,10 +178,9 @@ def test_late_parser_failure_preserves_newer_approved_state(
     assert not upload_thread.is_alive()
     assert responses["upload"].status_code == 502
     persisted = FileJobStore(tmp_path).get(job_id)
-    assert persisted.status == expected_status
+    assert persisted.status == "approved"
     assert persisted.error is None
     assert persisted.approved_state is not None
-    assert (persisted.recommendation is not None) is complete_recommendation
 
 
 def test_delete_during_active_parser_cancels_upload_without_resurrecting_job(

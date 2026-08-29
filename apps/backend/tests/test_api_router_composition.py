@@ -6,16 +6,12 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-import pytest
 
 from app.api.dependencies import (
     ApiRuntime,
     HistoryRuntime,
     JobImage,
     JobMutationConflictError,
-    JobRecommendationConfigurationError,
-    JobRecommendationInputError,
-    JobRecommendationProviderError,
     JobTransportNotFoundError,
     JobUploadConflictError,
     JobUploadInputError,
@@ -25,25 +21,20 @@ from app.api.dependencies import (
     JobUploadRequest,
     JobUploadUnexpectedParserError,
     JobsMutationRuntime,
-    JobsRecommendationRuntime,
     JobsReadRuntime,
     JobsUploadRuntime,
     McpAdminRuntime,
-    TrainingProgressQuery,
-    TrainingRuntime,
 )
 from app.api.dependencies import PipelineCapabilitiesUnavailableError
 from app.api.routers.health import create_health_router
 from app.api.routers.history import create_history_router
 from app.api.routers.jobs import (
     create_job_mutations_router,
-    create_job_recommendation_router,
     create_job_upload_router,
     create_jobs_router,
 )
 from app.api.routers.mcp_admin import create_mcp_admin_router
 from app.api.routers.pipeline import create_pipeline_router
-from app.api.routers.training import create_training_router
 from app.mcp_access import (
     CreateMcpPrincipalRequest,
     McpAccessConfig,
@@ -65,12 +56,6 @@ from app.domain.pipeline import (
     PipelineSelection,
 )
 from app.domain.poker import CanonicalState
-from app.domain.training import (
-    TrainingDecisionRequest,
-    TrainingProgress,
-    TrainingReviewRequest,
-)
-from app.domain.training.aggregation import summarize_training
 from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
 from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
 
@@ -82,14 +67,10 @@ def pipeline_capabilities() -> PipelineCapabilities:
         defaults=PipelineSelection(
             parser_provider="ocr_cv",
             parser_layout_profile="fortuna",
-            recommendation_provider="local_solver",
-            recommendation_engine="local_solver",
         ),
         parser_providers=[],
         parser_layout_profiles=[],
         parser_layout_compatibility={},
-        recommendation_providers=[],
-        recommendation_engines=[],
         administrative_ocr_test=AdministrativeOcrTestCapability(enabled=True),
     )
 
@@ -114,7 +95,6 @@ def job_record() -> JobRecord:
         original_filename="table.png",
         image_filename="table.png",
         parser_provider="ocr_cv",
-        recommendation_provider="local_solver",
     )
 
 
@@ -139,13 +119,6 @@ def default_jobs_mutation_runtime() -> JobsMutationRuntime:
         update_metadata=lambda _job_id, _metadata: job_record(),
         delete_job=lambda _job_id: None,
         approve_job=lambda _job_id, _state: job_record(),
-        record_training_decision=lambda _job_id, _decision: job_record(),
-    )
-
-
-def default_jobs_recommendation_runtime() -> JobsRecommendationRuntime:
-    return JobsRecommendationRuntime(
-        recommend=lambda _job_id, _request_id: job_record()
     )
 
 
@@ -155,43 +128,9 @@ def default_jobs_upload_runtime() -> JobsUploadRuntime:
         resolve_pipeline=lambda _request: PipelineSelection(
             parser_provider="ocr_cv",
             parser_layout_profile="fortuna",
-            recommendation_provider="local_solver",
-            recommendation_engine="local_solver",
         ),
         process_upload=lambda _request: job_record(),
         authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
-    )
-
-
-def training_progress(_query: TrainingProgressQuery) -> TrainingProgress:
-    return summarize_training([])
-
-
-def complete_training_review(
-    _job_id: str,
-    _review: TrainingReviewRequest | None,
-) -> JobRecord:
-    return job_record()
-
-
-def reopen_training_review(_job_id: str) -> JobRecord:
-    return job_record()
-
-
-def export_training_lessons(
-    _lesson_order: str,
-    _lesson_street: str | None,
-    _lesson_query: str | None,
-) -> tuple[str, str]:
-    return "# Poker Hero Lessons\n", "poker-hero-lessons-20260820T000000Z.md"
-
-
-def default_training_runtime() -> TrainingRuntime:
-    return TrainingRuntime(
-        complete_review=complete_training_review,
-        reopen_review=reopen_training_review,
-        get_progress=training_progress,
-        export_lessons=export_training_lessons,
     )
 
 
@@ -261,10 +200,8 @@ def make_client(
         lambda _request, _limit: job_history()
     ),
     mcp_admin_runtime: McpAdminRuntime | None = None,
-    training_runtime: TrainingRuntime | None = None,
     jobs_read_runtime: JobsReadRuntime | None = None,
     jobs_mutation_runtime: JobsMutationRuntime | None = None,
-    jobs_recommendation_runtime: JobsRecommendationRuntime | None = None,
     jobs_upload_runtime: JobsUploadRuntime | None = None,
 ) -> TestClient:
     runtime = ApiRuntime(
@@ -283,19 +220,11 @@ def make_client(
         create_mcp_admin_router(mcp_admin_runtime or default_mcp_admin_runtime())
     )
     app.include_router(
-        create_training_router(training_runtime or default_training_runtime())
-    )
-    app.include_router(
         create_jobs_router(jobs_read_runtime or default_jobs_read_runtime())
     )
     app.include_router(
         create_job_mutations_router(
             jobs_mutation_runtime or default_jobs_mutation_runtime()
-        )
-    )
-    app.include_router(
-        create_job_recommendation_router(
-            jobs_recommendation_runtime or default_jobs_recommendation_runtime()
         )
     )
     app.include_router(
@@ -502,8 +431,6 @@ def test_job_upload_router_delegates_defaults_and_all_form_values() -> None:
     selection = PipelineSelection(
         parser_provider="mock",
         parser_layout_profile="pokerstars",
-        recommendation_provider="external",
-        recommendation_engine="solver_v2",
     )
 
     def resolve_pipeline(request: JobUploadPipelineRequest) -> PipelineSelection:
@@ -542,8 +469,6 @@ def test_job_upload_router_delegates_defaults_and_all_form_values() -> None:
                 "upload_request_id": "upload-42",
                 "parser_provider": "mock",
                 "parser_layout_profile": "pokerstars",
-                "recommendation_provider": "external",
-                "recommendation_engine": "solver_v2",
             },
             headers=ADMIN_OCR_TEST_HEADERS,
         )
@@ -553,8 +478,8 @@ def test_job_upload_router_delegates_defaults_and_all_form_values() -> None:
         201,
     ]
     assert pipeline_requests == [
-        JobUploadPipelineRequest(None, None, None, None),
-        JobUploadPipelineRequest("mock", "pokerstars", "external", "solver_v2"),
+        JobUploadPipelineRequest(None, None),
+        JobUploadPipelineRequest("mock", "pokerstars"),
     ]
     assert upload_requests == [
         JobUploadRequest(
@@ -579,8 +504,6 @@ def test_job_upload_router_validates_each_form_field_without_delegating() -> Non
         resolve_pipeline=lambda _request: calls.append("pipeline") or PipelineSelection(
             parser_provider="ocr_cv",
             parser_layout_profile="fortuna",
-            recommendation_provider="local_solver",
-            recommendation_engine="local_solver",
         ),
         process_upload=lambda _request: calls.append("upload") or job_record(),
         authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
@@ -589,8 +512,6 @@ def test_job_upload_router_validates_each_form_field_without_delegating() -> Non
         {"upload_request_id": "invalid request"},
         {"parser_provider": "invalid-provider"},
         {"parser_layout_profile": "invalid-profile"},
-        {"recommendation_provider": "invalid-provider"},
-        {"recommendation_engine": "invalid-engine"},
     ]
 
     with make_client(jobs_upload_runtime=runtime) as client:
@@ -615,8 +536,6 @@ def test_job_upload_router_rejects_oversize_before_processing() -> None:
         resolve_pipeline=lambda _request: calls.append("pipeline") or PipelineSelection(
             parser_provider="ocr_cv",
             parser_layout_profile="fortuna",
-            recommendation_provider="local_solver",
-            recommendation_engine="local_solver",
         ),
         process_upload=lambda _request: calls.append("upload") or job_record(),
         authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
@@ -640,8 +559,6 @@ def test_job_upload_router_maps_typed_errors() -> None:
     selection = PipelineSelection(
         parser_provider="ocr_cv",
         parser_layout_profile="fortuna",
-        recommendation_provider="local_solver",
-        recommendation_engine="local_solver",
     )
 
     def resolve_pipeline(request: JobUploadPipelineRequest) -> PipelineSelection:
@@ -739,18 +656,10 @@ def test_jobs_mutation_router_delegates_validated_requests() -> None:
         calls.append(("approve", job_id, state))
         return job_record()
 
-    def record_training_decision(
-        job_id: str,
-        decision: TrainingDecisionRequest,
-    ) -> JobRecord:
-        calls.append(("decision", job_id, decision))
-        return job_record()
-
     runtime = JobsMutationRuntime(
         update_metadata=update_metadata,
         delete_job=delete_job,
         approve_job=approve_job,
-        record_training_decision=record_training_decision,
     )
     with make_client(jobs_mutation_runtime=runtime) as client:
         metadata = client.put(
@@ -763,17 +672,12 @@ def test_jobs_mutation_router_delegates_validated_requests() -> None:
         )
         deleted = client.delete("/api/jobs/job-1")
         approved = client.post("/api/jobs/job-1/approve", json={})
-        decision = client.put(
-            "/api/jobs/job-1/decision",
-            json={"action": "check", "certainty": "high"},
-        )
 
     assert [response.status_code for response in (
         metadata,
         deleted,
         approved,
-        decision,
-    )] == [200, 204, 200, 200]
+    )] == [200, 204, 200]
     assert deleted.content == b""
     assert calls[0] == (
         "metadata",
@@ -786,11 +690,6 @@ def test_jobs_mutation_router_delegates_validated_requests() -> None:
     )
     assert calls[1] == ("delete", "job-1")
     assert calls[2][0:2] == ("approve", "job-1")
-    assert calls[3] == (
-        "decision",
-        "job-1",
-        TrainingDecisionRequest(action="check", certainty="high"),
-    )
 
 
 def test_jobs_mutation_router_preserves_request_validation_without_delegating() -> None:
@@ -810,18 +709,10 @@ def test_jobs_mutation_router_preserves_request_validation_without_delegating() 
         calls.append("approve")
         return job_record()
 
-    def record_training_decision(
-        _job_id: str,
-        _decision: TrainingDecisionRequest,
-    ) -> JobRecord:
-        calls.append("decision")
-        return job_record()
-
     runtime = JobsMutationRuntime(
         update_metadata=update_metadata,
         delete_job=delete_job,
         approve_job=approve_job,
-        record_training_decision=record_training_decision,
     )
     with make_client(jobs_mutation_runtime=runtime) as client:
         invalid_tags = client.put(
@@ -832,16 +723,11 @@ def test_jobs_mutation_router_preserves_request_validation_without_delegating() 
             "/api/jobs/job-1/approve",
             json={"hero_cards": ["Ah"]},
         )
-        invalid_decision = client.put(
-            "/api/jobs/job-1/decision",
-            json={"action": "check", "sizing": 2},
-        )
 
     assert [response.status_code for response in (
         invalid_tags,
         invalid_state,
-        invalid_decision,
-    )] == [422, 422, 422]
+    )] == [422, 422]
     assert calls == []
 
 
@@ -855,29 +741,14 @@ def test_jobs_mutation_router_maps_typed_errors() -> None:
     def blocked_delete(_job_id: str) -> None:
         raise JobMutationConflictError("A benchmark dataset import is still pending")
 
-    def blocked_approval(_job_id: str, _state: CanonicalState) -> JobRecord:
-        raise JobMutationConflictError("Recommendation is already running")
-
-    def missing_decision(
-        _job_id: str,
-        _decision: TrainingDecisionRequest,
-    ) -> JobRecord:
-        raise JobTransportNotFoundError("Job not found")
-
     runtime = JobsMutationRuntime(
         update_metadata=missing_metadata,
         delete_job=blocked_delete,
-        approve_job=blocked_approval,
-        record_training_decision=missing_decision,
+        approve_job=lambda _job_id, _state: job_record(),
     )
     with make_client(jobs_mutation_runtime=runtime) as client:
         missing_metadata_response = client.put("/api/jobs/missing/metadata", json={})
         pending_import = client.delete("/api/jobs/job-1")
-        pending_recommendation = client.post("/api/jobs/job-1/approve", json={})
-        missing_decision_response = client.put(
-            "/api/jobs/missing/decision",
-            json={"action": "fold"},
-        )
 
     assert (missing_metadata_response.status_code, missing_metadata_response.json()) == (
         404,
@@ -886,282 +757,6 @@ def test_jobs_mutation_router_maps_typed_errors() -> None:
     assert (pending_import.status_code, pending_import.json()) == (
         409,
         {"detail": "A benchmark dataset import is still pending"},
-    )
-    assert (pending_recommendation.status_code, pending_recommendation.json()) == (
-        409,
-        {"detail": "Recommendation is already running"},
-    )
-    assert (missing_decision_response.status_code, missing_decision_response.json()) == (
-        404,
-        {"detail": "Job not found"},
-    )
-
-
-def test_job_recommendation_router_delegates_request_id() -> None:
-    calls: list[tuple[str, str | None]] = []
-
-    def recommend(job_id: str, request_id: str | None) -> JobRecord:
-        calls.append((job_id, request_id))
-        return job_record()
-
-    runtime = JobsRecommendationRuntime(recommend=recommend)
-    with make_client(jobs_recommendation_runtime=runtime) as client:
-        default_request = client.post("/api/jobs/job-1/recommend")
-        identified_request = client.post(
-            "/api/jobs/job-2/recommend",
-            headers={"X-Recommendation-Request-ID": "request-id_2"},
-        )
-
-    assert [response.status_code for response in (
-        default_request,
-        identified_request,
-    )] == [200, 200]
-    assert calls == [("job-1", None), ("job-2", "request-id_2")]
-
-
-def test_job_recommendation_router_validates_header_without_delegating() -> None:
-    calls: list[tuple[str, str | None]] = []
-
-    def recommend(job_id: str, request_id: str | None) -> JobRecord:
-        calls.append((job_id, request_id))
-        return job_record()
-
-    runtime = JobsRecommendationRuntime(recommend=recommend)
-    with make_client(jobs_recommendation_runtime=runtime) as client:
-        invalid_request_id = client.post(
-            "/api/jobs/job-1/recommend",
-            headers={"X-Recommendation-Request-ID": "invalid request id"},
-        )
-        oversized_request_id = client.post(
-            "/api/jobs/job-1/recommend",
-            headers={"X-Recommendation-Request-ID": "a" * 129},
-        )
-
-    assert [response.status_code for response in (
-        invalid_request_id,
-        oversized_request_id,
-    )] == [422, 422]
-    assert calls == []
-
-
-def test_job_recommendation_router_maps_typed_errors() -> None:
-    def recommend(job_id: str, _request_id: str | None) -> JobRecord:
-        if job_id == "missing":
-            raise JobTransportNotFoundError("Job not found")
-        if job_id == "blocked":
-            raise JobMutationConflictError("Recommendation is already running")
-        if job_id == "missing-fields":
-            raise JobRecommendationInputError({"missing_fields": ["hero_cards"]})
-        if job_id == "invalid-input":
-            raise JobRecommendationInputError("Add the missing table context")
-        if job_id == "misconfigured":
-            raise JobRecommendationConfigurationError("Provider is unavailable")
-        raise JobRecommendationProviderError("provider exploded")
-
-    runtime = JobsRecommendationRuntime(recommend=recommend)
-    with make_client(jobs_recommendation_runtime=runtime) as client:
-        missing = client.post("/api/jobs/missing/recommend")
-        blocked = client.post("/api/jobs/blocked/recommend")
-        missing_fields = client.post("/api/jobs/missing-fields/recommend")
-        invalid_input = client.post("/api/jobs/invalid-input/recommend")
-        misconfigured = client.post("/api/jobs/misconfigured/recommend")
-        provider_failure = client.post("/api/jobs/provider-failure/recommend")
-
-    assert (missing.status_code, missing.json()) == (404, {"detail": "Job not found"})
-    assert (blocked.status_code, blocked.json()) == (
-        409,
-        {"detail": "Recommendation is already running"},
-    )
-    assert (missing_fields.status_code, missing_fields.json()) == (
-        422,
-        {"detail": {"missing_fields": ["hero_cards"]}},
-    )
-    assert (invalid_input.status_code, invalid_input.json()) == (
-        422,
-        {"detail": "Add the missing table context"},
-    )
-    assert (misconfigured.status_code, misconfigured.json()) == (
-        500,
-        {"detail": "Provider configuration error: Provider is unavailable"},
-    )
-    assert (provider_failure.status_code, provider_failure.json()) == (
-        502,
-        {"detail": "provider exploded"},
-    )
-
-
-def test_job_recommendation_router_propagates_unexpected_errors() -> None:
-    def recommend(_job_id: str, _request_id: str | None) -> JobRecord:
-        raise RuntimeError("provider implementation defect")
-
-    runtime = JobsRecommendationRuntime(recommend=recommend)
-    with make_client(jobs_recommendation_runtime=runtime) as client:
-        with pytest.raises(RuntimeError, match="provider implementation defect"):
-            client.post("/api/jobs/job-1/recommend")
-
-
-def test_training_router_delegates_review_progress_and_lesson_export() -> None:
-    calls: list[tuple[object, ...]] = []
-
-    def complete_review(
-        job_id: str,
-        review: TrainingReviewRequest | None,
-    ) -> JobRecord:
-        calls.append(("complete", job_id, review.note if review else None))
-        return job_record()
-
-    def reopen_review(job_id: str) -> JobRecord:
-        calls.append(("reopen", job_id))
-        return job_record()
-
-    def get_progress(query: TrainingProgressQuery) -> TrainingProgress:
-        calls.append(("progress", query))
-        return summarize_training([])
-
-    def export_lessons(
-        lesson_order: str,
-        lesson_street: str | None,
-        lesson_query: str | None,
-    ) -> tuple[str, str]:
-        calls.append(("export", lesson_order, lesson_street, lesson_query))
-        return "# Poker Hero Lessons\n", "poker-hero-lessons-20260820T000000Z.md"
-
-    runtime = TrainingRuntime(
-        complete_review=complete_review,
-        reopen_review=reopen_review,
-        get_progress=get_progress,
-        export_lessons=export_lessons,
-    )
-    with make_client(training_runtime=runtime) as client:
-        completed = client.put(
-            "/api/jobs/job-1/training-review",
-            json={"note": "Review blockers"},
-        )
-        reopened = client.delete("/api/jobs/job-1/training-review")
-        progress = client.get(
-            "/api/training/progress?review_order=ev_loss&review_street=flop"
-            "&review_certainty=high&review_position=button"
-            "&review_decision_action=fold&review_recommended_action=call"
-            "&lesson_order=ev_loss&lesson_street=turn&lesson_query=blockers"
-            f"&solver_fallback_key={'a' * 64}"
-        )
-        exported = client.get(
-            "/api/training/lessons/export?lesson_order=ev_loss"
-            "&lesson_street=flop&lesson_query=blockers"
-        )
-
-    assert [response.status_code for response in (
-        completed,
-        reopened,
-        progress,
-        exported,
-    )] == [200, 200, 200, 200]
-    assert exported.text == "# Poker Hero Lessons\n"
-    assert exported.headers["content-type"] == "text/markdown; charset=utf-8"
-    assert exported.headers["content-disposition"] == (
-        'attachment; filename="poker-hero-lessons-20260820T000000Z.md"'
-    )
-    assert calls == [
-        ("complete", "job-1", "Review blockers"),
-        ("reopen", "job-1"),
-        (
-            "progress",
-            TrainingProgressQuery(
-                review_order="ev_loss",
-                review_street="flop",
-                review_certainty="high",
-                review_position="button",
-                review_unpositioned=False,
-                review_action_difference=("fold", "call"),
-                lesson_order="ev_loss",
-                lesson_street="turn",
-                lesson_query="blockers",
-                solver_fallback_key="a" * 64,
-                solver_route_key=None,
-                solver_unattributed=False,
-                recent_street=None,
-                recent_position=None,
-                recent_unpositioned=False,
-                recent_certainty=None,
-            ),
-        ),
-        ("export", "ev_loss", "flop", "blockers"),
-    ]
-
-
-def test_training_router_preserves_query_validation_without_delegating() -> None:
-    calls: list[tuple[object, ...]] = []
-
-    def get_progress(query: TrainingProgressQuery) -> TrainingProgress:
-        calls.append((query,))
-        return summarize_training([])
-
-    runtime = TrainingRuntime(
-        complete_review=complete_training_review,
-        reopen_review=reopen_training_review,
-        get_progress=get_progress,
-        export_lessons=export_training_lessons,
-    )
-    with make_client(training_runtime=runtime) as client:
-        incomplete_difference = client.get(
-            "/api/training/progress?review_decision_action=fold"
-        )
-        conflicting_filters = client.get(
-            "/api/training/progress?recent_position=button"
-            f"&solver_route_key={'b' * 64}"
-        )
-        invalid_position = client.get("/api/training/progress?review_position=%20")
-
-    assert [response.status_code for response in (
-        incomplete_difference,
-        conflicting_filters,
-        invalid_position,
-    )] == [422, 422, 422]
-    assert calls == []
-
-
-def test_training_router_maps_review_and_lesson_export_errors() -> None:
-    def missing_review(
-        _job_id: str,
-        _review: TrainingReviewRequest | None,
-    ) -> JobRecord:
-        raise KeyError("Job not found")
-
-    def incomplete_reopen(_job_id: str) -> JobRecord:
-        raise ValueError(
-            "A completed decision comparison is required before reopening review"
-        )
-
-    def no_lessons(
-        _lesson_order: str,
-        _lesson_street: str | None,
-        _lesson_query: str | None,
-    ) -> tuple[str, str]:
-        raise ValueError("No saved lesson notes match the selected filters")
-
-    runtime = TrainingRuntime(
-        complete_review=missing_review,
-        reopen_review=incomplete_reopen,
-        get_progress=training_progress,
-        export_lessons=no_lessons,
-    )
-    with make_client(training_runtime=runtime) as client:
-        missing = client.put("/api/jobs/missing/training-review")
-        incomplete = client.delete("/api/jobs/job-1/training-review")
-        empty_export = client.get("/api/training/lessons/export")
-
-    assert (missing.status_code, missing.json()) == (404, {"detail": "Job not found"})
-    assert (incomplete.status_code, incomplete.json()) == (
-        409,
-        {
-            "detail": (
-                "A completed decision comparison is required before reopening review"
-            )
-        },
-    )
-    assert (empty_export.status_code, empty_export.json()) == (
-        409,
-        {"detail": "No saved lesson notes match the selected filters"},
     )
 
 
@@ -1351,10 +946,6 @@ def test_router_composition_preserves_public_operation_ids() -> None:
         document["paths"]["/api/jobs/{job_id}/approve"]["post"]["operationId"]
         == "job_approve"
     )
-    assert (
-        document["paths"]["/api/jobs/{job_id}/decision"]["put"]["operationId"]
-        == "job_decision_record"
-    )
     job_image_response = document["paths"]["/api/jobs/{job_id}/image"]["get"][
         "responses"
     ]["200"]
@@ -1368,26 +959,11 @@ def test_router_composition_preserves_public_operation_ids() -> None:
         "image/png": {"schema": {"type": "string", "format": "binary"}},
         "image/webp": {"schema": {"type": "string", "format": "binary"}},
     }
-    assert (
-        document["paths"]["/api/jobs/{job_id}/training-review"]["put"][
-            "operationId"
-        ]
-        == "job_training_review_complete"
-    )
-    assert (
-        document["paths"]["/api/jobs/{job_id}/training-review"]["delete"][
-            "operationId"
-        ]
-        == "job_training_review_reopen"
-    )
-    assert (
-        document["paths"]["/api/training/progress"]["get"]["operationId"]
-        == "training_progress_get"
-    )
-    assert (
-        document["paths"]["/api/training/lessons/export"]["get"]["operationId"]
-        == "training_lessons_export"
-    )
+    assert "/api/jobs/{job_id}/decision" not in document["paths"]
+    assert "/api/jobs/{job_id}/recommend" not in document["paths"]
+    assert "/api/jobs/{job_id}/training-review" not in document["paths"]
+    assert "/api/training/progress" not in document["paths"]
+    assert "/api/training/lessons/export" not in document["paths"]
 
 
 def test_router_imports_do_not_initialize_the_legacy_bootstrap() -> None:
@@ -1402,7 +978,6 @@ importlib.import_module('app.api.routers.history')
 importlib.import_module('app.api.routers.jobs')
 importlib.import_module('app.api.routers.mcp_admin')
 importlib.import_module('app.api.routers.pipeline')
-importlib.import_module('app.api.routers.training')
 
 for module_name in (
     'app.bootstrap',

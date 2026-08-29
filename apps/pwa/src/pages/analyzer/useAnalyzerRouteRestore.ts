@@ -10,17 +10,14 @@ export interface AnalyzerRouteRestoreOptions {
   activeJobId: string | null;
   benchmarksOpen: boolean;
   closeBenchmarks: () => void;
-  closeTraining: () => void;
   jobs: readonly JobRecord[];
   loadJob: (jobId: string) => Promise<JobRecord>;
   onError: (error: unknown) => void;
   onJobLoading: (jobId: string) => void;
   onJobUnavailable: () => void;
   openBenchmarks: () => void;
-  openTraining: () => void;
   route: AnalyzerRouteState;
   restoreWorkspace: () => void;
-  trainingOpen: boolean;
 }
 
 export function useAnalyzerRouteRestore(
@@ -37,20 +34,11 @@ export function useAnalyzerRouteRestore(
     const surfaceChanged = restoredSurfaceRef.current !== current.route.surface;
     restoredSurfaceRef.current = current.route.surface;
 
-    if (current.route.surface !== "training") {
-      current.closeTraining();
-    }
     if (current.route.surface !== "benchmarks") {
       current.closeBenchmarks();
     }
     if (current.route.surface === "workspace") {
       current.restoreWorkspace();
-    } else if (
-      current.route.surface === "training" &&
-      !current.trainingOpen &&
-      surfaceChanged
-    ) {
-      current.openTraining();
     } else if (
       current.route.surface === "benchmarks" &&
       !current.benchmarksOpen &&

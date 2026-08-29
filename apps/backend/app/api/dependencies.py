@@ -20,10 +20,6 @@ from app.application.jobs import (
 )
 from app.application.mcp_admin import McpAdminService
 from app.application.system import SystemQueryService
-from app.application.training import (
-    TrainingProgressQuery,
-    TrainingService as TrainingRuntime,
-)
 from app.domain.pipeline import PipelineSelection
 from app.domain.poker import CanonicalState
 from app.domain.hands import (
@@ -32,7 +28,6 @@ from app.domain.hands import (
     ScreenshotMetadataRequest,
 )
 from app.application.backups import ApplicationBackupExport, BackupService
-from app.domain.training import TrainingDecisionRequest
 
 BACKGROUND_TASK_STATE_KEY = "poker_response_background_task_scheduled"
 
@@ -47,10 +42,6 @@ class JobTransportNotFoundError(Exception):
 
 class JobMutationConflictError(Exception):
     """A requested job mutation conflicts with its current persisted state."""
-
-
-class JobInputContextError(Exception):
-    """The job's input context forbids the requested transition."""
 
 
 class JobUploadInputError(Exception):
@@ -71,22 +62,6 @@ class JobUploadParserProviderError(Exception):
 
 class JobUploadUnexpectedParserError(Exception):
     """An unexpected parser failure was recorded for an uploaded image."""
-
-
-class JobRecommendationInputError(Exception):
-    """A recommendation request needs more user-correctable state."""
-
-    def __init__(self, detail: str | dict[str, list[str]]) -> None:
-        super().__init__(str(detail))
-        self.detail = detail
-
-
-class JobRecommendationConfigurationError(Exception):
-    """The configured recommendation route cannot be initialized."""
-
-
-class JobRecommendationProviderError(Exception):
-    """The configured recommendation provider failed while serving a request."""
 
 
 class BenchmarkInputError(Exception):
@@ -148,14 +123,6 @@ class JobsMutationRuntime:
     update_metadata: Callable[[str, ScreenshotMetadataRequest], JobRecord]
     delete_job: Callable[[str], None]
     approve_job: Callable[[str, CanonicalState], JobRecord]
-    record_training_decision: Callable[[str, TrainingDecisionRequest], JobRecord]
-
-
-@dataclass(frozen=True)
-class JobsRecommendationRuntime:
-    """Dependencies required by the processing job recommendation endpoint."""
-
-    recommend: Callable[[str, str | None], JobRecord]
 
 
 BackupsRuntime = BackupService

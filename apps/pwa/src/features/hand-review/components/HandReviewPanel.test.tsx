@@ -18,8 +18,6 @@ function panelProps(
   return {
     busy: false,
     canApprove: true,
-    canRecommend: true,
-    children: <div>Decision slot</div>,
     editor: {} as HandStateEditorProps,
     job: {
       id: "job-1",
@@ -27,7 +25,6 @@ function panelProps(
       original_filename: "table.png",
       image_filename: "job-1.png",
       parser_provider: "mock",
-      recommendation_provider: "mock",
       parser_result: {
         state: {
           hero_cards: [],
@@ -49,11 +46,6 @@ function panelProps(
         raw: {},
       },
       approved_state: null,
-      training_decision: null,
-      recommendation: null,
-      recommendation_pending: false,
-      training_reviewed_at: null,
-      training_review_note: null,
       benchmark_included: false,
       archived_at: null,
       error: null,
@@ -61,7 +53,6 @@ function panelProps(
       updated_at: "2026-08-14T00:00:00Z",
     } satisfies JobRecord,
     onApprove: vi.fn(),
-    onRecommend: vi.fn(),
     onResetToParser: vi.fn(),
     ...overrides,
   };
@@ -73,50 +64,32 @@ describe("HandReviewPanel", () => {
     render(<HandReviewPanel {...props} />);
 
     expect(screen.getByText("Hand state editor")).toBeInTheDocument();
-    expect(screen.getByText("Decision slot")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Approve state" }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Request recommendation" }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Reset to parser" }),
     );
 
     expect(props.onApprove).toHaveBeenCalledOnce();
-    expect(props.onRecommend).toHaveBeenCalledOnce();
     expect(props.onResetToParser).toHaveBeenCalledOnce();
   });
 
-  it("marks administrative test jobs and leaves legacy jobs unmarked", () => {
-    const legacyProps = panelProps();
-    const administrativeJob: JobRecord = {
-      ...legacyProps.job!,
-      input_context: "administrative_test",
-    };
-    const { rerender } = render(
-      <HandReviewPanel {...panelProps({ job: administrativeJob })} />,
+  it("shows the job status and offers no learning actions", () => {
+    render(
+      <HandReviewPanel
+        {...panelProps({
+          job: { ...panelProps().job!, status: "approved" },
+        })}
+      />,
     );
 
+    expect(screen.getByText("approved")).toBeInTheDocument();
     expect(
-      screen.getByLabelText("Administrative OCR test input"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "Administrative test inputs never request recommendations or enter training.",
-      ),
-    ).toBeInTheDocument();
-
-    rerender(<HandReviewPanel {...legacyProps} />);
-
-    expect(
-      screen.queryByLabelText("Administrative OCR test input"),
+      screen.queryByRole("button", { name: "Request recommendation" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText(
-        "Administrative test inputs never request recommendations or enter training.",
-      ),
+      screen.queryByLabelText("Administrative OCR test input"),
     ).not.toBeInTheDocument();
   });
 });

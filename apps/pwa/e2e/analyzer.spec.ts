@@ -21,8 +21,10 @@ const ADMINISTRATOR_HEADERS = {
 };
 const IMPORT_FIRST_NOTICE =
   "Screenshot upload and live capture are administrator-only parser test tools";
-const ADMINISTRATIVE_REVIEW_NOTICE =
-  "Administrative test inputs never request recommendations or enter training.";
+const CONSOLE_SUBTITLE =
+  "Administrator OCR test console for Texas Hold'em screenshots";
+const ADMINISTRATIVE_BANNER_NOTICE =
+  "Uploads and captures produce administrative OCR test data, not player analysis.";
 
 async function unlockAdministrativeAccess(page: Page): Promise<void> {
   const banner = page.getByRole("note", {
@@ -46,20 +48,6 @@ async function unlockAdministrativeAccess(page: Page): Promise<void> {
     .getByRole("button", { name: "Close administrator tools" })
     .click();
   await expect(banner).toBeVisible();
-}
-
-// Records persisted before #413 deserialize as `legacy_player`, so the provider
-// stub drops the `input_context` key to produce a player-owned hand without
-// adding a test switch to the product.
-async function markLegacyJobs(
-  page: Page,
-  jobIds: readonly string[],
-): Promise<void> {
-  const response = await page.request.post(
-    `${PROVIDER_URL}/control/legacy-jobs`,
-    { data: { job_ids: jobIds } },
-  );
-  expect(response.ok()).toBe(true);
 }
 
 function attemptFilename(base: string, testInfo: TestInfo): string {
@@ -145,9 +133,6 @@ async function captureAdministrativeFrame(page: Page): Promise<{
     name: filenamePattern(uploadedJob.original_filename),
   });
   await expect(queueItem).toContainText("parsed");
-  await expect(
-    queueItem.getByLabel("Administrative OCR test input"),
-  ).toContainText("Admin test");
   return { ...uploadedJob, queueItem };
 }
 
@@ -175,212 +160,6 @@ async function uploadAdministrativeScreenshot(
   });
   await expect(queueItem).toContainText("parsed");
   return { id: uploadedJob.id, queueItem };
-}
-
-// The workspace serves its cached processing snapshot while the session is
-// marked synced, so a record the provider stub rewrote behind the app's back is
-// only read again once those markers are gone. A document init script clears
-// them so the workspace cannot re-mark the session between the removal and the
-// navigation.
-const QUEUE_REVALIDATION_FLAG = "poker-hero-e2e-force-queue-revalidation";
-const queueRevalidationPages = new WeakSet<Page>();
-
-async function forceQueueRevalidation(page: Page): Promise<void> {
-  if (!queueRevalidationPages.has(page)) {
-    queueRevalidationPages.add(page);
-    await page.addInitScript((flag) => {
-      if (sessionStorage.getItem(flag) === null) {
-        return;
-      }
-      sessionStorage.removeItem(flag);
-      sessionStorage.removeItem("poker-training-processing-synced");
-      sessionStorage.removeItem("poker-training-history-synced");
-    }, QUEUE_REVALIDATION_FLAG);
-  }
-  await page.evaluate((flag) => {
-    sessionStorage.setItem(flag, "1");
-  }, QUEUE_REVALIDATION_FLAG);
-}
-
-// Administrative test inputs never reach recommendations or training, so a
-// scenario that needs a player-owned hand uploads through the administrative
-// surface and then reloads the record as a legacy one.
-async function uploadLegacyScreenshot(
-  page: Page,
-  filename: string,
-): Promise<{ id: string; queueItem: Locator }> {
-  await prepareUploadInput(page);
-  const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
-  await markLegacyJobs(page, [uploadedJob.id]);
-  await forceQueueRevalidation(page);
-  await page.goto(`/analyzer/jobs/${uploadedJob.id}`);
-  await expectAnalyzerReady(page);
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${uploadedJob.id}/image`);
-  await expect(
-    uploadedJob.queueItem.getByLabel("Administrative OCR test input"),
-  ).toHaveCount(0);
-  return uploadedJob;
-}
-
-async function createReviewedLesson(
-  page: Page,
-  filename: string,
-  note: string,
-  options: { boardCards?: string; street?: "flop" | "turn" } = {},
-): Promise<{ id: string }> {
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  if (options.boardCards !== undefined) {
-    await page.getByLabel("Board cards").fill(options.boardCards);
-  }
-  if (options.street !== undefined) {
-    await page.getByLabel("Street").selectOption(options.street);
-  }
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", { name: "fold", exact: true })
-    .click();
-  await decisionPanel
-    .getByRole("button", { name: "high", exact: true })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-  await page.getByLabel("Training review note").fill(note);
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed" })
-    .click();
-  await expect(page.getByLabel("Training decision comparison")).toContainText(
-    "Reviewed",
-  );
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-  return { id: uploadedJob.id };
-}
-
-async function createPendingTrainingReview(
-  page: Page,
-  filename: string,
-  options: {
-    boardCards?: string;
-    certainty?: "high" | "medium" | "low";
-    decisionAction?: "fold" | "check" | "call" | "bet" | "raise";
-    decisionSizing?: number;
-    heroPosition?: string;
-    recommendationControl?: string;
-    street: "flop" | "turn" | "river";
-  },
-): Promise<{ id: string }> {
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  const handReview = page.getByRole("region", { name: "Hand review" });
-  if (options.boardCards !== undefined) {
-    await handReview.getByLabel("Board cards").fill(options.boardCards);
-  }
-  if (options.heroPosition !== undefined) {
-    await handReview.getByLabel("Hero position").fill(options.heroPosition);
-  }
-  await handReview
-    .getByRole("combobox", { name: /^Street/ })
-    .selectOption(options.street);
-  await handReview.getByRole("button", { name: "Approve state" }).click();
-
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: options.decisionAction ?? "fold",
-      exact: true,
-    })
-    .click();
-  if (options.decisionSizing !== undefined) {
-    await decisionPanel
-      .getByLabel("Decision sizing in BB")
-      .fill(String(options.decisionSizing));
-  }
-  if (options.certainty !== undefined) {
-    await decisionPanel
-      .getByRole("button", {
-        name: options.certainty,
-        exact: true,
-      })
-      .click();
-  }
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  if (options.recommendationControl !== undefined) {
-    const armResponse = await page.request.post(
-      `${PROVIDER_URL}/control/${options.recommendationControl}`,
-    );
-    expect(armResponse.ok()).toBe(true);
-  }
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-  return { id: uploadedJob.id };
-}
-
-async function completeStaleTrainingReviews(
-  page: Page,
-  fixturePrefix: string,
-): Promise<void> {
-  const staleProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(staleProgressResponse.ok()).toBe(true);
-  const staleProgress = (await staleProgressResponse.json()) as {
-    recent_hands: Array<{
-      job_id: string;
-      original_filename: string;
-      reviewed_at: string | null;
-    }>;
-  };
-  for (const staleHand of staleProgress.recent_hands) {
-    if (
-      staleHand.reviewed_at !== null ||
-      !staleHand.original_filename.startsWith(fixturePrefix)
-    ) {
-      continue;
-    }
-    const cleanupResponse = await page.request.put(
-      `${BACKEND_URL}/api/jobs/${staleHand.job_id}/training-review`,
-      { data: { note: null } },
-    );
-    expect(cleanupResponse.ok()).toBe(true);
-  }
-}
-
-async function expectDetailedSolverEvidence(page: Page): Promise<void> {
-  const evidence = page.getByLabel("Decision evidence");
-  await expect(evidence).toContainText("e2e provider stub");
-  await expect(evidence.getByText("Range equity").locator("..")).toContainText(
-    "61%",
-  );
-  await expect(evidence.getByText("Realized").locator("..")).toContainText(
-    "55%",
-  );
-  await expect(evidence.getByText("Call price").locator("..")).toContainText(
-    "20%",
-  );
-  const comparedActions = evidence.getByRole("list", {
-    name: "Compared actions",
-  });
-  await expect(comparedActions.getByRole("listitem")).toHaveCount(3);
-  const chosenAction = comparedActions.getByRole("listitem").filter({
-    hasText: "Chosen",
-  });
-  await expect(chosenAction).toContainText("call");
-  await expect(chosenAction).toContainText("EV 1.4 BB");
-  await expect(chosenAction).toContainText("78% frequency");
 }
 
 async function createApprovedScreenshot(
@@ -417,7 +196,6 @@ async function createApprovedScreenshot(
     },
   );
   expect(approveResponse.ok()).toBe(true);
-  await markLegacyJobs(page, [uploadedJob.id]);
   return { id: uploadedJob.id };
 }
 
@@ -425,6 +203,24 @@ async function expectAnalyzerReady(page: Page): Promise<void> {
   await expect(
     page.getByRole("region", { name: "Analyzer controls" }),
   ).toBeVisible();
+}
+
+// The console reviews parser output only, so the retired learning surface must
+// leave no button, panel or per-row marker behind.
+async function expectNoLearningControls(page: Page): Promise<void> {
+  await expect(
+    page.getByRole("button", { name: "Request recommendation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Recommendation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Your training decision" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Training progress" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("Administrative OCR test input")).toHaveCount(0);
 }
 
 async function prepareUploadInput(page: Page): Promise<void> {
@@ -763,7 +559,7 @@ test("keeps dataset import and backup restore behind administrator tools", async
   await expect(infoDialog).toHaveCount(0);
 });
 
-test("marks an administrative upload and withholds its recommendation", async ({
+test("approves an administrative upload in a console without learning controls", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
@@ -771,55 +567,41 @@ test("marks an administrative upload and withholds its recommendation", async ({
   const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
 
   await expect(
-    uploadedJob.queueItem.getByLabel("Administrative OCR test input"),
-  ).toContainText("Admin test");
-  const handReview = page.getByRole("region", { name: "Hand review" });
+    page.getByRole("region", { name: "Analyzer controls" }),
+  ).toContainText(CONSOLE_SUBTITLE);
   await expect(
-    handReview.getByLabel("Administrative OCR test input"),
-  ).toContainText("Admin test");
-  await expect(handReview).toContainText(ADMINISTRATIVE_REVIEW_NOTICE);
-  const recommendButton = page.getByRole("button", {
-    name: "Request recommendation",
-  });
-  await expect(recommendButton).toBeDisabled();
+    page.getByRole("note", { name: "Administrative OCR test mode" }),
+  ).toContainText(ADMINISTRATIVE_BANNER_NOTICE);
+  await expectNoLearningControls(page);
 
   await page.getByRole("button", { name: "Approve state" }).click();
   await expect(uploadedJob.queueItem).toContainText("approved");
-  await expect(recommendButton).toBeDisabled();
-  await expect(
-    page.getByRole("region", { name: "Your training decision" }),
-  ).toHaveCount(0);
+  await expectNoLearningControls(page);
 
-  const refusedRecommendation = await page.request.post(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}/recommend`,
-  );
-  expect(refusedRecommendation.status()).toBe(403);
   const persistedResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
   );
   expect(persistedResponse.ok()).toBe(true);
   expect(await persistedResponse.json()).toMatchObject({
-    input_context: "administrative_test",
-    recommendation: null,
+    archived_at: null,
     status: "approved",
   });
 
-  const progressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(progressResponse.ok()).toBe(true);
-  const progress = (await progressResponse.json()) as {
-    recent_hands: Array<{ job_id: string }>;
-    review_queue: Array<{ job_id: string }>;
-  };
-  expect(
-    [...progress.recent_hands, ...progress.review_queue].some(
-      (hand) => hand.job_id === uploadedJob.id,
-    ),
-  ).toBe(false);
-
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
+
+  // The retired learning surface has no route of its own any more: the deep
+  // link lands on the analyzer workspace instead of a training page.
+  await page.goto("/analyzer/training");
+  await expectAnalyzerReady(page);
+  await expect(page).toHaveURL(/\/analyzer$/);
+  await expect(
+    page.getByRole("region", { name: "Analyzer controls" }),
+  ).toContainText(CONSOLE_SUBTITLE);
+  await expect(page.getByRole("region", { name: "Input" })).toContainText(
+    IMPORT_FIRST_NOTICE,
+  );
+  await expectNoLearningControls(page);
 });
 
 test("requires an administrator credential for the screenshot upload API", async ({
@@ -856,7 +638,6 @@ test("requires an administrator credential for the screenshot upload API", async
   expect(authorizedUpload.status()).toBe(201);
   const authorizedJob = (await authorizedUpload.json()) as { id: string };
   expect(authorizedJob).toMatchObject({
-    input_context: "administrative_test",
     original_filename: filename,
     status: "parsed",
   });
@@ -928,15 +709,10 @@ test("captures repeated shared-window frames into persisted history", async ({
     .toEqual({ height: 360, width: 640 });
 
   const firstCapture = await captureAdministrativeFrame(page);
+  await expectNoLearningControls(page);
   await expect(
-    page.getByRole("region", { name: "Recommendation" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Request recommendation" }),
-  ).toBeDisabled();
-  await expect(page.getByRole("region", { name: "Hand review" })).toContainText(
-    ADMINISTRATIVE_REVIEW_NOTICE,
-  );
+    page.getByRole("note", { name: "Administrative OCR test mode" }),
+  ).toContainText(ADMINISTRATIVE_BANNER_NOTICE);
   await expect(preview).not.toHaveClass(/active/);
   await expect(
     page.getByAltText("Uploaded poker table screenshot"),
@@ -964,16 +740,12 @@ test("captures repeated shared-window frames into persisted history", async ({
   const persistedJob = (await persistedResponse.json()) as {
     approved_state: unknown;
     archived_at: string | null;
-    input_context: string;
-    recommendation: { raw: Record<string, string> } | null;
     status: string;
     upload_request_id: string | null;
   };
   expect(persistedJob).toMatchObject({
     approved_state: null,
     archived_at: null,
-    input_context: "administrative_test",
-    recommendation: null,
     status: "parsed",
     upload_request_id: expect.any(String),
   });
@@ -1043,8 +815,8 @@ test("captures repeated shared-window frames into persisted history", async ({
   );
   expect(displayMediaCalls).toBe(1);
 
-  // Administrative captures never reach `recommended`, so each frame is
-  // approved by hand before it can leave the queue.
+  // Only approved ground truth leaves the queue, so each frame is approved by
+  // hand before it can be archived.
   for (const capture of [firstCapture, secondCapture]) {
     await capture.queueItem.click();
     await page.getByRole("button", { name: "Approve state" }).click();
@@ -1144,9 +916,7 @@ test("rejects a mismatched share source and recovers with a tab", async ({
   ).toBeHidden();
 
   const capture = await captureAdministrativeFrame(page);
-  await expect(
-    page.getByRole("region", { name: "Recommendation" }),
-  ).toHaveCount(0);
+  await expectNoLearningControls(page);
   const activeShareState = await page.evaluate(() => {
     const fixtureWindow = window as typeof window & {
       __pokerHeroCaptureFixtures: Array<{
@@ -1267,9 +1037,7 @@ test("recovers after the browser share picker is cancelled", async ({
     .toEqual({ height: 360, width: 640 });
 
   const capture = await captureAdministrativeFrame(page);
-  await expect(
-    page.getByRole("region", { name: "Recommendation" }),
-  ).toHaveCount(0);
+  await expectNoLearningControls(page);
   const recoveredState = await page.evaluate(() => {
     const fixtureWindow = window as typeof window & {
       __pokerHeroCaptureFixtures: Array<{
@@ -1337,22 +1105,17 @@ test("reviews one screenshot from upload through persisted history", async ({
   await openUploadInput(page);
   const filename = attemptFilename("manual-flow", testInfo);
 
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
+  const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
   const queueItem = uploadedJob.queueItem;
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${uploadedJob.id}/image`);
   await expect(page.getByLabel("Hero cards")).toHaveValue("Ah Kd");
   await expect(page.getByLabel("Board cards")).toHaveValue("Qs Jc 2h");
 
   await page.getByLabel("Pot").fill("13");
   await page.getByRole("button", { name: "Approve state" }).click();
-  await expect(
-    page.getByRole("region", { name: "Your training decision" }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(
-    page.getByRole("region", { name: "Recommendation" }),
-  ).toBeVisible();
-  await expect(queueItem).toContainText("recommended");
+  await expect(queueItem).toContainText("approved");
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(queueItem).toBeHidden();
@@ -1399,9 +1162,10 @@ test("overlays delete confirmation without resizing screenshot details", async (
     .click();
 
   const dialog = page.getByRole("dialog", { name: "Screenshot details" });
-  await expect(
-    dialog.getByLabel("Administrative OCR test input"),
-  ).toContainText("Admin test");
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel("Administrative OCR test input")).toHaveCount(
+    0,
+  );
   const before = await dialog.boundingBox();
   expect(before).not.toBeNull();
 
@@ -1447,2935 +1211,15 @@ test("overlays delete confirmation without resizing screenshot details", async (
   await expect(dialog).toBeHidden();
 });
 
-test("completes and reopens a training review from persisted progress", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-  const filename = attemptFilename("training-review", testInfo);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    lesson_count: number;
-    needs_review_hands: number;
-    reviewed_hands: number;
-  };
-
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await expect(decisionPanel).toBeVisible();
-  await decisionPanel.getByRole("button", { name: "fold" }).click();
-  await decisionPanel.getByRole("button", { name: "high" }).click();
-
-  const decisionResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url() === `${BACKEND_URL}/api/jobs/${uploadedJob.id}/decision` &&
-      response.request().method() === "PUT",
-  );
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  expect((await decisionResponsePromise).ok()).toBe(true);
-  await expect(decisionPanel).toContainText("Answer locked");
-  await expect(decisionPanel).toContainText("Saved before reveal");
-
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-  const recommendation = page.getByRole("region", { name: "Recommendation" });
-  await expect(recommendation).toBeVisible();
-  await expect(recommendation).toContainText("call");
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText("Fold");
-  await expect(comparison).toContainText("High certainty");
-  await expect(comparison).toContainText("Different action");
-
-  const lessonNote = "Compare pot odds before folding to a single bet.";
-  await page.getByLabel("Training review note").fill(lessonNote);
-  const completeResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url() ===
-        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review` &&
-      response.request().method() === "PUT",
-  );
-  await comparison.getByRole("button", { name: "Mark reviewed" }).click();
-  expect((await completeResponsePromise).ok()).toBe(true);
-  await expect(comparison).toContainText("Reviewed");
-  await expect(page.getByLabel("Saved training review note")).toContainText(
-    lessonNote,
-  );
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  await expect(progressDialog).toBeVisible();
-  const progressSummary = progressDialog.getByLabel(
-    "Training progress summary",
-  );
-  await expect(progressSummary).toContainText(
-    String(initialProgress.reviewed_hands + 1),
-  );
-  const trainingRow = progressDialog.getByRole("button", {
-    name: `Open ${filename} training review`,
-    exact: true,
-  });
-  await expect(trainingRow).toContainText("Fold");
-  await expect(trainingRow).toContainText("Call");
-  await expect(trainingRow).toContainText(lessonNote);
-  await expect(trainingRow).toContainText("Reviewed");
-
-  await trainingRow.click();
-  await expect(progressDialog).toBeHidden();
-  await expect(page.getByLabel("Training decision comparison")).toContainText(
-    "Reviewed",
-  );
-  await expect(page.getByLabel("Saved training review note")).toContainText(
-    lessonNote,
-  );
-
-  const reopenResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url() ===
-        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review` &&
-      response.request().method() === "DELETE",
-  );
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Reopen review" })
-    .click();
-  expect((await reopenResponsePromise).ok()).toBe(true);
-  await expect(page.getByText("Training review reopened")).toBeVisible();
-  await expect(page.getByLabel("Training review note")).toHaveValue(lessonNote);
-
-  const recompleteResponsePromise = page.waitForResponse(
-    (response) =>
-      response.url() ===
-        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/training-review` &&
-      response.request().method() === "PUT",
-  );
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed" })
-    .click();
-  expect((await recompleteResponsePromise).ok()).toBe(true);
-  await expect(page.getByLabel("Training decision comparison")).toContainText(
-    "Reviewed",
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    archived_at: string | null;
-    recommendation: { action: string } | null;
-    training_decision: { action: string; certainty: string | null } | null;
-    training_review_note: string | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    archived_at: expect.any(String),
-    recommendation: { action: "call" },
-    training_decision: { action: "fold", certainty: "high" },
-    training_review_note: lessonNote,
-    training_reviewed_at: expect.any(String),
-  });
-
-  const finalProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(finalProgressResponse.ok()).toBe(true);
-  const finalProgress = (await finalProgressResponse.json()) as {
-    lesson_count: number;
-    needs_review_hands: number;
-    reviewed_hands: number;
-  };
-  expect(finalProgress).toMatchObject({
-    lesson_count: initialProgress.lesson_count + 1,
-    needs_review_hands: initialProgress.needs_review_hands,
-    reviewed_hands: initialProgress.reviewed_hands + 1,
-  });
-});
-
-test("continues through a filtered persisted training review queue", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  const staleProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(staleProgressResponse.ok()).toBe(true);
-  const staleProgress = (await staleProgressResponse.json()) as {
-    review_queue: Array<{ job_id: string; original_filename: string }>;
-  };
-  const attemptMarker = [
-    `w${testInfo.workerIndex}`,
-    `p${testInfo.repeatEachIndex}`,
-  ].join("-");
-  const staleFixturePrefixes = [
-    "review-control-flop-",
-    "review-turn-older-",
-    "review-turn-newer-",
-  ];
-  for (const staleHand of staleProgress.review_queue) {
-    if (
-      !staleHand.original_filename.includes(attemptMarker) ||
-      !staleFixturePrefixes.some((prefix) =>
-        staleHand.original_filename.startsWith(prefix),
-      )
-    ) {
-      continue;
-    }
-    const cleanupResponse = await page.request.put(
-      `${BACKEND_URL}/api/jobs/${staleHand.job_id}/training-review`,
-      { data: { note: null } },
-    );
-    expect(cleanupResponse.ok()).toBe(true);
-  }
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    needs_review_hands: number;
-  };
-
-  const controlFilename = attemptFilename("review-control-flop", testInfo);
-  const olderTurnFilename = attemptFilename("review-turn-older", testInfo);
-  const newerTurnFilename = attemptFilename("review-turn-newer", testInfo);
-  const controlJob = await createPendingTrainingReview(page, controlFilename, {
-    certainty: "low",
-    street: "flop",
-  });
-  const olderTurnJob = await createPendingTrainingReview(
-    page,
-    olderTurnFilename,
-    {
-      boardCards: "Qs Jc 2h 9d",
-      certainty: "high",
-      street: "turn",
-    },
-  );
-  const newerTurnJob = await createPendingTrainingReview(
-    page,
-    newerTurnFilename,
-    {
-      boardCards: "Qs Jc 2h 8s",
-      certainty: "high",
-      street: "turn",
-    },
-  );
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  const expectedPendingCount = initialProgress.needs_review_hands + 3;
-  await progressDialog
-    .getByRole("button", {
-      name: `Needs review ${expectedPendingCount}`,
-      exact: true,
-    })
-    .click();
-  await progressDialog.getByLabel("Review street").selectOption("turn");
-  await progressDialog.getByLabel("Review certainty").selectOption("high");
-
-  const olderTurnReview = progressDialog.getByRole("button", {
-    name: `Open ${olderTurnFilename} training review`,
-    exact: true,
-  });
-  const newerTurnReview = progressDialog.getByRole("button", {
-    name: `Open ${newerTurnFilename} training review`,
-    exact: true,
-  });
-  await expect(newerTurnReview).toBeVisible();
-  await expect(olderTurnReview).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${controlFilename} training review`,
-      exact: true,
-    }),
-  ).toBeHidden();
-
-  await progressDialog.getByRole("button", { name: "Review next" }).click();
-  await expect(progressDialog).toBeHidden();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${newerTurnJob.id}/image`);
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${olderTurnJob.id}/image`);
-  await expect(
-    page.getByText("Training review completed. Next hand ready"),
-  ).toBeVisible();
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(progressDialog).toBeVisible();
-  await expect(progressDialog.getByLabel("Review street")).toHaveValue("turn");
-  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
-    "high",
-  );
-  await expect(progressDialog).toContainText(
-    "No action or sizing differences need review.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-      exact: true,
-    }),
-  ).toBeVisible();
-
-  for (const reviewedJob of [newerTurnJob, olderTurnJob]) {
-    const persistedResponse = await page.request.get(
-      `${BACKEND_URL}/api/jobs/${reviewedJob.id}`,
-    );
-    expect(persistedResponse.ok()).toBe(true);
-    const persistedJob = (await persistedResponse.json()) as {
-      training_reviewed_at: string | null;
-    };
-    expect(persistedJob.training_reviewed_at).toEqual(expect.any(String));
-  }
-  const controlResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}`,
-  );
-  expect(controlResponse.ok()).toBe(true);
-  const persistedControl = (await controlResponse.json()) as {
-    training_reviewed_at: string | null;
-  };
-  expect(persistedControl.training_reviewed_at).toBeNull();
-
-  const cleanupResponse = await page.request.put(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}/training-review`,
-    { data: { note: null } },
-  );
-  expect(cleanupResponse.ok()).toBe(true);
-});
-
-test("drills into persisted solver attribution", async ({ page }, testInfo) => {
-  await openUploadInput(page);
-
-  const fixturePrefix = [
-    "solver-attribution",
-    `w${testInfo.workerIndex}`,
-    `p${testInfo.repeatEachIndex}`,
-  ].join("-");
-  await completeStaleTrainingReviews(page, fixturePrefix);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    solver_coverage: {
-      routes: Array<{ engine: string; hands: number }>;
-    };
-  };
-  const initialRouteHands =
-    initialProgress.solver_coverage.routes.find(
-      (route) => route.engine === "e2e_provider_stub",
-    )?.hands ?? 0;
-
-  const filename = attemptFilename("solver-attribution", testInfo);
-  const attributedJob = await createPendingTrainingReview(page, filename, {
-    certainty: "medium",
-    street: "flop",
-  });
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  await expect(
-    progressDialog.getByRole("heading", {
-      name: "Solver coverage",
-    }),
-  ).toBeVisible();
-  const expectedRouteHands = initialRouteHands + 1;
-  const routeButton = progressDialog.getByRole("button", {
-    name: new RegExp(
-      `^Show ${expectedRouteHands} ${expectedRouteHands === 1 ? "hand" : "hands"}` +
-        " handled by e2e provider stub\\.",
-    ),
-  });
-  await expect(routeButton).toBeVisible();
-  await routeButton.click();
-
-  const activeSolverFilter = progressDialog.getByLabel("Active solver filter");
-  await expect(activeSolverFilter).toContainText("e2e provider stub");
-  const attributedReview = progressDialog.getByRole("button", {
-    name: `Open ${filename} training review`,
-    exact: true,
-  });
-  await expect(attributedReview).toBeVisible();
-  await attributedReview.click();
-
-  await expect(progressDialog).toBeHidden();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${attributedJob.id}/image`);
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed" })
-    .click();
-  await expect(page.getByLabel("Training decision comparison")).toContainText(
-    "Reviewed",
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${attributedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    recommendation: { raw: Record<string, unknown> } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    recommendation: {
-      raw: { engine: "e2e_provider_stub" },
-    },
-    training_reviewed_at: expect.any(String),
-  });
-});
-
-test("drills into a persisted solver fallback", async ({ page }, testInfo) => {
-  await openUploadInput(page);
-
-  const fixturePrefix = [
-    "solver-fallback",
-    `w${testInfo.workerIndex}`,
-    `p${testInfo.repeatEachIndex}`,
-  ].join("-");
-  await completeStaleTrainingReviews(page, fixturePrefix);
-  const fallbackReason = "E2E fallback: unsupported postflop tree";
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    solver_coverage: {
-      fallback_reasons: Array<{ reason: string; hands: number }>;
-    };
-  };
-  const initialFallbackHands =
-    initialProgress.solver_coverage.fallback_reasons.find(
-      (fallback) => fallback.reason === fallbackReason,
-    )?.hands ?? 0;
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}/control/fallback-next-recommendation`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  const filename = attemptFilename("solver-fallback", testInfo);
-  const fallbackJob = await createPendingTrainingReview(page, filename, {
-    certainty: "medium",
-    street: "flop",
-  });
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  const expectedFallbackHands = initialFallbackHands + 1;
-  const fallbackButton = progressDialog.getByRole("button", {
-    name: new RegExp(
-      `^Show ${expectedFallbackHands} ${expectedFallbackHands === 1 ? "hand" : "hands"}` +
-        ` using fallback: ${fallbackReason}\\.`,
-    ),
-  });
-  await expect(fallbackButton).toBeVisible();
-  await fallbackButton.click();
-
-  const activeSolverFilter = progressDialog.getByLabel("Active solver filter");
-  await expect(activeSolverFilter).toContainText(fallbackReason);
-  const fallbackReview = progressDialog.getByRole("button", {
-    name: `Open ${filename} training review`,
-    exact: true,
-  });
-  await expect(fallbackReview).toBeVisible();
-  await fallbackReview.click();
-
-  await expect(progressDialog).toBeHidden();
-  const recommendation = page.getByRole("region", { name: "Recommendation" });
-  await expect(recommendation).toContainText(fallbackReason);
-  await expect(recommendation).toContainText("Postflop solver fallback");
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed" })
-    .click();
-  await expect(page.getByLabel("Training decision comparison")).toContainText(
-    "Reviewed",
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${fallbackJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    recommendation: { raw: Record<string, unknown> } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    recommendation: {
-      raw: {
-        engine: "e2e_provider_stub",
-        fallback_reason: fallbackReason,
-        requested_engine: "postflop_solver",
-      },
-    },
-    training_reviewed_at: expect.any(String),
-  });
-});
-
-test("renders persisted solver evidence and prioritizes EV loss", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  const fixturePrefix = "solver-evidence-";
-  await completeStaleTrainingReviews(page, fixturePrefix);
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    needs_review_hands: number;
-  };
-
-  const filename = attemptFilename("solver-evidence", testInfo);
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: "fold",
-      exact: true,
-    })
-    .click();
-  await decisionPanel
-    .getByRole("button", {
-      name: "medium",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}/control/evidence-next-recommendation`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-
-  await expectDetailedSolverEvidence(page);
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText("Different action");
-  await expect(comparison).toContainText("1.4 BB EV loss");
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-  const lowerLossFilename = attemptFilename("solver-evidence-lower", testInfo);
-  const lowerLossJob = await createPendingTrainingReview(
-    page,
-    lowerLossFilename,
-    {
-      certainty: "medium",
-      recommendationControl: "lower-evidence-next-recommendation",
-      street: "flop",
-    },
-  );
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  await progressDialog
-    .getByRole("button", {
-      name: `Needs review ${initialProgress.needs_review_hands + 2}`,
-      exact: true,
-    })
-    .click();
-  await progressDialog.getByLabel("Review order").selectOption("ev_loss");
-  const reviewHands = progressDialog.getByRole("button", {
-    name: /^Open .* training review$/,
-  });
-  await expect(reviewHands.first()).toHaveAccessibleName(
-    `Open ${filename} training review`,
-  );
-  await expect(reviewHands.first()).toContainText("EV loss: 1.4 BB");
-  await expect(reviewHands.nth(1)).toHaveAccessibleName(
-    `Open ${lowerLossFilename} training review`,
-  );
-  await expect(reviewHands.nth(1)).toContainText("EV loss: 0.4 BB");
-  await progressDialog
-    .getByRole("button", {
-      name: "Review highest loss",
-    })
-    .click();
-
-  await expect(progressDialog).toBeHidden();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${uploadedJob.id}/image`);
-  await expectDetailedSolverEvidence(page);
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${lowerLossJob.id}/image`);
-  await expect(page.getByLabel("Training decision comparison")).toContainText(
-    "0.4 BB EV loss",
-  );
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-  await expect(progressDialog).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Needs review ${initialProgress.needs_review_hands}`,
-      exact: true,
-    }),
-  ).toBeVisible();
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    recommendation: { raw: Record<string, unknown> } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    recommendation: {
-      raw: {
-        candidates: expect.arrayContaining([
-          { action: "call", sizing: null, ev: 1.4, frequency: 0.78 },
-          { action: "fold", sizing: null, ev: 0, frequency: 0.02 },
-        ]),
-        engine: "e2e_provider_stub",
-        equity: { equity: 0.61 },
-      },
-    },
-    training_reviewed_at: expect.any(String),
-  });
-  const persistedLowerLossResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${lowerLossJob.id}`,
-  );
-  expect(persistedLowerLossResponse.ok()).toBe(true);
-  const persistedLowerLossJob = (await persistedLowerLossResponse.json()) as {
-    training_reviewed_at: string | null;
-  };
-  expect(persistedLowerLossJob.training_reviewed_at).toEqual(
-    expect.any(String),
-  );
-});
-
-test("opens the suggested highest-loss action pattern", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  await completeStaleTrainingReviews(page, "suggested-pattern-");
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    needs_review_hands: number;
-  };
-
-  const controlFilename = attemptFilename(
-    "suggested-pattern-control",
-    testInfo,
-  );
-  const controlJob = await createPendingTrainingReview(page, controlFilename, {
-    certainty: "low",
-    recommendationControl: "lower-evidence-next-recommendation",
-    street: "flop",
-  });
-  const olderTargetFilename = attemptFilename(
-    "suggested-pattern-target-older",
-    testInfo,
-  );
-  const olderTargetJob = await createPendingTrainingReview(
-    page,
-    olderTargetFilename,
-    {
-      certainty: "high",
-      decisionAction: "raise",
-      decisionSizing: 8,
-      recommendationControl: "pattern-evidence-next-recommendation",
-      street: "turn",
-    },
-  );
-  const newerTargetFilename = attemptFilename(
-    "suggested-pattern-target-newer",
-    testInfo,
-  );
-  const newerTargetJob = await createPendingTrainingReview(
-    page,
-    newerTargetFilename,
-    {
-      boardCards: "Qs Jc 2h 8s",
-      certainty: "medium",
-      decisionAction: "raise",
-      decisionSizing: 8,
-      recommendationControl: "pattern-evidence-next-recommendation",
-      street: "turn",
-    },
-  );
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  const suggestedFocus = progressDialog.getByRole("button", {
-    name: "Focus Raise to Call differences: Highest average EV loss: 2.2 BB",
-  });
-  await expect(suggestedFocus).toBeVisible();
-  await suggestedFocus.click();
-
-  await expect(progressDialog).toContainText(
-    "2 pending review hands for Raise to Call across all streets.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${newerTargetFilename} training review`,
-    }),
-  ).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${olderTargetFilename} training review`,
-    }),
-  ).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${controlFilename} training review`,
-    }),
-  ).toBeHidden();
-  await progressDialog.getByRole("button", { name: "Review next" }).click();
-
-  await expect(progressDialog).toBeHidden();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute(
-    "src",
-    `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
-  );
-  await expect(page.getByLabel("Training decision comparison")).toContainText(
-    "2.2 BB EV loss",
-  );
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute(
-    "src",
-    `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
-  );
-  await expect(
-    page.getByText("Training review completed. Next hand ready"),
-  ).toBeVisible();
-  await expect(page.getByLabel("Training decision comparison")).toContainText(
-    "2.2 BB EV loss",
-  );
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(progressDialog).toBeVisible();
-  await expect(progressDialog).toContainText(
-    "No action or sizing differences need review.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-      exact: true,
-    }),
-  ).toBeVisible();
-
-  for (const targetJob of [newerTargetJob, olderTargetJob]) {
-    const targetResponse = await page.request.get(
-      `${BACKEND_URL}/api/jobs/${targetJob.id}`,
-    );
-    expect(targetResponse.ok()).toBe(true);
-    const persistedTarget = (await targetResponse.json()) as {
-      training_reviewed_at: string | null;
-    };
-    expect(persistedTarget.training_reviewed_at).toEqual(expect.any(String));
-  }
-
-  const controlResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}`,
-  );
-  expect(controlResponse.ok()).toBe(true);
-  const persistedControl = (await controlResponse.json()) as {
-    training_reviewed_at: string | null;
-  };
-  expect(persistedControl.training_reviewed_at).toBeNull();
-  const cleanupResponse = await page.request.put(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}/training-review`,
-    { data: { note: null } },
-  );
-  expect(cleanupResponse.ok()).toBe(true);
-});
-
-test("opens the suggested normalized-position review focus", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  await completeStaleTrainingReviews(page, "suggested-position-");
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    needs_review_hands: number;
-  };
-
-  const controlFilename = attemptFilename(
-    "suggested-position-control",
-    testInfo,
-  );
-  const controlJob = await createPendingTrainingReview(page, controlFilename, {
-    certainty: "low",
-    recommendationControl: "lower-evidence-next-recommendation",
-    street: "flop",
-  });
-  const olderTargetFilename = attemptFilename(
-    "suggested-position-target-older",
-    testInfo,
-  );
-  const olderTargetJob = await createPendingTrainingReview(
-    page,
-    olderTargetFilename,
-    {
-      certainty: "high",
-      heroPosition: "big blind",
-      recommendationControl: "evidence-next-recommendation",
-      street: "turn",
-    },
-  );
-  const newerTargetFilename = attemptFilename(
-    "suggested-position-target-newer",
-    testInfo,
-  );
-  const newerTargetJob = await createPendingTrainingReview(
-    page,
-    newerTargetFilename,
-    {
-      boardCards: "Qs Jc 2h 8s",
-      certainty: "medium",
-      heroPosition: "bb",
-      recommendationControl: "evidence-next-recommendation",
-      street: "turn",
-    },
-  );
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  const suggestedFocus = progressDialog.getByRole("button", {
-    name: "Focus BB position reviews: Highest average EV loss: 1.4 BB",
-  });
-  await expect(suggestedFocus).toBeVisible();
-  await suggestedFocus.click();
-
-  const positionFilter = progressDialog.getByLabel(
-    "Active review position filter",
-  );
-  await expect(positionFilter).toContainText("BB");
-  await expect(progressDialog).toContainText(
-    "2 pending review hands across all streets at BB.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${newerTargetFilename} training review`,
-    }),
-  ).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${olderTargetFilename} training review`,
-    }),
-  ).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${controlFilename} training review`,
-    }),
-  ).toBeHidden();
-  await progressDialog.getByRole("button", { name: "Review next" }).click();
-
-  await expect(progressDialog).toBeHidden();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute(
-    "src",
-    `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
-  );
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute(
-    "src",
-    `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
-  );
-  await expect(
-    page.getByText("Training review completed. Next hand ready"),
-  ).toBeVisible();
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(progressDialog).toBeVisible();
-  await expect(
-    progressDialog.getByLabel("Active review position filter"),
-  ).toContainText("BB");
-  await expect(progressDialog).toContainText(
-    "No action or sizing differences need review.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-      exact: true,
-    }),
-  ).toBeVisible();
-
-  const targetPositions = [
-    [newerTargetJob, "bb"],
-    [olderTargetJob, "big blind"],
-  ] as const;
-  for (const [targetJob, expectedPosition] of targetPositions) {
-    const targetResponse = await page.request.get(
-      `${BACKEND_URL}/api/jobs/${targetJob.id}`,
-    );
-    expect(targetResponse.ok()).toBe(true);
-    const persistedTarget = (await targetResponse.json()) as {
-      approved_state: { hero_position: string | null } | null;
-      training_reviewed_at: string | null;
-    };
-    expect(persistedTarget).toMatchObject({
-      approved_state: { hero_position: expectedPosition },
-      training_reviewed_at: expect.any(String),
-    });
-  }
-
-  const controlResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}`,
-  );
-  expect(controlResponse.ok()).toBe(true);
-  const persistedControl = (await controlResponse.json()) as {
-    training_reviewed_at: string | null;
-  };
-  expect(persistedControl.training_reviewed_at).toBeNull();
-  const cleanupResponse = await page.request.put(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}/training-review`,
-    { data: { note: null } },
-  );
-  expect(cleanupResponse.ok()).toBe(true);
-});
-
-test("opens the suggested certainty review focus", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  await completeStaleTrainingReviews(page, "suggested-certainty-");
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    needs_review_hands: number;
-  };
-
-  const controlFilename = attemptFilename(
-    "suggested-certainty-control",
-    testInfo,
-  );
-  const controlJob = await createPendingTrainingReview(page, controlFilename, {
-    certainty: "low",
-    recommendationControl: "lower-evidence-next-recommendation",
-    street: "flop",
-  });
-  const olderTargetFilename = attemptFilename(
-    "suggested-certainty-target-older",
-    testInfo,
-  );
-  const olderTargetJob = await createPendingTrainingReview(
-    page,
-    olderTargetFilename,
-    {
-      certainty: "high",
-      recommendationControl: "pattern-evidence-next-recommendation",
-      street: "turn",
-    },
-  );
-  const newerTargetFilename = attemptFilename(
-    "suggested-certainty-target-newer",
-    testInfo,
-  );
-  const newerTargetJob = await createPendingTrainingReview(
-    page,
-    newerTargetFilename,
-    {
-      boardCards: "Qs Jc 2h 8s",
-      certainty: "high",
-      recommendationControl: "pattern-evidence-next-recommendation",
-      street: "turn",
-    },
-  );
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  const suggestedFocus = progressDialog.getByRole("button", {
-    name: /^Focus high certainty reviews: Highest average EV loss: [\d.]+ BB$/,
-  });
-  await expect(suggestedFocus).toBeVisible();
-  await suggestedFocus.click();
-
-  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
-    "high",
-  );
-  await expect(progressDialog).toContainText(
-    "2 pending review hands across all streets with high certainty.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${newerTargetFilename} training review`,
-    }),
-  ).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${olderTargetFilename} training review`,
-    }),
-  ).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${controlFilename} training review`,
-    }),
-  ).toBeHidden();
-  await progressDialog.getByRole("button", { name: "Review next" }).click();
-
-  await expect(progressDialog).toBeHidden();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute(
-    "src",
-    `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
-  );
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute(
-    "src",
-    `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
-  );
-  await expect(
-    page.getByText("Training review completed. Next hand ready"),
-  ).toBeVisible();
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(progressDialog).toBeVisible();
-  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
-    "high",
-  );
-  await expect(progressDialog).toContainText(
-    "No action or sizing differences need review.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-      exact: true,
-    }),
-  ).toBeVisible();
-
-  for (const targetJob of [newerTargetJob, olderTargetJob]) {
-    const targetResponse = await page.request.get(
-      `${BACKEND_URL}/api/jobs/${targetJob.id}`,
-    );
-    expect(targetResponse.ok()).toBe(true);
-    const persistedTarget = (await targetResponse.json()) as {
-      training_decision: { certainty: string | null } | null;
-      training_reviewed_at: string | null;
-    };
-    expect(persistedTarget).toMatchObject({
-      training_decision: { certainty: "high" },
-      training_reviewed_at: expect.any(String),
-    });
-  }
-
-  const controlResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}`,
-  );
-  expect(controlResponse.ok()).toBe(true);
-  const persistedControl = (await controlResponse.json()) as {
-    training_decision: { certainty: string | null } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedControl).toMatchObject({
-    training_decision: { certainty: "low" },
-    training_reviewed_at: null,
-  });
-  const cleanupResponse = await page.request.put(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}/training-review`,
-    { data: { note: null } },
-  );
-  expect(cleanupResponse.ok()).toBe(true);
-});
-
-test("opens the suggested street review focus", async ({ page }, testInfo) => {
-  await openUploadInput(page);
-
-  await completeStaleTrainingReviews(page, "suggested-street-");
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    needs_review_hands: number;
-  };
-
-  const controlFilename = attemptFilename("suggested-street-control", testInfo);
-  const controlJob = await createPendingTrainingReview(page, controlFilename, {
-    certainty: "low",
-    recommendationControl: "lower-evidence-next-recommendation",
-    street: "flop",
-  });
-  const olderTargetFilename = attemptFilename(
-    "suggested-street-target-older",
-    testInfo,
-  );
-  const olderTargetJob = await createPendingTrainingReview(
-    page,
-    olderTargetFilename,
-    {
-      boardCards: "Qs Jc 2h 8s 7d",
-      certainty: "high",
-      recommendationControl: "pattern-evidence-next-recommendation",
-      street: "river",
-    },
-  );
-  const newerTargetFilename = attemptFilename(
-    "suggested-street-target-newer",
-    testInfo,
-  );
-  const newerTargetJob = await createPendingTrainingReview(
-    page,
-    newerTargetFilename,
-    {
-      boardCards: "Qs Jc 2h 8s 6c",
-      certainty: "medium",
-      recommendationControl: "pattern-evidence-next-recommendation",
-      street: "river",
-    },
-  );
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  const suggestedFocus = progressDialog.getByRole("button", {
-    name: /^Focus river reviews: Highest average EV loss: [\d.]+ BB$/,
-  });
-  await expect(suggestedFocus).toBeVisible();
-  await suggestedFocus.click();
-
-  await expect(progressDialog.getByLabel("Review street")).toHaveValue("river");
-  await expect(progressDialog).toContainText(
-    "2 pending review hands on river.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${newerTargetFilename} training review`,
-    }),
-  ).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${olderTargetFilename} training review`,
-    }),
-  ).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${controlFilename} training review`,
-    }),
-  ).toBeHidden();
-  await progressDialog.getByRole("button", { name: "Review next" }).click();
-
-  await expect(progressDialog).toBeHidden();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute(
-    "src",
-    `${BACKEND_URL}/api/jobs/${newerTargetJob.id}/image`,
-  );
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute(
-    "src",
-    `${BACKEND_URL}/api/jobs/${olderTargetJob.id}/image`,
-  );
-  await expect(
-    page.getByText("Training review completed. Next hand ready"),
-  ).toBeVisible();
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(progressDialog).toBeVisible();
-  await expect(progressDialog.getByLabel("Review street")).toHaveValue("river");
-  await expect(progressDialog).toContainText(
-    "No action or sizing differences need review.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Needs review ${initialProgress.needs_review_hands + 1}`,
-      exact: true,
-    }),
-  ).toBeVisible();
-
-  for (const targetJob of [newerTargetJob, olderTargetJob]) {
-    const targetResponse = await page.request.get(
-      `${BACKEND_URL}/api/jobs/${targetJob.id}`,
-    );
-    expect(targetResponse.ok()).toBe(true);
-    const persistedTarget = (await targetResponse.json()) as {
-      approved_state: {
-        board_cards: Array<{ rank: string; suit: string }>;
-        street: string | null;
-      } | null;
-      training_reviewed_at: string | null;
-    };
-    expect(persistedTarget).toMatchObject({
-      approved_state: {
-        board_cards: expect.arrayContaining([{ rank: "8", suit: "spades" }]),
-        street: "river",
-      },
-      training_reviewed_at: expect.any(String),
-    });
-    expect(persistedTarget.approved_state?.board_cards).toHaveLength(5);
-  }
-
-  const controlResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}`,
-  );
-  expect(controlResponse.ok()).toBe(true);
-  const persistedControl = (await controlResponse.json()) as {
-    approved_state: { street: string | null } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedControl).toMatchObject({
-    approved_state: { street: "flop" },
-    training_reviewed_at: null,
-  });
-  const cleanupResponse = await page.request.put(
-    `${BACKEND_URL}/api/jobs/${controlJob.id}/training-review`,
-    { data: { note: null } },
-  );
-  expect(cleanupResponse.ok()).toBe(true);
-});
-
-test("opens legacy review focus by unrated and unpositioned state", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  await completeStaleTrainingReviews(page, "legacy-focus-");
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    needs_review_hands: number;
-  };
-
-  const filename = attemptFilename("legacy-focus", testInfo);
-  const legacyJob = await createPendingTrainingReview(page, filename, {
-    heroPosition: "",
-    recommendationControl: "evidence-next-recommendation",
-    street: "flop",
-  });
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  const unratedFocus = progressDialog.getByRole("button", {
-    name: "Focus unrated reviews: 1 legacy hand needs review",
-  });
-  const unpositionedFocus = progressDialog.getByRole("button", {
-    name: "Focus unpositioned reviews: 1 unpositioned hand needs review",
-  });
-  await expect(unratedFocus).toBeVisible();
-  await expect(unpositionedFocus).toBeVisible();
-
-  await unratedFocus.click();
-  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
-    "unrated",
-  );
-  await expect(progressDialog).toContainText(
-    "1 pending review hand across all streets without a certainty rating.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${filename} training review`,
-    }),
-  ).toBeVisible();
-
-  const recentView = progressDialog.getByRole("button", { name: "Recent" });
-  await recentView.click();
-  await expect(recentView).toHaveAttribute("aria-pressed", "true");
-  const refreshedUnpositionedFocus = progressDialog.getByRole("button", {
-    name: "Focus unpositioned reviews: 1 unpositioned hand needs review",
-  });
-  await expect(refreshedUnpositionedFocus).toBeVisible();
-  await refreshedUnpositionedFocus.click();
-
-  await expect(progressDialog.getByLabel("Review certainty")).toHaveValue(
-    "all",
-  );
-  await expect(
-    progressDialog.getByLabel("Active review position filter"),
-  ).toContainText("Unpositioned");
-  await expect(progressDialog).toContainText(
-    "1 pending review hand across all streets without a recorded position.",
-  );
-  await progressDialog.getByRole("button", { name: "Review next" }).click();
-
-  await expect(progressDialog).toBeHidden();
-  await expect(
-    page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${legacyJob.id}/image`);
-  await page
-    .getByLabel("Training decision comparison")
-    .getByRole("button", { name: "Mark reviewed & next" })
-    .click();
-
-  await expect(progressDialog).toBeVisible();
-  await expect(
-    progressDialog.getByLabel("Active review position filter"),
-  ).toContainText("Unpositioned");
-  await expect(progressDialog).toContainText(
-    "No action or sizing differences need review.",
-  );
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Needs review ${initialProgress.needs_review_hands}`,
-      exact: true,
-    }),
-  ).toBeVisible();
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${legacyJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    approved_state: { hero_position: string | null } | null;
-    training_decision: { certainty: string | null } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    approved_state: { hero_position: null },
-    training_decision: { certainty: null },
-    training_reviewed_at: expect.any(String),
-  });
-});
-
-const gradedSupportedMixCases = [
-  {
-    filename: "supported-mix",
-    controlPath: "/control/evidence-next-recommendation",
-    unrelatedAction: "fold",
-    unrelatedEv: 0,
-    unrelatedSizing: null,
-  },
-  {
-    filename: "supported-mix-unrelated-nonnumeric-ev",
-    controlPath: "/control/unrelated-nonnumeric-ev-next-recommendation",
-    unrelatedAction: "fold",
-    unrelatedEv: "99",
-    unrelatedSizing: null,
-  },
-  {
-    filename: "supported-mix-unrelated-invalid-sizing",
-    controlPath: "/control/unrelated-invalid-sizing-next-recommendation",
-    unrelatedAction: "bet",
-    unrelatedEv: 99,
-    unrelatedSizing: -1,
-  },
-  {
-    filename: "supported-mix-unrelated-invalid-action",
-    controlPath: "/control/unrelated-invalid-action-next-recommendation",
-    unrelatedAction: "jam",
-    unrelatedEv: 99,
-    unrelatedSizing: null,
-  },
-  {
-    filename: "supported-mix-ev-candidate-invalid-frequency",
-    controlPath: "/control/ev-candidate-invalid-frequency-next-recommendation",
-    expectedEvLoss: 0.9,
-    unrelatedAction: "bet",
-    unrelatedEv: 2,
-    unrelatedFrequency: "20%",
-    unrelatedSizing: 6,
-  },
-  {
-    filename: "supported-mix-missing-recommended-frequency",
-    controlPath: "/control/missing-recommended-frequency-next-recommendation",
-    recommendedCandidate: { action: "call", sizing: null, ev: 1.4 },
-    unrelatedAction: "fold",
-    unrelatedEv: 0,
-    unrelatedSizing: null,
-  },
-  {
-    filename: "supported-mix-malformed-recommended-frequency",
-    controlPath: "/control/malformed-recommended-frequency-next-recommendation",
-    recommendedCandidate: {
-      action: "call",
-      sizing: null,
-      ev: 1.4,
-      frequency: "78%",
-    },
-    unrelatedAction: "fold",
-    unrelatedEv: 0,
-    unrelatedSizing: null,
-  },
-  {
-    filename: "supported-mix-maximum-frequency-boundary",
-    controlPath: "/control/maximum-frequency-boundary-next-recommendation",
-    alternateFrequency: 1,
-    unrelatedAction: "fold",
-    unrelatedEv: 0,
-    unrelatedSizing: null,
-  },
-].map((evidenceCase) => ({
-  alternateFrequency: 0.2,
-  expectedEvLoss: 0.3,
-  recommendedCandidate: {
-    action: "call",
-    sizing: null,
-    ev: 1.4,
-    frequency: 0.78,
-  },
-  unrelatedFrequency: 0.02,
-  ...evidenceCase,
-}));
-
-async function verifyGradedSupportedMix(
-  page: Page,
-  testInfo: TestInfo,
-  evidenceCase: (typeof gradedSupportedMixCases)[number],
-): Promise<void> {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    ev_compared_hands: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    reviewed_hands: number;
-  };
-
-  const filename = attemptFilename(evidenceCase.filename, testInfo);
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: "raise",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-  await decisionPanel
-    .getByRole("button", {
-      name: "medium",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}${evidenceCase.controlPath}`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText("Solver-supported mix");
-  await expect(comparison).toContainText(
-    `${evidenceCase.expectedEvLoss} BB EV loss`,
-  );
-  await expect(
-    comparison.getByRole("button", {
-      name: "Mark reviewed",
-    }),
-  ).toBeHidden();
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-
-  const updatedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = (await updatedProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    ev_compared_hands: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    recent_hands: Array<{
-      ev_loss_bb: number | null;
-      job_id: string;
-      outcome: string;
-    }>;
-    reviewed_hands: number;
-  };
-  expect(updatedProgress).toMatchObject({
-    action_matches: initialProgress.action_matches + 1,
-    different_actions: initialProgress.different_actions,
-    ev_compared_hands: initialProgress.ev_compared_hands + 1,
-    exact_matches: initialProgress.exact_matches + 1,
-    needs_review_hands: initialProgress.needs_review_hands,
-    reviewed_hands: initialProgress.reviewed_hands + 1,
-  });
-  expect(updatedProgress.recent_hands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        ev_loss_bb: evidenceCase.expectedEvLoss,
-        job_id: uploadedJob.id,
-        outcome: "mixed",
-      }),
-    ]),
-  );
-
-  const filteredProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress` +
-      "?review_decision_action=raise&review_recommended_action=call",
-  );
-  expect(filteredProgressResponse.ok()).toBe(true);
-  const filteredProgress = (await filteredProgressResponse.json()) as {
-    review_queue: Array<{ job_id: string }>;
-  };
-  expect(filteredProgress.review_queue).not.toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ job_id: uploadedJob.id }),
-    ]),
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    archived_at: string | null;
-    recommendation: { raw: Record<string, unknown> } | null;
-    training_decision: { action: string; sizing: number | null } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    archived_at: expect.any(String),
-    recommendation: {
-      raw: {
-        candidates: expect.arrayContaining([
-          evidenceCase.recommendedCandidate,
-          {
-            action: "raise",
-            sizing: 8,
-            ev: 1.1,
-            frequency: evidenceCase.alternateFrequency,
-          },
-          {
-            action: evidenceCase.unrelatedAction,
-            sizing: evidenceCase.unrelatedSizing,
-            ev: evidenceCase.unrelatedEv,
-            frequency: evidenceCase.unrelatedFrequency,
-          },
-        ]),
-      },
-    },
-    training_decision: { action: "raise", sizing: 8 },
-    training_reviewed_at: null,
-  });
-}
-
-test("keeps a solver-supported mixed action out of review", async ({
-  page,
-}, testInfo) => {
-  await verifyGradedSupportedMix(page, testInfo, gradedSupportedMixCases[0]);
-});
-
-test("ignores unrelated nonnumeric EV when grading a supported mix", async ({
-  page,
-}, testInfo) => {
-  await verifyGradedSupportedMix(page, testInfo, gradedSupportedMixCases[1]);
-});
-
-test("ignores unrelated invalid sizing when grading a supported mix", async ({
-  page,
-}, testInfo) => {
-  await verifyGradedSupportedMix(page, testInfo, gradedSupportedMixCases[2]);
-});
-
-test("ignores unrelated invalid action when grading a supported mix", async ({
-  page,
-}, testInfo) => {
-  await verifyGradedSupportedMix(page, testInfo, gradedSupportedMixCases[3]);
-});
-
-test("grades valid EV evidence without candidate frequency metadata", async ({
-  page,
-}, testInfo) => {
-  await verifyGradedSupportedMix(page, testInfo, gradedSupportedMixCases[4]);
-});
-
-test("grades recommended-line EV without frequency metadata", async ({
-  page,
-}, testInfo) => {
-  await verifyGradedSupportedMix(page, testInfo, gradedSupportedMixCases[5]);
-});
-
-test("grades recommended-line EV with malformed frequency metadata", async ({
-  page,
-}, testInfo) => {
-  await verifyGradedSupportedMix(page, testInfo, gradedSupportedMixCases[6]);
-});
-
-test("supports a policy candidate at the maximum frequency boundary", async ({
-  page,
-}, testInfo) => {
-  await verifyGradedSupportedMix(page, testInfo, gradedSupportedMixCases[7]);
-});
-
-test("applies the solver policy-support frequency boundary", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-
-  async function processFrequencyCase(
-    filename: string,
-    controlPath: string,
-    expectedLabel: string,
-    needsReview: boolean,
-  ) {
-    const uploadedJob = await uploadLegacyScreenshot(page, filename);
-    await page.getByRole("button", { name: "Approve state" }).click();
-    const decisionPanel = page.getByRole("region", {
-      name: "Your training decision",
-    });
-    await decisionPanel
-      .getByRole("button", {
-        name: "raise",
-        exact: true,
-      })
-      .click();
-    await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-    await decisionPanel
-      .getByRole("button", {
-        name: "medium",
-        exact: true,
-      })
-      .click();
-    await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-    await expect(decisionPanel).toContainText("Answer locked");
-
-    const armResponse = await page.request.post(
-      `${PROVIDER_URL}${controlPath}`,
-    );
-    expect(armResponse.ok()).toBe(true);
-    await page.getByRole("button", { name: "Request recommendation" }).click();
-    await expect(uploadedJob.queueItem).toContainText("recommended");
-
-    const comparison = page.getByLabel("Training decision comparison");
-    await expect(comparison).toContainText(expectedLabel);
-    if (needsReview) {
-      await expect(
-        comparison.getByRole("button", {
-          name: "Mark reviewed",
-        }),
-      ).toBeVisible();
-    } else {
-      await expect(
-        comparison.getByRole("button", {
-          name: "Mark reviewed",
-        }),
-      ).toBeHidden();
-    }
-
-    await page.getByRole("button", { name: "Clear reviewed" }).click();
-    await expect(uploadedJob.queueItem).toBeHidden();
-    return uploadedJob;
-  }
-
-  const boundaryJob = await processFrequencyCase(
-    attemptFilename("frequency-boundary-supported", testInfo),
-    "/control/frequency-boundary-next-recommendation",
-    "Solver-supported mix",
-    false,
-  );
-  const belowBoundaryJob = await processFrequencyCase(
-    attemptFilename("frequency-boundary-review", testInfo),
-    "/control/below-frequency-boundary-next-recommendation",
-    "Different action",
-    true,
-  );
-
-  const updatedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = (await updatedProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    recent_hands: Array<{ job_id: string; outcome: string }>;
-    review_queue: Array<{ job_id: string; outcome: string }>;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-  expect(updatedProgress).toMatchObject({
-    action_matches: initialProgress.action_matches + 1,
-    different_actions: initialProgress.different_actions + 1,
-    exact_matches: initialProgress.exact_matches + 1,
-    needs_review_hands: initialProgress.needs_review_hands + 1,
-    review_queue_hands: initialProgress.review_queue_hands + 1,
-    reviewed_hands: initialProgress.reviewed_hands + 2,
-  });
-  expect(updatedProgress.recent_hands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        job_id: boundaryJob.id,
-        outcome: "mixed",
-      }),
-      expect.objectContaining({
-        job_id: belowBoundaryJob.id,
-        outcome: "different",
-      }),
-    ]),
-  );
-  expect(updatedProgress.review_queue).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        job_id: belowBoundaryJob.id,
-        outcome: "different",
-      }),
-    ]),
-  );
-  expect(updatedProgress.review_queue).not.toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ job_id: boundaryJob.id }),
-    ]),
-  );
-
-  const boundaryResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${boundaryJob.id}`,
-  );
-  const belowBoundaryResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${belowBoundaryJob.id}`,
-  );
-  expect(boundaryResponse.ok()).toBe(true);
-  expect(belowBoundaryResponse.ok()).toBe(true);
-  const boundaryPersistedJob = (await boundaryResponse.json()) as {
-    recommendation: { raw: Record<string, unknown> } | null;
-  };
-  const belowBoundaryPersistedJob = (await belowBoundaryResponse.json()) as {
-    recommendation: { raw: Record<string, unknown> } | null;
-  };
-  expect(boundaryPersistedJob.recommendation?.raw).toMatchObject({
-    candidates: expect.arrayContaining([
-      { action: "raise", sizing: 8, ev: 1.1, frequency: 0.05 },
-    ]),
-  });
-  expect(belowBoundaryPersistedJob.recommendation?.raw).toMatchObject({
-    candidates: expect.arrayContaining([
-      { action: "raise", sizing: 8, ev: 1.1, frequency: 0.049999 },
-    ]),
-  });
-});
-
-const unsupportedPolicyCases = [
-  {
-    filename: "malformed-policy-candidate",
-    controlPath: "/control/malformed-policy-next-recommendation",
-    expectedCandidate: { action: "raise", ev: 1.1, frequency: 0.2 },
-    expectedEvLoss: null,
-  },
-  {
-    filename: "malformed-policy-frequency",
-    controlPath: "/control/malformed-policy-frequency-next-recommendation",
-    expectedCandidate: {
-      action: "raise",
-      sizing: 8,
-      ev: 1.1,
-      frequency: "20%",
-    },
-    expectedEvLoss: 0.3,
-  },
-  {
-    filename: "above-policy-frequency-maximum",
-    controlPath: "/control/above-frequency-maximum-next-recommendation",
-    expectedCandidate: {
-      action: "raise",
-      sizing: 8,
-      ev: 1.1,
-      frequency: 1.000001,
-    },
-    expectedEvLoss: 0.3,
-  },
-  {
-    filename: "missing-policy-frequency",
-    controlPath: "/control/missing-policy-frequency-next-recommendation",
-    expectedCandidate: {
-      action: "raise",
-      sizing: 8,
-      ev: 1.1,
-    },
-    expectedEvLoss: 0.3,
-  },
-];
-
-async function verifyUnsupportedPolicyCandidate(
-  page: Page,
-  testInfo: TestInfo,
-  evidenceCase: (typeof unsupportedPolicyCases)[number],
-): Promise<void> {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    ev_compared_hands: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-
-  const filename = attemptFilename(evidenceCase.filename, testInfo);
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: "raise",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-  await decisionPanel
-    .getByRole("button", {
-      name: "medium",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}${evidenceCase.controlPath}`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText("Different action");
-  if (evidenceCase.expectedEvLoss === null) {
-    await expect(comparison).not.toContainText("BB EV loss");
-  } else {
-    await expect(comparison).toContainText(
-      `${evidenceCase.expectedEvLoss} BB EV loss`,
-    );
-  }
-  await expect(
-    comparison.getByRole("button", {
-      name: "Mark reviewed",
-    }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-
-  const updatedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = (await updatedProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    ev_compared_hands: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    recent_hands: Array<{
-      ev_loss_bb: number | null;
-      job_id: string;
-      outcome: string;
-    }>;
-    review_queue: Array<{ job_id: string; outcome: string }>;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-  expect(updatedProgress).toMatchObject({
-    action_matches: initialProgress.action_matches,
-    different_actions: initialProgress.different_actions + 1,
-    ev_compared_hands:
-      initialProgress.ev_compared_hands +
-      (evidenceCase.expectedEvLoss === null ? 0 : 1),
-    exact_matches: initialProgress.exact_matches,
-    needs_review_hands: initialProgress.needs_review_hands + 1,
-    review_queue_hands: initialProgress.review_queue_hands + 1,
-    reviewed_hands: initialProgress.reviewed_hands + 1,
-  });
-  expect(updatedProgress.recent_hands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        ev_loss_bb: evidenceCase.expectedEvLoss,
-        job_id: uploadedJob.id,
-        outcome: "different",
-      }),
-    ]),
-  );
-  expect(updatedProgress.review_queue).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        job_id: uploadedJob.id,
-        outcome: "different",
-      }),
-    ]),
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    recommendation: {
-      raw: { candidates: Array<Record<string, unknown>> };
-    } | null;
-  };
-  expect(persistedJob.recommendation?.raw.candidates).toEqual(
-    expect.arrayContaining([evidenceCase.expectedCandidate]),
-  );
-}
-
-test("keeps a malformed solver candidate out of policy support", async ({
-  page,
-}, testInfo) => {
-  await verifyUnsupportedPolicyCandidate(
-    page,
-    testInfo,
-    unsupportedPolicyCases[0],
-  );
-});
-
-test("grades EV without granting support to malformed frequency", async ({
-  page,
-}, testInfo) => {
-  await verifyUnsupportedPolicyCandidate(
-    page,
-    testInfo,
-    unsupportedPolicyCases[1],
-  );
-});
-
-test("rejects policy frequency above one while retaining EV grading", async ({
-  page,
-}, testInfo) => {
-  await verifyUnsupportedPolicyCandidate(
-    page,
-    testInfo,
-    unsupportedPolicyCases[2],
-  );
-});
-
-test("rejects missing policy frequency while retaining EV grading", async ({
-  page,
-}, testInfo) => {
-  await verifyUnsupportedPolicyCandidate(
-    page,
-    testInfo,
-    unsupportedPolicyCases[3],
-  );
-});
-
-const supportedUngradedMixCases = [
-  {
-    filename: "missing-recommended-ev-line",
-    controlPath: "/control/missing-recommended-line-next-recommendation",
-    candidates: [
-      { action: "raise", sizing: 8, ev: 1.1, frequency: 0.2 },
-      { action: "fold", sizing: null, ev: 0, frequency: 0.8 },
-    ],
-  },
-  {
-    filename: "nonnumeric-candidate-ev",
-    controlPath: "/control/nonnumeric-ev-next-recommendation",
-    candidates: [
-      { action: "call", sizing: null, ev: 1.4, frequency: 0.78 },
-      { action: "raise", sizing: 8, ev: "1.1", frequency: 0.2 },
-      { action: "fold", sizing: null, ev: 0, frequency: 0.02 },
-    ],
-  },
-  {
-    filename: "nonnumeric-recommended-ev",
-    controlPath: "/control/nonnumeric-recommended-ev-next-recommendation",
-    candidates: [
-      { action: "call", sizing: null, ev: "1.4", frequency: 0.78 },
-      { action: "raise", sizing: 8, ev: 1.1, frequency: 0.2 },
-      { action: "fold", sizing: null, ev: 0, frequency: 0.02 },
-    ],
-  },
-  {
-    filename: "missing-recommended-sizing",
-    controlPath: "/control/missing-recommended-sizing-next-recommendation",
-    candidates: [
-      { action: "call", ev: 1.4, frequency: 0.78 },
-      { action: "raise", sizing: 8, ev: 1.1, frequency: 0.2 },
-      { action: "fold", sizing: null, ev: 0, frequency: 0.02 },
-    ],
-  },
-  {
-    filename: "invalid-recommended-sizing",
-    controlPath: "/control/invalid-recommended-sizing-next-recommendation",
-    candidates: [
-      { action: "call", sizing: 2.5, ev: 1.4, frequency: 0.78 },
-      { action: "raise", sizing: 8, ev: 1.1, frequency: 0.2 },
-      { action: "fold", sizing: null, ev: 0, frequency: 0.02 },
-    ],
-  },
-];
-
-async function verifySupportedUngradedMix(
-  page: Page,
-  testInfo: TestInfo,
-  evidenceCase: (typeof supportedUngradedMixCases)[number],
-): Promise<void> {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    ev_compared_hands: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-
-  const filename = attemptFilename(evidenceCase.filename, testInfo);
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: "raise",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-  await decisionPanel
-    .getByRole("button", {
-      name: "medium",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}${evidenceCase.controlPath}`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText("Solver-supported mix");
-  await expect(comparison).not.toContainText("BB EV loss");
-  await expect(
-    comparison.getByRole("button", {
-      name: "Mark reviewed",
-    }),
-  ).toBeHidden();
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-
-  const updatedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = (await updatedProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    ev_compared_hands: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    recent_hands: Array<{
-      ev_loss_bb: number | null;
-      job_id: string;
-      outcome: string;
-    }>;
-    review_queue: Array<{ job_id: string }>;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-  expect(updatedProgress).toMatchObject({
-    action_matches: initialProgress.action_matches + 1,
-    different_actions: initialProgress.different_actions,
-    ev_compared_hands: initialProgress.ev_compared_hands,
-    exact_matches: initialProgress.exact_matches + 1,
-    needs_review_hands: initialProgress.needs_review_hands,
-    review_queue_hands: initialProgress.review_queue_hands,
-    reviewed_hands: initialProgress.reviewed_hands + 1,
-  });
-  expect(updatedProgress.recent_hands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        ev_loss_bb: null,
-        job_id: uploadedJob.id,
-        outcome: "mixed",
-      }),
-    ]),
-  );
-  expect(updatedProgress.review_queue).not.toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ job_id: uploadedJob.id }),
-    ]),
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    recommendation: {
-      action: string;
-      raw: { candidates: Array<Record<string, unknown>> };
-    } | null;
-  };
-  expect(persistedJob.recommendation?.action).toBe("call");
-  expect(persistedJob.recommendation?.raw.candidates).toEqual(
-    evidenceCase.candidates,
-  );
-}
-
-test("leaves EV loss ungraded without the recommended candidate line", async ({
-  page,
-}, testInfo) => {
-  await verifySupportedUngradedMix(
-    page,
-    testInfo,
-    supportedUngradedMixCases[0],
-  );
-});
-
-test("keeps a supported mix with nonnumeric candidate EV ungraded", async ({
-  page,
-}, testInfo) => {
-  await verifySupportedUngradedMix(
-    page,
-    testInfo,
-    supportedUngradedMixCases[1],
-  );
-});
-
-test("keeps a supported mix with nonnumeric recommended EV ungraded", async ({
-  page,
-}, testInfo) => {
-  await verifySupportedUngradedMix(
-    page,
-    testInfo,
-    supportedUngradedMixCases[2],
-  );
-});
-
-test("keeps a supported mix with missing recommended sizing ungraded", async ({
-  page,
-}, testInfo) => {
-  await verifySupportedUngradedMix(
-    page,
-    testInfo,
-    supportedUngradedMixCases[3],
-  );
-});
-
-test("keeps a supported mix with invalid recommended sizing ungraded", async ({
-  page,
-}, testInfo) => {
-  await verifySupportedUngradedMix(
-    page,
-    testInfo,
-    supportedUngradedMixCases[4],
-  );
-});
-
-const nonDistinctEvidenceCases = [
-  {
-    label: "one candidate",
-    filename: "single-line-ev-evidence",
-    controlPath: "/control/single-line-evidence-next-recommendation",
-    candidates: [{ action: "raise", sizing: 8, ev: 1.4, frequency: 1 }],
-  },
-  {
-    label: "duplicate candidate lines",
-    filename: "duplicate-line-ev-evidence",
-    controlPath: "/control/duplicate-line-evidence-next-recommendation",
-    candidates: [
-      { action: "raise", sizing: 8, ev: 1.4, frequency: 1 },
-      { action: "raise", sizing: 8.001, ev: 1.3, frequency: 0 },
-    ],
-  },
-];
-
-async function verifyNonDistinctEvidence(
-  page: Page,
-  testInfo: TestInfo,
-  evidenceCase: (typeof nonDistinctEvidenceCases)[number],
-): Promise<void> {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    ev_compared_hands: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-
-  const filename = attemptFilename(evidenceCase.filename, testInfo);
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: "raise",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByLabel("Decision sizing in BB").fill("8");
-  await decisionPanel
-    .getByRole("button", {
-      name: "medium",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}${evidenceCase.controlPath}`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText("Matched solver");
-  await expect(comparison).not.toContainText("BB EV loss");
-  await expect(
-    comparison.getByRole("button", {
-      name: "Mark reviewed",
-    }),
-  ).toBeHidden();
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-
-  const updatedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = (await updatedProgressResponse.json()) as {
-    action_matches: number;
-    different_actions: number;
-    ev_compared_hands: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    recent_hands: Array<{
-      ev_loss_bb: number | null;
-      job_id: string;
-      outcome: string;
-    }>;
-    review_queue: Array<{ job_id: string }>;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-  expect(updatedProgress).toMatchObject({
-    action_matches: initialProgress.action_matches + 1,
-    different_actions: initialProgress.different_actions,
-    ev_compared_hands: initialProgress.ev_compared_hands,
-    exact_matches: initialProgress.exact_matches + 1,
-    needs_review_hands: initialProgress.needs_review_hands,
-    review_queue_hands: initialProgress.review_queue_hands,
-    reviewed_hands: initialProgress.reviewed_hands + 1,
-  });
-  expect(updatedProgress.recent_hands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        ev_loss_bb: null,
-        job_id: uploadedJob.id,
-        outcome: "match",
-      }),
-    ]),
-  );
-  expect(updatedProgress.review_queue).not.toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ job_id: uploadedJob.id }),
-    ]),
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    recommendation: {
-      action: string;
-      raw: { candidates: Array<Record<string, unknown>> };
-      sizing: number | null;
-    } | null;
-  };
-  expect(persistedJob.recommendation).toMatchObject({
-    action: "raise",
-    sizing: 8,
-  });
-  expect(persistedJob.recommendation?.raw.candidates).toEqual(
-    evidenceCase.candidates,
-  );
-}
-
-test("leaves EV loss ungraded with one candidate", async ({
-  page,
-}, testInfo) => {
-  await verifyNonDistinctEvidence(page, testInfo, nonDistinctEvidenceCases[0]);
-});
-
-test("leaves EV loss ungraded with duplicate candidate lines", async ({
-  page,
-}, testInfo) => {
-  await verifyNonDistinctEvidence(page, testInfo, nonDistinctEvidenceCases[1]);
-});
-
-test("reviews a sizing difference at the tolerance boundary", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    action_differences: Array<{
-      decision_action: string;
-      recommended_action: string;
-    }>;
-    action_matches: number;
-    different_actions: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-
-  const filename = attemptFilename("sizing-boundary-review", testInfo);
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: "raise",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByLabel("Decision sizing in BB").fill("8.01");
-  await decisionPanel
-    .getByRole("button", {
-      name: "medium",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}/control/sizing-evidence-next-recommendation`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText("Same action, different size");
-  await expect(
-    comparison.getByRole("button", {
-      name: "Mark reviewed",
-    }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-
-  const updatedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = (await updatedProgressResponse.json()) as {
-    action_differences: Array<{
-      decision_action: string;
-      recommended_action: string;
-    }>;
-    action_matches: number;
-    different_actions: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    recent_hands: Array<{ job_id: string; outcome: string }>;
-    review_queue: Array<{ job_id: string; outcome: string }>;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-  expect(updatedProgress).toMatchObject({
-    action_matches: initialProgress.action_matches + 1,
-    different_actions: initialProgress.different_actions,
-    exact_matches: initialProgress.exact_matches,
-    needs_review_hands: initialProgress.needs_review_hands + 1,
-    review_queue_hands: initialProgress.review_queue_hands + 1,
-    reviewed_hands: initialProgress.reviewed_hands + 1,
-  });
-  expect(updatedProgress.action_differences).toEqual(
-    initialProgress.action_differences,
-  );
-  expect(updatedProgress.recent_hands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        job_id: uploadedJob.id,
-        outcome: "same_action",
-      }),
-    ]),
-  );
-  expect(updatedProgress.review_queue).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        job_id: uploadedJob.id,
-        outcome: "same_action",
-      }),
-    ]),
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    archived_at: string | null;
-    recommendation: { action: string; sizing: number | null } | null;
-    training_decision: { action: string; sizing: number | null } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    archived_at: expect.any(String),
-    recommendation: { action: "raise", sizing: 8 },
-    training_decision: { action: "raise", sizing: 8.01 },
-    training_reviewed_at: null,
-  });
-});
-
-test("reviews a supported mixed action taken at a different size", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    action_differences: Array<{
-      decision_action: string;
-      recommended_action: string;
-    }>;
-    action_matches: number;
-    different_actions: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-
-  const filename = attemptFilename("mixed-sizing-review", testInfo);
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: "raise",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByLabel("Decision sizing in BB").fill("9");
-  await decisionPanel
-    .getByRole("button", {
-      name: "medium",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}/control/evidence-next-recommendation`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText(
-    "Solver-supported action, different size",
-  );
-  await expect(
-    comparison.getByRole("button", {
-      name: "Mark reviewed",
-    }),
-  ).toBeVisible();
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-
-  const updatedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = (await updatedProgressResponse.json()) as {
-    action_differences: Array<{
-      decision_action: string;
-      recommended_action: string;
-    }>;
-    action_matches: number;
-    different_actions: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    recent_hands: Array<{ job_id: string; outcome: string }>;
-    review_queue: Array<{ job_id: string; outcome: string }>;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-  expect(updatedProgress).toMatchObject({
-    action_matches: initialProgress.action_matches + 1,
-    different_actions: initialProgress.different_actions,
-    exact_matches: initialProgress.exact_matches,
-    needs_review_hands: initialProgress.needs_review_hands + 1,
-    review_queue_hands: initialProgress.review_queue_hands + 1,
-    reviewed_hands: initialProgress.reviewed_hands + 1,
-  });
-  expect(updatedProgress.action_differences).toEqual(
-    initialProgress.action_differences,
-  );
-  expect(updatedProgress.recent_hands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        job_id: uploadedJob.id,
-        outcome: "mixed_action",
-      }),
-    ]),
-  );
-  expect(updatedProgress.review_queue).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        job_id: uploadedJob.id,
-        outcome: "mixed_action",
-      }),
-    ]),
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    archived_at: string | null;
-    recommendation: {
-      action: string;
-      raw: Record<string, unknown>;
-      sizing: number | null;
-    } | null;
-    training_decision: { action: string; sizing: number | null } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    archived_at: expect.any(String),
-    recommendation: {
-      action: "call",
-      raw: {
-        candidates: expect.arrayContaining([
-          { action: "raise", sizing: 8, ev: 1.1, frequency: 0.2 },
-        ]),
-      },
-      sizing: null,
-    },
-    training_decision: { action: "raise", sizing: 9 },
-    training_reviewed_at: null,
-  });
-});
-
-test("treats sub-tolerance sizing drift as an exact line", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    action_differences: Array<{
-      decision_action: string;
-      recommended_action: string;
-    }>;
-    action_matches: number;
-    different_actions: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-
-  const filename = attemptFilename("sizing-tolerance", testInfo);
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-  const decisionPanel = page.getByRole("region", {
-    name: "Your training decision",
-  });
-  await decisionPanel
-    .getByRole("button", {
-      name: "raise",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByLabel("Decision sizing in BB").fill("8.005");
-  await decisionPanel
-    .getByRole("button", {
-      name: "high",
-      exact: true,
-    })
-    .click();
-  await decisionPanel.getByRole("button", { name: "Lock answer" }).click();
-  await expect(decisionPanel).toContainText("Answer locked");
-
-  const armResponse = await page.request.post(
-    `${PROVIDER_URL}/control/sizing-evidence-next-recommendation`,
-  );
-  expect(armResponse.ok()).toBe(true);
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
-
-  const comparison = page.getByLabel("Training decision comparison");
-  await expect(comparison).toContainText("Matched solver");
-  await expect(
-    comparison.getByRole("button", {
-      name: "Mark reviewed",
-    }),
-  ).toBeHidden();
-
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(uploadedJob.queueItem).toBeHidden();
-
-  const updatedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(updatedProgressResponse.ok()).toBe(true);
-  const updatedProgress = (await updatedProgressResponse.json()) as {
-    action_differences: Array<{
-      decision_action: string;
-      recommended_action: string;
-    }>;
-    action_matches: number;
-    different_actions: number;
-    exact_matches: number;
-    needs_review_hands: number;
-    recent_hands: Array<{ job_id: string; outcome: string }>;
-    review_queue: Array<{ job_id: string }>;
-    review_queue_hands: number;
-    reviewed_hands: number;
-  };
-  expect(updatedProgress).toMatchObject({
-    action_matches: initialProgress.action_matches + 1,
-    different_actions: initialProgress.different_actions,
-    exact_matches: initialProgress.exact_matches + 1,
-    needs_review_hands: initialProgress.needs_review_hands,
-    review_queue_hands: initialProgress.review_queue_hands,
-    reviewed_hands: initialProgress.reviewed_hands + 1,
-  });
-  expect(updatedProgress.action_differences).toEqual(
-    initialProgress.action_differences,
-  );
-  expect(updatedProgress.recent_hands).toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({
-        job_id: uploadedJob.id,
-        outcome: "match",
-      }),
-    ]),
-  );
-  expect(updatedProgress.review_queue).not.toEqual(
-    expect.arrayContaining([
-      expect.objectContaining({ job_id: uploadedJob.id }),
-    ]),
-  );
-
-  const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-  );
-  expect(persistedResponse.ok()).toBe(true);
-  const persistedJob = (await persistedResponse.json()) as {
-    archived_at: string | null;
-    recommendation: { action: string; sizing: number | null } | null;
-    training_decision: { action: string; sizing: number | null } | null;
-    training_reviewed_at: string | null;
-  };
-  expect(persistedJob).toMatchObject({
-    archived_at: expect.any(String),
-    recommendation: { action: "raise", sizing: 8 },
-    training_decision: { action: "raise", sizing: 8.005 },
-    training_reviewed_at: null,
-  });
-});
-
-test("filters and exports persisted lesson notes", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-
-  const initialProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(initialProgressResponse.ok()).toBe(true);
-  const initialProgress = (await initialProgressResponse.json()) as {
-    lesson_count: number;
-  };
-  const flopFilename = attemptFilename("lesson-export-flop", testInfo);
-  const turnFilename = attemptFilename("lesson-export-turn", testInfo);
-  const turnControlFilename = attemptFilename(
-    "lesson-export-turn-control",
-    testInfo,
-  );
-  const lessonFilterToken = [
-    "shared-filter",
-    `w${testInfo.workerIndex}`,
-    `p${testInfo.repeatEachIndex}`,
-    `r${testInfo.retry}`,
-  ].join("-");
-  const flopNote = `${lessonFilterToken}: review the flop continuation bet.`;
-  const turnNote = `${lessonFilterToken}: check the turn bluff catcher.`;
-  const turnControlNote = `Review turn value bets from ${turnControlFilename}.`;
-
-  const flopJob = await createReviewedLesson(page, flopFilename, flopNote);
-  const turnJob = await createReviewedLesson(page, turnFilename, turnNote, {
-    boardCards: "Qs Jc 2h 9d",
-    street: "turn",
-  });
-  const turnControlJob = await createReviewedLesson(
-    page,
-    turnControlFilename,
-    turnControlNote,
-    { boardCards: "Qs Jc 2h 8s", street: "turn" },
-  );
-
-  await page.getByRole("button", { name: "Training progress" }).click();
-  const progressDialog = page.getByRole("dialog", {
-    name: "Training progress",
-  });
-  await expect(progressDialog).toBeVisible();
-  const expectedLessonCount = initialProgress.lesson_count + 3;
-  await progressDialog
-    .getByRole("button", {
-      name: `Lessons ${expectedLessonCount}`,
-      exact: true,
-    })
-    .click();
-
-  await progressDialog.getByLabel("Lesson street").selectOption("turn");
-  const turnLesson = progressDialog.getByRole("button", {
-    name: `Open ${turnFilename} training review`,
-    exact: true,
-  });
-  const turnControlLesson = progressDialog.getByRole("button", {
-    name: `Open ${turnControlFilename} training review`,
-    exact: true,
-  });
-  await expect(turnLesson).toBeVisible();
-  await expect(turnControlLesson).toBeVisible();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${flopFilename} training review`,
-      exact: true,
-    }),
-  ).toBeHidden();
-
-  const lessonSearch = progressDialog.getByLabel("Search saved lesson notes");
-  await lessonSearch.fill(lessonFilterToken);
-  await progressDialog
-    .getByRole("button", {
-      name: "Apply lesson search",
-    })
-    .click();
-
-  await expect(turnLesson).toContainText(turnNote);
-  await expect(turnControlLesson).toBeHidden();
-  await expect(
-    progressDialog.getByRole("button", {
-      name: `Open ${flopFilename} training review`,
-      exact: true,
-    }),
-  ).toBeHidden();
-  await expect(progressDialog).toContainText(
-    "1 lesson note matches these filters.",
-  );
-
-  const downloadPromise = page.waitForEvent("download");
-  await progressDialog.getByRole("link", { name: "Export lessons" }).click();
-  const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(
-    /^poker-hero-lessons-\d{8}T\d{6}Z\.md$/,
-  );
-  expect(download.url()).toContain("lesson_street=turn");
-  expect(decodeURIComponent(download.url())).toContain(
-    `lesson_query=${lessonFilterToken}`,
-  );
-  const lessonPath = await download.path();
-  expect(lessonPath).not.toBeNull();
-  if (lessonPath === null) {
-    throw new Error("Lesson export did not produce a local download");
-  }
-  const lessonDocument = await readFile(lessonPath, "utf8");
-  expect(lessonDocument).toContain("# Poker Hero Lessons");
-  expect(lessonDocument).toContain("1 saved lesson note.");
-  expect(lessonDocument).toContain(`- Source: \`${turnFilename}\``);
-  expect(lessonDocument).toContain(turnNote);
-  expect(lessonDocument).not.toContain(flopFilename);
-  expect(lessonDocument).not.toContain(flopNote);
-  expect(lessonDocument).not.toContain(turnControlFilename);
-  expect(lessonDocument).not.toContain(turnControlNote);
-
-  for (const lessonJob of [flopJob, turnJob, turnControlJob]) {
-    const cleanupResponse = await page.request.put(
-      `${BACKEND_URL}/api/jobs/${lessonJob.id}/training-review`,
-      { data: { note: null } },
-    );
-    expect(cleanupResponse.ok()).toBe(true);
-  }
-  const cleanedProgressResponse = await page.request.get(
-    `${BACKEND_URL}/api/training/progress`,
-  );
-  expect(cleanedProgressResponse.ok()).toBe(true);
-  const cleanedProgress = (await cleanedProgressResponse.json()) as {
-    lesson_count: number;
-  };
-  expect(cleanedProgress.lesson_count).toBe(initialProgress.lesson_count);
-});
-
 test("runs a parser benchmark and verifies its exported dataset", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
   const filename = attemptFilename("benchmark-dataset", testInfo);
 
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
+  const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
+  await expect(uploadedJob.queueItem).toContainText("approved");
 
   const initialOverviewResponse = await page.request.get(
     `${BACKEND_URL}/api/benchmarks`,
@@ -4386,9 +1230,6 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   };
   const expectedIncludedCases = initialOverview.included_cases + 1;
 
-  // The legacy reload drops the in-memory credential, so dataset import stays
-  // locked until the administrator unlocks the tools again.
-  await unlockAdministrativeAccess(page);
   await page.getByRole("button", { name: "Parser benchmark" }).click();
   const benchmarkDialog = page.getByRole("dialog", {
     name: "Parser benchmark",
@@ -4549,8 +1390,6 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   );
   await benchmarkDialog.getByRole("button", { name: "Done" }).click();
 
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(uploadedJob.queueItem).toContainText("recommended");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
 
@@ -4574,10 +1413,9 @@ test("downloads and verifies an application backup through recovery", async ({
   await openUploadInput(page);
   const filename = attemptFilename("application-backup", testInfo);
 
-  const archivedJob = await uploadLegacyScreenshot(page, filename);
+  const archivedJob = await uploadAdministrativeScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(archivedJob.queueItem).toContainText("recommended");
+  await expect(archivedJob.queueItem).toContainText("approved");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(archivedJob.queueItem).toBeHidden();
 
@@ -4585,12 +1423,12 @@ test("downloads and verifies an application backup through recovery", async ({
     "application-backup-pending",
     testInfo,
   );
-  const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
+  const pendingJob = await uploadAdministrativeScreenshot(
+    page,
+    pendingFilename,
+  );
   await expect(pendingJob.queueItem).toContainText("parsed");
 
-  // The legacy reload drops the in-memory credential, so backup restore stays
-  // locked until the administrator unlocks the tools again.
-  await unlockAdministrativeAccess(page);
   await page.getByRole("button", { name: "About this app" }).click();
   const infoDialog = page.getByRole("dialog", {
     name: "About Poker Training Analyzer",
@@ -4686,7 +1524,7 @@ test("downloads and verifies an application backup through recovery", async ({
   };
   expect(archivedRecord).toMatchObject({
     archived_at: expect.any(String),
-    status: "recommended",
+    status: "approved",
   });
   const pendingResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${pendingJob.id}`,
@@ -4704,8 +1542,7 @@ test("downloads and verifies an application backup through recovery", async ({
   await infoDialog.getByRole("button", { name: "Done" }).click();
   await pendingJob.queueItem.click();
   await page.getByRole("button", { name: "Approve state" }).click();
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(pendingJob.queueItem).toContainText("recommended");
+  await expect(pendingJob.queueItem).toContainText("approved");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(pendingJob.queueItem).toBeHidden();
 });
@@ -4756,7 +1593,6 @@ test("continues a screenshot batch when one upload is invalid", async ({
   expect(batchJobsResponse.ok()).toBe(true);
   const batchJobs = (await batchJobsResponse.json()) as {
     jobs: Array<{
-      input_context: string;
       original_filename: string;
       status: string;
     }>;
@@ -4766,7 +1602,6 @@ test("continues a screenshot batch when one upload is invalid", async ({
       (candidate) => candidate.original_filename === validFilename,
     ),
   ).toMatchObject({
-    input_context: "administrative_test",
     status: "parsed",
   });
   expect(
@@ -4775,251 +1610,16 @@ test("continues a screenshot batch when one upload is invalid", async ({
     ),
   ).toBe(false);
 
-  // The surviving upload is an administrative test input, so it is approved by
-  // hand and never offers a recommendation.
+  // The surviving upload is administrative OCR test data, so it becomes ground
+  // truth only through an explicit approval.
   await validItem.click();
-  await expect(
-    page.getByRole("button", { name: "Request recommendation" }),
-  ).toBeDisabled();
   await page.getByRole("button", { name: "Approve state" }).click();
   await expect(validItem).toContainText("approved");
-  await expect(
-    page.getByRole("button", { name: "Request recommendation" }),
-  ).toBeDisabled();
+  await expectNoLearningControls(page);
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(validItem).toBeHidden();
   await expect(invalidItem).toBeVisible();
-});
-
-const retryableRecommendationFailureCases = [
-  {
-    title: "recovers from a failed recommendation and retries it",
-    filename: "provider-retry",
-    controlPath: "/control/fail-next-recommendation",
-    expectedError: "external_solver request failed with status 503",
-  },
-  {
-    title: "rejects and retries malformed headline recommendation sizing",
-    filename: "invalid-headline-sizing",
-    controlPath: "/control/invalid-headline-sizing-next-recommendation",
-    expectedError: "external_solver returned invalid payload",
-  },
-  {
-    title: "rejects and retries nonfinite headline recommendation sizing",
-    filename: "nonfinite-headline-sizing",
-    controlPath: "/control/nonfinite-headline-sizing-next-recommendation",
-    expectedError: "external_solver returned invalid payload",
-  },
-  {
-    title: "rejects and retries zero headline recommendation sizing",
-    filename: "zero-headline-sizing",
-    controlPath: "/control/zero-headline-sizing-next-recommendation",
-    expectedError: "external_solver returned invalid payload",
-  },
-  {
-    title: "rejects and retries coerced headline recommendation sizing",
-    filename: "coerced-headline-sizing",
-    controlPath: "/control/coerced-headline-sizing-next-recommendation",
-    expectedError: "external_solver returned invalid payload",
-  },
-  {
-    title: "rejects and retries coerced recommendation confidence",
-    filename: "coerced-recommendation-confidence",
-    controlPath: "/control/coerced-confidence-next-recommendation",
-    expectedError: "external_solver returned invalid payload",
-  },
-];
-
-for (const failureCase of retryableRecommendationFailureCases) {
-  test(failureCase.title, async ({ page }, testInfo) => {
-    await openUploadInput(page);
-    const filename = attemptFilename(failureCase.filename, testInfo);
-
-    const uploadedJob = await uploadLegacyScreenshot(page, filename);
-    await page.getByRole("button", { name: "Approve state" }).click();
-    await expect(
-      page.getByRole("region", { name: "Your training decision" }),
-    ).toBeVisible();
-
-    const armFailureResponse = await page.request.post(
-      `${PROVIDER_URL}${failureCase.controlPath}`,
-    );
-    expect(armFailureResponse.ok()).toBe(true);
-
-    await page.getByRole("button", { name: "Request recommendation" }).click();
-    await expect(
-      page.getByText(failureCase.expectedError).first(),
-    ).toBeVisible();
-    await expect(uploadedJob.queueItem).toContainText("error");
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          sessionStorage.getItem("poker-training-processing-mutation-v1"),
-        ),
-      )
-      .toBeNull();
-    const failedJobResponse = await page.request.get(
-      `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-    );
-    expect(failedJobResponse.ok()).toBe(true);
-    const failedJob = (await failedJobResponse.json()) as {
-      error: string | null;
-      recommendation_pending: boolean;
-      recommendation_request_id: string | null;
-      status: string;
-    };
-    expect(failedJob).toMatchObject({
-      error: failureCase.expectedError,
-      recommendation_pending: false,
-      status: "error",
-    });
-    expect(failedJob.recommendation_request_id).not.toBeNull();
-
-    await page.getByRole("button", { name: "Request recommendation" }).click();
-    await expect(
-      page.getByRole("region", { name: "Recommendation" }),
-    ).toBeVisible();
-    await expect(uploadedJob.queueItem).toContainText("recommended");
-    const recommendedJobResponse = await page.request.get(
-      `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-    );
-    expect(recommendedJobResponse.ok()).toBe(true);
-    const recommendedJob = (await recommendedJobResponse.json()) as {
-      error: string | null;
-      recommendation: { raw: { engine: string } } | null;
-      status: string;
-    };
-    expect(recommendedJob).toMatchObject({
-      error: null,
-      recommendation: {
-        raw: { engine: "e2e_provider_stub" },
-      },
-      status: "recommended",
-    });
-  });
-}
-
-test("reconciles a recommendation that completes after page reload", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-  const filename = attemptFilename("recommendation-reload", testInfo);
-
-  const uploadedJob = await uploadLegacyScreenshot(page, filename);
-  await page.getByRole("button", { name: "Approve state" }).click();
-
-  const armBlockResponse = await page.request.post(
-    `${PROVIDER_URL}/control/block-next-recommendation`,
-  );
-  expect(armBlockResponse.ok()).toBe(true);
-
-  let recommendationReleased = false;
-  try {
-    await page.getByRole("button", { name: "Request recommendation" }).click();
-    await expect
-      .poll(async () => {
-        const response = await page.request.get(
-          `${PROVIDER_URL}/control/recommendation-state`,
-        );
-        if (!response.ok()) {
-          return false;
-        }
-        const state = (await response.json()) as { started: boolean };
-        return state.started;
-      })
-      .toBe(true);
-    await expect
-      .poll(async () => {
-        const response = await page.request.get(
-          `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-        );
-        if (!response.ok()) {
-          return false;
-        }
-        const job = (await response.json()) as {
-          recommendation_pending: boolean;
-        };
-        return job.recommendation_pending;
-      })
-      .toBe(true);
-    const pendingLease = await page.evaluate(
-      () =>
-        JSON.parse(
-          sessionStorage.getItem("poker-training-processing-mutation-v1") ??
-            "null",
-        ) as {
-          expectedRecommendationRequestId: string;
-          jobId: string;
-          kind: string;
-        } | null,
-    );
-    if (pendingLease === null) {
-      throw new Error("Recommendation mutation lease was not persisted");
-    }
-    expect(pendingLease).toMatchObject({
-      expectedRecommendationRequestId: expect.any(String),
-      jobId: uploadedJob.id,
-      kind: "job",
-    });
-
-    await page.reload();
-    await expectAnalyzerReady(page);
-    const reloadedQueueItem = page.getByRole("button", {
-      name: filenamePattern(filename),
-    });
-    await expect(reloadedQueueItem).toContainText("Recommendation running");
-    await reloadedQueueItem.click();
-    await expect(
-      page.getByRole("region", { name: "Recommendation" }),
-    ).toBeHidden();
-
-    const releaseResponse = await page.request.post(
-      `${PROVIDER_URL}/control/release-recommendation`,
-    );
-    expect(releaseResponse.ok()).toBe(true);
-    recommendationReleased = true;
-
-    await expect(
-      page.getByRole("region", { name: "Recommendation" }),
-    ).toBeVisible();
-    await expect(reloadedQueueItem).toContainText("recommended");
-    await expect
-      .poll(() =>
-        page.evaluate(() =>
-          sessionStorage.getItem("poker-training-processing-mutation-v1"),
-        ),
-      )
-      .toBeNull();
-
-    const completedJobResponse = await page.request.get(
-      `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
-    );
-    expect(completedJobResponse.ok()).toBe(true);
-    const completedJob = (await completedJobResponse.json()) as {
-      error: string | null;
-      recommendation: { raw: Record<string, string> } | null;
-      recommendation_pending: boolean;
-      recommendation_request_id: string | null;
-      status: string;
-    };
-    expect(completedJob).toMatchObject({
-      error: null,
-      recommendation: {
-        raw: {
-          engine: "e2e_provider_stub",
-          provider: "external_solver",
-        },
-      },
-      recommendation_pending: false,
-      recommendation_request_id: pendingLease.expectedRecommendationRequestId,
-      status: "recommended",
-    });
-  } finally {
-    if (!recommendationReleased) {
-      await page.request.post(`${PROVIDER_URL}/control/release-recommendation`);
-    }
-  }
 });
 
 test("persists a parser failure and recovers by re-uploading the screenshot", async ({
@@ -5140,20 +1740,14 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   );
   await expect(matchingQueueItems.filter({ hasText: "parsed" })).toHaveCount(1);
 
-  await markLegacyJobs(page, [recoveredJob.id]);
-  await forceQueueRevalidation(page);
   await page.goto(`/analyzer/jobs/${recoveredJob.id}`);
   await expectAnalyzerReady(page);
   await expect(matchingQueueItems).toHaveCount(2);
   await page.getByRole("button", { name: "Approve state" }).click();
-  await page.getByRole("button", { name: "Request recommendation" }).click();
   const recoveredQueueItem = matchingQueueItems.filter({
-    hasText: "recommended",
+    hasText: "approved",
   });
-  await expect(recoveredQueueItem).toContainText("recommended");
-  await expect(
-    page.getByRole("region", { name: "Recommendation" }),
-  ).toBeVisible();
+  await expect(recoveredQueueItem).toHaveCount(1);
 
   const recoveredJobsResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs`,
@@ -5161,9 +1755,9 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   expect(recoveredJobsResponse.ok()).toBe(true);
   const recoveredJobs = (await recoveredJobsResponse.json()) as {
     jobs: Array<{
+      approved_state: Record<string, unknown> | null;
       original_filename: string;
       parser_result: { raw: Record<string, string> } | null;
-      recommendation: { raw: Record<string, string> } | null;
       status: string;
     }>;
   };
@@ -5178,16 +1772,14 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
         status: "error",
       }),
       expect.objectContaining({
+        approved_state: expect.objectContaining({ street: "flop" }),
         parser_result: expect.objectContaining({
           raw: expect.objectContaining({
             engine: "e2e_provider_stub",
             provider: "llm_vision",
           }),
         }),
-        recommendation: expect.objectContaining({
-          raw: expect.objectContaining({ engine: "e2e_provider_stub" }),
-        }),
-        status: "recommended",
+        status: "approved",
       }),
     ]),
   );
@@ -5203,16 +1795,21 @@ test("restores history and processing after browser storage is cleared", async (
   await openUploadInput(page);
 
   const archivedFilename = attemptFilename("storage-reset-history", testInfo);
-  const archivedJob = await uploadLegacyScreenshot(page, archivedFilename);
+  const archivedJob = await uploadAdministrativeScreenshot(
+    page,
+    archivedFilename,
+  );
   await page.getByLabel("Pot").fill("66.75");
   await page.getByRole("button", { name: "Approve state" }).click();
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(archivedJob.queueItem).toContainText("recommended");
+  await expect(archivedJob.queueItem).toContainText("approved");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(archivedJob.queueItem).toBeHidden();
 
   const pendingFilename = attemptFilename("storage-reset-pending", testInfo);
-  const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
+  const pendingJob = await uploadAdministrativeScreenshot(
+    page,
+    pendingFilename,
+  );
   await expect(pendingJob.queueItem).toContainText("parsed");
   const historyPanel = page.getByRole("region", { name: "Session history" });
   await expect(
@@ -5260,13 +1857,12 @@ test("restores history and processing after browser storage is cleared", async (
   expect(persistedArchivedJob).toMatchObject({
     archived_at: expect.any(String),
     approved_state: { pot_size: 66.75 },
-    status: "recommended",
+    status: "approved",
   });
 
   await restoredPendingJob.click();
   await page.getByRole("button", { name: "Approve state" }).click();
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(restoredPendingJob).toContainText("recommended");
+  await expect(restoredPendingJob).toContainText("approved");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(restoredPendingJob).toBeHidden();
 });
@@ -5311,7 +1907,10 @@ test("searches beyond cached history without replacing active work", async ({
 
   await openUploadInput(page);
   const pendingFilename = attemptFilename("deep-history-pending", testInfo);
-  const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
+  const pendingJob = await uploadAdministrativeScreenshot(
+    page,
+    pendingFilename,
+  );
   const historyPanel = page.getByRole("region", { name: "Session history" });
   const historyItems = historyPanel.getByRole("button", {
     name: /^Reopen history item /,
@@ -5368,8 +1967,7 @@ test("searches beyond cached history without replacing active work", async ({
 
   await pendingJob.queueItem.click();
   await page.getByRole("button", { name: "Approve state" }).click();
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(pendingJob.queueItem).toContainText("recommended");
+  await expect(pendingJob.queueItem).toContainText("approved");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(pendingJob.queueItem).toBeHidden();
 });
@@ -5408,7 +2006,10 @@ test("loads an older page of matching history results", async ({
 
   await openUploadInput(page);
   const pendingFilename = attemptFilename("paged-history-pending", testInfo);
-  const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
+  const pendingJob = await uploadAdministrativeScreenshot(
+    page,
+    pendingFilename,
+  );
   const historyPanel = page.getByRole("region", { name: "Session history" });
   await historyPanel
     .getByRole("button", {
@@ -5497,8 +2098,7 @@ test("loads an older page of matching history results", async ({
 
   await pendingJob.queueItem.click();
   await page.getByRole("button", { name: "Approve state" }).click();
-  await page.getByRole("button", { name: "Request recommendation" }).click();
-  await expect(pendingJob.queueItem).toContainText("recommended");
+  await expect(pendingJob.queueItem).toContainText("approved");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(pendingJob.queueItem).toBeHidden();
 });

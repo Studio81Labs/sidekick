@@ -42,8 +42,6 @@ def seed_backup_data(data_dir: Path) -> None:
         original_filename="table.png",
         image_bytes=VALID_PNG,
         parser_provider="mock",
-        recommendation_provider="mock",
-        input_context="legacy_player",
     )
     job.status = "parsed"
     job_store.save(job)
@@ -353,8 +351,6 @@ def test_export_rejects_active_jobs_without_publishing_backup(
         original_filename="table.png",
         image_bytes=VALID_PNG,
         parser_provider="mock",
-        recommendation_provider="mock",
-        input_context="legacy_player",
     )
     destination = tmp_path / "backups"
 

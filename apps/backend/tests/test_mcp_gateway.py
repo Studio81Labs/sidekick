@@ -19,11 +19,9 @@ from app.mcp_gateway import (
 )
 from app.domain.hands import JobRecord
 from app.domain.poker import CanonicalState
-from app.domain.training import TrainingDecisionRequest
 from api_test_support import (
     ADMIN_OCR_TEST_HEADERS,
     ADMIN_OCR_TEST_TOKEN,
-    mark_legacy_player,
 )
 
 VALID_PNG = base64.b64decode(
@@ -65,19 +63,17 @@ def make_gateway(
         environment=gateway_environment,
         api_base_url="http://127.0.0.1:8000",
         allow_writes=allow_writes,
-        image_root=tmp_path,
     )
     api_client = PokerApiClient(settings, client=http_client)
     return PokerMcpGateway(settings, api_client=api_client), http_client
 
 
-def test_mcp_settings_require_safe_fixed_targets(tmp_path: Path) -> None:
+def test_mcp_settings_require_safe_fixed_targets() -> None:
     with pytest.raises(ValidationError, match="production MCP gateways are read-only"):
         McpGatewaySettings(
             environment="production",
             api_base_url="https://poker.example.com",
             allow_writes=True,
-            image_root=tmp_path,
         )
 
     with pytest.raises(ValidationError, match="HTTPS or loopback HTTP"):
@@ -93,22 +89,13 @@ def test_mcp_settings_require_safe_fixed_targets(tmp_path: Path) -> None:
             cf_access_client_id="client-id",
         )
 
-    with pytest.raises(ValidationError, match="explicitly configured"):
-        McpGatewaySettings(
-            environment="staging",
-            api_base_url="https://poker.example.com",
-            allow_writes=True,
-        )
-
 
 def test_mcp_settings_read_prefixed_environment(
-    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("POKER_MCP_ENVIRONMENT", "staging")
     monkeypatch.setenv("POKER_MCP_API_BASE_URL", "https://poker.example.com")
     monkeypatch.setenv("POKER_MCP_ALLOW_WRITES", "true")
-    monkeypatch.setenv("POKER_MCP_IMAGE_ROOT", str(tmp_path))
     monkeypatch.setenv("POKER_MCP_CF_ACCESS_CLIENT_ID", "client-id")
     monkeypatch.setenv("POKER_MCP_CF_ACCESS_CLIENT_SECRET", "client-secret")
 
@@ -116,50 +103,42 @@ def test_mcp_settings_read_prefixed_environment(
 
     assert settings.environment == "staging"
     assert settings.allow_writes is True
-    assert settings.image_root == tmp_path.resolve()
     assert settings.cf_access_client_secret is not None
     assert settings.cf_access_client_secret.get_secret_value() == "client-secret"
 
 
-def test_production_server_registers_only_read_tools(tmp_path: Path) -> None:
+READ_TOOL_NAMES = {
+    "get_environment_status",
+    "list_processing_jobs",
+    "get_job",
+    "search_history",
+    "list_benchmarks",
+}
+
+
+def test_production_server_registers_only_read_tools() -> None:
     settings = McpGatewaySettings(
         environment="production",
         api_base_url="https://poker.example.com",
-        image_root=tmp_path,
     )
 
     tools = run(build_mcp_server(settings).list_tools())
 
-    assert {tool.name for tool in tools} == {
-        "get_environment_status",
-        "list_processing_jobs",
-        "get_job",
-        "search_history",
-        "get_training_progress",
-        "list_benchmarks",
-    }
+    assert {tool.name for tool in tools} == READ_TOOL_NAMES
     assert all(tool.annotations.readOnlyHint is True for tool in tools)
 
 
-def test_staging_write_profile_registers_curated_mutations(tmp_path: Path) -> None:
+def test_staging_write_profile_registers_only_approval() -> None:
     settings = McpGatewaySettings(
         environment="staging",
         api_base_url="https://poker.example.com",
         allow_writes=True,
-        image_root=tmp_path,
     )
 
     tools = run(build_mcp_server(settings).list_tools())
     tools_by_name = {tool.name: tool for tool in tools}
 
-    assert {
-        "submit_screenshot",
-        "approve_hand_state",
-        "record_training_decision",
-        "request_recommendation",
-        "save_training_review",
-    } <= tools_by_name.keys()
-    assert tools_by_name["submit_screenshot"].annotations.destructiveHint is False
+    assert tools_by_name.keys() == READ_TOOL_NAMES | {"approve_hand_state"}
     assert tools_by_name["approve_hand_state"].annotations.destructiveHint is True
 
 
@@ -266,44 +245,15 @@ def test_api_client_withholds_api_credentials_until_identity_matches() -> None:
     run(http_client.aclose())
 
 
-def test_staging_gateway_refuses_screenshot_upload_when_administrative_mode_is_disabled(
-    tmp_path: Path,
-) -> None:
-    # Issue #413: screenshot upload is an administrator-only OCR test surface. The
-    # local gateway holds no administrator credential and must not learn one, so
-    # the tool surfaces the backend denial instead of creating a job.
-    image_path = tmp_path / "table.png"
-    image_path.write_bytes(VALID_PNG)
-    gateway, http_client = make_gateway(tmp_path, allow_writes=True)
-
-    with pytest.raises(PokerApiError) as error:
-        run(gateway.submit_screenshot(str(image_path), "mcp-upload-1"))
-
-    assert error.value.status_code == 403
-    assert error.value.detail == "Administrative OCR test mode is disabled"
-    assert run(gateway.list_processing_jobs()).queue.total == 0
-    run(http_client.aclose())
-
-
-def test_staging_gateway_completes_training_workflow(tmp_path: Path) -> None:
-    image_path = tmp_path / "table.png"
-    image_path.write_bytes(VALID_PNG)
+def test_staging_gateway_approves_a_seeded_administrative_job(tmp_path: Path) -> None:
     gateway, http_client = make_gateway(
         tmp_path,
         allow_writes=True,
         admin_ocr_test_enabled=True,
     )
 
-    # Issue #413: even where the deployment enables the administrative OCR test
-    # surface, the gateway sends no administrator bearer and is refused, so the
-    # training workflow starts from a job seeded with the administrator credential.
-    with pytest.raises(PokerApiError) as upload_error:
-        run(gateway.submit_screenshot(str(image_path), "mcp-upload-1"))
-    assert upload_error.value.status_code == 401
-    assert upload_error.value.detail == (
-        "Administrative OCR test authorization is required"
-    )
-
+    # Screenshot upload stays behind the administrator bearer, which the gateway
+    # does not hold, so the reviewable job is seeded through the guarded route.
     uploaded = run(
         http_client.post(
             "/api/jobs",
@@ -314,10 +264,6 @@ def test_staging_gateway_completes_training_workflow(tmp_path: Path) -> None:
     )
     assert uploaded.status_code == 201
     submitted_job = JobRecord.model_validate(uploaded.json())
-    # The seeded upload is an administrative OCR test input, which may never
-    # feed training. The gateway's training workflow runs on player-captured
-    # records, so the seeded job is re-persisted as one.
-    mark_legacy_player(tmp_path / "data", submitted_job.id)
     assert submitted_job.status == "parsed"
     assert submitted_job.upload_request_id == "mcp-upload-1"
     assert submitted_job.parser_result is not None
@@ -335,47 +281,8 @@ def test_staging_gateway_completes_training_workflow(tmp_path: Path) -> None:
     assert approved.job.approved_state is not None
     assert approved.job.approved_state.user_approved is True
 
-    decision = run(
-        gateway.record_training_decision(
-            submitted_job.id,
-            TrainingDecisionRequest(action="fold", certainty="high"),
-        )
-    )
-    assert decision.job.training_decision is not None
-    assert decision.job.training_decision.action == "fold"
-
-    recommended = run(
-        gateway.request_recommendation(
-            submitted_job.id,
-            "mcp-recommend-1",
-        )
-    )
-    assert recommended.job.status == "recommended"
-    assert recommended.job.recommendation is not None
-    assert recommended.job.recommendation_request_id == "mcp-recommend-1"
-
-    reviewed = run(gateway.save_training_review(submitted_job.id, "Review pot odds"))
-    assert reviewed.job.training_reviewed_at is not None
-    assert reviewed.job.training_review_note == "Review pot odds"
-
-    progress = run(gateway.get_training_progress())
-    assert progress.progress.reviewed_hands == 1
-    assert progress.progress.needs_review_hands == 0
     benchmarks = run(gateway.list_benchmarks())
     assert benchmarks.benchmarks.included_cases == 0
-    run(http_client.aclose())
-
-
-def test_submit_screenshot_rejects_paths_outside_configured_root(tmp_path: Path) -> None:
-    image_root = tmp_path / "allowed"
-    image_root.mkdir()
-    outside_path = tmp_path / "outside.png"
-    outside_path.write_bytes(VALID_PNG)
-    gateway, http_client = make_gateway(image_root, allow_writes=True)
-
-    with pytest.raises(ValueError, match="POKER_MCP_IMAGE_ROOT"):
-        run(gateway.submit_screenshot(str(outside_path)))
-
     run(http_client.aclose())
 
 

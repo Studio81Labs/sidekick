@@ -27,7 +27,7 @@ vi.mock("./AnalyzerPage", () => ({
       <output aria-label="Navigation ownership">
         {navigation.managed ? "route" : "local"}
       </output>
-      <button onClick={navigation.openTraining}>Open training</button>
+      <button onClick={navigation.openBenchmarks}>Open benchmarks</button>
       <button onClick={() => navigation.openJob("next-job")}>Open job</button>
       <button
         onClick={() => navigation.openJob("replacement-job", { replace: true })}
@@ -56,8 +56,8 @@ describe("AnalyzerRoute", () => {
             element={<AnalyzerRoute surface="job" />}
           />
           <Route
-            path="/analyzer/training"
-            element={<AnalyzerRoute surface="training" />}
+            path="/analyzer/benchmarks"
+            element={<AnalyzerRoute surface="benchmarks" />}
           />
         </Routes>
         <output aria-label="Current path">{useLocation().pathname}</output>
@@ -86,17 +86,17 @@ describe("AnalyzerRoute", () => {
 
   it("passes a durable non-job surface without job identity", () => {
     render(
-      <MemoryRouter initialEntries={["/analyzer/training"]}>
+      <MemoryRouter initialEntries={["/analyzer/benchmarks"]}>
         <Routes>
           <Route
-            path="/analyzer/training"
-            element={<AnalyzerRoute surface="training" />}
+            path="/analyzer/benchmarks"
+            element={<AnalyzerRoute surface="benchmarks" />}
           />
         </Routes>
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("training:none")).toBeInTheDocument();
+    expect(screen.getByText("benchmarks:none")).toBeInTheDocument();
   });
 
   it("routes analyzer UI commands through durable URLs", () => {
@@ -106,10 +106,10 @@ describe("AnalyzerRoute", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Open training" }));
-    expect(screen.getByText("training:none")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Open benchmarks" }));
+    expect(screen.getByText("benchmarks:none")).toBeInTheDocument();
     expect(screen.getByLabelText("Current path")).toHaveTextContent(
-      "/analyzer/training",
+      "/analyzer/benchmarks",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Close surface" }));
@@ -144,7 +144,7 @@ describe("AnalyzerRoute", () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Open training" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open benchmarks" }));
     fireEvent.click(screen.getByRole("button", { name: "Close surface" }));
     expect(screen.getByText("workspace:none")).toBeInTheDocument();
 

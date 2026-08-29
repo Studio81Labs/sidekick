@@ -17,7 +17,6 @@ from app.domain.poker import (
     PostflopAction,
 )
 from app.domain.recommendations import RecommendationAction, RecommendationResult
-from app.domain.training import TrainingDecisionRequest
 
 
 def test_benchmark_overview_requires_consistent_layout_counts() -> None:
@@ -152,7 +151,6 @@ def test_settings_defaults_use_local_training_backends(tmp_path: Path) -> None:
     assert settings.sentry_error_sample_rate == 1
     assert settings.api_rate_limit_enabled is True
     assert settings.api_rate_limit_uploads_per_minute == 120
-    assert settings.api_rate_limit_recommendations_per_minute == 120
     assert settings.api_rate_limit_benchmarks_per_minute == 6
     assert settings.api_rate_limit_data_transfers_per_minute == 6
     assert settings.external_parser_bearer_token is None
@@ -274,8 +272,6 @@ def test_settings_rejects_non_positive_max_upload_bytes() -> None:
 def test_settings_rejects_invalid_api_rate_limits() -> None:
     with pytest.raises(ValidationError):
         Settings(api_rate_limit_uploads_per_minute=0)
-    with pytest.raises(ValidationError):
-        Settings(api_rate_limit_recommendations_per_minute=10_001)
     with pytest.raises(ValidationError):
         Settings(api_rate_limit_benchmarks_per_minute=0)
     with pytest.raises(ValidationError):
@@ -694,60 +690,44 @@ def test_recommendation_rejects_sizing_for_non_wager_action(
         )
 
 
-@pytest.mark.parametrize(
-    "model",
-    [RecommendationResult, TrainingDecisionRequest],
-)
-def test_action_line_rejects_nonfinite_sizing(model: type[Any]) -> None:
-    values: dict[str, Any] = {"action": "raise", "sizing": float("inf")}
-    if model is RecommendationResult:
-        values.update(confidence=0.8, explanation="Malformed recommendation")
-
+def test_action_line_rejects_nonfinite_sizing() -> None:
     with pytest.raises(ValidationError, match="finite number"):
-        model(**values)
+        RecommendationResult(
+            action="raise",
+            sizing=float("inf"),
+            confidence=0.8,
+            explanation="Malformed recommendation",
+        )
 
 
-@pytest.mark.parametrize(
-    "model",
-    [RecommendationResult, TrainingDecisionRequest],
-)
-def test_action_line_rejects_zero_wager_sizing(model: type[Any]) -> None:
-    values: dict[str, Any] = {"action": "raise", "sizing": 0}
-    if model is RecommendationResult:
-        values.update(confidence=0.8, explanation="Malformed recommendation")
-
+def test_action_line_rejects_zero_wager_sizing() -> None:
     with pytest.raises(ValidationError, match="greater than 0"):
-        model(**values)
+        RecommendationResult(
+            action="raise",
+            sizing=0,
+            confidence=0.8,
+            explanation="Malformed recommendation",
+        )
 
 
-@pytest.mark.parametrize(
-    ("model", "sizing"),
-    [
-        (RecommendationResult, True),
-        (RecommendationResult, "7.5"),
-        (TrainingDecisionRequest, True),
-        (TrainingDecisionRequest, "7.5"),
-    ],
-)
-def test_action_line_rejects_coerced_wager_sizing(
-    model: type[Any],
-    sizing: object,
-) -> None:
-    values: dict[str, Any] = {"action": "raise", "sizing": sizing}
-    if model is RecommendationResult:
-        values.update(confidence=0.8, explanation="Malformed recommendation")
-
+@pytest.mark.parametrize("sizing", [True, "7.5"])
+def test_action_line_rejects_coerced_wager_sizing(sizing: object) -> None:
     with pytest.raises(ValidationError, match="valid number"):
-        model(**values)
+        RecommendationResult(
+            action="raise",
+            sizing=sizing,
+            confidence=0.8,
+            explanation="Malformed recommendation",
+        )
 
 
-@pytest.mark.parametrize("model", [RecommendationResult, TrainingDecisionRequest])
-def test_action_line_accepts_integer_wager_sizing(model: type[Any]) -> None:
-    values: dict[str, Any] = {"action": "raise", "sizing": 8}
-    if model is RecommendationResult:
-        values.update(confidence=0.8, explanation="Valid recommendation")
-
-    result = model(**values)
+def test_action_line_accepts_integer_wager_sizing() -> None:
+    result = RecommendationResult(
+        action="raise",
+        sizing=8,
+        confidence=0.8,
+        explanation="Valid recommendation",
+    )
 
     assert result.sizing == 8.0
 

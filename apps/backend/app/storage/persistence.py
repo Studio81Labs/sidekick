@@ -7,9 +7,6 @@ import re
 import tempfile
 from hashlib import sha256
 from pathlib import Path
-from typing import Any
-
-from pydantic import TypeAdapter
 
 from app.domain.benchmarks import BENCHMARK_IMPORT_REQUEST_ID_PATTERN
 from app.domain.hands import JobRecord
@@ -17,10 +14,7 @@ from app.domain.hands import JobRecord
 JOB_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 BENCHMARK_ID_PATTERN = JOB_ID_PATTERN
 BENCHMARK_IMPORT_REQUEST_ID_RE = re.compile(BENCHMARK_IMPORT_REQUEST_ID_PATTERN)
-JOB_RECORD_PAYLOAD_ADAPTER = TypeAdapter(dict[str, Any])
 
-LEGACY_ACTIONS_WITHOUT_SIZING = frozenset({"fold", "check", "call"})
-LEGACY_WAGER_ACTIONS = frozenset({"bet", "raise"})
 DATA_VOLUME_MARKER_FILENAME = ".poker-hero-data-volume"
 DATA_VOLUME_MARKER_PREFIX = "poker-hero-data-volume-v1:"
 
@@ -152,33 +146,5 @@ def _fsync_directory(directory: Path) -> None:
         os.close(descriptor)
 
 
-def _normalize_legacy_action_sizing(
-    value: Any,
-    *,
-    normalize_non_wager: bool,
-) -> None:
-    if not isinstance(value, dict):
-        return
-    action = value.get("action")
-    sizing = value.get("sizing")
-    if action in LEGACY_WAGER_ACTIONS and sizing == 0:
-        value["sizing"] = None
-    elif (
-        normalize_non_wager
-        and action in LEGACY_ACTIONS_WITHOUT_SIZING
-        and sizing is not None
-    ):
-        value["sizing"] = None
-
-
 def load_persisted_job_record(payload: str | bytes) -> JobRecord:
-    values = JOB_RECORD_PAYLOAD_ADAPTER.validate_json(payload)
-    _normalize_legacy_action_sizing(
-        values.get("recommendation"),
-        normalize_non_wager=True,
-    )
-    _normalize_legacy_action_sizing(
-        values.get("training_decision"),
-        normalize_non_wager=False,
-    )
-    return JobRecord.model_validate(values)
+    return JobRecord.model_validate_json(payload)

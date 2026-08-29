@@ -22,10 +22,6 @@ export function AppRoutes() {
         element={<AnalyzerRoute surface="job" />}
       />
       <Route
-        path={appPaths.analyzerTraining}
-        element={<AnalyzerRoute surface="training" />}
-      />
-      <Route
         path={appPaths.analyzerBenchmarks}
         element={<AnalyzerRoute surface="benchmarks" />}
       />

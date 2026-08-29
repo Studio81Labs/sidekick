@@ -46,10 +46,6 @@ const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
       "domains/history/api/historyApi.ts",
       "features/history/services/archiveJobsCommand.ts",
     ]),
-    completeTrainingReview: new Set([
-      "domains/training/api/trainingApi.ts",
-      "features/training/services/trainingReviewCommands.ts",
-    ]),
     createMcpPrincipal: new Set([
       "domains/mcp/api/mcpApi.ts",
       "features/system/services/mcpPrincipalCommands.ts",
@@ -62,14 +58,6 @@ const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
       "domains/benchmarks/api/benchmarksApi.ts",
       "features/benchmark/services/importBenchmarkDatasetCommand.ts",
     ]),
-    recordTrainingDecision: new Set([
-      "domains/training/api/trainingApi.ts",
-      "features/training/services/trainingReviewCommands.ts",
-    ]),
-    reopenTrainingReview: new Set([
-      "domains/training/api/trainingApi.ts",
-      "features/training/services/trainingReviewCommands.ts",
-    ]),
     revokeMcpPrincipal: new Set([
       "domains/mcp/api/mcpApi.ts",
       "features/system/services/mcpPrincipalCommands.ts",
@@ -81,10 +69,6 @@ const WAVE_NINE_MUTATION_OWNERS: Readonly<Record<string, ReadonlySet<string>>> =
     runParserBenchmark: new Set([
       "domains/benchmarks/api/benchmarksApi.ts",
       "features/benchmark/services/runParserBenchmarkCommand.ts",
-    ]),
-    requestRecommendation: new Set([
-      "domains/recommendations/api/recommendationsApi.ts",
-      "features/hand-review/services/handWorkflowCommands.ts",
     ]),
     restoreApplicationBackup: new Set([
       "domains/backups/api/backupsApi.ts",
@@ -4735,25 +4719,6 @@ function mutationLeaseBoundaryViolations(): string[] {
   });
 }
 
-function retiredRecommendationFacadeViolations(): string[] {
-  return [
-    "features/recommendation/lib/recommendationPresentation.ts",
-    "features/recommendation/lib/postflopEvidencePresentation.ts",
-    "features/recommendation/lib/preflopEvidencePresentation.ts",
-  ].flatMap((facadePath) =>
-    existsSync(resolve(SOURCE_ROOT, facadePath))
-      ? [`retired recommendation facade exists: ${facadePath}`]
-      : [],
-  );
-}
-
-function retiredTrainingPresentationFacadeViolations(): string[] {
-  const facadePath = "features/training/lib/trainingPresentation.ts";
-  return existsSync(resolve(SOURCE_ROOT, facadePath))
-    ? [`retired training presentation facade exists: ${facadePath}`]
-    : [];
-}
-
 function retiredHandReviewPokerStateFacadeViolations(): string[] {
   const facadePath = "features/hand-review/lib/pokerState.ts";
   return existsSync(resolve(SOURCE_ROOT, facadePath))
@@ -4810,7 +4775,7 @@ describe("frontend source architecture", () => {
     expect(
       domainCompatibilityFacadeImportAllowed(
         ["shared", "api", "training.ts"],
-        ["domains", "training", "api", "trainingApi.ts"],
+        ["domains", "history", "api", "historyApi.ts"],
       ),
     ).toBe(false);
     expect(
@@ -5024,14 +4989,6 @@ describe("frontend source architecture", () => {
 
   it("keeps the retired workspace mutation leases barrel removed", () => {
     expect(mutationLeaseBoundaryViolations()).toEqual([]);
-  });
-
-  it("keeps retired recommendation facades removed", () => {
-    expect(retiredRecommendationFacadeViolations()).toEqual([]);
-  });
-
-  it("keeps the retired training presentation facade removed", () => {
-    expect(retiredTrainingPresentationFacadeViolations()).toEqual([]);
   });
 
   it("keeps the retired hand-review poker state facade removed", () => {

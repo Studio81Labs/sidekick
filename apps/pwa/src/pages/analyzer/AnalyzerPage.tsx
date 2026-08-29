@@ -17,7 +17,6 @@ const DEFAULT_ANALYZER_NAVIGATION: AnalyzerRouteNavigation = {
   managed: false,
   openBenchmarks: ignoreRouteNavigation,
   openJob: ignoreRouteNavigation,
-  openTraining: ignoreRouteNavigation,
   openWorkspace: ignoreRouteNavigation,
 };
 

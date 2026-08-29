@@ -11,14 +11,12 @@ from app.application.jobs import (
     JobImage,
     JobMutationService,
     JobQueryService,
-    JobRecommendationService,
     JobUploadPipelineRequest,
     JobUploadRequest,
     JobUploadService,
 )
 from app.application.mcp_admin import McpAdminService
 from app.application.system import SystemQueryService
-from app.application.training import TrainingProgressQuery, TrainingService
 
 __all__ = [
     "ApplicationBackupExport",
@@ -30,12 +28,9 @@ __all__ = [
     "JobImage",
     "JobMutationService",
     "JobQueryService",
-    "JobRecommendationService",
     "JobUploadPipelineRequest",
     "JobUploadRequest",
     "JobUploadService",
     "McpAdminService",
     "SystemQueryService",
-    "TrainingProgressQuery",
-    "TrainingService",
 ]

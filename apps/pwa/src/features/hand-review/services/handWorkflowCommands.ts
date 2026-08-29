@@ -3,8 +3,6 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { approveState } from "../../../domains/jobs/api/jobsApi";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
-import { requestRecommendation } from "../../../domains/recommendations/api/recommendationsApi";
-import { trainingQueryKeys } from "../../../domains/training/api/trainingQueries";
 import {
   beginLatestQueryWrite,
   finishLatestQueryWrite,
@@ -18,12 +16,6 @@ export type ApproveStateCommand = {
   jobId: string;
   signal?: AbortSignal;
   state: CanonicalState;
-};
-
-export type RequestRecommendationCommand = {
-  jobId: string;
-  requestId: string;
-  signal?: AbortSignal;
 };
 
 function preserveNewerCachedMetadata(
@@ -51,16 +43,12 @@ function preserveNewerCachedMetadata(
 async function applyHandWorkflowCacheOutcome(
   queryClient: QueryClient,
   job: JobRecord,
-  invalidateTraining: boolean,
   detailWriteToken: object,
 ) {
   const invalidated: QueryKey[] = [
     jobQueryKeys.processing(),
     historyQueryKeys.all,
   ];
-  if (invalidateTraining) {
-    invalidated.push(trainingQueryKeys.all);
-  }
   const cache = {
     updated: jobQueryKeys.detail(job.id),
     invalidated,
@@ -112,30 +100,6 @@ export async function approveStateCommand(
     return await applyHandWorkflowCacheOutcome(
       queryClient,
       job,
-      true,
-      detailWriteToken,
-    );
-  } finally {
-    finishLatestQueryWrite(queryClient, detailKey, detailWriteToken);
-  }
-}
-
-export async function requestRecommendationCommand(
-  queryClient: QueryClient,
-  command: RequestRecommendationCommand,
-) {
-  const detailKey = jobQueryKeys.detail(command.jobId);
-  const detailWriteToken = beginLatestQueryWrite(queryClient, detailKey);
-  try {
-    const job = await requestRecommendation(
-      command.jobId,
-      command.requestId,
-      command.signal,
-    );
-    return await applyHandWorkflowCacheOutcome(
-      queryClient,
-      job,
-      true,
       detailWriteToken,
     );
   } finally {

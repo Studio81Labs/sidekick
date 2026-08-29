@@ -14,7 +14,7 @@ describe("humanReadableMessage", () => {
         "Recommendation failed",
       ),
     ).toBe(
-      "Complete the required table details before requesting a recommendation: Opponent wager total and opponents at the current wager. Edit the listed fields, then approve the state again.",
+      "Complete the required table details before approving the state: Opponent wager total and opponents at the current wager. Edit the listed fields, then approve again.",
     );
   });
 
@@ -41,7 +41,7 @@ describe("humanReadableMessage", () => {
         "Recommendation failed",
       ),
     ).toBe(
-      "Complete the required table details before requesting a recommendation: Effective stack. Edit the listed fields, then approve the state again.",
+      "Complete the required table details before approving the state: Effective stack. Edit the listed fields, then approve again.",
     );
   });
 
@@ -61,7 +61,7 @@ describe("readJson", () => {
     );
 
     await expect(readJson(response)).rejects.toThrow(
-      "Complete the required table details before requesting a recommendation: Opponent wager total. Edit the listed fields, then approve the state again.",
+      "Complete the required table details before approving the state: Opponent wager total. Edit the listed fields, then approve again.",
     );
   });
 

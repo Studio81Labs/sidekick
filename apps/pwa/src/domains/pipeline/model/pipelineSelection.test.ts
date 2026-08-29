@@ -11,8 +11,6 @@ const capabilities = {
   defaults: {
     parser_layout_profile: "default_layout",
     parser_provider: "ocr_cv",
-    recommendation_engine: "postflop_solver",
-    recommendation_provider: "local_solver",
   },
   parser_layout_compatibility: {
     ocr_cv: ["default_layout"],
@@ -40,28 +38,6 @@ const capabilities = {
     },
   ],
   administrative_ocr_test: { enabled: false },
-  recommendation_engines: [
-    {
-      available: true,
-      id: "postflop_solver",
-      label: "Postflop solver",
-      unavailable_reason: null,
-    },
-  ],
-  recommendation_providers: [
-    {
-      available: true,
-      id: "local_solver",
-      label: "Local solver",
-      unavailable_reason: null,
-    },
-    {
-      available: true,
-      id: "llm_advice",
-      label: "LLM adviser",
-      unavailable_reason: null,
-    },
-  ],
 } as PipelineCapabilities;
 
 describe("pipeline selection", () => {
@@ -79,19 +55,27 @@ describe("pipeline selection", () => {
     );
   });
 
-  it("reconciles unavailable choices and clears engines for remote providers", () => {
+  it("reconciles unavailable parser choices to available options", () => {
     expect(
       reconcilePipelineSelection(capabilities, {
         parser_layout_profile: "unavailable_layout",
         parser_provider: "unavailable_parser",
-        recommendation_engine: "unavailable_engine",
-        recommendation_provider: "llm_advice",
       }),
     ).toEqual({
       parser_layout_profile: "default_layout",
       parser_provider: "ocr_cv",
-      recommendation_engine: null,
-      recommendation_provider: "llm_advice",
+    });
+  });
+
+  it("keeps a compatible layout the caller already selected", () => {
+    expect(
+      reconcilePipelineSelection(capabilities, {
+        parser_layout_profile: "default_layout",
+        parser_provider: "ocr_cv",
+      }),
+    ).toEqual({
+      parser_layout_profile: "default_layout",
+      parser_provider: "ocr_cv",
     });
   });
 });

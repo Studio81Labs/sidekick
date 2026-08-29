@@ -6,19 +6,9 @@ import type {
 
 export const PROVIDER_LABELS: Record<string, string> = {
   auto: "Automatic recognition",
-  custom_local: "Custom local solver",
-  external_solver: "External solver",
-  llm_advice: "LLM adviser",
   llm_vision: "External vision model",
-  local_ev: "Local EV solver",
-  local_ev_solver_v1: "Local EV solver",
-  local_solver: "Local solver",
   mock: "Demo engine",
   ocr_cv: "OCR + computer vision",
-  preflop_chart_v1: "Preflop chart",
-  postflop_solver: "Postflop solver",
-  rule_based: "Rule-based trainer",
-  rule_based_training_v2: "Rule-based trainer",
 };
 
 export function providerLabel(provider: string): string {
@@ -67,32 +57,8 @@ export function reconcilePipelineSelection(
     )?.id ??
     layouts.find((option) => option.available)?.id ??
     capabilities.defaults.parser_layout_profile;
-  const recommendationProvider =
-    availablePipelineOption(
-      capabilities.recommendation_providers,
-      candidate.recommendation_provider,
-    )?.id ??
-    capabilities.recommendation_providers.find((option) => option.available)
-      ?.id ??
-    capabilities.defaults.recommendation_provider;
-  const recommendationEngine =
-    recommendationProvider === "local_solver"
-      ? (availablePipelineOption(
-          capabilities.recommendation_engines,
-          candidate.recommendation_engine,
-        )?.id ??
-        availablePipelineOption(
-          capabilities.recommendation_engines,
-          capabilities.defaults.recommendation_engine,
-        )?.id ??
-        capabilities.recommendation_engines.find((option) => option.available)
-          ?.id ??
-        null)
-      : null;
   return {
     parser_provider: parserProvider,
     parser_layout_profile: parserLayoutProfile,
-    recommendation_provider: recommendationProvider,
-    recommendation_engine: recommendationEngine,
   };
 }

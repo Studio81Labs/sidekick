@@ -14,8 +14,6 @@ const capabilities: PipelineCapabilities = {
   defaults: {
     parser_provider: "ocr_cv",
     parser_layout_profile: "fortuna",
-    recommendation_provider: "local_solver",
-    recommendation_engine: "postflop_solver",
   },
   parser_providers: [
     {
@@ -45,29 +43,7 @@ const capabilities: PipelineCapabilities = {
       unavailable_reason: null,
     },
   ],
-  recommendation_providers: [
-    {
-      id: "local_solver",
-      label: "Local solver",
-      available: true,
-      unavailable_reason: null,
-    },
-    {
-      id: "rule_based",
-      label: "Rule based",
-      available: true,
-      unavailable_reason: null,
-    },
-  ],
   administrative_ocr_test: { enabled: false },
-  recommendation_engines: [
-    {
-      id: "postflop_solver",
-      label: "Postflop CFR",
-      available: true,
-      unavailable_reason: null,
-    },
-  ],
 };
 
 const selection: PipelineSelection = { ...capabilities.defaults };
@@ -82,8 +58,6 @@ function dialogProps(
     onClose: vi.fn(),
     onParserChange: vi.fn(),
     onParserLayoutChange: vi.fn(),
-    onRecommendationChange: vi.fn(),
-    onRecommendationEngineChange: vi.fn(),
     selection,
     ...overrides,
   };
@@ -99,10 +73,8 @@ describe("PipelineDialog", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Recognition")).toHaveValue("ocr_cv");
     expect(screen.getByLabelText("Table layout")).toHaveValue("fortuna");
-    expect(screen.getByLabelText("Recommendation")).toHaveValue("local_solver");
-    expect(screen.getByLabelText("Solver engine")).toHaveValue(
-      "postflop_solver",
-    );
+    expect(screen.queryByLabelText("Recommendation")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Solver engine")).not.toBeInTheDocument();
     expect(
       screen.getByText(/External parser URL is not configured/),
     ).toBeInTheDocument();
@@ -118,14 +90,6 @@ describe("PipelineDialog", () => {
       screen.getByLabelText("Table layout"),
       "generic",
     );
-    await userEvent.selectOptions(
-      screen.getByLabelText("Recommendation"),
-      "rule_based",
-    );
-    await userEvent.selectOptions(
-      screen.getByLabelText("Solver engine"),
-      "postflop_solver",
-    );
     await userEvent.click(
       screen.getByRole("button", { name: "Close analysis plugin settings" }),
     );
@@ -133,27 +97,7 @@ describe("PipelineDialog", () => {
 
     expect(props.onParserChange).toHaveBeenCalledWith("ocr_cv");
     expect(props.onParserLayoutChange).toHaveBeenCalledWith("generic");
-    expect(props.onRecommendationChange).toHaveBeenCalledWith("rule_based");
-    expect(props.onRecommendationEngineChange).toHaveBeenCalledWith(
-      "postflop_solver",
-    );
     expect(props.onClose).toHaveBeenCalledTimes(2);
-  });
-
-  it("hides the solver engine for non-local recommendation providers", () => {
-    render(
-      <PipelineDialog
-        {...dialogProps({
-          selection: {
-            ...selection,
-            recommendation_provider: "rule_based",
-            recommendation_engine: null,
-          },
-        })}
-      />,
-    );
-
-    expect(screen.queryByLabelText("Solver engine")).not.toBeInTheDocument();
   });
 
   it("renders loading and unavailable states", () => {

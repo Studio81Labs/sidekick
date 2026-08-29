@@ -16,7 +16,6 @@ export interface InfoProviderSummary {
   recognition: string;
   recognitionFallbackFrom: string | null;
   recognitionRoute: string | null;
-  recommendation: string;
 }
 
 export interface InfoDialogProps {
@@ -55,7 +54,7 @@ export function InfoDialog({
       <DialogHeader
         titleId="info-dialog-title"
         title="About Poker Training Analyzer"
-        subtitle="Post-hand Texas Hold'em review and training"
+        subtitle="Administrator OCR test console"
         closeLabel="Close app information"
         closeDisabled={closeDisabled}
         onClose={onClose}
@@ -78,10 +77,6 @@ export function InfoDialog({
                   </span>
                 ) : null}
               </div>
-              <div>
-                <small>Recommendation</small>
-                <strong>{providers.recommendation}</strong>
-              </div>
             </div>
           ) : (
             <p>
@@ -100,16 +95,7 @@ export function InfoDialog({
           </p>
         </section>
         <section className="info-dialog-section">
-          <h3>Recommendations</h3>
-          <p>
-            The configured engine analyzes approved hand state and compares
-            available actions. Preflop uses a position-aware training chart, the
-            postflop engine solves supported heads-up game trees, and ambiguous
-            spots use the range/EV fallback.
-          </p>
-        </section>
-        <section className="info-dialog-section">
-          <h3>Training scope</h3>
+          <h3>Product scope</h3>
           <p>
             Designed for post-hand study. It does not place bets or interact
             directly with a poker client.
@@ -127,9 +113,8 @@ export function InfoDialog({
         <section className="info-dialog-section data-recovery-section">
           <h3>Data and recovery</h3>
           <p>
-            Back up screenshots, reviewed hands, lesson notes, training
-            decisions, recommendations, and benchmark reports in one portable
-            ZIP.
+            Back up screenshots, approved ground truth, and benchmark reports in
+            one portable ZIP.
           </p>
           <div className="data-recovery-actions">
             <DownloadLinkControl

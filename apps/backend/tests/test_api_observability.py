@@ -913,7 +913,7 @@ def test_cors_preflight_is_observed(
     response = client.options(
         "/api/jobs",
         headers={
-            "Access-Control-Request-Headers": "X-Recommendation-Request-ID",
+            "Access-Control-Request-Headers": "X-Benchmark-Import-Request-ID",
             "Access-Control-Request-Method": "POST",
             "Origin": "http://localhost:5173",
             "X-Request-ID": "preflight-request-123",

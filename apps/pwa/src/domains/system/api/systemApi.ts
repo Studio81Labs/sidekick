@@ -8,8 +8,6 @@ export function toSystemInfo(response: HealthResponse): SystemInfo {
   return {
     environment: response.environment,
     parser_provider: response.parser_provider,
-    recommendation_engine: response.recommendation_engine,
-    recommendation_provider: response.recommendation_provider,
     status: response.status,
   };
 }

@@ -8,7 +8,6 @@ import {
   fetchMock,
   jobRecord,
   jsonResponse,
-  recommendation,
   switchToUploadMode,
 } from "../../../test/analyzerHarness";
 
@@ -20,8 +19,6 @@ describe("Analyzer pipeline", () => {
           defaults: {
             parser_provider: "llm_vision",
             parser_layout_profile: "pokerstars",
-            recommendation_provider: "external_solver",
-            recommendation_engine: null,
           },
           parser_providers: [
             {
@@ -55,22 +52,7 @@ describe("Analyzer pipeline", () => {
             llm_vision: ["pokerstars", "generic"],
             mock: ["pokerstars", "generic"],
           },
-          recommendation_providers: [
-            {
-              id: "external_solver",
-              label: "External solver",
-              available: false,
-              unavailable_reason: "External solver URL is not configured",
-            },
-            {
-              id: "rule_based",
-              label: "Rule-based training",
-              available: true,
-              unavailable_reason: null,
-            },
-          ],
           administrative_ocr_test: { enabled: false },
-          recommendation_engines: [],
         }),
       )
       .mockResolvedValue(
@@ -99,9 +81,9 @@ describe("Analyzer pipeline", () => {
     expect(within(dialog).getByLabelText("Table layout")).toHaveValue(
       "pokerstars",
     );
-    expect(within(dialog).getByLabelText("Recommendation")).toHaveValue(
-      "rule_based",
-    );
+    expect(
+      within(dialog).queryByLabelText("Recommendation"),
+    ).not.toBeInTheDocument();
   });
 
   it("selects installed analysis plugins for new uploads", async () => {
@@ -111,8 +93,6 @@ describe("Analyzer pipeline", () => {
           defaults: {
             parser_provider: "mock",
             parser_layout_profile: "generic",
-            recommendation_provider: "mock",
-            recommendation_engine: null,
           },
           parser_providers: [
             {
@@ -159,29 +139,7 @@ describe("Analyzer pipeline", () => {
             ocr_cv: ["generic", "fortuna_nations"],
             llm_vision: ["generic", "fortuna_nations", "pokerstars"],
           },
-          recommendation_providers: [
-            {
-              id: "mock",
-              label: "Mock recommendation",
-              available: true,
-              unavailable_reason: null,
-            },
-            {
-              id: "local_solver",
-              label: "Local solver",
-              available: true,
-              unavailable_reason: null,
-            },
-          ],
           administrative_ocr_test: { enabled: false },
-          recommendation_engines: [
-            {
-              id: "postflop_solver",
-              label: "Postflop CFR",
-              available: true,
-              unavailable_reason: null,
-            },
-          ],
         }),
       )
       .mockResolvedValueOnce(
@@ -191,8 +149,6 @@ describe("Analyzer pipeline", () => {
             upload_request_id: null,
             parser_provider: "ocr_cv",
             parser_layout_profile: "fortuna_nations",
-            recommendation_provider: "local_solver",
-            recommendation_engine: "postflop_solver",
           }),
           201,
         ),
@@ -232,13 +188,9 @@ describe("Analyzer pipeline", () => {
       within(dialog).getByLabelText("Table layout"),
       "fortuna_nations",
     );
-    await user.selectOptions(
-      within(dialog).getByLabelText("Recommendation"),
-      "local_solver",
-    );
-    expect(within(dialog).getByLabelText("Solver engine")).toHaveValue(
-      "postflop_solver",
-    );
+    expect(
+      within(dialog).queryByLabelText("Solver engine"),
+    ).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
 
     await unlockAdministrativeAccess(user);
@@ -262,7 +214,6 @@ describe("Analyzer pipeline", () => {
     const form = uploadRequest?.body as FormData;
     expect(form.get("parser_provider")).toBe("ocr_cv");
     expect(form.get("parser_layout_profile")).toBe("fortuna_nations");
-    expect(form.get("recommendation_provider")).toBe("local_solver");
-    expect(form.get("recommendation_engine")).toBe("postflop_solver");
+    expect(form.get("recommendation_provider")).toBeNull();
   });
 });

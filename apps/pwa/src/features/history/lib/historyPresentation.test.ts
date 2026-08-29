@@ -17,14 +17,8 @@ function jobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
     original_filename: "table.png",
     image_filename: "job-1.png",
     parser_provider: "ocr_cv",
-    recommendation_provider: "local_solver",
     parser_result: null,
     approved_state: null,
-    training_decision: null,
-    recommendation: null,
-    recommendation_pending: false,
-    training_reviewed_at: null,
-    training_review_note: null,
     benchmark_included: false,
     archived_at: null,
     error: null,
@@ -57,26 +51,15 @@ function canonicalState(): CanonicalState {
 }
 
 describe("history presentation", () => {
-  it("uses approved cards and recommendation action when available", () => {
-    const job = jobRecord({
-      approved_state: canonicalState(),
-      recommendation: {
-        action: "check",
-        sizing: null,
-        confidence: 0.82,
-        explanation: "Check keeps weaker hands in.",
-        raw: {},
-      },
-    });
+  it("uses approved cards when the ground truth is saved", () => {
+    const job = jobRecord({ approved_state: canonicalState() });
 
     expect(historyCards(job)).toEqual(canonicalState().hero_cards);
-    expect(historyAction(job)).toBe("check");
+    expect(historyAction(job)).toBe("approved");
   });
 
   it("falls back from approved action to job status", () => {
-    expect(historyAction(jobRecord({ approved_state: canonicalState() }))).toBe(
-      "approved",
-    );
+    expect(historyAction(jobRecord({ status: "parsed" }))).toBe("parsed");
     expect(historyAction(jobRecord({ status: "error" }))).toBe("error");
     expect(historyCards(jobRecord())).toEqual([]);
   });

@@ -23,7 +23,6 @@ from app.storage.file_job_store import FileJobStore
 from api_test_support import (
     ADMIN_OCR_TEST_HEADERS,
     ADMIN_OCR_TEST_TOKEN,
-    mark_legacy_player,
     restore_application_backup,
 )
 
@@ -67,7 +66,7 @@ def make_client(data_dir: Path, **overrides: object) -> TestClient:
     return TestClient(create_app(Settings(**values)))
 
 
-def create_reviewed_job(client: TestClient, data_dir: Path) -> dict[str, object]:
+def create_reviewed_job(client: TestClient) -> dict[str, object]:
     upload = client.post(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
@@ -76,22 +75,9 @@ def create_reviewed_job(client: TestClient, data_dir: Path) -> dict[str, object]
     )
     assert upload.status_code == 201
     job_id = upload.json()["id"]
-    mark_legacy_player(data_dir, job_id)
     assert client.post(
         f"/api/jobs/{job_id}/approve",
         json=APPROVED_STATE,
-    ).status_code == 200
-    assert client.put(
-        f"/api/jobs/{job_id}/decision",
-        json={"action": "fold", "certainty": "high"},
-    ).status_code == 200
-    assert client.post(
-        f"/api/jobs/{job_id}/recommend",
-        headers={"X-Recommendation-Request-ID": "backup-recommend-1"},
-    ).status_code == 200
-    assert client.put(
-        f"/api/jobs/{job_id}/training-review",
-        json={"note": "Review turn sizing next time."},
     ).status_code == 200
     assert client.put(
         f"/api/jobs/{job_id}/metadata",
@@ -132,7 +118,7 @@ def test_application_backup_round_trip_preserves_all_durable_state(
 ) -> None:
     source_dir = tmp_path / "source"
     source = make_client(source_dir)
-    source_job = create_reviewed_job(source, source_dir)
+    source_job = create_reviewed_job(source)
 
     export = source.get("/api/backups/export")
 
@@ -171,9 +157,6 @@ def test_application_backup_round_trip_preserves_all_durable_state(
     history = destination.get("/api/history")
     assert history.status_code == 200
     assert history.json()["total"] == 1
-    assert history.json()["jobs"][0]["training_review_note"] == (
-        "Review turn sizing next time."
-    )
     assert history.json()["jobs"][0]["title"] == "Backup review hand"
     assert history.json()["jobs"][0]["notes"] == (
         "Imported from the weekly study session."
@@ -195,84 +178,6 @@ def test_application_backup_round_trip_preserves_all_durable_state(
         "total_jobs": 1,
         "total_benchmark_reports": 1,
     }
-
-
-def test_application_backup_restores_legacy_non_actionable_recommendation_sizing(
-    tmp_path: Path,
-) -> None:
-    source = make_client(tmp_path / "source")
-    source_job = create_reviewed_job(source, tmp_path / "source")
-    export = source.get("/api/backups/export")
-    assert export.status_code == 200
-
-    with ZipFile(BytesIO(export.content)) as archive:
-        manifest = json.loads(archive.read("manifest.json"))
-        record_path = manifest["jobs"][0]["record_file"]
-        legacy_record = json.loads(archive.read(record_path))
-    legacy_record["recommendation"]["sizing"] = 2.5
-    legacy_record_bytes = json.dumps(legacy_record).encode()
-    manifest["jobs"][0]["record_sha256"] = sha256(
-        legacy_record_bytes
-    ).hexdigest()
-    legacy_archive = rebuild_archive(
-        export.content,
-        {
-            "manifest.json": json.dumps(manifest).encode(),
-            record_path: legacy_record_bytes,
-        },
-    )
-
-    destination_dir = tmp_path / "destination"
-    destination = make_client(destination_dir)
-    restore = restore_application_backup(destination, legacy_archive)
-
-    assert restore.status_code == 200
-    restored_job = FileJobStore(destination_dir).get(str(source_job["id"]))
-    assert restored_job.recommendation is not None
-    assert restored_job.recommendation.action == "call"
-    assert restored_job.recommendation.sizing is None
-
-
-def test_application_backup_restores_legacy_zero_wager_sizing(
-    tmp_path: Path,
-) -> None:
-    source = make_client(tmp_path / "source")
-    source_job = create_reviewed_job(source, tmp_path / "source")
-    export = source.get("/api/backups/export")
-    assert export.status_code == 200
-
-    with ZipFile(BytesIO(export.content)) as archive:
-        manifest = json.loads(archive.read("manifest.json"))
-        record_path = manifest["jobs"][0]["record_file"]
-        legacy_record = json.loads(archive.read(record_path))
-    legacy_record["training_decision"]["action"] = "raise"
-    legacy_record["training_decision"]["sizing"] = 0
-    legacy_record["recommendation"]["action"] = "raise"
-    legacy_record["recommendation"]["sizing"] = 0
-    legacy_record_bytes = json.dumps(legacy_record).encode()
-    manifest["jobs"][0]["record_sha256"] = sha256(
-        legacy_record_bytes
-    ).hexdigest()
-    legacy_archive = rebuild_archive(
-        export.content,
-        {
-            "manifest.json": json.dumps(manifest).encode(),
-            record_path: legacy_record_bytes,
-        },
-    )
-
-    destination_dir = tmp_path / "destination"
-    destination = make_client(destination_dir)
-    restore = restore_application_backup(destination, legacy_archive)
-
-    assert restore.status_code == 200
-    restored_job = FileJobStore(destination_dir).get(str(source_job["id"]))
-    assert restored_job.training_decision is not None
-    assert restored_job.training_decision.action == "raise"
-    assert restored_job.training_decision.sizing is None
-    assert restored_job.recommendation is not None
-    assert restored_job.recommendation.action == "raise"
-    assert restored_job.recommendation.sizing is None
 
 
 def test_empty_application_backup_round_trips(
@@ -472,7 +377,7 @@ def test_restored_old_reports_do_not_displace_recent_report_history(
 ) -> None:
     source_dir = tmp_path / "source"
     source = make_client(source_dir)
-    create_reviewed_job(source, source_dir)
+    create_reviewed_job(source)
     old_report = FileBenchmarkStore(source_dir).get_latest()
     assert old_report is not None
 
@@ -509,7 +414,7 @@ def test_restore_tracks_published_report_when_temp_cleanup_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = make_client(tmp_path / "source")
-    source_job = create_reviewed_job(source, tmp_path / "source")
+    source_job = create_reviewed_job(source)
     export = source.get("/api/backups/export")
     assert export.status_code == 200
 
@@ -543,7 +448,7 @@ def test_backup_rejects_decompression_bomb_images_without_writing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = make_client(tmp_path / "source")
-    create_reviewed_job(source, tmp_path / "source")
+    create_reviewed_job(source)
     valid_export = source.get("/api/backups/export")
     assert valid_export.status_code == 200
 
@@ -573,7 +478,7 @@ def test_restore_rejects_checksum_tampering_before_writing(
     tmp_path: Path,
 ) -> None:
     source = make_client(tmp_path / "source")
-    source_job = create_reviewed_job(source, tmp_path / "source")
+    source_job = create_reviewed_job(source)
     export = source.get("/api/backups/export")
     tampered = rebuild_archive(
         export.content,
@@ -608,7 +513,7 @@ def test_restore_rejects_coerced_manifest_integers_before_writing(
     value: object,
 ) -> None:
     source = make_client(tmp_path / "source")
-    create_reviewed_job(source, tmp_path / "source")
+    create_reviewed_job(source)
     export = source.get("/api/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
@@ -639,7 +544,7 @@ def test_restore_rejects_naive_job_timestamp_before_writing(
     tmp_path: Path,
 ) -> None:
     source = make_client(tmp_path / "source")
-    source_job = create_reviewed_job(source, tmp_path / "source")
+    source_job = create_reviewed_job(source)
     export = source.get("/api/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
@@ -671,7 +576,7 @@ def test_restore_rejects_naive_report_timestamp_before_writing(
     tmp_path: Path,
 ) -> None:
     source = make_client(tmp_path / "source")
-    create_reviewed_job(source, tmp_path / "source")
+    create_reviewed_job(source)
     export = source.get("/api/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
@@ -722,7 +627,7 @@ def test_restore_rejects_coerced_benchmark_report_metrics_before_writing(
     value: object,
 ) -> None:
     source = make_client(tmp_path / "source")
-    create_reviewed_job(source, tmp_path / "source")
+    create_reviewed_job(source)
     export = source.get("/api/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
@@ -780,7 +685,7 @@ def test_restore_rejects_inconsistent_benchmark_report_metrics_before_writing(
     value: object,
 ) -> None:
     source = make_client(tmp_path / "source")
-    create_reviewed_job(source, tmp_path / "source")
+    create_reviewed_job(source)
     export = source.get("/api/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
@@ -831,7 +736,7 @@ def test_restore_rejects_invalid_benchmark_comparisons_before_writing(
     mutation: str,
 ) -> None:
     source = make_client(tmp_path / "source")
-    create_reviewed_job(source, tmp_path / "source")
+    create_reviewed_job(source)
     export = source.get("/api/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
@@ -918,7 +823,7 @@ def test_restore_rejects_conflicting_existing_job_without_partial_import(
     )
     assert first_upload.status_code == 201
     first_job_id = first_upload.json()["id"]
-    source_job_data = create_reviewed_job(source, source_dir)
+    source_job_data = create_reviewed_job(source)
     source_job = FileJobStore(source_dir).get(str(source_job_data["id"]))
     export = source.get("/api/backups/export")
 
@@ -943,7 +848,7 @@ def test_restore_rejects_unexpected_archive_members(
     tmp_path: Path,
 ) -> None:
     source = make_client(tmp_path / "source")
-    create_reviewed_job(source, tmp_path / "source")
+    create_reviewed_job(source)
     export = source.get("/api/backups/export")
     unexpected = rebuild_archive(export.content, {})
     output = BytesIO()
@@ -1001,7 +906,7 @@ def test_export_rejects_active_jobs_and_images_over_the_current_limit(
     assert upload.status_code == 201
     active_store = FileJobStore(active_dir)
     active_job = active_store.get(upload.json()["id"])
-    active_job.recommendation_pending = True
+    active_job.status = "created"
     active_store.save(active_job)
 
     active_export = active.get("/api/backups/export")
@@ -1015,8 +920,6 @@ def test_export_rejects_active_jobs_and_images_over_the_current_limit(
         original_filename="large.png",
         image_bytes=VALID_PNG,
         parser_provider="mock",
-        recommendation_provider="mock",
-        input_context="legacy_player",
     )
     oversized_job.status = "error"
     oversized_job.error = "Stored under an earlier upload limit"
@@ -1033,7 +936,7 @@ def test_restore_rejects_record_with_mismatched_job_id(
     tmp_path: Path,
 ) -> None:
     source = make_client(tmp_path / "source")
-    source_job = create_reviewed_job(source, tmp_path / "source")
+    source_job = create_reviewed_job(source)
     export = source.get("/api/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))

@@ -17,6 +17,14 @@ the ADR's gated migration work is implemented. In particular, the Worker proxy
 and hosted file-backed API below are not an approved V2 player-data path: Phase 1
 requires the ADR's loopback-only, authenticated co-located player runtime and
 local writable system of record.
+The retirement of the V1 screenshot-bound learning surface (recommendation
+requests, training decisions, training review, progress, and lessons) is
+defined by
+[ADR 0047](../decisions/0047-retire-v1-screenshot-learning-surface.md). Every
+stored screenshot job is now administrative OCR test data: upload/capture,
+parser review and approval, benchmarking, history/archive, and backups remain,
+while recommendation providers, local solvers, and the offline recommendation
+benchmark remain only as settings-driven infrastructure with no per-job route.
 
 ## System Shape
 
@@ -45,23 +53,23 @@ Post-hand agent
 
 ### Backend
 
-`apps/backend` owns upload validation, parser and provider selection, canonical
-state validation, automation-compatible job transitions, recommendation calls,
-persisted job/image data, and read-only parser benchmark runs. Environment-driven
-registries define installed defaults and runtime allowlists. New uploads and live
-captures may select an advertised parser, layout profile, recommendation provider,
-and local engine; that selection is persisted on the job so the PWA flow does
-not depend on a concrete engine.
+`apps/backend` owns upload validation, parser selection, canonical
+state validation, automation-compatible job transitions, persisted job/image
+data, and read-only parser benchmark runs. Environment-driven
+registries define installed defaults and runtime allowlists. New uploads and
+live captures may select an advertised parser and layout profile; that
+selection is persisted on the job so the PWA flow does not depend on a
+concrete engine.
 Each installed parser is represented by one immutable catalog descriptor that
 owns its factory, label, readiness check, and supported-layout policy. Runtime
 construction and pipeline capabilities consume the same descriptor, while the
 configuration allowlist remains a separately validated deployment boundary.
 Recommendation providers follow the same catalog contract for their factory,
 label, and readiness check. Local solver engines remain a nested selection of
-the `local_solver` provider and retain their independent deployment allowlist.
-Each local engine descriptor owns its subprocess command factory, label,
-execution mode, and whether users may select it. The custom command is a
-deployment-fixed engine descriptor rather than an allowlisted browser option.
+the `local_solver` provider, chosen by `POKER_LOCAL_SOLVER_ENGINE` alone. Each
+local engine descriptor owns its subprocess command factory, label, and
+execution mode. The custom command is a deployment-fixed engine descriptor
+rather than a selectable entry.
 Layout profile IDs are deployment-defined data. The capability response includes
 a parser/layout compatibility matrix: multi-layout external vision can accept
 custom profiles such as `pokerstars`, while fixed-region OCR is selectable only
@@ -87,27 +95,19 @@ because both persist screenshots the boundary would otherwise refuse, and both
 check it before the application reads the archive or opens any store (the
 framework still parses the multipart body first). `GET /api/admin/ocr-test/session`
 lets a client confirm a credential before it reveals any capture control; it
-answers `no-store` and shares the upload rate-limit budget. Every job records an
-explicit `input_context`: uploads and benchmark dataset imports are
-`administrative_test`, while records persisted before the boundary load as
-`legacy_player`. Recommendation, training-decision, and training-review
-transitions refuse administrative jobs with `403`, and training progress and
-lesson exports exclude them, so administrative inputs never become learning
-evidence. The local stdio MCP gateway's screenshot tool receives the same
-denial. `GET /api/pipeline` advertises `administrative_ocr_test.enabled` so
-operators can see the deployment state.
+answers `no-store` and shares the upload rate-limit budget. `GET /api/pipeline`
+advertises `administrative_ocr_test.enabled` so operators can see the
+deployment state.
 
 FastAPI composition remains in `app/bootstrap.py`, while extracted transport
 adapters live under `app/api/routers`. Health and pipeline queries dispatch
 through `app/application/system.py`; MCP configuration and principal operations
 dispatch through `app/application/mcp_admin.py`.
-Processing-job reads, uploads, short mutations, recommendation commands, and
-history list/archive operations dispatch through the storage-independent
-`app/application/jobs.py` services. Training review commands, progress queries,
-and lesson exports dispatch through `app/application/training.py`; benchmark
-dataset, report, import, and run operations dispatch through
-`app/application/benchmarks.py`; backup export and restore operations dispatch
-through `app/application/backups.py`;
+Processing-job reads, uploads, short mutations, and history list/archive
+operations dispatch through the storage-independent `app/application/jobs.py`
+services. Benchmark dataset, report, import, and run operations dispatch
+through `app/application/benchmarks.py`; backup export and restore operations
+dispatch through `app/application/backups.py`;
 hosted MCP reaches the same boundaries through its internal ASGI API client.
 Remaining storage, locking, aggregation, and persistence stay behind
 bootstrap-owned callables until later application-service slices replace those
@@ -119,7 +119,7 @@ PWA job-detail and processing-page reads are owned by
 `domains/jobs/api/jobsApi.ts`, with stable TanStack Query keys and options in
 `domains/jobs/api/jobsQueries.ts`. The legacy `shared/api/jobs.ts` and
 `shared/api/history.ts` compatibility aliases have been removed; consumers use
-the jobs, recommendations, and history domain API owners directly.
+the jobs and history domain API owners directly.
 Analyzer job-detail, processing-extent, history-page, and history-search reads
 execute those domain options through the application QueryClient. Browser
 queue and history persistence remains a bounded recovery projection rather
@@ -150,20 +150,18 @@ invalidate imported job details, processing, history, and benchmark overviews;
 reports remain immutable, failures leave Query state untouched, and Analyzer
 composition continues to own projection leases and imported-result rendering.
 Application backup restore now uses a backup-owned multipart command. A
-confirmed restore cancels and supersedes stale reads, then removes job, history,
-training, and benchmark Query families before Analyzer composition schedules
+confirmed restore cancels and supersedes stale reads, then removes job,
+history, and benchmark Query families before Analyzer composition schedules
 projection recovery. System and pipeline caches remain intact; transport
 failure leaves every cache untouched so the same archive can be retried.
-Approval and recommendation writes now use abort-aware hand-review commands.
-Generated-contract job and recommendation adapters preserve the legacy signals
-and caller-generated recommendation request ID; confirmed results seed job
-detail and invalidate processing/history/training. Cache seeding preserves newer
-concurrent screenshot metadata from an older workflow response, while a
-delete-superseded write generation prevents late approval/recommendation
-responses from recreating permanently removed detail entries. Analyzer
-composition retains lease handoff, abort registration, and optional
-training-decision sequencing; control-panel automation was removed with the
-import-first boundary.
+Approval now uses an abort-aware hand-review command. The generated-contract
+job adapter preserves the legacy signals; confirmed results seed job detail
+and invalidate processing/history. Cache seeding preserves newer concurrent
+screenshot metadata from an older workflow response, while a
+delete-superseded write generation prevents a late approval response from
+recreating a permanently removed detail entry. Analyzer composition retains
+lease handoff and abort registration; control-panel automation was removed
+with the import-first boundary.
 Screenshot upload now uses a capture-owned command over the generated jobs
 adapter. It preserves the caller upload request ID, selected pipeline, and abort
 signal, seeds confirmed job detail, and invalidates processing only. Analyzer
@@ -176,25 +174,15 @@ notice instead of capture controls. An operator can unlock the administrative
 OCR test tools from the toolbar **Administrator tools** dialog; the token is
 held only in component state and sent as `Authorization: Bearer ...` with each
 upload or capture. While unlocked, the capture panel renders under an explicit
-administrative banner; a `401`/`403` upload response re-locks the tools. Jobs
-with `input_context: "administrative_test"` carry an `Admin test` badge in the
-queue, history, details, and review panels, and their recommendation and
-training-decision controls are withheld.
-
-Training decisions and review completion/reopen operations now use a
-training-owned command family. The generated-contract adapters preserve the
-legacy positional function signatures, and confirmed responses update job
-detail while invalidating processing, history, and all filtered training
-progress keys. Commands cancel and supersede stale reads before applying those
-outcomes; Analyzer composition continues to own leases and review-queue flow.
+administrative banner; a `401`/`403` upload response re-locks the tools.
 
 Provider-neutral pipeline selection and capability contracts live under
 `app/domain/pipeline`. Runtime configuration and HTTP adapters import that
 domain package directly.
 
 Poker card values, constrained numeric types, and validated preflop and
-postflop action histories live under `app/domain/poker`. Parsers, solvers, and
-training adapters import those primitives directly. The same domain owns
+postflop action histories live under `app/domain/poker`. Parsers and solvers
+import those primitives directly. The same domain owns
 detected parser state, parser evidence, and canonical user-approved state plus
 their cross-field wager and history validation.
 
@@ -237,8 +225,8 @@ contracts are not yet connected to V1 routes or file-backed storage, so they do
 not make the hosted screenshot workflow a V2 player-data path.
 
 Provider-neutral recommendation actions, requests, and result evidence live
-under `app/domain/recommendations`. Providers, local engines, benchmarks, and
-training aggregation import those contracts directly.
+under `app/domain/recommendations`. Providers, local engines, and benchmarks
+import those contracts directly.
 
 Upload/job-lifecycle contracts now live under `app/domain/hands`. `JobRecord`,
 `JobQueue`, `JobHistory`, `ScreenshotMetadataRequest`, and
@@ -256,23 +244,15 @@ packages.
 
 File-backed persistence is organized under `app/storage`. Repository contracts
 live in `app/storage/ports.py`, job and benchmark adapters are split between
-`file_job_store.py` and `file_benchmark_store.py`, and shared durability and
-legacy-decoding helpers live in `persistence.py`. The package root preserves the
-package namespace without re-exporting adapter or persistence symbols;
-consumers import the owned modules directly.
+`file_job_store.py` and `file_benchmark_store.py`, and shared durability helpers
+and a strict job-record loader live in `persistence.py`. The package root
+preserves the package namespace without re-exporting adapter or persistence
+symbols; consumers import the owned modules directly.
 
 `app/workspace.py` composes those repositories with the process-wide and
 cross-process coordination boundary. `WorkspaceCoordinator` owns startup job
 recovery and the lock ordering for job, history, benchmark import, backup export,
 and restore transactions; transport callbacks continue to own HTTP error mapping.
-
-Post-hand decisions, review requests, progress summaries, trends, and solver
-coverage contracts live under `app/domain/training`. Summary, grading, trend,
-solver-coverage, and Markdown lesson aggregation live in
-`app/domain/training/aggregation.py`; bootstrap and tests import that owner
-directly. The former `app/models.py`
-compatibility facade has been retired; source-architecture tests prevent it or
-its imports from returning.
 
 Backend API integration tests share transport setup through
 `tests/api_test_support.py`, and route-domain suites live in focused modules.
@@ -284,13 +264,9 @@ search coverage lives in `test_history_api.py`. Job request identity, queue
 projection, metadata, approval, read/image behavior, deletion, and storage
 guards live in `test_jobs_api.py`. Upload validation, parser lifecycle,
 mutation coordination during parsing, and auto-approval coverage lives in
-`test_job_upload_api.py`.
-Training-decision persistence and validation, progress filtering, lesson export,
-and review lifecycle coverage lives in `test_training_api.py`. Benchmark corpus
-selection, archive import/export, recovery, concurrency, scoring, and report
-coverage lives in `test_benchmarks_api.py`. Recommendation provider selection,
-request lifecycle, recovery, failure mapping, and solver-input validation
-coverage lives in `test_recommendation_api.py`.
+`test_job_upload_api.py`. Benchmark corpus selection, archive import/export,
+recovery, concurrency, scoring, and report coverage lives in
+`test_benchmarks_api.py`.
 
 The `local_solver` provider has a second configurable boundary for local engine
 plugins. Supported preflop states use a position-aware 169-hand training chart.
@@ -589,12 +565,9 @@ verifies that identity before data access. Production configuration rejects
 write enablement and omits every mutation from tool discovery. Staging remains
 read-only unless an operator explicitly sets `POKER_MCP_ALLOW_WRITES=true`.
 
-The read surface exposes environment health, processing jobs, individual jobs,
-history search, training progress, and parser benchmark summaries. The staging
-write surface follows the ordinary post-hand lifecycle: the local transport may
-upload a screenshot from a configured filesystem root, then either transport
-can approve a user-reviewed canonical state, record a pre-reveal decision,
-request educational guidance, and save a review lesson. Administrative backup,
+The read surface exposes environment status, the processing queue, individual
+jobs, history search, and parser benchmark summaries. The staging write surface
+is limited to approving a user-reviewed canonical state. Administrative backup,
 dataset, benchmark-run, and bulk-archive APIs remain outside the gateway.
 
 Hosted MCP is mounted on the existing backend at `/mcp`, disabled by default,
@@ -650,8 +623,7 @@ recorded in
 ### PWA
 
 `apps/pwa` owns administrator-only screenshot upload and capture, queue
-navigation, review and correction, pre-reveal training decisions, recommendations,
-decision-evidence presentation, aggregate training progress, and history. It
+navigation, review and approval, parser benchmarking, and history. It
 is organized into application, page, feature, and shared layers. `src/app`
 contains the browser-router shell, route registry, top-level error monitoring,
 and other application-wide concerns. `src/pages/analyzer/AnalyzerPage.tsx` is a
@@ -702,7 +674,7 @@ deployment path.
 
 `shared/pwa/updateSafety.tsx` aggregates named dirty and busy reasons from
 independent feature owners. The analyzer registers all correction, screenshot,
-training, lesson, capture, mutation, restore, and benchmark state; Agent access
+capture, mutation, restore, and benchmark state; Agent access
 registers administrator and credential drafts, unacknowledged one-time tokens,
 and mutations. The information dialog blocks every close path for the complete
 MCP mutation and unacknowledged-token lifetime, keeping that owner mounted.
@@ -729,11 +701,6 @@ Benchmark HTTP transport and dataset-export URL construction are owned by
 benchmark-overview Query invalidation outcome. The former
 `shared/api/benchmarks.ts` facade has been removed.
 
-Training progress reads and lesson-export URL construction are owned by
-`domains/training/api`. Both training hooks and analyzer compatibility flows
-execute the same normalized Query options; the former `shared/api/training.ts`
-facade has been removed.
-
 Health and pipeline reads use their existing system and pipeline domain
 adapters. Backup export URL construction now belongs to the backup domain and
 is exposed through the backup feature service used by the analyzer page. The
@@ -757,17 +724,13 @@ adapter owns the shared primitive.
 
 Provider labels, parser-layout compatibility, and pipeline-selection
 reconciliation live in `domains/pipeline/model/pipelineSelection.ts`.
-Pipeline, benchmark, recommendation, and training features consume the same
+Pipeline and benchmark features consume the same
 provider-neutral model; the analyzer page receives display-ready values from
 the pipeline feature hook rather than importing domain internals.
 
-Training action/certainty options, sizing reconciliation, solver-line
-comparison, and decision labels live under `domains/training/model`.
-Recommendation metadata guards live under `domains/recommendations/model` and
-are shared by recommendation evidence and training comparison without a
-feature-to-feature dependency. Training focus and queue presentation remain
-feature-owned, while the former training presentation compatibility barrel has
-been removed.
+Parser-routing evidence, metadata guards, and presentation helpers live under
+`domains/pipeline/model/parserRouting*.ts`, consumed directly by the benchmark
+feature and the system-info display without a feature-to-feature dependency.
 
 The persisted analyzer history projection uses
 `domains/history/model/historyItem.ts` as its shared domain shape. Screenshot
@@ -781,11 +744,10 @@ closest feature boundary, while future top-level experiences such as account or
 authentication pages should enter through `src/app/routes.tsx` and a dedicated
 directory under `src/pages`.
 
-The review workspace is split into hand-state editing, training-decision, and
-recommendation panels. Capture, administrator access, parser/recommendation
-selection,
-training progress, benchmarks, screenshot details, and system information each
-have a dedicated state hook or controller. Dialogs and panels receive explicit
+The review workspace is split into hand-state editing and approval panels.
+Capture, administrator access, parser selection, benchmarks, screenshot
+details, and system information each have a dedicated state hook or
+controller. Dialogs and panels receive explicit
 values and commands from those boundaries, which keeps them independently
 testable while leaving user corrections and persisted mutation recovery under
 one visible coordinator. Component tests are colocated with their components;
@@ -800,11 +762,8 @@ Backend tests are separated by router,
 application service, domain model, repository contract, persistence/archive
 compatibility, and provider policy; large static poker-policy suites remain
 cohesive where splitting would obscure their ownership.
-Training progress query state owns review, lesson, and recent-hand filters,
-request ordering, and failed-filter rollback. Its outer controller owns only
-dialog lifecycle and opening a selected hand in the analyzer workspace.
-The application route shell owns canonical analyzer workspace, job, training,
-and benchmark URLs. Typed analyzer route state restores the represented surface
+The application route shell owns canonical analyzer workspace, job, and
+benchmark URLs. Typed analyzer route state restores the represented surface
 and optional job identity, while workspace selections and surface closes update
 the same URLs. Transient dialog internals and draft state remain outside the URL.
 The source-architecture suite keeps `AnalyzerRoute.tsx`, `AnalyzerPage.tsx`, and
@@ -841,16 +800,16 @@ advanced by those runtime effects without storing the effects themselves.
 Pending restore promises, retry timers, active restore IDs, and retry flags are
 stable refs owned by a focused recovery runtime-service hook; the page retains
 the effects that consume those handles while the reducer remains serializable.
-Queue abort controllers, active recommendation requests, mounted-state guards,
-and stale history-request generations use a parallel request runtime-service
-hook. Media stream ownership remains inside `useCaptureSource`.
+Queue abort controllers, mounted-state guards, and stale history-request
+generations use a parallel request runtime-service hook. Media stream
+ownership remains inside `useCaptureSource`.
 The raw analyzer workflow context accessor is module-private. Production code
 can consume only the focused selection, queue, mutation-lease, recovery, and
 projection hooks, preventing page composition from bypassing command APIs.
-PWA writes follow the same ownership rule. Upload/capture,
-approve/recommend, training review, screenshot metadata and deletion, history
-archive, benchmark inclusion/import, and backup restore calls are confined to
-their domain API adapters and focused feature command services. Commands return
+PWA writes follow the same ownership rule. Upload/capture, approve, screenshot
+metadata and deletion, history archive, benchmark inclusion/import, and
+backup restore calls are confined to their domain API adapters and focused
+feature command services. Commands return
 explicit Query cache outcomes and preserve request identities, abort behavior,
 mutation leases, and ambiguous-failure recovery. The source-architecture suite
 audits the exact mutation inventory so pages and shared compatibility exports
@@ -867,20 +826,11 @@ history, and mutation-lease
 operations are grouped in a stable projection adapter injected by
 `AnalyzerWorkflowProvider`; the analyzer consumes that adapter through a focused
 hook, while tests may replace it without patching browser globals.
-Cache validation keeps primitive bounds, poker and completed-street state,
-recommendation and training payloads, and parser/job records in focused modules.
+Cache validation keeps primitive bounds, poker and completed-street state, and
+parser/job records in focused modules.
 Mutation-lease contracts, job and projection expectations, lease matching,
 legacy decoding, browser storage, and lease factories are separate modules.
 
-Recommendation parser routing, metadata validation, preflop context, postflop
-range evidence, candidate ranking, and display formatting live in focused
-modules under `domains/recommendations/model`. Benchmark, hand-review, and
-recommendation components consume those domain owners directly. The former
-recommendation, postflop-evidence, and preflop-evidence compatibility barrels
-have been removed.
-Training review-queue copy and suggested-focus ranking remain in focused
-feature-library modules; reusable options and decision comparison import the
-training domain model directly, with no presentation barrel.
 Poker card parsing, form conversion, canonical identity, state constants, and
 preflop-position normalization live in focused modules under
 `domains/poker/model`. Hand-review retains only confidence presentation and
@@ -889,9 +839,8 @@ has been removed. Persisted job-ID recognition and screenshot metadata
 normalization live under `shared/lib` for page, workspace, and screenshot use.
 
 `HandReviewPanel` owns only hand-state editing and review actions. The analyzer
-page-level `HandReviewWorkspace` composes recommendation and training-decision
-feature panels from separate typed controller prop groups, so no feature
-component imports a peer feature component.
+page-level `HandReviewWorkspace` renders that single panel from typed
+controller props, so no feature component imports a peer feature component.
 The parser benchmark dialog is likewise a composition root: pipeline
 comparison, report overview, result presentation, expandable case review, and
 dataset/run actions live in focused benchmark components with direct tests.
@@ -1004,8 +953,8 @@ running the parser. An explicit parser/layout query exports only the matching
 layout corpus; an omitted selection uses the deployment defaults. `manifest.json`
 identifies schema version 1, parser/layout context, and each approved canonical
 state. Original screenshots are stored at stable `images/<job-id>.<ext>` paths
-referenced by the manifest. Unselected jobs, other layouts, parser output,
-recommendations, and player decisions are excluded.
+referenced by the manifest. Unselected jobs, other layouts, and parser output
+are excluded.
 
 The same archive can be imported to restore or share a corpus. Import validates
 the complete manifest, paths, limits, and image payloads before creating jobs.
@@ -1014,9 +963,9 @@ booleans, strings, or floating-point values is rejected.
 Stable job IDs make exact re-imports idempotent; an existing job with different
 image bytes, approved state, or effective layout rejects the archive instead of
 being overwritten.
-Imported cases are approved benchmark jobs, while recommendation and training
-data remain absent. Ground-truth labels are not copied into parser results, so
-an imported job never presents user-approved state as detected OCR evidence.
+Imported cases are approved benchmark jobs. Ground-truth labels are not
+copied into parser results, so an imported job never presents user-approved
+state as detected OCR evidence.
 Import results return the refreshed global and per-layout corpus counts. Legacy
 completed import receipts without the layout map remain readable during rolling
 upgrades.
@@ -1037,13 +986,12 @@ test, keeping coverage and regression ownership explicit.
 
 Full application backups are a separate schema and recovery boundary. A
 versioned ZIP contains every durable `JobRecord`, its original image, and all
-persisted benchmark reports. Because training decisions, completed reviews,
-lesson notes, recommendations, history timestamps, and benchmark selection are
-job fields, they travel with the record. API mutations hold a shared
-data-volume lock across the full request, including background work. Browser
-and CLI exports take its exclusive side while building the archive, then refuse
-to capture any persisted active parser or recommendation work or a pending
-benchmark import journal.
+persisted benchmark reports. Because notes, tags, history timestamps, and
+benchmark selection are job fields, they travel with the record. API
+mutations hold a shared data-volume lock across the full request, including
+background work. Browser and CLI exports take its exclusive side while
+building the archive, then refuse to capture any persisted active parser work
+or a pending benchmark import journal.
 
 Restore parses and verifies the complete archive before acquiring the mutation
 locks. It checks declared paths, entry counts and sizes, supported images,
@@ -1112,185 +1060,14 @@ benchmark matcher.
    auto-approval always leaves warning-bearing parser results for browser
    review; control-panel automation no longer exists, so every other approval
    is an explicit user action.
-4. The user may lock an action, optional sizing, and optional self-rated
-   certainty before revealing provider output.
-5. The configured provider returns an educational action, sizing, confidence,
-   and reasoning. Headline sizing is valid only for bet and raise actions;
-   malformed provider payloads fail before recommendation persistence.
-6. The UI compares a locked training decision with the recommendation when one exists.
-7. Completed decision/recommendation pairs contribute to the on-demand training progress summary.
-8. A non-exact comparison can be marked reviewed with an optional lesson note
-   after the user revisits its evidence.
-9. A hand opened from the needs-review queue advances to the next hand matching
-   the same action, street, and ordering filters after its review is persisted.
-10. Completed reviews with notes remain available in a bounded Lessons list,
-    filterable by street/text and ordered by recency or available EV loss,
-    without returning them to the pending queue. The same complete selection
-    can be exported as Markdown.
-11. Completed queue items remain in processing until explicitly cleared into
-    backend-persisted history. Unarchived upload and capture jobs restore in
-    stable queue order after reload.
-12. Explicitly selected approved states can be re-parsed as a benchmark corpus without mutating the job flow.
+4. Completed queue items remain in processing until explicitly cleared into
+   backend-persisted history. Unarchived upload and capture jobs restore in
+   stable queue order after reload.
+5. Explicitly selected approved states can be re-parsed as a benchmark corpus
+   without mutating the job flow.
 
-Training decisions are persisted with the job. The API accepts them only for an
-approved state that does not yet have a recommendation, preventing a revealed
-solver result from being recorded afterward as a supposed pre-reveal answer.
-Mutations for one job are serialized. Solver work runs outside that critical
-section, then reloads and validates the latest approved state before committing
-its result so concurrent decisions and unrelated job metadata are preserved.
-Before releasing the lock, recommendation work persists an in-progress marker;
-re-approval is rejected while that marker remains, and provider setup or
-execution clears it on every terminal success or failure. Backend startup
-converts an orphaned marker into a visible retryable error because no provider
-operation survives a process restart. A reloaded PWA keeps the processing
-cache unsynchronized and polls the projection while that marker remains,
-retrying transient projection failures so a solver result committed after the
-first reload read is not hidden by the browser cache.
-The training progress endpoint derives action and exact-line policy accuracy,
-street breakdowns, optional EV-loss grading, equal-window recent trends, and
-recent review links from persisted jobs. It also aggregates the recommendation
-`raw.engine` value for each compared hand, grouped by canonical street. Each
-street with at least two hands derives equal recent and previous performance
-windows capped at ten hands per side. Its EV-loss delta requires at least one
-gradable hand in both windows. A canonical street selector filters only the
-bounded Recent decisions projection and is mutually exclusive with position
-and solver selectors.
-Approved hero-position labels are normalized into common six-max seats plus
-IP/OOP for a separate performance breakdown. Missing positions stay in an
-explicit unpositioned count and do not receive a synthetic label. A normalized
-position selector, or the explicit unpositioned selector, filters only the
-bounded Recent decisions projection. Position and solver selectors are
-mutually exclusive, while aggregates and the pending-review projection remain
-global. Each normalized position and the unpositioned bucket separately expose
-their global unresolved count. A review-position selector, or the explicit
-review-unpositioned selector, filters the pending-review projection and
-composes with action-pair, street, certainty, and ordering parameters without
-changing aggregate or Recent decisions results. Each normalized position with
-at least two hands also derives equal recent and previous performance windows
-capped at ten hands per side. Its EV loss delta requires at least one gradable
-hand in both windows.
-Non-empty `fallback_reason` values count as fallback and are grouped for
-diagnostics; `routing_reason` records an intentional engine choice, such as the
-preflop chart route, and does not count as fallback. Older recommendations
-without an engine remain in the total as unattributed hands. Each engine route
-and fallback summary includes a SHA-256 key derived from its normalized label.
-Attributed engine routes reuse the same mixed-strategy-aware outcome and EV-loss
-comparisons as global progress to report action accuracy, exact-line accuracy,
-and an average over only the route's EV-gradable hands. Fallback-reason
-summaries apply the same comparison contract to their matching hands. Both
-summary types also derive equal recent and previous performance windows, capped
-at ten hands per side; an EV-loss delta requires graded hands in both windows.
-Solver coverage also compares equal recent and previous windows capped at ten
-hands each. It reports attribution and fallback rates separately so increased
-attribution and decreased fallback use are both presented as improvements.
-The progress endpoint accepts one of those fixed-length keys, or an explicit
-unattributed selector, to filter only the bounded Recent decisions projection.
-This avoids raw provider metadata in query strings while leaving every
-aggregate and pending-review projection global. Route, fallback, and
-unattributed selectors are mutually exclusive per request. Completed notes
-have their own global count and bounded list ordered by review time, independent
-from both the recent and pending-review limits. The endpoint also groups rated
-decisions by low, medium, or high pre-reveal certainty so accuracy and available
-EV loss can be calibrated without excluding legacy or unrated hands from
-overall progress. Each rated group with at least two hands derives the same
-equal recent and previous performance windows used by the global, street,
-position, and solver summaries. Each rated summary also exposes its global
-pending-review count so the PWA can open that certainty queue without
-deriving counts from the bounded response. Separate unrated total and pending
-counts keep legacy decisions discoverable without treating missing self-ratings
-as a calibration category or assigning them a trend. The progress endpoint also
-accepts a rated or unrated certainty selector for the bounded Recent decisions
-projection. That selector is mutually exclusive with street, position, and
-solver Recent filters and does not change aggregates or pending-review results.
-Trend windows use the newest and
-immediately preceding reviewed hands, have the same size, and are capped at ten
-hands each. Action and exact-line deltas are available once two reviewed hands
-exist. The EV-loss delta is available only when both windows contain at least
-one comparable EV grade. Unsupported action choices are also grouped by the
-player's action and the headline recommendation, ordered by frequency and then
-available average EV loss. Solver-supported mixed actions and same-action
-sizing differences are excluded so the summary does not overstate mistakes.
-Patterns retain their full hand count while averaging EV over only the hands
-with comparable candidate grades, and expose a separate pending-review count.
-The review endpoint accepts player-action and headline-action filters only as a
-complete pair. That pair selects unsupported action outcomes before optional
-street, certainty, and normalized-position filtering, ordering, and limiting,
-so solver-supported mixed actions are not pulled into a focused pattern queue.
-Normalized position and explicit unpositioned review selectors are mutually
-exclusive. Player-decision and headline-recommendation sizing must be finite
-positive JSON numbers when present; boolean and string coercion is rejected.
-Recommendation confidence must also be a finite JSON number between zero and
-one; boolean and string coercion is rejected. The headline recommendation is
-always supported.
-Alternate provider candidates are supported
-only when their action/sizing metadata is valid and modeled frequency is at
-least 5%, which filters numerical strategy noise. An exact alternate line is
-recorded as a supported mix; an alternate action with different sizing remains
-reviewable. When candidate metadata also includes finite numeric EV values in
-BB, the backend compares the exact locked line with the highest-EV valid
-candidate and reports non-negative per-hand and average EV loss. Missing,
-implicit, or malformed action/sizing/EV metadata leaves the hand ungraded for EV
-without changing its action-policy outcome. A grade also requires the provider's
-recommended line and at least one distinct valid alternative, preventing a
-partial candidate payload from claiming zero loss. Hands approved only by
-deployment auto-approval are excluded because they have no player answer to
-evaluate. A
-separate bounded queue returns unsupported actions and sizing differences so the
-PWA can review them without hiding older differences behind supported
-lines. It defaults to newest-first order. An explicit EV-loss order ranks
-graded hands by descending loss, breaks ties by recency, and keeps ungraded
-hands afterward in recent-first order. Ordering happens before the queue limit
-so an older costly mistake remains discoverable.
-An optional street filter is applied before that ordering and limit. The review
-queue can also select low, medium, high, or unrated decisions. Certainty, street,
-and complete action-pair filters compose before ordering and limiting. The
-response keeps the global pending-review count separate from the number of hands
-matching the active filter, so a focused queue does not misrepresent overall
-progress.
-Pending counts are also returned per street. The PWA uses only streets
-with pending work when suggesting a focus: highest average EV loss wins when
-comparable EV grades exist, otherwise the lowest action accuracy wins. Pending
-volume and canonical street order provide deterministic tie-breakers. Each
-street summary also exposes its pending count as a direct shortcut into the
-same composed review queue.
-The PWA applies the same EV-loss, action-accuracy, pending-volume order to
-rated certainty summaries with pending work, using high-to-low certainty as the
-final deterministic tie-breaker. The Unrated backlog is suggested only when no
-rated certainty group has pending reviews, because it has no calibration
-metrics to compare.
-Normalized position summaries use the same ranking, with canonical position
-order as the final tie-breaker. The Unpositioned backlog is suggested only when
-no normalized position has pending reviews, because it has no position-level
-accuracy or EV metrics to compare.
-Action-difference suggestions consider only patterns with pending work. The
-highest comparable average EV loss wins when graded patterns exist; otherwise
-the largest unresolved backlog wins. Total pattern volume and canonical action
-order make ties deterministic. Pattern rows expose that unresolved count as the
-review action; completed patterns render a non-actionable clear state.
-Completing a review persists a timestamp and optional normalized lesson note on
-the job, then removes it from the pending queue without changing historical
-accuracy. The progress projections include the note for later study.
-The lesson selector applies street and case-insensitive note-text filters before
-ordering by review recency or available EV loss. EV-loss order keeps graded
-lessons highest first, uses review time for ties, and places ungraded lessons
-afterward in newest-first order. The UI applies its display limit only after
-that ordering; Markdown export uses the same selector without the limit.
-Re-approval, a changed training decision, or a fresh recommendation clears both
-the marker and note because the comparison inputs have changed. Deleting only
-the review marker explicitly reopens the same comparison and returns it to the
-pending queue while retaining the note for editing.
-Both the workspace and training-progress dialog reconcile the affected
-processing or history record when a review mutation response is lost, so a
-same-tab reload cannot preserve stale review metadata from browser storage.
-The PWA treats a hand opened from that queue as a review session. After
-persisting its review marker, it reloads the progress endpoint with the current
-action-pair, position, street, certainty, and order parameters and opens the
-first remaining hand.
-An exhausted session returns to the filtered empty queue; a continuation error
-does not roll back or misreport the review that already completed.
-
-Batch items are isolated. A parser or recommendation failure affects that item
-only and leaves other queue items free to continue.
+Batch items are isolated. A parser failure affects that item only and leaves
+other queue items free to continue.
 
 ## Persistence
 
@@ -1309,27 +1086,17 @@ records replace in-memory and cached records regardless of `updated_at`; dirty
 active form values remain separate until a persisted revision confirms the
 user's uncertain mutation committed. The PWA records bounded,
 browser-session mutation leases before persisted operations begin. Single-job
-writes carry the job ID and an operation-specific expected effect for approval,
-training decisions, review state, or benchmark inclusion. An unrelated
-`updated_at` change cannot settle that lease. Recommendation actions first carry
-the expected training-decision effect when one must be saved, then atomically
-arm the lease with the solver request ID before starting the solver. Ambiguous
-failures and correctable solver responses retain that exact-ID lease, while a
-deterministic conflict releases it and immediately refreshes the authoritative
-queue so the competing attempt becomes visible. If a leased job is missing from
-processing, including when its expected mutation removes it from that
-projection, the PWA revalidates it by ID before settling or removing it
-from the workspace. Legacy single-job leases without operation-specific
-evidence remain conservative until their bounded expiry.
-Upload and capture leases carry the baseline queue plus client-generated upload
-and solver request IDs; every upload now targets the parsed stage for each
-file.
-The upload ID is sent with the multipart request and both
-identities are persisted on the backend job, allowing a replacement document to
-distinguish a completed correctable solver attempt from work that never began.
-Backend solver completions and failures must still match that persisted solver
-identity before changing the job, so a superseded provider call cannot clear or
-overwrite a newer attempt.
+writes carry the job ID and an operation-specific expected effect for approval
+or benchmark inclusion. An unrelated `updated_at` change cannot settle that
+lease. If a leased job is missing from processing, including when its expected
+mutation removes it from that projection, the PWA revalidates it by ID before
+settling or removing it from the workspace. Legacy single-job leases without
+operation-specific evidence remain conservative until their bounded expiry.
+Upload and capture leases carry the baseline queue plus a client-generated
+upload request ID; every upload now targets the parsed stage for each file.
+The upload ID is sent with the multipart request and persisted on the backend
+job, letting a replacement document distinguish a completed upload from work
+that never began.
 Benchmark dataset imports use a separate client-generated request identity in
 both projection leases and the multipart request. Import identities are
 alphanumeric-led and resolve to a strict child of the journal root. After
@@ -1348,10 +1115,9 @@ Deterministic non-timeout 4xx responses release both import leases immediately;
 ambiguous failures keep polling for the receipt. An observed pending receipt
 keeps its browser recovery leases alive beyond the ordinary mutation window;
 the backend either finishes the active import or resumes its durable archive.
-Once a benchmark hand records
-a solver request identity, including a correctable 422 attempt, it is no longer
-pristine and remains in the processing projection and browser cache for
-correction across reloads.
+Once a benchmark hand is edited or reapproved, it is no longer pristine and
+remains in the processing projection and browser cache for correction across
+reloads.
 The upload ID is used instead of the display filename when matching a restored
 queue. Dataset imports may also carry processing IDs expected to disappear. Batch
 archive leases carry every target ID and baseline revision in both processing
@@ -1371,13 +1137,12 @@ invalidate the browser snapshot and force an authoritative reload instead of
 outranking server state.
 Processing records must also carry an explicit null archive marker; missing or
 non-null markers are reconciled rather than treated as active work. Imported
-benchmark-only jobs have approved labels but no parser result, recommendation,
-training decision, review metadata, error, or active recommendation, so
+benchmark-only jobs have approved labels but no parser result or error, so
 untouched imports remain in the benchmark corpus without appearing as
-processing work. Once an imported hand starts recommendation work, records
-training state, or receives a retryable error, it returns to the processing
-projection until that work is completed. An untouched import explicitly opened
-for review remains workspace-only across processing reconciliations even though
+processing work. Once an imported hand is reapproved or receives a retryable
+error, it returns to the processing projection until that work is completed.
+An untouched import explicitly opened for review remains workspace-only
+across processing reconciliations even though
 it stays excluded from the processing projection and browser queue cache. If
 the same job later enters the processing projection, its authoritative record
 replaces that workspace-only copy without creating a duplicate.
@@ -1426,8 +1191,8 @@ user.
   unverified Access identity headers; the backend hashes a validated Cloudflare
   connecting IP only after Worker-secret authentication, then falls back to a
   shared proxy or direct-client identity.
-  Limits are configurable independently for uploads, recommendations,
-  benchmarks, and archive transfers. The API client preserves server
+  Limits are configurable independently for uploads, benchmarks, and archive
+  transfers. The API client preserves server
   `Retry-After` metadata, and interrupted benchmark-import recovery suppresses
   receipt requests until that backoff expires.
   Buckets are process-local for each single-container environment; a future

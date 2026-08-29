@@ -79,7 +79,6 @@ def test_token_bucket_rejects_until_a_token_is_replenished() -> None:
     limiter = ApiRateLimiter(
         {
             "uploads": 2,
-            "recommendations": 2,
             "benchmarks": 2,
             "data_transfers": 2,
         },
@@ -105,7 +104,6 @@ def test_token_buckets_are_independent_by_category_and_identity() -> None:
     limiter = ApiRateLimiter(
         {
             "uploads": 1,
-            "recommendations": 1,
             "benchmarks": 1,
             "data_transfers": 1,
         }
@@ -113,7 +111,7 @@ def test_token_buckets_are_independent_by_category_and_identity() -> None:
 
     assert limiter.check("uploads", "client-a").allowed is True
     assert limiter.check("uploads", "client-a").allowed is False
-    assert limiter.check("recommendations", "client-a").allowed is True
+    assert limiter.check("benchmarks", "client-a").allowed is True
     assert limiter.check("uploads", "client-b").allowed is True
 
 
@@ -121,7 +119,6 @@ def test_bounded_storage_does_not_alias_distinct_client_budgets() -> None:
     limiter = ApiRateLimiter(
         {
             "uploads": 1,
-            "recommendations": 1,
             "benchmarks": 1,
             "data_transfers": 1,
         },
@@ -139,7 +136,6 @@ def test_limiter_discards_inactive_buckets_before_lru_eviction() -> None:
     limiter = ApiRateLimiter(
         {
             "uploads": 1,
-            "recommendations": 1,
             "benchmarks": 1,
             "data_transfers": 1,
         },
@@ -161,7 +157,6 @@ def test_limiter_evicts_the_least_recently_used_active_bucket() -> None:
     limiter = ApiRateLimiter(
         {
             "uploads": 1,
-            "recommendations": 1,
             "benchmarks": 1,
             "data_transfers": 1,
         },
@@ -186,7 +181,6 @@ def test_limiter_requires_a_complete_positive_policy() -> None:
         ApiRateLimiter(
             {
                 "uploads": 0,
-                "recommendations": 1,
                 "benchmarks": 1,
                 "data_transfers": 1,
             }
@@ -195,7 +189,6 @@ def test_limiter_requires_a_complete_positive_policy() -> None:
         ApiRateLimiter(
             {
                 "uploads": 1,
-                "recommendations": 1,
                 "benchmarks": 1,
                 "data_transfers": 1,
             },
@@ -208,7 +201,6 @@ def test_limiter_requires_a_complete_positive_policy() -> None:
     [
         ("POST", "/api/jobs", "uploads"),
         ("GET", "/api/admin/ocr-test/session", "uploads"),
-        ("post", "/api/jobs/job-1/recommend", "recommendations"),
         ("POST", "/api/benchmarks/run", "benchmarks"),
         ("GET", "/api/backups/export", "data_transfers"),
         ("POST", "/api/backups/restore", "data_transfers"),
@@ -217,7 +209,7 @@ def test_limiter_requires_a_complete_positive_policy() -> None:
         ("GET", "/api/benchmarks/imports/import-1", "data_transfers"),
         ("GET", "/api/health", None),
         ("POST", "/api/jobs/job-1/approve", None),
-        ("POST", "/api/jobs/job-1/recommend/extra", None),
+        ("POST", "/api/jobs/job-1/approve/extra", None),
     ],
 )
 def test_rate_limit_category_matches_only_expensive_routes(

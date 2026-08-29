@@ -29,12 +29,3 @@ export function mutationFailureMayHavePersistedSideEffect(
       (error.status === 408 || error.status >= 500))
   );
 }
-
-export function recommendationAttemptMayHavePersistedSideEffect(
-  error: unknown,
-): boolean {
-  return (
-    mutationFailureMayHavePersistedSideEffect(error) ||
-    (error instanceof ApiResponseError && error.status === 422)
-  );
-}

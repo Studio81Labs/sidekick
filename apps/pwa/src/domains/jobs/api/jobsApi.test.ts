@@ -25,24 +25,15 @@ const jobResponse = {
   error: null,
   id: "job/123",
   image_filename: "table.png",
-  input_context: "legacy_player",
   notes: null,
   original_filename: "table.png",
   parser_auto_approval_eligible: null,
   parser_layout_profile: "generic",
   parser_provider: "mock",
   parser_result: null,
-  recommendation: null,
-  recommendation_engine: null,
-  recommendation_pending: false,
-  recommendation_provider: "mock",
-  recommendation_request_id: null,
   status: "created",
   tags: [],
   title: null,
-  training_decision: null,
-  training_review_note: null,
-  training_reviewed_at: null,
   updated_at: "2026-08-24T00:00:00Z",
   upload_request_id: null,
 } satisfies components["schemas"]["JobRecord"];
@@ -110,8 +101,6 @@ describe("jobs API adapter", () => {
       uploadScreenshot(file, "upload-1", "secret-token", controller.signal, {
         parser_provider: "ocr_cv",
         parser_layout_profile: "fortuna_nations",
-        recommendation_provider: "local_solver",
-        recommendation_engine: "postflop_solver",
       }),
     ).resolves.toEqual({ ...jobResponse, upload_request_id: "upload-1" });
 
@@ -128,8 +117,7 @@ describe("jobs API adapter", () => {
     expect(form.get("upload_request_id")).toBe("upload-1");
     expect(form.get("parser_provider")).toBe("ocr_cv");
     expect(form.get("parser_layout_profile")).toBe("fortuna_nations");
-    expect(form.get("recommendation_provider")).toBe("local_solver");
-    expect(form.get("recommendation_engine")).toBe("postflop_solver");
+    expect(form.get("recommendation_provider")).toBeNull();
   });
 
   it("authorizes the upload with the administrative OCR test credential", async () => {

@@ -18,7 +18,6 @@ from app.domain.hands import (
     ScreenshotMetadataRequest,
 )
 from app.domain.poker import CanonicalState
-from app.domain.training import TrainingDecisionRequest
 
 ListJobs = Callable[[int, int], JobQueue]
 GetJob = Callable[[str], JobRecord]
@@ -26,8 +25,6 @@ GetJobImage = Callable[[str], "JobImage"]
 UpdateJobMetadata = Callable[[str, ScreenshotMetadataRequest], JobRecord]
 DeleteJob = Callable[[str], None]
 ApproveJob = Callable[[str, CanonicalState], JobRecord]
-RecordTrainingDecision = Callable[[str, TrainingDecisionRequest], JobRecord]
-RecommendJob = Callable[[str, str | None], JobRecord]
 ResolveUploadPipeline = Callable[["JobUploadPipelineRequest"], PipelineSelection]
 ProcessUpload = Callable[["JobUploadRequest"], JobRecord]
 ListJobHistory = Callable[[int, int, str | None], JobHistory]
@@ -44,12 +41,10 @@ class JobImage:
 
 @dataclass(frozen=True)
 class JobUploadPipelineRequest:
-    """Requested parser and recommendation pipeline overrides for an upload."""
+    """Requested parser pipeline overrides for an upload."""
 
     parser_provider: str | None
     parser_layout_profile: str | None
-    recommendation_provider: str | None
-    recommendation_engine: str | None
 
 
 @dataclass(frozen=True)
@@ -93,12 +88,10 @@ class JobMutationService:
         update_metadata: UpdateJobMetadata,
         delete_job: DeleteJob,
         approve_job: ApproveJob,
-        record_training_decision: RecordTrainingDecision,
     ) -> None:
         self._update_metadata = update_metadata
         self._delete_job = delete_job
         self._approve_job = approve_job
-        self._record_training_decision = record_training_decision
 
     def update_metadata(
         self,
@@ -112,27 +105,6 @@ class JobMutationService:
 
     def approve_job(self, job_id: str, state: CanonicalState) -> JobRecord:
         return self._approve_job(job_id, state)
-
-    def record_training_decision(
-        self,
-        job_id: str,
-        decision: TrainingDecisionRequest,
-    ) -> JobRecord:
-        return self._record_training_decision(job_id, decision)
-
-
-class JobRecommendationService:
-    """Dispatch recommendation requests through an application boundary."""
-
-    def __init__(self, recommend: RecommendJob) -> None:
-        self._recommend = recommend
-
-    def recommend(
-        self,
-        job_id: str,
-        recommendation_request_id: str | None,
-    ) -> JobRecord:
-        return self._recommend(job_id, recommendation_request_id)
 
 
 class JobUploadService:

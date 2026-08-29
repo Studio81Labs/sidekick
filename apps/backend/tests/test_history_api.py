@@ -8,7 +8,6 @@ from api_test_support import (
     APPROVED_STATE,
     approve_job,
     make_client,
-    mark_legacy_player,
     upload_job,
 )
 
@@ -18,10 +17,8 @@ def test_history_persists_only_explicitly_archived_ready_jobs(tmp_path: Path) ->
     parsed_id = upload_job(client, filename="parsed.png").json()["id"]
     first_id = upload_job(client, filename="first.png").json()["id"]
     second_id = upload_job(client, filename="second.png").json()["id"]
-    mark_legacy_player(tmp_path, second_id)
     approve_job(client, first_id)
     approve_job(client, second_id)
-    assert client.post(f"/api/jobs/{second_id}/recommend").status_code == 200
 
     empty_history = client.get("/api/history")
     rejected = client.put("/api/history", json={"job_ids": [parsed_id]})
@@ -36,7 +33,7 @@ def test_history_persists_only_explicitly_archived_ready_jobs(tmp_path: Path) ->
     assert empty_history.json()["snapshot_version"]
     assert rejected.status_code == 409
     assert rejected.json()["detail"] == (
-        "Only successful approved or recommended jobs can be moved to history"
+        "Only successful approved jobs can be moved to history"
     )
     assert FileJobStore(tmp_path).get(parsed_id).archived_at is None
     assert archived.status_code == 200
@@ -147,7 +144,7 @@ def test_history_pages_archived_jobs_in_stable_newest_first_order(
     page = client.get("/api/history?limit=2&offset=1")
     store = FileJobStore(tmp_path)
     changed_job = store.get(job_ids[0])
-    changed_job.training_review_note = "Snapshot content changed."
+    changed_job.notes = "Snapshot content changed."
     store.save(changed_job)
     changed_page = client.get("/api/history?limit=2")
 
@@ -273,8 +270,6 @@ def test_history_searches_archived_poker_context_before_paging(
     client = make_client(tmp_path)
     matching_id = upload_job(client, filename="river-bluff.png").json()["id"]
     other_id = upload_job(client, filename="value-line.png").json()["id"]
-    mark_legacy_player(tmp_path, matching_id)
-    mark_legacy_player(tmp_path, other_id)
     matching_state = {
         **APPROVED_STATE,
         "hero_cards": [
@@ -285,8 +280,6 @@ def test_history_searches_archived_poker_context_before_paging(
     }
     approve_job(client, matching_id, matching_state)
     approve_job(client, other_id)
-    assert client.post(f"/api/jobs/{matching_id}/recommend").status_code == 200
-    client.post(f"/api/jobs/{other_id}/recommend")
     client.put(
         "/api/history",
         json={"job_ids": [matching_id, other_id]},
@@ -294,7 +287,7 @@ def test_history_searches_archived_poker_context_before_paging(
 
     poker_terms = client.get(
         "/api/history",
-        params={"query": "7♦ TURN call", "limit": 1},
+        params={"query": "7♦ TURN", "limit": 1},
     )
     filename = client.get(
         "/api/history",
@@ -324,14 +317,12 @@ def test_history_searches_archived_poker_context_before_paging(
     ).status_code == 422
 
 
-def test_history_card_queries_do_not_match_recommendation_prose(
+def test_history_card_queries_do_not_match_table_prose(
     tmp_path: Path,
 ) -> None:
-    client = make_client(tmp_path, recommendation_provider="rule_based")
+    client = make_client(tmp_path)
     ace_spades_id = upload_job(client, filename="ace-spades.png").json()["id"]
     other_id = upload_job(client, filename="other-hand.png").json()["id"]
-    mark_legacy_player(tmp_path, ace_spades_id)
-    mark_legacy_player(tmp_path, other_id)
     ace_spades_state = {
         **APPROVED_STATE,
         "hero_cards": [
@@ -345,17 +336,12 @@ def test_history_card_queries_do_not_match_recommendation_prose(
             {"rank": "Q", "suit": "clubs"},
             {"rank": "K", "suit": "diamonds"},
         ],
+        "action_context": (
+            "Play as bluff when blockers support it. Ah, I missed the draw."
+        ),
     }
     approve_job(client, ace_spades_id, ace_spades_state)
     approve_job(client, other_id, other_state)
-    client.post(f"/api/jobs/{ace_spades_id}/recommend")
-    client.post(f"/api/jobs/{other_id}/recommend")
-    store = FileJobStore(tmp_path)
-    other_job = store.get(other_id)
-    other_job.training_review_note = (
-        "Play as bluff when blockers support it. Ah, I missed the draw."
-    )
-    store.save(other_job)
     client.put(
         "/api/history",
         json={"job_ids": [ace_spades_id, other_id]},
@@ -432,7 +418,14 @@ def test_history_card_queries_match_screenshot_metadata_only(
         ],
     }
     approve_job(client, metadata_id, state_without_metadata_cards)
-    approve_job(client, prose_id, state_without_metadata_cards)
+    approve_job(
+        client,
+        prose_id,
+        {
+            **state_without_metadata_cards,
+            "action_context": "Ah Kd Qs appeared only in table prose.",
+        },
+    )
     metadata = client.put(
         f"/api/jobs/{metadata_id}/metadata",
         json={
@@ -441,10 +434,6 @@ def test_history_card_queries_match_screenshot_metadata_only(
             "tags": ["Qs study"],
         },
     )
-    store = FileJobStore(tmp_path)
-    prose_job = store.get(prose_id)
-    prose_job.training_review_note = "Ah Kd Qs appeared only in review prose."
-    store.save(prose_job)
     client.put(
         "/api/history",
         json={"job_ids": [metadata_id, prose_id]},
@@ -470,6 +459,27 @@ def test_history_card_queries_match_screenshot_metadata_only(
         assert response.status_code == 200
         assert response.json()["total"] == 1
         assert [job["id"] for job in response.json()["jobs"]] == [metadata_id]
+
+
+def test_archive_requires_approval(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    job_id = upload_job(client).json()["id"]
+
+    rejected = client.put("/api/history", json={"job_ids": [job_id]})
+
+    assert rejected.status_code == 409
+    assert rejected.json()["detail"] == (
+        "Only successful approved jobs can be moved to history"
+    )
+    assert FileJobStore(tmp_path).get(job_id).status == "parsed"
+    assert FileJobStore(tmp_path).get(job_id).archived_at is None
+
+    approve_job(client, job_id)
+    archived = client.put("/api/history", json={"job_ids": [job_id]})
+
+    assert archived.status_code == 200
+    assert [job["id"] for job in archived.json()["jobs"]] == [job_id]
+    assert FileJobStore(tmp_path).get(job_id).archived_at is not None
 
 
 def test_history_rejects_duplicate_job_ids(tmp_path: Path) -> None:

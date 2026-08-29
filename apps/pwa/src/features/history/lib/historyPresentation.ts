@@ -8,9 +8,6 @@ export function historyCards(job: JobRecord): Card[] {
 }
 
 export function historyAction(job: JobRecord): string {
-  if (job.recommendation) {
-    return job.recommendation.action;
-  }
   return job.approved_state ? "approved" : job.status;
 }
 

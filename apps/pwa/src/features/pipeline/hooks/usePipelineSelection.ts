@@ -73,33 +73,6 @@ export function usePipelineSelection({ onError }: UsePipelineSelectionOptions) {
     );
   }
 
-  function updateRecommendationProvider(value: string) {
-    setSelection((current) => {
-      if (!current) return current;
-      if (value !== "local_solver") {
-        return {
-          ...current,
-          recommendation_provider: value,
-          recommendation_engine: null,
-        };
-      }
-      const selectedEngineAvailable =
-        capabilities?.recommendation_engines.some(
-          (option) =>
-            option.available && option.id === current.recommendation_engine,
-        ) ?? false;
-      return {
-        ...current,
-        recommendation_provider: value,
-        recommendation_engine: selectedEngineAvailable
-          ? current.recommendation_engine
-          : (capabilities?.recommendation_engines.find(
-              (option) => option.available,
-            )?.id ?? null),
-      };
-    });
-  }
-
   return {
     capabilities,
     compatibleLayouts,
@@ -112,7 +85,6 @@ export function usePipelineSelection({ onError }: UsePipelineSelectionOptions) {
     setDialogOpen,
     setSelection,
     updateParserProvider,
-    updateRecommendationProvider,
     updateSelection,
   };
 }

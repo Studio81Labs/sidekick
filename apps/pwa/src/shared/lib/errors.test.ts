@@ -6,7 +6,6 @@ import {
   isAbortError,
   messageFromError,
   mutationFailureMayHavePersistedSideEffect,
-  recommendationAttemptMayHavePersistedSideEffect,
 } from "./errors";
 
 describe("shared error primitives", () => {
@@ -25,8 +24,8 @@ describe("shared error primitives", () => {
     expect(
       mutationFailureMayHavePersistedSideEffect(new TypeError("offline")),
     ).toBe(true);
-    expect(
-      recommendationAttemptMayHavePersistedSideEffect(new Error("no")),
-    ).toBe(false);
+    expect(mutationFailureMayHavePersistedSideEffect(new Error("no"))).toBe(
+      false,
+    );
   });
 });

@@ -12,7 +12,7 @@ from app.domain.benchmarks import (
     BenchmarkReportSummary,
 )
 from app.domain.poker import CanonicalState
-from app.domain.hands import JobInputContext, JobRecord
+from app.domain.hands import JobRecord
 
 
 class JobRepository(Protocol):
@@ -21,13 +21,9 @@ class JobRepository(Protocol):
         original_filename: str,
         image_bytes: bytes,
         parser_provider: str,
-        recommendation_provider: str,
         parser_layout_profile: str | None = ...,
-        recommendation_engine: str | None = ...,
         job_id: str | None = ...,
         upload_request_id: str | None = ...,
-        *,
-        input_context: JobInputContext,
     ) -> JobRecord: ...
 
     def create_benchmark_import_job(
@@ -37,12 +33,9 @@ class JobRepository(Protocol):
         original_filename: str,
         image_bytes: bytes,
         parser_provider: str,
-        recommendation_provider: str,
         approved_state: CanonicalState,
         import_request_id: str,
         parser_layout_profile: str | None = ...,
-        recommendation_engine: str | None = ...,
-        input_context: JobInputContext,
     ) -> JobRecord: ...
 
     def write_image(self, job: JobRecord, image_bytes: bytes) -> None: ...

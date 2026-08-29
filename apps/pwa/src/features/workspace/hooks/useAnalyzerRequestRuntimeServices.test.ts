@@ -11,9 +11,6 @@ describe("analyzer request runtime services", () => {
     const initialServices = result.current;
     const controller = new AbortController();
 
-    expect(initialServices.activeRecommendationRequestsRef.current).toEqual(
-      new Map(),
-    );
     expect(initialServices.appMountedRef.current).toBe(true);
     expect(initialServices.historySearchRequestRef.current).toBe(0);
     expect(initialServices.queueAbortControllerRef.current).toBeNull();

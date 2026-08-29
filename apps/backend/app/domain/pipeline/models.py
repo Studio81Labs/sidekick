@@ -21,17 +21,6 @@ class PipelineSelection(BaseModel):
         max_length=64,
         pattern=r"^[a-z0-9_]+$",
     )
-    recommendation_provider: str = Field(
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z0-9_]+$",
-    )
-    recommendation_engine: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=64,
-        pattern=r"^[a-z0-9_]+$",
-    )
 
 
 class AdministrativeOcrTestCapability(BaseModel):
@@ -45,6 +34,4 @@ class PipelineCapabilities(BaseModel):
     parser_providers: list[PipelineOption]
     parser_layout_profiles: list[PipelineOption]
     parser_layout_compatibility: dict[str, list[str]]
-    recommendation_providers: list[PipelineOption]
-    recommendation_engines: list[PipelineOption]
     administrative_ocr_test: AdministrativeOcrTestCapability

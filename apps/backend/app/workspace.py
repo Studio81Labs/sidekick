@@ -19,9 +19,6 @@ DEFAULT_JOB_LOCK_STRIPES = 64
 INTERRUPTED_PARSER_ERROR = (
     "Parsing was interrupted by a backend restart; upload the screenshot again"
 )
-INTERRUPTED_RECOMMENDATION_ERROR = (
-    "Recommendation was interrupted by a backend restart; request it again"
-)
 
 
 class WorkspaceCoordinator:
@@ -70,15 +67,8 @@ class WorkspaceCoordinator:
     def recover_interrupted_jobs(self) -> None:
         for job in self.jobs.list():
             if job.status == "created":
-                job.recommendation_pending = False
                 job.status = "error"
                 job.error = INTERRUPTED_PARSER_ERROR
-                self.jobs.save(job)
-                continue
-            if job.recommendation_pending:
-                job.recommendation_pending = False
-                job.status = "error"
-                job.error = INTERRUPTED_RECOMMENDATION_ERROR
                 self.jobs.save(job)
 
     def save_job(self, job: JobRecord) -> JobRecord:

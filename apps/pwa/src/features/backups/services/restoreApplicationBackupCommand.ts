@@ -7,7 +7,6 @@ import {
 import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQueries";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
-import { trainingQueryKeys } from "../../../domains/training/api/trainingQueries";
 import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
 
 export { applicationBackupUrl };
@@ -29,7 +28,6 @@ export async function restoreApplicationBackupCommand(
     removed: [
       jobQueryKeys.all,
       historyQueryKeys.all,
-      trainingQueryKeys.all,
       benchmarkQueryKeys.all,
     ] as readonly QueryKey[],
   };

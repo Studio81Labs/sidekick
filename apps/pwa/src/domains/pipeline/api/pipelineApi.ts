@@ -26,8 +26,6 @@ function toPipelineSelection(
   return {
     parser_layout_profile: selection.parser_layout_profile,
     parser_provider: selection.parser_provider,
-    recommendation_engine: selection.recommendation_engine ?? null,
-    recommendation_provider: selection.recommendation_provider,
   };
 }
 
@@ -43,10 +41,6 @@ export function toPipelineCapabilities(
     parser_layout_profiles:
       response.parser_layout_profiles.map(toPipelineOption),
     parser_providers: response.parser_providers.map(toPipelineOption),
-    recommendation_engines:
-      response.recommendation_engines.map(toPipelineOption),
-    recommendation_providers:
-      response.recommendation_providers.map(toPipelineOption),
   };
 }
 

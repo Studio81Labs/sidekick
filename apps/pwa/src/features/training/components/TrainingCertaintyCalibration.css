@@ -1,4 +1,0 @@
-.training-unrated-row th,
-.training-unrated-row td:not(:last-child) {
-  color: var(--muted);
-}

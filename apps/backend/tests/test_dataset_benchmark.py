@@ -70,7 +70,6 @@ def test_benchmark_corpus_fingerprint_tracks_stable_labels_and_images(
         original_filename="first.png",
         image_filename="original.png",
         parser_provider="mock",
-        recommendation_provider="mock",
         approved_state=expected_mock_state(),
         benchmark_included=True,
     )
@@ -173,7 +172,6 @@ def test_benchmark_preserves_automatic_parser_routing(tmp_path: Path) -> None:
         image_filename="original.png",
         parser_provider="auto",
         parser_layout_profile="fortuna_nations",
-        recommendation_provider="mock",
         approved_state=expected_mock_state(),
         benchmark_included=True,
     )

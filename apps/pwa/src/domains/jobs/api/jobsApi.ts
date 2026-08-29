@@ -39,10 +39,6 @@ export async function uploadScreenshot(
   if (pipeline) {
     form.append("parser_provider", pipeline.parser_provider);
     form.append("parser_layout_profile", pipeline.parser_layout_profile);
-    form.append("recommendation_provider", pipeline.recommendation_provider);
-    if (pipeline.recommendation_engine) {
-      form.append("recommendation_engine", pipeline.recommendation_engine);
-    }
   }
   const response = await requestJson<JobRecordResponse>("/api/jobs", {
     method: "POST",

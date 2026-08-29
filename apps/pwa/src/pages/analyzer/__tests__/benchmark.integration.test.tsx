@@ -21,8 +21,6 @@ import {
   jobRecord,
   jsonResponse,
   processingQueueResponse,
-  recommendation,
-  recommendedJob,
   uploadScreenshot,
 } from "../../../test/analyzerHarness";
 
@@ -87,8 +85,6 @@ describe("Analyzer benchmarks", () => {
           defaults: {
             parser_provider: "ocr_cv",
             parser_layout_profile: "fortuna",
-            recommendation_provider: "mock",
-            recommendation_engine: null,
           },
           parser_providers: [
             {
@@ -122,16 +118,7 @@ describe("Analyzer benchmarks", () => {
             mock: ["generic", "fortuna"],
             ocr_cv: ["generic", "fortuna"],
           },
-          recommendation_providers: [
-            {
-              id: "mock",
-              label: "Mock recommendation",
-              available: true,
-              unavailable_reason: null,
-            },
-          ],
           administrative_ocr_test: { enabled: false },
-          recommendation_engines: [],
         }),
       )
       .mockReturnValueOnce(pendingOverview.promise)
@@ -153,8 +140,8 @@ describe("Analyzer benchmarks", () => {
     await user.click(screen.getByRole("button", { name: "Approve state" }));
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Request recommendation" }),
-      ).toBeEnabled(),
+        screen.getByRole("button", { name: "Approve state" }),
+      ).toBeDisabled(),
     );
 
     await user.click(
@@ -719,8 +706,6 @@ describe("Analyzer benchmarks", () => {
           defaults: {
             parser_provider: "mock",
             parser_layout_profile: "generic",
-            recommendation_provider: "mock",
-            recommendation_engine: null,
           },
           parser_providers: parserPipelines.map(({ parser }) => parser),
           parser_layout_profiles: [
@@ -735,16 +720,7 @@ describe("Analyzer benchmarks", () => {
             mock: ["generic"],
             llm_vision: ["generic"],
           },
-          recommendation_providers: [
-            {
-              id: "mock",
-              label: "Mock recommendation",
-              available: true,
-              unavailable_reason: null,
-            },
-          ],
           administrative_ocr_test: { enabled: false },
-          recommendation_engines: [],
         }),
       )
       .mockResolvedValueOnce(
@@ -2228,7 +2204,7 @@ describe("Analyzer benchmarks", () => {
 
   it("updates an imported hand held only by the history search projection", async () => {
     const archivedJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "archived-import-job",
       original_filename: "archived-import.png",
       benchmark_included: false,
@@ -2594,487 +2570,6 @@ describe("Analyzer benchmarks", () => {
     ).toBeInTheDocument();
   });
 
-  it("restores a provider failure after recommending a pristine benchmark import", async () => {
-    const benchmarkJobId = "c".repeat(32);
-    const recommendationRequestId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(
-      recommendationRequestId,
-    );
-    const pristineImport = {
-      ...approvedJob(),
-      id: benchmarkJobId,
-      original_filename: "provider-failure.png",
-      image_filename: `${benchmarkJobId}.png`,
-      benchmark_included: true,
-      parser_result: null,
-    };
-    const failedImport = {
-      ...pristineImport,
-      status: "error" as const,
-      error: "provider exploded",
-      recommendation_request_id: recommendationRequestId,
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    fetchMock()
-      .mockResolvedValueOnce(
-        jsonResponse(
-          benchmarkOverviewForJob(benchmarkJobId, "provider-failure.png"),
-        ),
-      )
-      .mockResolvedValueOnce(jsonResponse(pristineImport))
-      .mockResolvedValueOnce(jsonResponse({ detail: "provider exploded" }, 502))
-      .mockResolvedValueOnce(
-        processingQueueResponse([failedImport], "failed-import-snapshot"),
-      );
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
-    const dialog = await screen.findByRole("dialog", {
-      name: "Parser benchmark",
-    });
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "Toggle provider-failure.png benchmark details",
-      }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Review hand" }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Parser benchmark" }),
-      ).not.toBeInTheDocument(),
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    );
-
-    expect(await screen.findAllByText("provider exploded")).not.toHaveLength(0);
-    const failedQueueItem = await screen.findByRole("button", {
-      name: "Open screenshot 1: provider-failure.png",
-    });
-    expect(within(failedQueueItem).getByText("error")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([failedImport]),
-    );
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
-
-    firstRender.unmount();
-    render(<App />);
-
-    const restoredQueueItem = await screen.findByRole("button", {
-      name: "Open screenshot 1: provider-failure.png",
-    });
-    expect(
-      within(restoredQueueItem).getByText("provider exploded"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeEnabled();
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}`,
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/recommend`,
-      "http://localhost:8000/api/jobs",
-    ]);
-  });
-
-  it("keeps a correctable benchmark recommendation in processing across reloads", async () => {
-    const benchmarkJobId = "e".repeat(32);
-    const recommendationRequestId = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee";
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(
-      recommendationRequestId,
-    );
-    const pristineImport = {
-      ...approvedJob(),
-      id: benchmarkJobId,
-      original_filename: "correctable-recommendation.png",
-      image_filename: `${benchmarkJobId}.png`,
-      benchmark_included: true,
-      parser_result: null,
-    };
-    const revalidatedImport = {
-      ...pristineImport,
-      recommendation_request_id: recommendationRequestId,
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    fetchMock()
-      .mockResolvedValueOnce(
-        jsonResponse(
-          benchmarkOverviewForJob(
-            benchmarkJobId,
-            "correctable-recommendation.png",
-          ),
-        ),
-      )
-      .mockResolvedValueOnce(jsonResponse(pristineImport))
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            detail: { missing_fields: ["effective_stack"] },
-          },
-          422,
-        ),
-      )
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [revalidatedImport],
-          "correctable-import-snapshot",
-        ),
-      );
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
-    const dialog = await screen.findByRole("dialog", {
-      name: "Parser benchmark",
-    });
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "Toggle correctable-recommendation.png benchmark details",
-      }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Review hand" }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Parser benchmark" }),
-      ).not.toBeInTheDocument(),
-    );
-
-    await user.click(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    );
-
-    expect(await screen.findAllByText(/Effective stack/)).not.toHaveLength(0);
-    expect(
-      await screen.findByRole("button", {
-        name: "Open screenshot 1: correctable-recommendation.png",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeEnabled();
-    await waitFor(() =>
-      expect(
-        window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ).toBeNull(),
-    );
-
-    firstRender.unmount();
-    render(<App />);
-
-    expect(
-      await screen.findByRole("button", {
-        name: "Open screenshot 1: correctable-recommendation.png",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeEnabled();
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}`,
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/recommend`,
-      "http://localhost:8000/api/jobs",
-    ]);
-  });
-
-  it("restores a lost standalone decision response for a pristine benchmark import", async () => {
-    const benchmarkJobId = "7".repeat(32);
-    const pristineImport = {
-      ...approvedJob(),
-      id: benchmarkJobId,
-      original_filename: "decision-response-lost.png",
-      image_filename: `${benchmarkJobId}.png`,
-      benchmark_included: true,
-      parser_result: null,
-    };
-    const persistedDecision = {
-      ...pristineImport,
-      training_decision: {
-        action: "call" as const,
-        sizing: null,
-        certainty: "medium" as const,
-        recorded_at: "2026-07-20T12:05:00Z",
-      },
-      updated_at: "2026-07-20T12:05:00Z",
-    };
-    fetchMock()
-      .mockResolvedValueOnce(
-        jsonResponse(
-          benchmarkOverviewForJob(benchmarkJobId, "decision-response-lost.png"),
-        ),
-      )
-      .mockResolvedValueOnce(jsonResponse(pristineImport))
-      .mockRejectedValueOnce(
-        new TypeError("Connection lost after saving answer"),
-      )
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [persistedDecision],
-          "persisted-decision-snapshot",
-        ),
-      );
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
-    const dialog = await screen.findByRole("dialog", {
-      name: "Parser benchmark",
-    });
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "Toggle decision-response-lost.png benchmark details",
-      }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Review hand" }),
-    );
-    await waitFor(() =>
-      expect(
-        screen.queryByRole("dialog", { name: "Parser benchmark" }),
-      ).not.toBeInTheDocument(),
-    );
-    const decisionPanel = await screen.findByLabelText(
-      "Your training decision",
-    );
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "call" }),
-    );
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "medium" }),
-    );
-
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "Lock answer" }),
-    );
-
-    expect(
-      await screen.findByText("Connection lost after saving answer"),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([persistedDecision]),
-    );
-    expect(
-      await within(decisionPanel).findByText("Answer locked"),
-    ).toBeInTheDocument();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
-
-    firstRender.unmount();
-    render(<App />);
-
-    const restoredQueueItem = await screen.findByRole("button", {
-      name: "Open screenshot 1: decision-response-lost.png",
-    });
-    expect(within(restoredQueueItem).getByText("approved")).toBeInTheDocument();
-    const restoredDecisionPanel = await screen.findByLabelText(
-      "Your training decision",
-    );
-    expect(
-      within(restoredDecisionPanel).getByText("Answer locked"),
-    ).toBeInTheDocument();
-    expect(
-      within(restoredDecisionPanel).getByRole("button", {
-        name: "medium",
-      }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}`,
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/decision`,
-      "http://localhost:8000/api/jobs",
-    ]);
-  });
-
-  it.each([
-    { operation: "recommendation" as const },
-    { operation: "decision" as const },
-  ])(
-    "restores stable queue order after a successful benchmark $operation",
-    async ({ operation }) => {
-      const benchmarkJobId =
-        operation === "recommendation" ? "a".repeat(32) : "b".repeat(32);
-      const promotedFilename = `${operation}-promoted.png`;
-      const olderJob = jobRecord({
-        id: "0".repeat(32),
-        original_filename: `${operation}-older.png`,
-        image_filename: `${"0".repeat(32)}.png`,
-        created_at: "2026-07-20T12:00:00Z",
-        updated_at: "2026-07-20T12:00:00Z",
-      });
-      const pristineImport = {
-        ...approvedJob(),
-        id: benchmarkJobId,
-        original_filename: promotedFilename,
-        image_filename: `${benchmarkJobId}.png`,
-        benchmark_included: true,
-        parser_result: null,
-        created_at: "2026-07-20T12:01:00Z",
-        updated_at: "2026-07-20T12:01:00Z",
-      };
-      const newerJob = jobRecord({
-        id: "f".repeat(32),
-        original_filename: `${operation}-newer.png`,
-        image_filename: `${"f".repeat(32)}.png`,
-        created_at: "2026-07-20T12:02:00Z",
-        updated_at: "2026-07-20T12:02:00Z",
-      });
-      const promotedJob: JobRecord =
-        operation === "recommendation"
-          ? {
-              ...pristineImport,
-              status: "recommended",
-              recommendation,
-              updated_at: "2026-07-20T12:03:00Z",
-            }
-          : {
-              ...pristineImport,
-              training_decision: {
-                action: "call",
-                sizing: null,
-                certainty: "medium",
-                recorded_at: "2026-07-20T12:03:00Z",
-              },
-              updated_at: "2026-07-20T12:03:00Z",
-            };
-      window.localStorage.setItem(
-        "poker-training-processing-v1",
-        JSON.stringify([olderJob, newerJob]),
-      );
-      window.localStorage.setItem("poker-training-processing-total-v1", "2");
-      fetchMock()
-        .mockResolvedValueOnce(
-          jsonResponse(
-            benchmarkOverviewForJob(benchmarkJobId, promotedFilename),
-          ),
-        )
-        .mockResolvedValueOnce(jsonResponse(pristineImport))
-        .mockResolvedValueOnce(jsonResponse(promotedJob))
-        .mockResolvedValueOnce(
-          processingQueueResponse(
-            [olderJob, promotedJob, newerJob],
-            `${operation}-promoted-snapshot`,
-          ),
-        );
-      const firstRender = render(<App />);
-      const user = userEvent.setup();
-
-      await user.click(
-        screen.getByRole("button", { name: "Parser benchmark" }),
-      );
-      const dialog = await screen.findByRole("dialog", {
-        name: "Parser benchmark",
-      });
-      await user.click(
-        within(dialog).getByRole("button", {
-          name: `Toggle ${promotedFilename} benchmark details`,
-        }),
-      );
-      await user.click(
-        within(dialog).getByRole("button", { name: "Review hand" }),
-      );
-      await waitFor(() =>
-        expect(
-          screen.queryByRole("dialog", { name: "Parser benchmark" }),
-        ).not.toBeInTheDocument(),
-      );
-      expect(
-        screen.getByRole("button", {
-          name: `Open screenshot 1: ${promotedFilename}`,
-        }),
-      ).toBeInTheDocument();
-
-      if (operation === "recommendation") {
-        await user.click(
-          screen.getByRole("button", {
-            name: "Request recommendation",
-          }),
-        );
-      } else {
-        const decisionPanel = await screen.findByLabelText(
-          "Your training decision",
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "call" }),
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "medium" }),
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "Lock answer" }),
-        );
-      }
-
-      await waitFor(() =>
-        expect(
-          JSON.parse(
-            String(window.localStorage.getItem("poker-training-processing-v1")),
-          ),
-        ).toEqual([olderJob, promotedJob, newerJob]),
-      );
-      expect(
-        screen.getByRole("button", {
-          name: `Open screenshot 1: ${operation}-older.png`,
-        }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", {
-          name: `Open screenshot 2: ${promotedFilename}`,
-        }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", {
-          name: `Open screenshot 3: ${operation}-newer.png`,
-        }),
-      ).toBeInTheDocument();
-      expect(
-        window.sessionStorage.getItem("poker-training-processing-synced"),
-      ).toBe("true");
-
-      firstRender.unmount();
-      render(<App />);
-
-      expect(
-        screen.getByRole("button", {
-          name: `Open screenshot 1: ${operation}-older.png`,
-        }),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", {
-          name: `Open screenshot 2: ${promotedFilename}`,
-        }),
-      ).toBeInTheDocument();
-      expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-        "http://localhost:8000/api/benchmarks",
-        `http://localhost:8000/api/jobs/${benchmarkJobId}`,
-        `http://localhost:8000/api/jobs/${benchmarkJobId}/${operation === "recommendation" ? "recommend" : "decision"}`,
-        "http://localhost:8000/api/jobs",
-      ]);
-    },
-  );
-
   it("removes an import from processing after successful benchmark inclusion", async () => {
     const benchmarkJobId = "6".repeat(32);
     const processingImport = {
@@ -3221,18 +2716,13 @@ describe("Analyzer benchmarks", () => {
       image_filename: `${benchmarkJobId}.png`,
       benchmark_included: true,
       parser_result: null,
-      training_decision: {
-        action: "call" as const,
-        sizing: null,
-        certainty: "medium" as const,
-        recorded_at: "2026-07-20T12:05:00Z",
-      },
+      error: "Imported labels need review",
     };
     const approvedState = canonicalState({ pot_size: 20 });
     const pristineImport = {
       ...mutatedImport,
       approved_state: approvedState,
-      training_decision: null,
+      error: null,
       updated_at: "2026-07-20T12:10:00Z",
     };
     window.localStorage.setItem(
@@ -3571,17 +3061,12 @@ describe("Analyzer benchmarks", () => {
       image_filename: `${benchmarkJobId}.png`,
       benchmark_included: true,
       parser_result: null,
-      training_decision: {
-        action: "call" as const,
-        sizing: null,
-        certainty: "medium" as const,
-        recorded_at: "2026-07-20T12:05:00Z",
-      },
+      error: "Imported labels need review",
     };
     const persistedApproval: JobRecord = {
       ...mutatedImport,
       approved_state: canonicalState({ pot_size: 20 }),
-      training_decision: null,
+      error: null,
       updated_at: "2026-07-20T12:10:00Z",
     };
     window.localStorage.setItem(
@@ -3658,8 +3143,6 @@ describe("Analyzer benchmarks", () => {
           defaults: {
             parser_provider: "mock",
             parser_layout_profile: "generic",
-            recommendation_provider: "mock",
-            recommendation_engine: null,
           },
           parser_providers: [
             {
@@ -3693,16 +3176,7 @@ describe("Analyzer benchmarks", () => {
             mock: ["generic", "fortuna"],
             ocr_cv: ["generic", "fortuna"],
           },
-          recommendation_providers: [
-            {
-              id: "mock",
-              label: "Mock recommendation",
-              available: true,
-              unavailable_reason: null,
-            },
-          ],
           administrative_ocr_test: { enabled: false },
-          recommendation_engines: [],
         }),
       )
       .mockReturnValueOnce(firstOverview.promise)

@@ -18,8 +18,6 @@ import {
   jobRecord,
   jsonResponse,
   processingQueueResponse,
-  recommendation,
-  recommendedJob,
   switchToUploadMode,
 } from "../../../test/analyzerHarness";
 
@@ -303,8 +301,7 @@ describe("Analyzer workspace recovery", () => {
     };
     const promotedBenchmark: JobRecord = {
       ...pristineBenchmark,
-      status: "recommended",
-      recommendation,
+      error: "Imported labels need review",
       updated_at: "2026-07-10T00:01:00Z",
     };
     window.localStorage.setItem(
@@ -374,7 +371,6 @@ describe("Analyzer workspace recovery", () => {
         name: "Open screenshot 2: returning-benchmark-workspace.png",
       }),
     ).toHaveClass("active");
-    expect(screen.getByLabelText("Recommendation")).toBeInTheDocument();
     expect(
       JSON.parse(
         String(window.localStorage.getItem("poker-training-processing-v1")),
@@ -459,7 +455,6 @@ describe("Analyzer workspace recovery", () => {
       managed: true,
       openBenchmarks: vi.fn(),
       openJob: vi.fn(),
-      openTraining: vi.fn(),
       openWorkspace: vi.fn(),
     };
     const view = render(
@@ -530,7 +525,6 @@ describe("Analyzer workspace recovery", () => {
       managed: true,
       openBenchmarks: vi.fn(),
       openJob: vi.fn(),
-      openTraining: vi.fn(),
       openWorkspace: vi.fn(),
     };
     const view = render(
@@ -683,161 +677,21 @@ describe("Analyzer workspace recovery", () => {
     ).toEqual([parsedJob]);
   });
 
-  it("polls a recommendation that was still running during reload", async () => {
-    const jobId = "4".repeat(32);
-    const pendingJob = {
-      ...approvedJob(),
-      id: jobId,
-      original_filename: "pending-recommendation.png",
-      recommendation_pending: true,
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    const completedJob = {
-      ...recommendedJob(),
-      id: jobId,
-      original_filename: "pending-recommendation.png",
-      recommendation_pending: false,
-      updated_at: "2026-07-10T00:02:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([pendingJob]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    const pendingCompletion = deferredResponse();
-    fetchMock()
-      .mockResolvedValueOnce(
-        processingQueueResponse([pendingJob], "recommendation-still-running"),
-      )
-      .mockReturnValueOnce(pendingCompletion.promise);
-    render(<App />);
-
-    const queueItem = await screen.findByRole("button", {
-      name: "Open screenshot 1: pending-recommendation.png",
-    });
-    expect(
-      within(queueItem).getByText("Recommendation running"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeDisabled();
-    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(2));
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBeNull();
-
-    await act(async () => {
-      pendingCompletion.resolve(
-        processingQueueResponse([completedJob], "recommendation-completed"),
-      );
-      await pendingCompletion.promise;
-    });
-
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(
-      within(queueItem).queryByText("Recommendation running"),
-    ).not.toBeInTheDocument();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
-    expect(
-      JSON.parse(
-        String(window.localStorage.getItem("poker-training-processing-v1")),
-      ),
-    ).toEqual([completedJob]);
-  });
-
-  it("lets terminal history state replace a future-dated pending cache", async () => {
-    const jobId = "8".repeat(32);
-    const archivedAt = "2026-07-10T00:00:30Z";
-    const pendingJob = {
-      ...approvedJob(),
-      id: jobId,
-      original_filename: "archived-pending-recommendation.png",
-      recommendation_pending: true,
-      archived_at: archivedAt,
-      updated_at: "9999-01-01T00:00:00Z",
-    };
-    const completedJob = {
-      ...recommendedJob(),
-      id: jobId,
-      original_filename: "archived-pending-recommendation.png",
-      recommendation_pending: false,
-      archived_at: archivedAt,
-      updated_at: "2026-07-10T00:02:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-history-v1",
-      JSON.stringify([
-        {
-          id: jobId,
-          job: pendingJob,
-          savedAt: archivedAt,
-        },
-      ]),
-    );
-    window.localStorage.setItem("poker-training-history-total-v1", "1");
-    const pendingHistoryRestore = deferredResponse();
-    fetchMock().mockReturnValueOnce(pendingHistoryRestore.promise);
-    render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(
-      await screen.findByRole("button", {
-        name: "Reopen history item 1",
-      }),
-    );
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeDisabled();
-    await waitFor(() =>
-      expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}`,
-        { credentials: "include" },
-      ),
-    );
-    expect(
-      window.sessionStorage.getItem("poker-training-history-synced"),
-    ).toBeNull();
-    await act(async () => {
-      pendingHistoryRestore.resolve(jsonResponse(completedJob));
-      await pendingHistoryRestore.promise;
-    });
-
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(screen.getByText(recommendation.explanation)).toBeInTheDocument();
-    expect(
-      JSON.parse(
-        String(window.localStorage.getItem("poker-training-history-v1")),
-      )[0].job,
-    ).toEqual(completedJob);
-    expect(window.sessionStorage.getItem("poker-training-history-synced")).toBe(
-      "true",
-    );
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${jobId}`,
-    ]);
-  });
-
   it("prefers terminal processing state over a slightly newer pending cache", async () => {
     const jobId = "9".repeat(32);
     const serverUpdatedAt = Date.now();
     const poisonedPendingJob = {
-      ...approvedJob(),
+      ...jobRecord(),
       id: jobId,
       original_filename: "future-pending.png",
-      recommendation_pending: true,
+      status: "created" as const,
+      parser_result: null,
       updated_at: new Date(serverUpdatedAt + 60_000).toISOString(),
     };
     const completedJob = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: jobId,
       original_filename: "future-pending.png",
-      recommendation_pending: false,
       updated_at: new Date(serverUpdatedAt).toISOString(),
     };
     window.localStorage.setItem(
@@ -851,21 +705,22 @@ describe("Analyzer workspace recovery", () => {
 
     render(<App />);
 
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          String(window.localStorage.getItem("poker-training-processing-v1")),
+        ),
+      ).toEqual([completedJob]),
+    );
     expect(
       screen.getByRole("button", {
-        name: "Request recommendation",
+        name: "Open screenshot 1: future-pending.png",
       }),
-    ).toBeDisabled();
+    ).toBeInTheDocument();
     expect(fetchMock()).toHaveBeenCalledTimes(1);
     expect(
       window.sessionStorage.getItem("poker-training-processing-synced"),
     ).toBe("true");
-    expect(
-      JSON.parse(
-        String(window.localStorage.getItem("poker-training-processing-v1")),
-      ),
-    ).toEqual([completedJob]);
   });
 
   it("lets authoritative processing state replace a future-dated ordinary cache", async () => {
@@ -950,67 +805,7 @@ describe("Analyzer workspace recovery", () => {
     ).toEqual([persistedJob]);
   });
 
-  it("retries polling after a pending recommendation restore fails", async () => {
-    const jobId = "5".repeat(32);
-    const pendingJob = {
-      ...approvedJob(),
-      id: jobId,
-      original_filename: "pending-retry.png",
-      recommendation_pending: true,
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    const completedJob = {
-      ...recommendedJob(),
-      id: jobId,
-      original_filename: "pending-retry.png",
-      recommendation_pending: false,
-      updated_at: "2026-07-10T00:02:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([pendingJob]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    fetchMock()
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [pendingJob],
-          "pending-before-transient-failure",
-        ),
-      )
-      .mockRejectedValueOnce(new TypeError("Network unavailable"))
-      .mockResolvedValueOnce(
-        processingQueueResponse([completedJob], "pending-retry-completed"),
-      );
-
-    render(<App />);
-
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledTimes(3);
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
-    expect(
-      JSON.parse(
-        String(window.localStorage.getItem("poker-training-processing-v1")),
-      ),
-    ).toEqual([completedJob]);
-  });
-
-  it("keeps mutated or pending benchmark imports in the cached processing queue", async () => {
-    const decisionImport = {
-      ...approvedJob(),
-      id: "d".repeat(32),
-      original_filename: "decision-import.png",
-      parser_result: null,
-      benchmark_included: true,
-      training_decision: {
-        action: "call" as const,
-        sizing: null,
-        certainty: "medium" as const,
-        recorded_at: "2026-07-10T00:01:00Z",
-      },
-    };
+  it("keeps unfinished benchmark imports in the cached processing queue", async () => {
     const failedImport = {
       ...approvedJob(),
       id: "e".repeat(32),
@@ -1027,24 +822,19 @@ describe("Analyzer workspace recovery", () => {
       parser_result: null,
       benchmark_included: true,
     };
-    const pendingImport = {
-      ...approvedJob(),
+    const unapprovedImport = {
+      ...jobRecord(),
       id: "a".repeat(32),
-      original_filename: "pending-import.png",
+      original_filename: "unapproved-import.png",
       parser_result: null,
       benchmark_included: true,
-      recommendation_pending: true,
     };
     window.localStorage.setItem(
       "poker-training-processing-v1",
-      JSON.stringify([
-        decisionImport,
-        failedImport,
-        pristineImport,
-        pendingImport,
-      ]),
+      JSON.stringify([failedImport, pristineImport, unapprovedImport]),
     );
-    window.localStorage.setItem("poker-training-processing-total-v1", "3");
+    window.localStorage.setItem("poker-training-processing-total-v1", "2");
+    window.sessionStorage.removeItem("poker-training-processing-synced");
     const pendingQueue = deferredResponse();
     fetchMock().mockReturnValueOnce(pendingQueue.promise);
 
@@ -1052,17 +842,12 @@ describe("Analyzer workspace recovery", () => {
 
     expect(
       await screen.findByRole("button", {
-        name: "Open screenshot 1: decision-import.png",
+        name: "Open screenshot 1: failed-import.png",
       }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
-        name: "Open screenshot 2: failed-import.png",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Open screenshot 3: pending-import.png",
+        name: "Open screenshot 2: unapproved-import.png",
       }),
     ).toBeInTheDocument();
     expect(
@@ -1254,129 +1039,6 @@ describe("Analyzer workspace recovery", () => {
     ).toEqual(detectedState.hero_cards);
   });
 
-  it.each([
-    ["missing recommendation fields", {}],
-    ["zero wager sizing", { ...recommendation, action: "raise", sizing: 0 }],
-  ])(
-    "rejects cached recommendations with %s and restores the backend record",
-    async (_label, malformedRecommendation) => {
-      const persistedJob = {
-        ...recommendedJob(),
-        id: "d".repeat(32),
-        original_filename: "restored-recommendation.png",
-      };
-      const malformedJob = {
-        ...persistedJob,
-        recommendation: malformedRecommendation,
-      };
-      window.localStorage.setItem(
-        "poker-training-processing-v1",
-        JSON.stringify([malformedJob]),
-      );
-      window.localStorage.setItem("poker-training-processing-total-v1", "1");
-      fetchMock().mockResolvedValueOnce(
-        jsonResponse({
-          total: 1,
-          jobs: [persistedJob],
-          snapshot_version: "valid-recommendation-snapshot",
-        }),
-      );
-
-      render(<App />);
-
-      expect(
-        await screen.findByLabelText("Recommendation"),
-      ).toBeInTheDocument();
-      expect(screen.getByText(recommendation.explanation)).toBeInTheDocument();
-      expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
-      );
-    },
-  );
-
-  it.each([
-    {
-      label: "training decision",
-      invalidFields: {
-        training_decision: {
-          action: {},
-          sizing: null,
-          certainty: "medium",
-          recorded_at: "2026-07-20T12:00:00Z",
-        },
-      },
-    },
-    {
-      label: "zero-sized training decision",
-      invalidFields: {
-        training_decision: {
-          action: "raise",
-          sizing: 0,
-          certainty: "medium",
-          recorded_at: "2026-07-20T12:00:00Z",
-        },
-      },
-    },
-    {
-      label: "training review note",
-      invalidFields: {
-        training_review_note: {},
-      },
-    },
-  ])(
-    "rejects malformed cached $label and restores the backend record",
-    async ({ invalidFields }) => {
-      const persistedJob = {
-        ...recommendedJob(),
-        id: "a".repeat(32),
-        original_filename: "restored-training-metadata.png",
-        training_decision: {
-          action: "call" as const,
-          sizing: null,
-          certainty: "medium" as const,
-          recorded_at: "2026-07-20T12:00:00Z",
-        },
-        training_reviewed_at: "2026-07-20T12:05:00Z",
-        training_review_note: "Review the solver comparison.",
-      };
-      window.localStorage.setItem(
-        "poker-training-processing-v1",
-        JSON.stringify([{ ...persistedJob, ...invalidFields }]),
-      );
-      window.localStorage.setItem("poker-training-processing-total-v1", "1");
-      fetchMock().mockResolvedValueOnce(
-        jsonResponse({
-          total: 1,
-          jobs: [persistedJob],
-          snapshot_version: "valid-training-metadata-snapshot",
-        }),
-      );
-
-      render(<App />);
-
-      const restoredItem = await screen.findByRole("button", {
-        name: "Open screenshot 1: restored-training-metadata.png",
-      });
-      expect(within(restoredItem).getByText("recommended")).toBeInTheDocument();
-      expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
-      );
-      await waitFor(() =>
-        expect(
-          JSON.parse(
-            String(window.localStorage.getItem("poker-training-processing-v1")),
-          )[0],
-        ).toMatchObject({
-          training_decision: persistedJob.training_decision,
-          training_reviewed_at: persistedJob.training_reviewed_at,
-          training_review_note: persistedJob.training_review_note,
-        }),
-      );
-    },
-  );
-
   it("rejects malformed cached errors and restores the backend record", async () => {
     const persistedJob = jobRecord({
       id: "f".repeat(32),
@@ -1414,9 +1076,9 @@ describe("Analyzer workspace recovery", () => {
 
   it("keeps unsaved form edits out of the processing cache", async () => {
     const persistedJob = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "e".repeat(32),
-      original_filename: "confirmed-recommendation.png",
+      original_filename: "confirmed-approval.png",
     };
     window.localStorage.setItem(
       "poker-training-processing-v1",
@@ -1426,27 +1088,23 @@ describe("Analyzer workspace recovery", () => {
     const firstRender = render(<App />);
     const user = userEvent.setup();
 
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    const potInput = screen.getByLabelText(/Pot/);
+    const potInput = await screen.findByLabelText(/Pot/);
     await user.clear(potInput);
     await user.type(potInput, "18");
 
-    expect(screen.queryByLabelText("Recommendation")).not.toBeInTheDocument();
     expect(
       JSON.parse(
         String(window.localStorage.getItem("poker-training-processing-v1")),
       )[0],
     ).toMatchObject({
-      status: "recommended",
+      status: "approved",
       approved_state: persistedJob.approved_state,
-      recommendation: persistedJob.recommendation,
     });
 
     firstRender.unmount();
     render(<App />);
 
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(screen.getByLabelText(/Pot/)).toHaveValue("12.5");
+    expect(await screen.findByLabelText(/Pot/)).toHaveValue("12.5");
     expect(fetchMock()).not.toHaveBeenCalled();
   });
 
@@ -1597,11 +1255,6 @@ describe("Analyzer workspace recovery", () => {
     expect(
       screen.getByRole("button", { name: "Approve state" }),
     ).toBeDisabled();
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeEnabled();
     await waitFor(() =>
       expect(
         window.sessionStorage.getItem("poker-training-processing-synced"),
@@ -1610,289 +1263,171 @@ describe("Analyzer workspace recovery", () => {
     expect(fetchMock()).toHaveBeenCalledTimes(3);
   });
 
-  it.each(["approval", "recommendation", "decision"] as const)(
-    "reloads backend state when an older restore finishes during an ordinary %s request",
-    async (operation) => {
-      const jobId = "b".repeat(32);
-      const initialJob =
-        operation === "approval"
-          ? jobRecord({
-              id: jobId,
-              original_filename: `pending-${operation}.png`,
-            })
-          : {
-              ...approvedJob(),
-              id: jobId,
-              original_filename: `pending-${operation}.png`,
-            };
-      const persistedJob: JobRecord =
-        operation === "approval"
-          ? {
-              ...initialJob,
-              status: "approved",
-              approved_state: canonicalState(),
-              updated_at: "2026-07-10T00:01:00Z",
-            }
-          : operation === "recommendation"
-            ? {
-                ...initialJob,
-                status: "recommended",
-                recommendation,
-                updated_at: "2026-07-10T00:01:00Z",
-              }
-            : {
-                ...initialJob,
-                training_decision: {
-                  action: "call",
-                  sizing: null,
-                  certainty: "medium",
-                  recorded_at: "2026-07-10T00:01:00Z",
-                },
-                updated_at: "2026-07-10T00:01:00Z",
-              };
-      window.localStorage.setItem(
-        "poker-training-processing-v1",
-        JSON.stringify([initialJob]),
+  it("reloads backend state when an older restore finishes during an ordinary approval request", async () => {
+    const jobId = "b".repeat(32);
+    const initialJob = jobRecord({
+      id: jobId,
+      original_filename: "pending-approval.png",
+    });
+    const persistedJob: JobRecord = {
+      ...initialJob,
+      status: "approved",
+      approved_state: canonicalState(),
+      updated_at: "2026-07-10T00:01:00Z",
+    };
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([initialJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    window.sessionStorage.removeItem("poker-training-processing-synced");
+    const pendingRestore = deferredResponse();
+    const pendingMutation = deferredResponse();
+    fetchMock()
+      .mockReturnValueOnce(pendingRestore.promise)
+      .mockReturnValueOnce(pendingMutation.promise)
+      .mockResolvedValueOnce(
+        processingQueueResponse([persistedJob], "pending-approval-snapshot"),
       );
-      window.localStorage.setItem("poker-training-processing-total-v1", "1");
-      window.sessionStorage.removeItem("poker-training-processing-synced");
-      const pendingRestore = deferredResponse();
-      const pendingMutation = deferredResponse();
-      fetchMock()
-        .mockReturnValueOnce(pendingRestore.promise)
-        .mockReturnValueOnce(pendingMutation.promise)
-        .mockResolvedValueOnce(
-          processingQueueResponse(
-            [persistedJob],
-            `pending-${operation}-snapshot`,
-          ),
-        );
-      const firstRender = render(<App />);
-      const user = userEvent.setup();
+    const firstRender = render(<App />);
+    const user = userEvent.setup();
 
-      await waitFor(() =>
-        expect(fetchMock()).toHaveBeenCalledWith(
-          "http://localhost:8000/api/jobs",
-          { credentials: "include" },
-        ),
-      );
-      if (operation === "approval") {
-        await user.click(screen.getByRole("button", { name: "Approve state" }));
-      } else if (operation === "recommendation") {
-        await user.click(
-          screen.getByRole("button", {
-            name: "Request recommendation",
-          }),
-        );
-      } else {
-        const decisionPanel = await screen.findByLabelText(
-          "Your training decision",
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "call" }),
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "medium" }),
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "Lock answer" }),
-        );
-      }
-
-      const mutationPath =
-        operation === "approval"
-          ? "approve"
-          : operation === "decision"
-            ? "decision"
-            : "recommend";
-      const mutationMethod = operation === "decision" ? "PUT" : "POST";
-      await waitFor(() =>
-        expect(fetchMock()).toHaveBeenCalledWith(
-          `http://localhost:8000/api/jobs/${jobId}/${mutationPath}`,
-          expect.objectContaining({ method: mutationMethod }),
-        ),
-      );
-      await act(async () => {
-        pendingRestore.resolve(
-          processingQueueResponse([initialJob], `stale-${operation}-snapshot`),
-        );
-        await pendingRestore.promise;
-      });
-      expect(
-        window.sessionStorage.getItem("poker-training-processing-synced"),
-      ).toBeNull();
-      expect(fetchMock()).toHaveBeenCalledTimes(2);
-
-      firstRender.unmount();
-      render(<App />);
-
-      await waitFor(() =>
-        expect(
-          JSON.parse(
-            String(window.localStorage.getItem("poker-training-processing-v1")),
-          ),
-        ).toEqual([persistedJob]),
-      );
-      if (operation === "approval") {
-        expect(
-          screen.getByRole("button", { name: "Approve state" }),
-        ).toBeDisabled();
-      } else if (operation === "recommendation") {
-        expect(
-          await screen.findByLabelText("Recommendation"),
-        ).toBeInTheDocument();
-      } else {
-        expect(
-          await within(
-            screen.getByLabelText("Your training decision"),
-          ).findByText("Answer locked"),
-        ).toBeInTheDocument();
-      }
-      expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
         "http://localhost:8000/api/jobs",
-        `http://localhost:8000/api/jobs/${jobId}/${mutationPath}`,
-        "http://localhost:8000/api/jobs",
-      ]);
-    },
-  );
+        { credentials: "include" },
+      ),
+    );
+    await user.click(screen.getByRole("button", { name: "Approve state" }));
 
-  it.each(["approval", "review"] as const)(
-    "reloads archived %s state when an older history restore finishes during the request",
-    async (operation) => {
-      const jobId = "f".repeat(32);
-      const archivedAt = "2026-07-20T12:00:00Z";
-      const initialJob =
-        operation === "approval"
-          ? jobRecord({
-              id: jobId,
-              original_filename: `archived-pending-${operation}.png`,
-              archived_at: archivedAt,
-            })
-          : {
-              ...recommendedJob(),
-              id: jobId,
-              original_filename: `archived-pending-${operation}.png`,
-              archived_at: archivedAt,
-              training_decision: {
-                action: "call" as const,
-                sizing: null,
-                certainty: "medium" as const,
-                recorded_at: "2026-07-20T12:01:00Z",
-              },
-            };
-      const persistedJob: JobRecord =
-        operation === "approval"
-          ? {
-              ...initialJob,
-              status: "approved",
-              approved_state: canonicalState(),
-              updated_at: "2026-07-20T12:02:00Z",
-            }
-          : {
-              ...initialJob,
-              training_reviewed_at: "2026-07-20T12:02:00Z",
-              updated_at: "2026-07-20T12:02:00Z",
-            };
-      window.localStorage.setItem(
-        "poker-training-history-v1",
-        JSON.stringify([
-          {
-            id: jobId,
-            job: initialJob,
-            savedAt: archivedAt,
-          },
-        ]),
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        `http://localhost:8000/api/jobs/${jobId}/approve`,
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    await act(async () => {
+      pendingRestore.resolve(
+        processingQueueResponse([initialJob], "stale-approval-snapshot"),
       );
-      window.localStorage.setItem("poker-training-history-total-v1", "1");
-      window.sessionStorage.removeItem("poker-training-history-synced");
-      const pendingHistoryRestore = deferredResponse();
-      const pendingMutation = deferredResponse();
-      fetchMock()
-        .mockReturnValueOnce(pendingHistoryRestore.promise)
-        .mockReturnValueOnce(pendingMutation.promise)
-        .mockResolvedValueOnce(
-          processingQueueResponse(
-            [persistedJob],
-            `archived-${operation}-completed`,
-          ),
-        );
-      const firstRender = render(<App />);
-      const user = userEvent.setup();
+      await pendingRestore.promise;
+    });
+    expect(
+      window.sessionStorage.getItem("poker-training-processing-synced"),
+    ).toBeNull();
+    expect(fetchMock()).toHaveBeenCalledTimes(2);
 
-      await waitFor(() =>
-        expect(fetchMock()).toHaveBeenCalledWith(
-          "http://localhost:8000/api/history",
-          { credentials: "include" },
-        ),
-      );
-      await user.click(
-        screen.getByRole("button", {
-          name: "Reopen history item 1",
-        }),
-      );
-      if (operation === "approval") {
-        await user.click(screen.getByRole("button", { name: "Approve state" }));
-      } else {
-        await user.click(
-          within(
-            await screen.findByLabelText("Training decision comparison"),
-          ).getByRole("button", { name: "Mark reviewed" }),
-        );
-      }
+    firstRender.unmount();
+    render(<App />);
 
-      const mutationPath =
-        operation === "approval" ? "approve" : "training-review";
-      const mutationMethod = operation === "approval" ? "POST" : "PUT";
-      await waitFor(() =>
-        expect(fetchMock()).toHaveBeenCalledWith(
-          `http://localhost:8000/api/jobs/${jobId}/${mutationPath}`,
-          expect.objectContaining({ method: mutationMethod }),
-        ),
-      );
-      await act(async () => {
-        pendingHistoryRestore.resolve(
-          processingQueueResponse([initialJob], `stale-archived-${operation}`),
-        );
-        await pendingHistoryRestore.promise;
-      });
+    await waitFor(() =>
       expect(
-        window.sessionStorage.getItem("poker-training-history-synced"),
-      ).toBeNull();
-      expect(fetchMock()).toHaveBeenCalledTimes(2);
+        JSON.parse(
+          String(window.localStorage.getItem("poker-training-processing-v1")),
+        ),
+      ).toEqual([persistedJob]),
+    );
+    expect(
+      screen.getByRole("button", { name: "Approve state" }),
+    ).toBeDisabled();
+    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:8000/api/jobs",
+      `http://localhost:8000/api/jobs/${jobId}/approve`,
+      "http://localhost:8000/api/jobs",
+    ]);
+  });
 
-      firstRender.unmount();
-      render(<App />);
+  it("reloads archived approval state when an older history restore finishes during the request", async () => {
+    const jobId = "f".repeat(32);
+    const archivedAt = "2026-07-20T12:00:00Z";
+    const initialJob = jobRecord({
+      id: jobId,
+      original_filename: "archived-pending-approval.png",
+      archived_at: archivedAt,
+    });
+    const persistedJob: JobRecord = {
+      ...initialJob,
+      status: "approved",
+      approved_state: canonicalState(),
+      updated_at: "2026-07-20T12:02:00Z",
+    };
+    window.localStorage.setItem(
+      "poker-training-history-v1",
+      JSON.stringify([
+        {
+          id: jobId,
+          job: initialJob,
+          savedAt: archivedAt,
+        },
+      ]),
+    );
+    window.localStorage.setItem("poker-training-history-total-v1", "1");
+    window.sessionStorage.removeItem("poker-training-history-synced");
+    const pendingHistoryRestore = deferredResponse();
+    const pendingMutation = deferredResponse();
+    fetchMock()
+      .mockReturnValueOnce(pendingHistoryRestore.promise)
+      .mockReturnValueOnce(pendingMutation.promise)
+      .mockResolvedValueOnce(
+        processingQueueResponse([persistedJob], "archived-approval-completed"),
+      );
+    const firstRender = render(<App />);
+    const user = userEvent.setup();
 
-      await waitFor(() =>
-        expect(
-          JSON.parse(
-            String(window.localStorage.getItem("poker-training-history-v1")),
-          )[0].job,
-        ).toEqual(persistedJob),
-      );
-      await user.click(
-        await screen.findByRole("button", {
-          name: "Reopen history item 1",
-        }),
-      );
-      if (operation === "approval") {
-        expect(
-          screen.getByRole("button", { name: "Approve state" }),
-        ).toBeDisabled();
-      } else {
-        expect(
-          within(
-            await screen.findByLabelText("Training decision comparison"),
-          ).getByText("Reviewed"),
-        ).toBeInTheDocument();
-      }
-      expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
         "http://localhost:8000/api/history",
-        `http://localhost:8000/api/jobs/${jobId}/${mutationPath}`,
-        "http://localhost:8000/api/history",
-      ]);
-    },
-  );
+        { credentials: "include" },
+      ),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Reopen history item 1",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Approve state" }));
+
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        `http://localhost:8000/api/jobs/${jobId}/approve`,
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    await act(async () => {
+      pendingHistoryRestore.resolve(
+        processingQueueResponse([initialJob], "stale-archived-approval"),
+      );
+      await pendingHistoryRestore.promise;
+    });
+    expect(
+      window.sessionStorage.getItem("poker-training-history-synced"),
+    ).toBeNull();
+    expect(fetchMock()).toHaveBeenCalledTimes(2);
+
+    firstRender.unmount();
+    render(<App />);
+
+    await waitFor(() =>
+      expect(
+        JSON.parse(
+          String(window.localStorage.getItem("poker-training-history-v1")),
+        )[0].job,
+      ).toEqual(persistedJob),
+    );
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Reopen history item 1",
+      }),
+    );
+    expect(
+      screen.getByRole("button", { name: "Approve state" }),
+    ).toBeDisabled();
+    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:8000/api/history",
+      `http://localhost:8000/api/jobs/${jobId}/approve`,
+      "http://localhost:8000/api/history",
+    ]);
+  });
 
   it("keeps processing unsynced when a reload races an ordinary write", async () => {
     const jobId = "4".repeat(32);
@@ -1945,13 +1480,6 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", {
-          name: "Request recommendation",
-        }),
-      ).toBeEnabled(),
-    );
-    await waitFor(() =>
-      expect(
         JSON.parse(
           String(window.localStorage.getItem("poker-training-processing-v1")),
         ),
@@ -1979,13 +1507,7 @@ describe("Analyzer workspace recovery", () => {
     };
     const interveningJob: JobRecord = {
       ...initialJob,
-      approved_state: canonicalState({ pot_size: 20 }),
-      training_decision: {
-        action: "call",
-        sizing: null,
-        certainty: "medium",
-        recorded_at: "2026-07-20T12:01:00Z",
-      },
+      approved_state: canonicalState({ pot_size: 15 }),
       updated_at: "2026-07-20T12:01:00Z",
     };
     const correctedState = canonicalState({ pot_size: 20 });
@@ -1993,7 +1515,6 @@ describe("Analyzer workspace recovery", () => {
       ...interveningJob,
       status: "approved",
       approved_state: correctedState,
-      training_decision: null,
       updated_at: "2026-07-20T12:02:00Z",
     };
     window.localStorage.setItem(
@@ -2008,7 +1529,7 @@ describe("Analyzer workspace recovery", () => {
       .mockResolvedValueOnce(
         processingQueueResponse(
           [interveningJob],
-          "intervening-decision-snapshot",
+          "intervening-revision-snapshot",
         ),
       )
       .mockReturnValueOnce(pendingFinalQueue.promise);
@@ -2094,12 +1615,7 @@ describe("Analyzer workspace recovery", () => {
     };
     const interveningJob: JobRecord = {
       ...initialJob,
-      training_decision: {
-        action: "call",
-        sizing: null,
-        certainty: "medium",
-        recorded_at: "2026-07-20T12:01:00Z",
-      },
+      title: "Cross-tab rename",
       updated_at: "2026-07-20T12:01:00Z",
     };
     const persistedInclusion: JobRecord = {
@@ -2120,7 +1636,6 @@ describe("Analyzer workspace recovery", () => {
         jobId,
         baselineUpdatedAt: initialJob.updated_at,
         expectsRemoval: false,
-        expectedRecommendationRequestId: null,
         expectedMutation: {
           kind: "benchmark-inclusion",
           included: true,
@@ -2132,7 +1647,7 @@ describe("Analyzer workspace recovery", () => {
       .mockResolvedValueOnce(
         processingQueueResponse(
           [interveningJob],
-          "intervening-decision-snapshot",
+          "intervening-revision-snapshot",
         ),
       )
       .mockResolvedValueOnce(
@@ -2197,10 +1712,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", {
-          name: "Request recommendation",
-        }),
-      ).toBeEnabled(),
+        screen.getByRole("button", { name: "Approve state" }),
+      ).toBeDisabled(),
     );
     expect(
       JSON.parse(
@@ -2216,54 +1729,6 @@ describe("Analyzer workspace recovery", () => {
     expect(fetchMock().mock.calls[0]?.[0]).toBe(
       "http://localhost:8000/api/jobs",
     );
-  });
-
-  it("restores and upgrades a legacy recommended upload lease", async () => {
-    const uploadRequestId = "legacy-upload-request";
-    const persistedJob = {
-      ...recommendedJob(),
-      id: "f".repeat(32),
-      original_filename: "legacy-recommended-upload.png",
-      upload_request_id: uploadRequestId,
-      updated_at: "2026-07-20T12:02:00Z",
-    };
-    window.sessionStorage.setItem(
-      "poker-training-processing-mutation-v1",
-      JSON.stringify({
-        kind: "projection",
-        ownerId: "previous-page",
-        baselineJobIds: [],
-        expectedRemovalJobIds: [],
-        expectedUploads: [
-          {
-            requestId: uploadRequestId,
-            target: "recommended",
-          },
-        ],
-        expiresAt: Date.now() + 30_000,
-      }),
-    );
-    fetchMock().mockResolvedValueOnce(
-      processingQueueResponse(
-        [persistedJob],
-        "legacy-recommended-upload-snapshot",
-      ),
-    );
-
-    render(<App />);
-
-    expect(
-      await screen.findByRole("button", {
-        name: "Open screenshot 1: legacy-recommended-upload.png",
-      }),
-    ).toBeInTheDocument();
-    expect(screen.getByLabelText("Recommendation")).toBeInTheDocument();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).toBeNull();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
   });
 
   it("does not replace a claimed recovery lease with a new mutation", async () => {
@@ -2330,16 +1795,10 @@ describe("Analyzer workspace recovery", () => {
     const jobId = "5".repeat(32);
     const archivedAt = "2026-07-20T12:00:00Z";
     const initialJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: jobId,
-      original_filename: "reload-spanning-review.png",
+      original_filename: "reload-spanning-archived-approval.png",
       archived_at: archivedAt,
-      training_decision: {
-        action: "call",
-        sizing: null,
-        certainty: "medium",
-        recorded_at: "2026-07-20T12:01:00Z",
-      },
     };
     const interveningJob: JobRecord = {
       ...initialJob,
@@ -2348,7 +1807,7 @@ describe("Analyzer workspace recovery", () => {
     };
     const persistedJob: JobRecord = {
       ...interveningJob,
-      training_reviewed_at: "2026-07-20T12:02:00Z",
+      approved_state: canonicalState({ pot_size: 20 }),
       updated_at: "2026-07-20T12:02:00Z",
     };
     window.localStorage.setItem(
@@ -2380,15 +1839,14 @@ describe("Analyzer workspace recovery", () => {
         name: "Reopen history item 1",
       }),
     );
-    await user.click(
-      within(
-        await screen.findByLabelText("Training decision comparison"),
-      ).getByRole("button", { name: "Mark reviewed" }),
-    );
+    const potInput = await screen.findByDisplayValue("12.5");
+    await user.clear(potInput);
+    await user.type(potInput, "20");
+    await user.click(screen.getByRole("button", { name: "Approve state" }));
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}/training-review`,
-        expect.objectContaining({ method: "PUT" }),
+        `http://localhost:8000/api/jobs/${jobId}/approve`,
+        expect.objectContaining({ method: "POST" }),
       ),
     );
     firstRender.unmount();
@@ -2408,7 +1866,7 @@ describe("Analyzer workspace recovery", () => {
       "true",
     );
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${jobId}/training-review`,
+      `http://localhost:8000/api/jobs/${jobId}/approve`,
       "http://localhost:8000/api/history",
       `http://localhost:8000/api/jobs/${jobId}`,
     ]);
@@ -2461,11 +1919,6 @@ describe("Analyzer workspace recovery", () => {
       ).toBeDisabled(),
     );
     expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeEnabled();
-    expect(
       JSON.parse(
         String(window.localStorage.getItem("poker-training-processing-v1")),
       ),
@@ -2486,67 +1939,6 @@ describe("Analyzer workspace recovery", () => {
       "http://localhost:8000/api/jobs",
       "http://localhost:8000/api/jobs",
     ]);
-  });
-
-  it("releases an approval lease after another tab starts a recommendation", async () => {
-    const parsedJob = jobRecord({
-      id: "d".repeat(32),
-      original_filename: "approval-conflict.png",
-    });
-    const competingAttempt: JobRecord = {
-      ...parsedJob,
-      recommendation_pending: true,
-      recommendation_request_id: "other-tab-attempt",
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([parsedJob]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    fetchMock()
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            detail: "Recommendation is already running",
-          },
-          409,
-        ),
-      )
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [competingAttempt],
-          "approval-conflict-snapshot",
-        ),
-      );
-    render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Approve state" }));
-
-    expect(
-      await screen.findByText("Recommendation is already running"),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([competingAttempt]),
-    );
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", {
-        name: "Approve state",
-      }),
-    ).toBeEnabled();
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeDisabled();
   });
 
   it("restores an upload that commits after a replacement page reads a stale queue", async () => {
@@ -2736,16 +2128,8 @@ describe("Analyzer workspace recovery", () => {
         ),
       ).expectedUploads,
     ).toEqual([
-      {
-        requestId: expect.any(String),
-        target: "parsed",
-        recommendationRequestId: null,
-      },
-      {
-        requestId: expect.any(String),
-        target: "parsed",
-        recommendationRequestId: null,
-      },
+      { requestId: expect.any(String), target: "parsed" },
+      { requestId: expect.any(String), target: "parsed" },
     ]);
 
     await act(async () => {
@@ -2816,17 +2200,13 @@ describe("Analyzer workspace recovery", () => {
     );
     expect(retainedLease.ownerId).toBe(replacementLease.ownerId);
     expect(retainedLease.expectedUploads).toEqual([
-      {
-        requestId: expect.any(String),
-        target: "parsed",
-        recommendationRequestId: null,
-      },
+      { requestId: expect.any(String), target: "parsed" },
     ]);
   });
 
   it("restores a batch archive after stale processing and history reloads", async () => {
     const readyJob = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "b".repeat(32),
       original_filename: "reload-spanning-archive.png",
     };
@@ -2940,7 +2320,7 @@ describe("Analyzer workspace recovery", () => {
 
   it("confirms an omitted benchmark hand before settling archive recovery", async () => {
     const readyJob = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "c".repeat(32),
       original_filename: "queued-archive.png",
     };
@@ -3082,880 +2462,76 @@ describe("Analyzer workspace recovery", () => {
     ).toBeInTheDocument();
   });
 
-  it("restores a persisted provider error after an ordinary recommendation failure", async () => {
-    const recommendationRequestId = "11111111-1111-4111-8111-111111111111";
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(
-      recommendationRequestId,
-    );
-    const approved = {
-      ...approvedJob(),
-      id: "5".repeat(32),
-      original_filename: "ordinary-provider-failure.png",
-    };
-    const failedJob: JobRecord = {
-      ...approved,
-      status: "error",
-      error: "provider exploded",
-      recommendation_request_id: recommendationRequestId,
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([approved]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    fetchMock()
-      .mockResolvedValueOnce(jsonResponse({ detail: "provider exploded" }, 502))
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [failedJob],
-          "ordinary-provider-failure-snapshot",
-        ),
-      );
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    );
-
-    expect(await screen.findAllByText("provider exploded")).not.toHaveLength(0);
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([failedJob]),
-    );
-    expect(
-      within(
-        screen.getByRole("button", {
-          name: "Open screenshot 1: ordinary-provider-failure.png",
-        }),
-      ).getByText("error"),
-    ).toBeInTheDocument();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
-
-    firstRender.unmount();
-    render(<App />);
-
-    expect(await screen.findAllByText("provider exploded")).not.toHaveLength(0);
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeEnabled();
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${approved.id}/recommend`,
-      "http://localhost:8000/api/jobs",
-    ]);
-  });
-
-  it("releases a recommendation lease after another tab wins the conflict", async () => {
-    const recommendationRequestId = "44444444-4444-4444-8444-444444444444";
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(
-      recommendationRequestId,
-    );
-    const approved = {
-      ...approvedJob(),
-      id: "a".repeat(32),
-      original_filename: "competing-recommendation.png",
-    };
-    const competingAttempt: JobRecord = {
-      ...approved,
-      recommendation_pending: true,
-      recommendation_request_id: "other-tab-attempt",
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([approved]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    fetchMock()
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            detail: "Recommendation is already running",
-          },
-          409,
-        ),
-      )
-      .mockResolvedValue(
-        processingQueueResponse(
-          [competingAttempt],
-          "competing-recommendation-snapshot",
-        ),
-      );
-    render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    );
-
-    expect(
-      await screen.findByText("Recommendation is already running"),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([competingAttempt]),
-    );
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).toBeNull();
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeDisabled();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBeNull();
-    expect(
-      fetchMock()
-        .mock.calls.slice(0, 2)
-        .map(([url]) => url),
-    ).toEqual([
-      `http://localhost:8000/api/jobs/${approved.id}/recommend`,
-      "http://localhost:8000/api/jobs",
-    ]);
-  });
-
-  it("restores an ordinary recommendation after its successful response is lost", async () => {
-    const recommendationRequestId = "22222222-2222-4222-8222-222222222222";
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(
-      recommendationRequestId,
-    );
-    const approved = {
-      ...approvedJob(),
-      id: "6".repeat(32),
-      original_filename: "ordinary-recommendation-lost.png",
-    };
-    const persistedRecommendation: JobRecord = {
-      ...approved,
-      status: "recommended",
-      recommendation,
-      recommendation_request_id: recommendationRequestId,
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([approved]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    fetchMock()
-      .mockRejectedValueOnce(
-        new TypeError("Connection lost after recommendation"),
-      )
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [persistedRecommendation],
-          "ordinary-recommendation-snapshot",
-        ),
-      );
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    );
-
-    expect(
-      await screen.findByText("Connection lost after recommendation"),
-    ).toBeInTheDocument();
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([persistedRecommendation]),
-    );
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeDisabled();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
-
-    firstRender.unmount();
-    render(<App />);
-
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(screen.getByText(recommendation.explanation)).toBeInTheDocument();
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${approved.id}/recommend`,
-      "http://localhost:8000/api/jobs",
-    ]);
-  });
-
-  it("keeps a recommendation lease through an intermediate decision revision", async () => {
-    const jobId = "8".repeat(32);
-    const recommendationRequestId = "88888888-8888-4888-8888-888888888888";
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(
-      recommendationRequestId,
-    );
-    const approved = {
-      ...approvedJob(),
+  it("restores an archived approval after its response is lost", async () => {
+    const jobId = "9".repeat(32);
+    const archivedAt = "2026-07-20T12:00:00Z";
+    const initialJob = jobRecord({
       id: jobId,
-      original_filename: "decision-before-recommendation.png",
-    };
-    const trainingDecision = {
-      action: "call" as const,
-      sizing: null,
-      certainty: "medium" as const,
-      recorded_at: "2026-07-20T12:01:00Z",
-    };
-    const decisionSaved: JobRecord = {
-      ...approved,
-      training_decision: trainingDecision,
-      updated_at: "2026-07-20T12:01:00Z",
-    };
-    const recommendationSaved: JobRecord = {
-      ...decisionSaved,
-      status: "recommended",
-      recommendation,
-      recommendation_request_id: recommendationRequestId,
-      updated_at: "2026-07-20T12:02:00Z",
+      original_filename: "archived-approval-response-lost.png",
+      image_filename: `${jobId}.png`,
+      archived_at: archivedAt,
+    });
+    const persistedJob: JobRecord = {
+      ...initialJob,
+      status: "approved",
+      approved_state: canonicalState({ pot_size: 20 }),
+      updated_at: "2026-07-20T12:10:00Z",
     };
     window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([approved]),
+      "poker-training-history-v1",
+      JSON.stringify([{ id: jobId, job: initialJob, savedAt: archivedAt }]),
     );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    const pendingRecommendation = deferredResponse();
-    const pendingFinalQueue = deferredResponse();
-    let processingReads = 0;
-    fetchMock().mockImplementation((url, init) => {
-      if (url === `http://localhost:8000/api/jobs/${jobId}/decision`) {
-        return Promise.resolve(jsonResponse(decisionSaved));
-      }
-      if (url === `http://localhost:8000/api/jobs/${jobId}/recommend`) {
-        expect(init?.headers).toEqual({
-          "X-Recommendation-Request-ID": recommendationRequestId,
-        });
-        return pendingRecommendation.promise;
-      }
-      if (url === "http://localhost:8000/api/jobs") {
-        processingReads += 1;
-        return processingReads === 1
-          ? Promise.resolve(
-              processingQueueResponse(
-                [decisionSaved],
-                "intermediate-decision-revision",
-              ),
-            )
-          : pendingFinalQueue.promise;
-      }
-      throw new Error(`Unexpected request: ${String(url)}`);
-    });
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-    const decisionPanel = await screen.findByLabelText(
-      "Your training decision",
-    );
-
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "call" }),
-    );
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "medium" }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    );
-    await waitFor(() =>
-      expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}/recommend`,
-        expect.objectContaining({ method: "POST" }),
-      ),
-    );
-    firstRender.unmount();
-    render(<App />);
-
-    await waitFor(() => expect(processingReads).toBeGreaterThanOrEqual(2));
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).not.toBeNull();
-    expect(screen.queryByLabelText("Recommendation")).not.toBeInTheDocument();
-
-    await act(async () => {
-      pendingFinalQueue.resolve(
-        processingQueueResponse(
-          [recommendationSaved],
-          "completed-recommendation-revision",
-        ),
-      );
-      pendingRecommendation.resolve(jsonResponse(recommendationSaved));
-      await Promise.all([
-        pendingFinalQueue.promise,
-        pendingRecommendation.promise,
-      ]);
-    });
-
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).toBeNull();
-  });
-
-  it("does not arm or start a recommendation when its decision response is lost", async () => {
-    const approved = {
-      ...approvedJob(),
-      id: "d".repeat(32),
-      original_filename: "recommend-after-decision-lost.png",
-    };
-    const persistedDecision: JobRecord = {
-      ...approved,
-      training_decision: {
-        action: "call",
-        sizing: null,
-        certainty: "medium",
-        recorded_at: "2026-07-10T00:01:00Z",
-      },
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([approved]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    window.localStorage.setItem("poker-training-history-total-v1", "1");
     fetchMock()
       .mockRejectedValueOnce(
-        new TypeError("Connection lost after saving answer"),
+        new TypeError("Connection lost after archived approval"),
       )
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [persistedDecision],
-          "decision-before-recommendation-snapshot",
-        ),
-      );
-    render(<App />);
+      .mockResolvedValueOnce(jsonResponse(persistedJob));
+    const firstRender = render(<App />);
     const user = userEvent.setup();
-    const decisionPanel = await screen.findByLabelText(
-      "Your training decision",
-    );
 
     await user.click(
-      within(decisionPanel).getByRole("button", { name: "call" }),
+      screen.getByRole("button", {
+        name: "Reopen history item 1",
+      }),
     );
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "medium" }),
-    );
-    await user.click(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    );
+    const potInput = await screen.findByDisplayValue("12.5");
+    await user.clear(potInput);
+    await user.type(potInput, "20");
+    await user.click(screen.getByRole("button", { name: "Approve state" }));
 
     expect(
-      await screen.findByText("Connection lost after saving answer"),
+      await screen.findByText("Connection lost after archived approval"),
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(
         JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([persistedDecision]),
+          String(window.localStorage.getItem("poker-training-history-v1")),
+        )[0].job,
+      ).toEqual(persistedJob),
     );
+    expect(window.sessionStorage.getItem("poker-training-history-synced")).toBe(
+      "true",
+    );
+    expect(await screen.findByDisplayValue("20")).toBeInTheDocument();
     expect(
-      await within(screen.getByLabelText("Your training decision")).findByText(
-        "Answer locked",
-      ),
-    ).toBeInTheDocument();
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${approved.id}/decision`,
-      "http://localhost:8000/api/jobs",
-    ]);
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).toBeNull();
-  });
-
-  it("restores an ordinary training decision after its response is lost", async () => {
-    const approved = {
-      ...approvedJob(),
-      id: "7".repeat(32),
-      original_filename: "ordinary-decision-lost.png",
-    };
-    const persistedDecision: JobRecord = {
-      ...approved,
-      training_decision: {
-        action: "call",
-        sizing: null,
-        certainty: "medium",
-        recorded_at: "2026-07-10T00:01:00Z",
-      },
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([approved]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    fetchMock()
-      .mockRejectedValueOnce(
-        new TypeError("Connection lost after saving answer"),
-      )
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [persistedDecision],
-          "ordinary-decision-snapshot",
-        ),
-      );
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-    const decisionPanel = await screen.findByLabelText(
-      "Your training decision",
-    );
-
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "call" }),
-    );
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "medium" }),
-    );
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "Lock answer" }),
-    );
-
-    expect(
-      await screen.findByText("Connection lost after saving answer"),
-    ).toBeInTheDocument();
-    expect(
-      await within(screen.getByLabelText("Your training decision")).findByText(
-        "Answer locked",
-      ),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([persistedDecision]),
-    );
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
+      screen.getByRole("button", { name: "Approve state" }),
+    ).toBeDisabled();
 
     firstRender.unmount();
     render(<App />);
-
-    const restoredDecisionPanel = await screen.findByLabelText(
-      "Your training decision",
-    );
-    expect(
-      within(restoredDecisionPanel).getByText("Answer locked"),
-    ).toBeInTheDocument();
-    expect(
-      within(restoredDecisionPanel).getByRole("button", {
-        name: "medium",
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Reopen history item 1",
       }),
-    ).toHaveAttribute("aria-pressed", "true");
+    );
+
+    expect(await screen.findByDisplayValue("20")).toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${approved.id}/decision`,
-      "http://localhost:8000/api/jobs",
+      `http://localhost:8000/api/jobs/${jobId}/approve`,
+      `http://localhost:8000/api/jobs/${jobId}`,
     ]);
   });
-
-  it("releases a training-decision lease after a deterministic conflict", async () => {
-    const approved = {
-      ...approvedJob(),
-      id: "8".repeat(32),
-      original_filename: "decision-conflict.png",
-    };
-    const competingRecommendation: JobRecord = {
-      ...approved,
-      status: "recommended",
-      recommendation,
-      recommendation_request_id: "other-tab-recommendation",
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([approved]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    fetchMock()
-      .mockResolvedValueOnce(
-        jsonResponse(
-          {
-            detail:
-              "Your decision must be recorded before revealing the recommendation",
-          },
-          409,
-        ),
-      )
-      .mockResolvedValueOnce(
-        processingQueueResponse(
-          [competingRecommendation],
-          "decision-conflict-snapshot",
-        ),
-      );
-    render(<App />);
-    const user = userEvent.setup();
-    const decisionPanel = await screen.findByLabelText(
-      "Your training decision",
-    );
-
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "call" }),
-    );
-    await user.click(
-      within(decisionPanel).getByRole("button", { name: "medium" }),
-    );
-    await user.click(
-      within(decisionPanel).getByRole("button", {
-        name: "Lock answer",
-      }),
-    );
-
-    expect(
-      await screen.findByText(
-        "Your decision must be recorded before revealing the recommendation",
-      ),
-    ).toBeInTheDocument();
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).toBeNull();
-  });
-
-  it.each([{ scope: "processing" as const }, { scope: "history" as const }])(
-    "releases a $scope review lease after a deterministic conflict",
-    async ({ scope }) => {
-      const jobId = scope === "processing" ? "3".repeat(32) : "4".repeat(32);
-      const archivedAt = scope === "history" ? "2026-07-20T12:00:00Z" : null;
-      const reviewedCandidate: JobRecord = {
-        ...recommendedJob(),
-        id: jobId,
-        original_filename: `${scope}-review-conflict.png`,
-        archived_at: archivedAt,
-        training_decision: {
-          action: "call",
-          sizing: null,
-          certainty: "medium",
-          recorded_at: "2026-07-20T12:01:00Z",
-        },
-      };
-      const competingApproval: JobRecord = {
-        ...reviewedCandidate,
-        status: "approved",
-        approved_state: canonicalState({ pot_size: 20 }),
-        recommendation: null,
-        recommendation_request_id: null,
-        training_decision: null,
-        updated_at: "2026-07-20T12:02:00Z",
-      };
-      if (scope === "processing") {
-        window.localStorage.setItem(
-          "poker-training-processing-v1",
-          JSON.stringify([reviewedCandidate]),
-        );
-        window.localStorage.setItem("poker-training-processing-total-v1", "1");
-      } else {
-        window.localStorage.setItem("poker-training-processing-v1", "[]");
-        window.localStorage.setItem("poker-training-processing-total-v1", "0");
-        window.sessionStorage.setItem(
-          "poker-training-processing-synced",
-          "true",
-        );
-        window.localStorage.setItem(
-          "poker-training-history-v1",
-          JSON.stringify([
-            {
-              id: jobId,
-              job: reviewedCandidate,
-              savedAt: archivedAt,
-            },
-          ]),
-        );
-        window.localStorage.setItem("poker-training-history-total-v1", "1");
-      }
-      fetchMock()
-        .mockResolvedValueOnce(
-          jsonResponse(
-            {
-              detail: "Approve the current state before completing review",
-            },
-            409,
-          ),
-        )
-        .mockResolvedValueOnce(
-          scope === "processing"
-            ? processingQueueResponse(
-                [competingApproval],
-                "review-conflict-snapshot",
-              )
-            : jsonResponse({
-                total: 1,
-                jobs: [competingApproval],
-                snapshot_version: "archived-review-conflict-snapshot",
-              }),
-        );
-      render(<App />);
-      const user = userEvent.setup();
-
-      if (scope === "history") {
-        await user.click(
-          screen.getByRole("button", {
-            name: "Reopen history item 1",
-          }),
-        );
-      }
-      const comparison = await screen.findByLabelText(
-        "Training decision comparison",
-      );
-      await user.click(
-        within(comparison).getByRole("button", {
-          name: "Mark reviewed",
-        }),
-      );
-
-      expect(
-        await screen.findByText(
-          "Approve the current state before completing review",
-        ),
-      ).toBeInTheDocument();
-      const cacheKey =
-        scope === "processing"
-          ? "poker-training-processing-v1"
-          : "poker-training-history-v1";
-      await waitFor(() => {
-        const cached = JSON.parse(
-          String(window.localStorage.getItem(cacheKey)),
-        );
-        const cachedJob = scope === "processing" ? cached[0] : cached[0].job;
-        expect(cachedJob).toEqual(competingApproval);
-      });
-      expect(
-        window.sessionStorage.getItem(`poker-training-${scope}-mutation-v1`),
-      ).toBeNull();
-    },
-  );
-
-  it.each([
-    { operation: "approval" as const },
-    { operation: "recommendation" as const },
-    { operation: "decision" as const },
-    { operation: "review" as const },
-  ])(
-    "restores an archived $operation after its response is lost",
-    async ({ operation }) => {
-      const jobId = "9".repeat(32);
-      const archivedAt = "2026-07-20T12:00:00Z";
-      const trainingDecision = {
-        action: "call" as const,
-        sizing: null,
-        certainty: "medium" as const,
-        recorded_at: "2026-07-20T12:01:00Z",
-      };
-      const parsedArchivedJob = jobRecord({
-        id: jobId,
-        original_filename: `archived-${operation}-response-lost.png`,
-        image_filename: `${jobId}.png`,
-        archived_at: archivedAt,
-      });
-      const approvedArchivedJob: JobRecord = {
-        ...approvedJob(),
-        id: jobId,
-        original_filename: parsedArchivedJob.original_filename,
-        image_filename: `${jobId}.png`,
-        archived_at: archivedAt,
-      };
-      const reviewedArchivedJob: JobRecord = {
-        ...recommendedJob(),
-        id: jobId,
-        original_filename: parsedArchivedJob.original_filename,
-        image_filename: `${jobId}.png`,
-        training_decision: trainingDecision,
-        archived_at: archivedAt,
-      };
-      let initialJob: JobRecord;
-      let persistedJob: JobRecord;
-      if (operation === "approval") {
-        initialJob = parsedArchivedJob;
-        persistedJob = {
-          ...parsedArchivedJob,
-          status: "approved",
-          approved_state: canonicalState({ pot_size: 20 }),
-          updated_at: "2026-07-20T12:10:00Z",
-        };
-      } else if (operation === "recommendation") {
-        const recommendationRequestId = "33333333-3333-4333-8333-333333333333";
-        vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(
-          recommendationRequestId,
-        );
-        initialJob = approvedArchivedJob;
-        persistedJob = {
-          ...approvedArchivedJob,
-          status: "recommended",
-          recommendation,
-          recommendation_request_id: recommendationRequestId,
-          updated_at: "2026-07-20T12:10:00Z",
-        };
-      } else if (operation === "decision") {
-        initialJob = approvedArchivedJob;
-        persistedJob = {
-          ...approvedArchivedJob,
-          training_decision: trainingDecision,
-          updated_at: "2026-07-20T12:10:00Z",
-        };
-      } else {
-        initialJob = reviewedArchivedJob;
-        persistedJob = {
-          ...reviewedArchivedJob,
-          training_reviewed_at: "2026-07-20T12:10:00Z",
-          training_review_note: "Persisted archived lesson.",
-          updated_at: "2026-07-20T12:10:00Z",
-        };
-      }
-      window.localStorage.setItem(
-        "poker-training-history-v1",
-        JSON.stringify([{ id: jobId, job: initialJob, savedAt: archivedAt }]),
-      );
-      window.localStorage.setItem("poker-training-history-total-v1", "1");
-      fetchMock()
-        .mockRejectedValueOnce(
-          new TypeError(`Connection lost after archived ${operation}`),
-        )
-        .mockResolvedValueOnce(jsonResponse(persistedJob));
-      const firstRender = render(<App />);
-      const user = userEvent.setup();
-
-      await user.click(
-        screen.getByRole("button", {
-          name: "Reopen history item 1",
-        }),
-      );
-      if (operation === "approval") {
-        const potInput = await screen.findByDisplayValue("12.5");
-        await user.clear(potInput);
-        await user.type(potInput, "20");
-        await user.click(screen.getByRole("button", { name: "Approve state" }));
-      } else if (operation === "recommendation") {
-        await user.click(
-          screen.getByRole("button", {
-            name: "Request recommendation",
-          }),
-        );
-      } else if (operation === "decision") {
-        const decisionPanel = await screen.findByLabelText(
-          "Your training decision",
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "call" }),
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "medium" }),
-        );
-        await user.click(
-          within(decisionPanel).getByRole("button", { name: "Lock answer" }),
-        );
-      } else {
-        const comparison = await screen.findByLabelText(
-          "Training decision comparison",
-        );
-        await user.type(
-          screen.getByLabelText("Training review note"),
-          "Persisted archived lesson.",
-        );
-        await user.click(
-          within(comparison).getByRole("button", {
-            name: "Mark reviewed",
-          }),
-        );
-      }
-
-      expect(
-        await screen.findByText(`Connection lost after archived ${operation}`),
-      ).toBeInTheDocument();
-      await waitFor(() =>
-        expect(
-          JSON.parse(
-            String(window.localStorage.getItem("poker-training-history-v1")),
-          )[0].job,
-        ).toEqual(persistedJob),
-      );
-      expect(
-        window.sessionStorage.getItem("poker-training-history-synced"),
-      ).toBe("true");
-      if (operation === "approval") {
-        expect(await screen.findByDisplayValue("20")).toBeInTheDocument();
-        expect(
-          screen.getByRole("button", { name: "Approve state" }),
-        ).toBeDisabled();
-      } else if (operation === "recommendation") {
-        expect(
-          await screen.findByLabelText("Recommendation"),
-        ).toBeInTheDocument();
-      } else if (operation === "decision") {
-        expect(
-          await within(
-            screen.getByLabelText("Your training decision"),
-          ).findByText("Answer locked"),
-        ).toBeInTheDocument();
-      } else {
-        const comparison = await screen.findByLabelText(
-          "Training decision comparison",
-        );
-        expect(within(comparison).getByText("Reviewed")).toBeInTheDocument();
-        expect(
-          screen.getByLabelText("Saved training review note"),
-        ).toHaveTextContent("Persisted archived lesson.");
-      }
-
-      firstRender.unmount();
-      render(<App />);
-      await user.click(
-        await screen.findByRole("button", {
-          name: "Reopen history item 1",
-        }),
-      );
-
-      if (operation === "approval") {
-        expect(await screen.findByDisplayValue("20")).toBeInTheDocument();
-      } else if (operation === "recommendation") {
-        expect(
-          await screen.findByLabelText("Recommendation"),
-        ).toBeInTheDocument();
-      } else if (operation === "decision") {
-        expect(
-          await within(
-            screen.getByLabelText("Your training decision"),
-          ).findByText("Answer locked"),
-        ).toBeInTheDocument();
-      } else {
-        expect(
-          await screen.findByLabelText("Saved training review note"),
-        ).toHaveTextContent("Persisted archived lesson.");
-      }
-      const mutationPath =
-        operation === "approval"
-          ? "approve"
-          : operation === "decision"
-            ? "decision"
-            : operation === "review"
-              ? "training-review"
-              : "recommend";
-      expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-        `http://localhost:8000/api/jobs/${jobId}/${mutationPath}`,
-        `http://localhost:8000/api/jobs/${jobId}`,
-      ]);
-    },
-  );
 
   it("preserves ordinary approval edits when the failed write did not commit", async () => {
     const parsedJob = jobRecord({
@@ -4118,7 +2694,7 @@ describe("Analyzer workspace recovery", () => {
 
   it("ignores a stale restore after cached jobs move to history", async () => {
     const staleJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "2".repeat(32),
       original_filename: "stale-processing.png",
       archived_at: null,

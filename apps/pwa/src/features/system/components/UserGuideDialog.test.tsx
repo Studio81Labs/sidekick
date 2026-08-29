@@ -24,7 +24,7 @@ describe("UserGuideDialog", () => {
       screen.getByRole("button", { name: "Next topic: Quick start" }),
     );
     expect(
-      screen.getByRole("heading", { name: "Review your first hand" }),
+      screen.getByRole("heading", { name: "Run an OCR test end to end" }),
     ).toBeInTheDocument();
 
     await userEvent.click(

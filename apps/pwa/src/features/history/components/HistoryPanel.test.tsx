@@ -42,25 +42,13 @@ function canonicalState(): CanonicalState {
 function jobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
   return {
     id: "job-1",
-    status: "recommended",
+    status: "approved",
     original_filename: "table.png",
     title: "Button versus blind",
     image_filename: "job-1.png",
     parser_provider: "ocr_cv",
-    recommendation_provider: "local_solver",
     parser_result: null,
     approved_state: canonicalState(),
-    training_decision: null,
-    recommendation: {
-      action: "check",
-      sizing: null,
-      confidence: 0.82,
-      explanation: "Check keeps weaker hands in.",
-      raw: {},
-    },
-    recommendation_pending: false,
-    training_reviewed_at: null,
-    training_review_note: null,
     benchmark_included: false,
     archived_at: "2026-08-13T11:55:00Z",
     error: null,
@@ -115,8 +103,8 @@ describe("HistoryPanel", () => {
     expect(screen.getByText("Button versus blind")).toHaveClass(
       "history-title",
     );
-    expect(screen.getByText("5 min ago · check")).toBeInTheDocument();
-    expect(screen.getByText("82%")).toBeInTheDocument();
+    expect(screen.getByText("5 min ago · approved")).toBeInTheDocument();
+    expect(screen.getByText("A")).toBeInTheDocument();
     expect(screen.getByText("Load 2 older")).toBeInTheDocument();
 
     await userEvent.click(
@@ -189,7 +177,6 @@ describe("HistoryPanel", () => {
                 approved_state: null,
                 archived_at: "2026-08-13T10:00:00Z",
                 original_filename: "unfinished.png",
-                recommendation: null,
                 status: "parsed",
                 title: null,
               }),
@@ -240,21 +227,8 @@ describe("HistoryPanel", () => {
     ).toBeInTheDocument();
   });
 
-  it("marks administrative test jobs and leaves legacy jobs unmarked", () => {
-    const administrativeItem = historyItem(
-      jobRecord({ input_context: "administrative_test" }),
-    );
-    const { rerender } = render(
-      <HistoryPanel
-        {...panelProps({ items: [administrativeItem], total: 1 })}
-      />,
-    );
-
-    expect(
-      screen.getByLabelText("Administrative OCR test input"),
-    ).toBeInTheDocument();
-
-    rerender(<HistoryPanel {...panelProps()} />);
+  it("renders no input-context badge for saved hands", () => {
+    render(<HistoryPanel {...panelProps()} />);
 
     expect(
       screen.queryByLabelText("Administrative OCR test input"),

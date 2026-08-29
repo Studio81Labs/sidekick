@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
   mergeHistoryItems,
-  newerHistoryJob,
   newerJob,
   reconcileProcessingJobs,
 } from "./reconciliation";
@@ -16,17 +15,11 @@ describe("workspace reconciliation", () => {
     expect(newerJob(current, incoming)).toBe(current);
   });
 
-  it("accepts completed recommendation state over a pending local revision", () => {
-    const current = jobRecord({
-      recommendation_pending: true,
-      updated_at: "2026-07-10T00:00:02Z",
-    });
-    const incoming = jobRecord({
-      recommendation_pending: false,
-      updated_at: "2026-07-10T00:00:01Z",
-    });
+  it("prefers the incoming revision when the local timestamp is older", () => {
+    const current = jobRecord({ updated_at: "2026-07-10T00:00:01Z" });
+    const incoming = jobRecord({ updated_at: "2026-07-10T00:00:02Z" });
 
-    expect(newerHistoryJob(current, incoming)).toBe(incoming);
+    expect(newerJob(current, incoming)).toBe(incoming);
   });
 
   it("replaces a local upload error with its persisted upload", () => {

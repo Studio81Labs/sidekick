@@ -22,13 +22,7 @@ describe("mutation lease factories", () => {
         "processing",
         "owner",
         [baseline],
-        [
-          {
-            requestId: "upload-1",
-            target: "recommended",
-            recommendationRequestId: "recommendation-1",
-          },
-        ],
+        [{ requestId: "upload-1", target: "approved" }],
         ["job-1"],
         "benchmark-1",
       ),
@@ -37,7 +31,7 @@ describe("mutation lease factories", () => {
       baselineJobIds: ["job-1"],
       expectedRemovalJobIds: ["job-1"],
       benchmarkImportRequestId: "benchmark-1",
-      expectedUploads: [{ requestId: "upload-1", target: "recommended" }],
+      expectedUploads: [{ requestId: "upload-1", target: "approved" }],
     });
   });
 

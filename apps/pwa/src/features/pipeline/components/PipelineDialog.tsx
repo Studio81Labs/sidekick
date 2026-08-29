@@ -21,8 +21,6 @@ export interface PipelineDialogProps {
   onClose: () => void;
   onParserChange: (value: string) => void;
   onParserLayoutChange: (value: string) => void;
-  onRecommendationChange: (value: string) => void;
-  onRecommendationEngineChange: (value: string) => void;
   selection: PipelineSelection | null;
 }
 
@@ -42,8 +40,6 @@ export function PipelineDialog({
   onClose,
   onParserChange,
   onParserLayoutChange,
-  onRecommendationChange,
-  onRecommendationEngineChange,
   selection,
 }: PipelineDialogProps) {
   return (
@@ -79,24 +75,6 @@ export function PipelineDialog({
               value={selection.parser_layout_profile}
               onChange={onParserLayoutChange}
             />
-            <PipelineSelect
-              id="pipeline-recommendation"
-              label="Recommendation"
-              description="Analyzes the approved table state"
-              options={capabilities.recommendation_providers}
-              value={selection.recommendation_provider}
-              onChange={onRecommendationChange}
-            />
-            {selection.recommendation_provider === "local_solver" ? (
-              <PipelineSelect
-                id="pipeline-engine"
-                label="Solver engine"
-                description="Runs locally inside the backend deployment"
-                options={capabilities.recommendation_engines}
-                value={selection.recommendation_engine ?? ""}
-                onChange={onRecommendationEngineChange}
-              />
-            ) : null}
           </>
         ) : (
           <StateMessage as="p" className="pipeline-loading">

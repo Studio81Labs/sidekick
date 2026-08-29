@@ -3,7 +3,6 @@ import { Archive } from "lucide-react";
 import "./ScreenshotQueuePanel.css";
 import { humanReadableMessage } from "../../../shared/api/core";
 import { ButtonControl } from "../../../shared/components/FormControls";
-import { JobInputContextBadge } from "../../../shared/components/JobInputContextBadge";
 import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
 import { ScreenshotRailItem } from "../../../shared/components/ScreenshotRailItem";
 import { screenshotLabel } from "../../../shared/lib/screenshotPresentation";
@@ -32,9 +31,6 @@ function queueDetail(job: JobRecord, attention: string | undefined): string {
   }
   if (job.status === "created") {
     return "Parsing screenshot";
-  }
-  if (job.recommendation_pending) {
-    return "Recommendation running";
   }
   if (job.parser_result && job.parser_result.warnings.length > 0) {
     return "Review warnings";
@@ -97,7 +93,6 @@ export function ScreenshotQueuePanel({
                   <small>{queueDetail(candidate, attention)}</small>
                 </span>
                 <span className="batch-status">
-                  <JobInputContextBadge density="compact" job={candidate} />
                   <JobStatusBadge status={candidate.status} />
                 </span>
               </ScreenshotRailItem>

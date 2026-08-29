@@ -1,5 +1,4 @@
 import base64
-import json
 from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
@@ -79,16 +78,11 @@ def upload_job_with_pipeline(
     *,
     parser_provider: str,
     parser_layout_profile: str,
-    recommendation_provider: str,
-    recommendation_engine: str | None = None,
 ):
     data = {
         "parser_provider": parser_provider,
         "parser_layout_profile": parser_layout_profile,
-        "recommendation_provider": recommendation_provider,
     }
-    if recommendation_engine is not None:
-        data["recommendation_engine"] = recommendation_engine
     return client.post(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
@@ -139,21 +133,6 @@ def restore_application_backup(
         files={"file": ("backup.zip", archive_bytes, "application/zip")},
         headers=dict(ADMIN_OCR_TEST_HEADERS if headers is None else headers),
     )
-
-
-def mark_legacy_player(data_dir: Path, job_id: str) -> None:
-    """Re-persist a stored job as a player-captured record.
-
-    Screenshot upload is an administrator-only OCR test surface since #413, so
-    every uploaded job is an administrative test input that may not feed
-    recommendations or training. Tests that exercise the player learning paths
-    reproduce a record captured before that boundary instead of relaxing the
-    denial.
-    """
-    path = data_dir / "jobs" / job_id / "job.json"
-    payload = json.loads(path.read_text())
-    payload["input_context"] = "legacy_player"
-    path.write_text(json.dumps(payload))
 
 
 def load_only_job(tmp_path: Path):

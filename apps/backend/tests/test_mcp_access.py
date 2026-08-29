@@ -181,7 +181,6 @@ def test_hosted_mcp_requires_an_environment_token(tmp_path: Path) -> None:
             "list_processing_jobs",
             "get_job",
             "search_history",
-            "get_training_progress",
             "list_benchmarks",
         }
 
@@ -230,7 +229,7 @@ def test_hosted_mcp_accepts_worker_canonical_ipv6_authority(
         assert initialized.status_code == 200
 
 
-def test_hosted_mcp_requires_scope_and_omits_local_upload(tmp_path: Path) -> None:
+def test_hosted_mcp_requires_write_scope_for_approval(tmp_path: Path) -> None:
     settings = Settings(
         data_dir=tmp_path,
         deployment_environment="staging",
@@ -255,7 +254,7 @@ def test_hosted_mcp_requires_scope_and_omits_local_upload(tmp_path: Path) -> Non
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         ).json()["result"]["tools"]
         names = {tool["name"] for tool in tools}
-        assert "save_training_review" in names
+        assert "approve_hand_state" in names
         assert "submit_screenshot" not in names
 
         denied = client.post(
@@ -266,8 +265,8 @@ def test_hosted_mcp_requires_scope_and_omits_local_upload(tmp_path: Path) -> Non
                 "id": 2,
                 "method": "tools/call",
                 "params": {
-                    "name": "save_training_review",
-                    "arguments": {"job_id": "0" * 32, "note": "review"},
+                    "name": "approve_hand_state",
+                    "arguments": {"job_id": "0" * 32, "state": {}},
                 },
             },
         )

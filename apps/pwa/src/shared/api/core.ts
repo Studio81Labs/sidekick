@@ -151,7 +151,7 @@ function structuredMessage(value: unknown, depth = 0): string | null {
       const readableFields = fields.map((field, index) =>
         index === 0 ? field : `${field[0].toLowerCase()}${field.slice(1)}`,
       );
-      return `Complete the required table details before requesting a recommendation: ${joinReadable(readableFields)}. Edit the listed fields, then approve the state again.`;
+      return `Complete the required table details before approving the state: ${joinReadable(readableFields)}. Edit the listed fields, then approve again.`;
     }
   }
   for (const key of ["detail", "message", "error", "title"]) {

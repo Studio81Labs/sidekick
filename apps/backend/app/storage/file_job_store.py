@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from app.domain.poker import CanonicalState
-from app.domain.hands import JobInputContext, JobRecord
+from app.domain.hands import JobRecord
 from app.storage.persistence import (
     JOB_ID_PATTERN,
     _fsync_directory,
@@ -28,13 +28,9 @@ class FileJobStore:
         original_filename: str,
         image_bytes: bytes,
         parser_provider: str,
-        recommendation_provider: str,
         parser_layout_profile: str | None = None,
-        recommendation_engine: str | None = None,
         job_id: str | None = None,
         upload_request_id: str | None = None,
-        *,
-        input_context: JobInputContext,
     ) -> JobRecord:
         image_suffix = Path(original_filename).suffix or ".png"
         job_values = {
@@ -42,10 +38,7 @@ class FileJobStore:
             "image_filename": f"original{image_suffix}",
             "parser_provider": parser_provider,
             "parser_layout_profile": parser_layout_profile,
-            "recommendation_provider": recommendation_provider,
-            "recommendation_engine": recommendation_engine,
             "upload_request_id": upload_request_id,
-            "input_context": input_context,
         }
         if job_id is not None:
             job_values["id"] = job_id
@@ -63,24 +56,18 @@ class FileJobStore:
         original_filename: str,
         image_bytes: bytes,
         parser_provider: str,
-        recommendation_provider: str,
         parser_layout_profile: str | None = None,
-        recommendation_engine: str | None = None,
         approved_state: CanonicalState,
         import_request_id: str,
-        input_context: JobInputContext,
     ) -> JobRecord:
         image_suffix = Path(original_filename).suffix or ".png"
         job = JobRecord(
             id=job_id,
             status="approved",
-            input_context=input_context,
             original_filename=original_filename,
             image_filename=f"original{image_suffix}",
             parser_provider=parser_provider,
             parser_layout_profile=parser_layout_profile,
-            recommendation_provider=recommendation_provider,
-            recommendation_engine=recommendation_engine,
             approved_state=approved_state,
             benchmark_included=True,
             benchmark_import_request_id=import_request_id,

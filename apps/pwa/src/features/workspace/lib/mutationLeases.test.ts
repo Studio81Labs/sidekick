@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { jobRecord } from "../../../test/analyzerHarness";
+import { canonicalState, jobRecord } from "../../../test/analyzerHarness";
 import { projectionMutationTargetReached } from "./mutationLeaseExpectations";
 import { startPersistedMutationLease } from "./mutationLeaseFactories";
 import {
@@ -51,18 +51,16 @@ describe("workspace mutation leases", () => {
     ).toBeNull();
   });
 
-  it("requires the matching recommendation request to settle a pending result", () => {
-    const job = jobRecord({
+  it("settles an upload only once its target state is reached", () => {
+    const parsed = jobRecord({ status: "parsed" });
+    const approved = jobRecord({
       status: "approved",
-      recommendation_pending: false,
-      recommendation_request_id: "request-2",
+      approved_state: canonicalState(),
     });
 
-    expect(
-      projectionMutationTargetReached(job, "recommended", "request-1"),
-    ).toBe(false);
-    expect(
-      projectionMutationTargetReached(job, "recommended", "request-2"),
-    ).toBe(true);
+    expect(projectionMutationTargetReached(parsed, "approved")).toBe(false);
+    expect(projectionMutationTargetReached(approved, "approved")).toBe(true);
+    expect(projectionMutationTargetReached(parsed, "parsed")).toBe(true);
+    expect(projectionMutationTargetReached(parsed, "failed")).toBe(false);
   });
 });

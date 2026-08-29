@@ -6,7 +6,7 @@ from typing import Any
 import httpx
 import pytest
 
-from app.config import KNOWN_RECOMMENDATION_PROVIDERS, Settings
+from app.config import Settings
 from app.domain.poker import (
     CanonicalState,
     Card,
@@ -247,10 +247,10 @@ def test_registry_rejects_unknown_provider(tmp_path: Path) -> None:
         build_provider(Settings(data_dir=tmp_path, recommendation_provider="missing"))
 
 
-def test_recommendation_plugin_catalog_matches_configuration_allowlist(
+def test_recommendation_plugin_catalog_exposes_every_installed_provider(
     tmp_path: Path,
 ) -> None:
-    assert RECOMMENDATION_PLUGIN_IDS == KNOWN_RECOMMENDATION_PROVIDERS
+    assert RECOMMENDATION_PLUGIN_IDS == frozenset(RECOMMENDATION_PLUGINS)
     assert list(RECOMMENDATION_PLUGINS) == [
         "rule_based",
         "mock",

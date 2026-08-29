@@ -1,9 +1,10 @@
 # Poker Hero
 
 Post-hand Texas Hold'em training analyzer for screenshots from online poker
-tables. Poker Hero extracts table state, lets the user verify uncertain fields,
-and produces an educational recommendation through a configurable local or
-external provider.
+tables. Poker Hero extracts table state and requires an administrator to
+verify uncertain fields and approve the reviewed state as ground truth.
+Recommendations are produced only by the offline recommendation benchmark
+until the V2 import-first learning loop ships.
 
 The project is for study and post-hand review. It is not live-play automation,
 covert real-time assistance, or a tool for taking actions in a poker client.
@@ -95,11 +96,7 @@ The main provider switches are:
   upload or live capture; the deployment defaults are always enabled and the UI
   shows only compatible parser/layout combinations
 - `POKER_RECOMMENDATION_PROVIDER`: `rule_based`, `mock`, `local_solver`, `external_solver`, or `llm_advice`
-- `POKER_RECOMMENDATION_ENABLED_PROVIDERS`: JSON list of additional installed
-  recommendation plugins exposed for per-screenshot selection
 - `POKER_LOCAL_SOLVER_ENGINE`: `postflop_solver` (default) or `local_ev`
-- `POKER_LOCAL_SOLVER_ENABLED_ENGINES`: JSON list of additional local solver
-  engines exposed when `local_solver` is selected
 - `POKER_POSTFLOP_SOLVER_RANGE_MODE`: derive ranges from a complete supported
   heads-up preflop history with `contextual` (default), or always use the
   configured OOP/IP ranges with `configured`
@@ -133,9 +130,9 @@ calibrated coordinates/templates are added.
 - `POKER_MAX_BACKUP_UPLOAD_BYTES`: maximum full application backup ZIP size for
   export and restore (default 100 MiB)
 - `POKER_API_RATE_LIMIT_ENABLED`: enable bounded per-client limits for uploads,
-  recommendations, benchmark runs, and archive transfers (default `true`)
+  benchmark runs, and archive transfers (default `true`)
 - `POKER_API_RATE_LIMIT_*_PER_MINUTE`: tune each expensive-operation budget;
-  defaults are `120` for uploads/recommendations and `6` for benchmarks/transfers
+  the default is `120` for uploads and `6` for benchmarks/data transfers
 - `POKER_CORS_ORIGINS`: JSON list of direct browser origins
 - `POKER_PROXY_SHARED_SECRET`: optional Worker-to-backend credential, at least
   32 characters; leave empty for local development
@@ -144,10 +141,9 @@ calibrated coordinates/templates are added.
   default; when enabled every `POST /api/jobs` upload, every
   `POST /api/benchmarks/import` dataset import, and every
   `POST /api/backups/restore` must carry the token as
-  `Authorization: Bearer ...`, and the resulting jobs are marked
-  `administrative_test` so they can never request recommendations or enter
-  training. Clients confirm a token with `GET /api/admin/ocr-test/session`
-  before revealing capture controls. The token must contain at least 32
+  `Authorization: Bearer ...`. Clients confirm a token with
+  `GET /api/admin/ocr-test/session` before revealing capture controls. The
+  token must contain at least 32
   printable ASCII characters and differ from `POKER_PROXY_SHARED_SECRET`
 - `POKER_MCP_ENABLED` and `POKER_MCP_PUBLIC_URL`: hosted MCP kill switch and
   exact public HTTPS `/mcp` endpoint; hosted access defaults off
@@ -183,9 +179,7 @@ Create a separate client configuration for each environment using
 requires `POKER_MCP_ENVIRONMENT` and `POKER_MCP_API_BASE_URL`. Before any data
 operation, it checks `/api/health` and refuses a backend whose
 `POKER_DEPLOYMENT_ENVIRONMENT` does not match. Production is always read-only.
-Staging write tools appear only with `POKER_MCP_ALLOW_WRITES=true`, and local
-screenshot paths must resolve under an explicitly configured
-`POKER_MCP_IMAGE_ROOT`.
+Staging write tools appear only with `POKER_MCP_ALLOW_WRITES=true`.
 
 After exporting the selected configuration into the MCP process environment,
 use this command in an MCP client that supports local stdio servers:
@@ -194,11 +188,11 @@ use this command in an MCP client that supports local stdio servers:
 pnpm backend:mcp
 ```
 
-The read surface covers environment status, processing jobs, individual jobs,
-history, training progress, and parser benchmarks. The staging write profile
-adds screenshot submission, reviewed-state approval, pre-reveal decisions,
-recommendations, and lesson reviews. Backup restore, dataset import, benchmark
-execution, and bulk archival are intentionally not exposed.
+The read surface covers environment status, the processing queue, individual
+jobs, history search, and parser benchmark summaries. The staging write
+profile adds only ground-truth approval for a reviewed state. Backup restore,
+dataset import, benchmark execution, and bulk archival are intentionally not
+exposed.
 
 Cloudflare Access service credentials are the preferred authentication path
 through a protected Worker. `POKER_MCP_API_PROXY_SECRET` exists only for a
@@ -219,8 +213,8 @@ default_tools_approval_mode = "writes"
 ```
 
 Hosted credentials are stored only as hashes and can be rotated or revoked.
-The hosted endpoint omits local screenshot submission; upload the hand in the
-app first. See
+The gateway does not upload screenshots; upload the hand in the app first,
+then let the agent inspect or approve the resulting job. See
 [`docs/reference/mcp-agent-access.md`](./docs/reference/mcp-agent-access.md)
 for rollout and incident steps.
 
@@ -380,94 +374,18 @@ the requested engine and routing or fallback reason in `raw` metadata. Set
 and run the range/EV engine directly. Select `external_solver` at the provider
 boundary for a future licensed service.
 
-When a user locks an answer before revealing guidance, training progress tracks
-action and exact-line accuracy. The answer may include a low, medium, or high
-self-rated certainty, allowing progress to compare accuracy and available EV
-loss by how sure the player felt before reveal. Rated certainty groups with at
-least two hands compare equal recent and previous windows for those metrics.
-Unrated hands remain in overall progress and are excluded only from certainty
-calibration. A rated certainty group or the unrated bucket can filter Recent
-decisions to its newest matching hands without changing global progress or the
-pending-review queue. Street groups with at least two hands expose the same
-equal-window performance comparison and drill-down behavior. Approved hero
-positions are normalized into common
-six-max and IP/OOP labels so the same metrics can be compared by position;
-hands without a position remain counted separately. A normalized position or
-the unpositioned bucket can apply the same bounded Recent decisions filter.
-Position groups with at least two hands also expose those equal-window
-comparisons. Position rows and the unpositioned bucket also expose unresolved
-counts and can open a focused needs-review queue. That review position composes
-with street, certainty, action-pattern, and ordering controls while remaining
-separate from the Recent decisions position filter. Solver responses also
-contribute engine coverage by street, including unattributed legacy hands and
-recorded fallback frequency and reasons. Each attributed engine route and
-fallback reason also reports the player's action and exact-line accuracy plus
-average EV loss when candidate EVs are available. Groups with at least two
-hands also compare equal recent and previous windows for those performance
-metrics. Intentional routing, such as using the preflop chart for a supported
-preflop hand, is not counted as fallback.
-An engine route, the unattributed legacy bucket, or a fallback reason can also
-filter Recent decisions to its newest matching hands without changing global
-progress or the pending-review queue. Once two reviewed hands are available,
-coverage also compares equal recent and previous windows, showing whether engine
-attribution and recorded fallback use are moving in the desired direction.
-Responses with complete candidate EV metadata also report the selected line's
-EV loss in BB plus aggregate and street-level averages; providers without
-comparable EVs remain ungraded for that metric. The needs-review queue can stay
-newest-first or prioritize the highest available EV losses while retaining
-ungraded hands afterward. It can
-also focus on one street; filtering happens before ordering and the bounded
-queue limit. Training progress suggests an actionable focus street from the
-pending queue, preferring the highest graded average EV loss and otherwise the
-lowest action accuracy. Street rows show their unresolved count and can open
-that street queue directly. Reviews can also be scoped to low, medium, or high
-self-rated certainty, or to legacy hands with no rating; certainty combines
-with street and action-pattern filters before ordering and limiting. Rated
-calibration rows show their unresolved count and can open that certainty queue
-directly. Progress also suggests which rated certainty backlog to review first,
-preferring the highest graded average EV loss and otherwise the lowest action
-accuracy. The Unrated backlog is suggested only when no rated certainty group
-has pending work. Legacy hands appear in a separate Unrated row with no
-fabricated accuracy or EV metrics and the same review shortcut. Progress also
-suggests a normalized position backlog using the same EV-loss and action-match
-ranking. Unpositioned hands are suggested only when no scored position has
-pending work. Progress also compares equal recent and previous windows,
-capped at ten hands each, so action, exact-line, and available EV-loss movement
-is visible without letting a larger period skew the trend. Common unsupported
-action choices are grouped by the player's action and the solver's headline
-action, with available average EV loss, to make repeated differences easier to
-study. Progress suggests the unresolved pattern with the highest comparable
-average EV loss, or the largest pending backlog when every pattern is ungraded.
-Each pattern shows its unresolved count and can open a review queue scoped to
-that exact action pair; position, street, certainty, and EV-loss ordering remain
-available within the focused queue. Completed patterns show a clear state
-instead of a disabled action. Completing a hand opened from that queue reloads
-the same filters and opens the next matching hand, then returns to the empty
-queue when the session is complete. A review can include a short lesson note.
-Notes stay attached to the hand in progress history and return to the editor
-when a review is reopened.
-Completed notes also appear in a dedicated Lessons view, newest first by
-default and kept independently from the shorter recent-decisions list. A
-completed lesson note can be edited or removed in place without reopening the
-review. The Lessons view can filter the full saved set by street and
-case-insensitive note text, then order it by recency or highest available EV
-loss before applying its bounded display limit. Ungraded lessons remain after
-graded lessons in EV-loss order. The active study set can be downloaded as
-Markdown in the same order without the display limit.
-Changing the approved state, training answer, or recommendation clears the note
-because the comparison it described is no longer current.
 Clearing completed processing items persists an archive timestamp on each
 backend job. The history rail restores the latest archived hands once per
 browser session, keeps a small local cache for immediate rendering and fallback,
 can load older archived hands in bounded pages, and can be refreshed explicitly
 after another device archives work. Saving changes to a reopened archived hand
 updates its history card and bounded browser cache immediately. Server-backed
-search can find older hands by filename, cards, table context, recommendation,
-lesson text, screenshot title, notes, or tags without replacing that newest-page
-cache. Every queue and history item exposes screenshot details where those
-metadata fields can be edited. The same dialog can permanently remove the job,
-original image, analysis, training record, and benchmark-corpus membership, so
-an incomplete parse never has to remain stuck in processing.
+search can find older hands by filename, cards, table context, screenshot
+title, notes, or tags without replacing that newest-page cache. Every queue
+and history item exposes screenshot details where those metadata fields can
+be edited. The same dialog can permanently remove the job, original image,
+analysis, and benchmark-corpus membership, so an incomplete parse never has
+to remain stuck in processing.
 Unarchived upload and capture jobs also survive reloads: the browser renders a
 bounded local queue cache immediately, then reconciles the complete oldest-first
 processing projection from the backend. Dataset-only benchmark imports stay out
@@ -485,10 +403,9 @@ projection.
 
 The app information dialog can export a versioned full-data backup containing
 every job record, original screenshot, screenshot title, notes and tags,
-training decision, review and lesson note, recommendation, history timestamp,
-benchmark selection, and benchmark report. Restore validates the complete ZIP,
-member paths, Pydantic records,
-image payloads, limits, and SHA-256 checksums before writing. Missing records
+history timestamp, benchmark selection, and benchmark report. Restore
+validates the complete ZIP, member paths, Pydantic records, image payloads,
+limits, and SHA-256 checksums before writing. Missing records
 are merged, exact records are reused, and a divergent existing job, image, or
 report rejects the restore without overwriting current data. Provider
 credentials, environment configuration, and transient import journals are
@@ -726,13 +643,7 @@ for the runtime topology.
 - `GET /api/history`
 - `PUT /api/history`
 - `POST /api/jobs/{job_id}/approve`
-- `PUT /api/jobs/{job_id}/decision`
-- `POST /api/jobs/{job_id}/recommend`
-- `PUT /api/jobs/{job_id}/training-review`
-- `DELETE /api/jobs/{job_id}/training-review`
 - `PUT /api/jobs/{job_id}/benchmark`
-- `GET /api/training/progress`
-- `GET /api/training/lessons/export`
 - `GET /api/benchmarks[?parser_provider=...&parser_layout_profile=...]`
 - `GET /api/backups/export`
 - `POST /api/backups/restore`

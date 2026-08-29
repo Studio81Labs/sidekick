@@ -15,11 +15,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.api.administrative_access import require_administrator
 from app.api.dependencies import (
-    JobInputContextError,
     JobMutationConflictError,
-    JobRecommendationConfigurationError,
-    JobRecommendationInputError,
-    JobRecommendationProviderError,
     JobTransportNotFoundError,
     JobUploadConflictError,
     JobUploadInputError,
@@ -31,14 +27,12 @@ from app.api.response_contracts import SUPPORTED_IMAGE_RESPONSE_CONTENT
 from app.application.jobs import (
     JobMutationService,
     JobQueryService,
-    JobRecommendationService,
     JobUploadPipelineRequest,
     JobUploadRequest,
     JobUploadService,
 )
 from app.domain.poker import CanonicalState
 from app.domain.hands import JobQueue, JobRecord, ScreenshotMetadataRequest
-from app.domain.training import TrainingDecisionRequest
 
 
 def create_jobs_router(runtime: JobQueryService) -> APIRouter:
@@ -111,18 +105,6 @@ def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
             max_length=64,
             pattern=r"^[a-z0-9_]+$",
         ),
-        recommendation_provider: str | None = Form(
-            default=None,
-            min_length=1,
-            max_length=64,
-            pattern=r"^[a-z0-9_]+$",
-        ),
-        recommendation_engine: str | None = Form(
-            default=None,
-            min_length=1,
-            max_length=64,
-            pattern=r"^[a-z0-9_]+$",
-        ),
         authorization: str | None = Header(
             default=None,
             alias="Authorization",
@@ -134,8 +116,6 @@ def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
         pipeline_request = JobUploadPipelineRequest(
             parser_provider=parser_provider,
             parser_layout_profile=parser_layout_profile,
-            recommendation_provider=recommendation_provider,
-            recommendation_engine=recommendation_engine,
         )
         try:
             selection = runtime.resolve_pipeline(pipeline_request)
@@ -215,68 +195,5 @@ def create_job_mutations_router(runtime: JobMutationService) -> APIRouter:
             return runtime.approve_job(job_id, state)
         except JobTransportNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except JobMutationConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    @router.put(
-        "/api/jobs/{job_id}/decision",
-        operation_id="job_decision_record",
-        response_model=JobRecord,
-    )
-    def record_training_decision(
-        job_id: str,
-        decision: TrainingDecisionRequest,
-    ) -> JobRecord:
-        try:
-            return runtime.record_training_decision(job_id, decision)
-        except JobInputContextError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except JobTransportNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except JobMutationConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    return router
-
-
-def create_job_recommendation_router(
-    runtime: JobRecommendationService,
-) -> APIRouter:
-    """Build the processing job recommendation router with application dependencies."""
-
-    router = APIRouter()
-
-    @router.post(
-        "/api/jobs/{job_id}/recommend",
-        operation_id="job_recommend",
-        response_model=JobRecord,
-    )
-    def recommend(
-        job_id: str,
-        recommendation_request_id: str | None = Header(
-            default=None,
-            alias="X-Recommendation-Request-ID",
-            min_length=1,
-            max_length=128,
-            pattern=r"^[A-Za-z0-9._:-]+$",
-        ),
-    ) -> JobRecord:
-        try:
-            return runtime.recommend(job_id, recommendation_request_id)
-        except JobInputContextError as exc:
-            raise HTTPException(status_code=403, detail=str(exc)) from exc
-        except JobTransportNotFoundError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except JobMutationConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except JobRecommendationInputError as exc:
-            raise HTTPException(status_code=422, detail=exc.detail) from exc
-        except JobRecommendationConfigurationError as exc:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Provider configuration error: {exc}",
-            ) from exc
-        except JobRecommendationProviderError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return router

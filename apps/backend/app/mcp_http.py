@@ -63,12 +63,7 @@ def build_hosted_mcp_runtime(
         environment=environment,
         api_base_url=public_origin,
         allow_writes=settings.mcp_allow_writes,
-        image_root=settings.data_dir,
-        max_upload_bytes=settings.max_upload_bytes,
-        request_timeout_seconds=max(
-            settings.external_request_timeout_seconds,
-            settings.local_solver_timeout_seconds + 10,
-        ),
+        request_timeout_seconds=settings.external_request_timeout_seconds,
         api_proxy_secret=settings.proxy_shared_secret,
     )
     client = httpx.AsyncClient(
@@ -85,7 +80,6 @@ def build_hosted_mcp_runtime(
         gateway_settings,
         gateway=gateway,
         require_auth=True,
-        include_screenshot_tool=False,
         http_host=parsed_url.hostname or "poker-mcp",
     )
     app = server.streamable_http_app()
@@ -262,14 +256,7 @@ async def _send_json(
     await send({"type": "http.response.body", "body": body})
 
 
-MCP_WRITE_TOOLS = frozenset(
-    {
-        "approve_hand_state",
-        "record_training_decision",
-        "request_recommendation",
-        "save_training_review",
-    }
-)
+MCP_WRITE_TOOLS = frozenset({"approve_hand_state"})
 MCP_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
 MCP_MAX_CONCURRENT_BODY_READS_PER_PRINCIPAL = 4
 

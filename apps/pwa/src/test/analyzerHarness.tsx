@@ -9,7 +9,6 @@ import type { AdministrativeSession } from "../domains/admin-ocr-test/api/adminO
 import AnalyzerPage from "../pages/analyzer/AnalyzerPage";
 import type { CanonicalState, DetectedState } from "../shared/types/poker";
 import type { JobRecord } from "../shared/types/jobs";
-import type { RecommendationResult } from "../shared/types/recommendations";
 
 const AUTHORIZED_SESSION: AdministrativeSession = {
   enabled: true,
@@ -67,54 +66,6 @@ export const detectedState: DetectedState = {
   action_context: "Cutoff bet 2.5 into 12.5",
 };
 
-export const recommendation: RecommendationResult = {
-  action: "raise",
-  sizing: 7.5,
-  confidence: 0.82,
-  explanation: "Apply pressure with top pair and strong blockers.",
-  raw: { provider: "mock" },
-};
-
-export const recommendationWithEvidence: RecommendationResult = {
-  ...recommendation,
-  explanation:
-    "Solver compared candidate actions and selected the highest EV line.",
-  raw: {
-    provider: "local_solver",
-    engine: "local_ev_solver_v1",
-    requested_engine: "postflop_solver",
-    fallback_reason:
-      "the open-source engine supports heads-up postflop spots only",
-    equity: { equity: 0.61 },
-    realized_equity: 0.55,
-    required_equity: 0.2,
-    opponents_at_current_bet: 1,
-    opponent_wager: 10,
-    opponent_commitment_total: 13,
-    hero_wager: 1,
-    stack_depth_policy: 42,
-    effective_stack: -1,
-    opening_raise_size: "2.5",
-    continue_fraction: 4,
-    candidates: [
-      { action: "fold", sizing: null, ev: 0 },
-      { action: "call", sizing: null, ev: 3.1 },
-      { action: "check", sizing: null, ev: 3 },
-      { action: "bet", sizing: 2.5, ev: 2.9 },
-      { action: "raise", sizing: 4, ev: 2.8 },
-      {
-        action: "raise",
-        sizing: 7.5,
-        ev: 2.4,
-        frequency: 0.72,
-        fold_equity: 0.09,
-        per_opponent_fold_equity: 0.3,
-      },
-      { action: "invalid", sizing: -1, ev: "unknown" },
-    ],
-  },
-};
-
 export function canonicalState(
   overrides: Partial<CanonicalState> = {},
 ): CanonicalState {
@@ -129,14 +80,10 @@ export function jobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
   return {
     id: "job-123",
     status: "parsed",
-    // Mocked uploads stand in for records persisted before #413 so review and
-    // recommendation flows stay testable; administrative scenarios override it.
-    input_context: "legacy_player",
     upload_request_id: null,
     original_filename: "table.png",
     image_filename: "job-123.png",
     parser_provider: "mock",
-    recommendation_provider: "mock",
     parser_result: {
       state: detectedState,
       confidences: {
@@ -156,12 +103,6 @@ export function jobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
     },
     parser_auto_approval_eligible: true,
     approved_state: null,
-    training_decision: null,
-    recommendation: null,
-    recommendation_pending: false,
-    recommendation_request_id: null,
-    training_reviewed_at: null,
-    training_review_note: null,
     benchmark_included: false,
     archived_at: null,
     error: null,
@@ -177,17 +118,6 @@ export function approvedJob(
   return jobRecord({
     status: "approved",
     approved_state: state,
-    recommendation: null,
-  });
-}
-
-export function recommendedJob(
-  state: CanonicalState = canonicalState(),
-): JobRecord {
-  return jobRecord({
-    status: "recommended",
-    approved_state: state,
-    recommendation,
   });
 }
 

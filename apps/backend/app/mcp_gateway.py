@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import mimetypes
-from pathlib import Path
 from typing import Annotated, Any, Literal, Self, TypeVar
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -17,22 +15,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.domain.benchmarks import BenchmarkOverview
 from app.domain.poker import CanonicalState
 from app.domain.hands import JobHistory, JobQueue, JobRecord
-from app.domain.training import (
-    TrainingDecisionRequest,
-    TrainingProgress,
-    TrainingReviewRequest,
-)
 from app.mcp_access import MCP_PRINCIPAL_CONTEXT
 
 McpEnvironment = Literal["staging", "production"]
-RequestId = Annotated[
-    str,
-    Field(
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9._:-]+$",
-    ),
-]
 JobId = Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -50,8 +35,6 @@ class McpGatewaySettings(BaseSettings):
     environment: McpEnvironment
     api_base_url: str = Field(min_length=1)
     allow_writes: bool = False
-    image_root: Path | None = None
-    max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     request_timeout_seconds: float = Field(default=130.0, gt=0)
     api_bearer_token: SecretStr | None = None
     api_proxy_secret: SecretStr | None = None
@@ -136,16 +119,6 @@ class McpGatewaySettings(BaseSettings):
             )
         if self.environment == "production" and self.allow_writes:
             raise ValueError("production MCP gateways are read-only")
-
-        if self.allow_writes and self.image_root is None:
-            raise ValueError("image_root must be explicitly configured when writes are enabled")
-        if self.image_root is not None:
-            image_root = self.image_root.expanduser().resolve(strict=False)
-            if self.allow_writes and (not image_root.is_dir()):
-                raise ValueError(
-                    "image_root must be an existing directory when writes are enabled"
-                )
-            self.image_root = image_root
         self.api_base_url = self.api_base_url.rstrip("/")
         return self
 
@@ -178,11 +151,6 @@ class JobQueueResult(BaseModel):
 class JobHistoryResult(BaseModel):
     environment: McpEnvironment
     history: JobHistory
-
-
-class TrainingProgressResult(BaseModel):
-    environment: McpEnvironment
-    progress: TrainingProgress
 
 
 class BenchmarkOverviewResult(BaseModel):
@@ -339,40 +307,6 @@ class PokerApiClient:
         )
         return self._validate_response(model_type, payload, response)
 
-    async def upload_job(
-        self,
-        image_path: Path,
-        *,
-        upload_request_id: RequestId,
-    ) -> JobRecord:
-        await self.ensure_environment()
-        content_type = mimetypes.guess_type(image_path.name)[0] or "application/octet-stream"
-        try:
-            image_bytes = image_path.read_bytes()
-        except OSError as exc:
-            raise PokerApiError(
-                "Could not read the screenshot",
-                environment=self.settings.environment,
-                detail=str(exc),
-            ) from exc
-        if len(image_bytes) > self.settings.max_upload_bytes:
-            raise PokerApiError(
-                "Screenshot exceeds the configured MCP upload limit",
-                environment=self.settings.environment,
-                detail={"max_upload_bytes": self.settings.max_upload_bytes},
-            )
-        try:
-            response = await self._client.post(
-                self.url_for("/api/jobs"),
-                headers=self.request_headers(),
-                data={"upload_request_id": upload_request_id},
-                files={"file": (image_path.name, image_bytes, content_type)},
-            )
-        except httpx.RequestError as exc:
-            raise self._network_error(exc) from exc
-        payload = self._response_payload(response)
-        return self._validate_response(JobRecord, payload, response)
-
     async def _request_json(
         self,
         method: str,
@@ -493,36 +427,12 @@ class PokerMcpGateway:
         history = await self.api.get_model(JobHistory, "/api/history", params=params)
         return JobHistoryResult(environment=self.settings.environment, history=history)
 
-    async def get_training_progress(self) -> TrainingProgressResult:
-        progress = await self.api.get_model(TrainingProgress, "/api/training/progress")
-        return TrainingProgressResult(
-            environment=self.settings.environment,
-            progress=progress,
-        )
-
     async def list_benchmarks(self) -> BenchmarkOverviewResult:
         benchmarks = await self.api.get_model(BenchmarkOverview, "/api/benchmarks")
         return BenchmarkOverviewResult(
             environment=self.settings.environment,
             benchmarks=benchmarks,
         )
-
-    async def submit_screenshot(
-        self,
-        image_path: str,
-        upload_request_id: RequestId | None = None,
-    ) -> JobResult:
-        self._require_writes()
-        resolved_path = self._resolve_image_path(image_path)
-        if resolved_path.stat().st_size > self.settings.max_upload_bytes:
-            raise ValueError(
-                f"Screenshot exceeds the MCP limit of {self.settings.max_upload_bytes} bytes"
-            )
-        job = await self.api.upload_job(
-            resolved_path,
-            upload_request_id=upload_request_id or f"mcp-upload-{uuid4().hex}",
-        )
-        return JobResult(environment=self.settings.environment, job=job)
 
     async def approve_hand_state(
         self,
@@ -539,66 +449,11 @@ class PokerMcpGateway:
         )
         return JobResult(environment=self.settings.environment, job=job)
 
-    async def record_training_decision(
-        self,
-        job_id: JobId,
-        decision: TrainingDecisionRequest,
-    ) -> JobResult:
-        self._require_writes()
-        job = await self.api.send_model(
-            JobRecord,
-            "PUT",
-            f"/api/jobs/{job_id}/decision",
-            json_body=decision.model_dump(mode="json"),
-        )
-        return JobResult(environment=self.settings.environment, job=job)
-
-    async def request_recommendation(
-        self,
-        job_id: JobId,
-        recommendation_request_id: RequestId | None = None,
-    ) -> JobResult:
-        self._require_writes()
-        request_id = recommendation_request_id or f"mcp-recommend-{uuid4().hex}"
-        job = await self.api.send_model(
-            JobRecord,
-            "POST",
-            f"/api/jobs/{job_id}/recommend",
-            headers={"X-Recommendation-Request-ID": request_id},
-        )
-        return JobResult(environment=self.settings.environment, job=job)
-
-    async def save_training_review(
-        self,
-        job_id: JobId,
-        note: str | None = None,
-    ) -> JobResult:
-        self._require_writes()
-        review = TrainingReviewRequest(note=note)
-        job = await self.api.send_model(
-            JobRecord,
-            "PUT",
-            f"/api/jobs/{job_id}/training-review",
-            json_body=review.model_dump(mode="json"),
-        )
-        return JobResult(environment=self.settings.environment, job=job)
-
     def _require_writes(self) -> None:
         if not self.settings.allow_writes:
             raise PermissionError(
                 f"The {self.settings.environment} MCP gateway is read-only"
             )
-
-    def _resolve_image_path(self, image_path: str) -> Path:
-        assert self.settings.image_root is not None
-        try:
-            resolved_path = Path(image_path).expanduser().resolve(strict=True)
-            resolved_path.relative_to(self.settings.image_root)
-        except (OSError, ValueError) as exc:
-            raise ValueError("Screenshot must be a file under POKER_MCP_IMAGE_ROOT") from exc
-        if not resolved_path.is_file():
-            raise ValueError("Screenshot path must identify a regular file")
-        return resolved_path
 
 
 def _tool_error(exc: Exception, environment: McpEnvironment) -> ToolError:
@@ -621,16 +476,17 @@ def build_mcp_server(
     *,
     gateway: PokerMcpGateway | None = None,
     require_auth: bool = False,
-    include_screenshot_tool: bool = True,
     http_host: str = "127.0.0.1",
 ) -> FastMCP:
     active_gateway = gateway or PokerMcpGateway(settings)
     server = FastMCP(
         name=f"Poker Hero {settings.environment}",
         instructions=(
-            "Use this server only for post-hand Texas Hold'em training and review. "
+            "Use this server only to inspect the administrator OCR test queue, "
+            "search approved hand history, read parser benchmark summaries, and "
+            "approve reviewed hand state. "
             f"Every tool is permanently bound to {settings.environment}. "
-            "Never describe recommendations as guaranteed optimal play."
+            "Parser output is never ground truth until a reviewer approves it."
         ),
         json_response=True,
         stateless_http=require_auth,
@@ -687,15 +543,6 @@ def build_mcp_server(
             raise _tool_error(exc, settings.environment) from exc
 
     @server.tool(annotations=read_only)
-    async def get_training_progress() -> TrainingProgressResult:
-        """Read aggregate training results, review queues, and solver coverage."""
-        try:
-            _require_hosted_scope("read", require_auth=require_auth)
-            return await active_gateway.get_training_progress()
-        except Exception as exc:
-            raise _tool_error(exc, settings.environment) from exc
-
-    @server.tool(annotations=read_only)
     async def list_benchmarks() -> BenchmarkOverviewResult:
         """Read parser benchmark coverage and recent report summaries."""
         try:
@@ -705,12 +552,6 @@ def build_mcp_server(
             raise _tool_error(exc, settings.environment) from exc
 
     if settings.allow_writes:
-        create_annotation = ToolAnnotations(
-            readOnlyHint=False,
-            destructiveHint=False,
-            idempotentHint=False,
-            openWorldHint=True,
-        )
         replace_annotation = ToolAnnotations(
             readOnlyHint=False,
             destructiveHint=True,
@@ -718,70 +559,15 @@ def build_mcp_server(
             openWorldHint=True,
         )
 
-        if include_screenshot_tool:
-            @server.tool(annotations=create_annotation)
-            async def submit_screenshot(
-                image_path: str,
-                upload_request_id: RequestId | None = None,
-            ) -> JobResult:
-                """Submit a completed-hand screenshot under the configured safe image root."""
-                try:
-                    _require_hosted_scope("write", require_auth=require_auth)
-                    return await active_gateway.submit_screenshot(
-                        image_path,
-                        upload_request_id,
-                    )
-                except Exception as exc:
-                    raise _tool_error(exc, settings.environment) from exc
-
         @server.tool(annotations=replace_annotation)
         async def approve_hand_state(
             job_id: JobId,
             state: CanonicalState,
         ) -> JobResult:
-            """Save explicitly reviewed corrections; this clears prior advice for the job."""
+            """Save explicitly reviewed corrections as the job's approved state."""
             try:
                 _require_hosted_scope("write", require_auth=require_auth)
                 return await active_gateway.approve_hand_state(job_id, state)
-            except Exception as exc:
-                raise _tool_error(exc, settings.environment) from exc
-
-        @server.tool(annotations=replace_annotation)
-        async def record_training_decision(
-            job_id: JobId,
-            decision: TrainingDecisionRequest,
-        ) -> JobResult:
-            """Lock the player's decision and certainty before revealing advice."""
-            try:
-                _require_hosted_scope("write", require_auth=require_auth)
-                return await active_gateway.record_training_decision(job_id, decision)
-            except Exception as exc:
-                raise _tool_error(exc, settings.environment) from exc
-
-        @server.tool(annotations=replace_annotation)
-        async def request_recommendation(
-            job_id: JobId,
-            recommendation_request_id: RequestId | None = None,
-        ) -> JobResult:
-            """Request educational guidance for an explicitly approved hand."""
-            try:
-                _require_hosted_scope("write", require_auth=require_auth)
-                return await active_gateway.request_recommendation(
-                    job_id,
-                    recommendation_request_id,
-                )
-            except Exception as exc:
-                raise _tool_error(exc, settings.environment) from exc
-
-        @server.tool(annotations=create_annotation)
-        async def save_training_review(
-            job_id: JobId,
-            note: Annotated[str | None, Field(max_length=1000)] = None,
-        ) -> JobResult:
-            """Mark a decision difference reviewed and optionally save a lesson note."""
-            try:
-                _require_hosted_scope("write", require_auth=require_auth)
-                return await active_gateway.save_training_review(job_id, note)
             except Exception as exc:
                 raise _tool_error(exc, settings.environment) from exc
 
