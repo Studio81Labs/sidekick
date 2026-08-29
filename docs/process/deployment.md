@@ -83,7 +83,8 @@ recommendations, record training decisions, or enter training progress. Enter
 the token only in the PWA **Administrator tools** dialog; it stays in browser
 memory until locked or reloaded. The PWA verifies the token with the backend
 through `GET /api/admin/ocr-test/session` before it unlocks any capture control.
-Rollback is `POKER_ADMIN_OCR_TEST_ENABLED=false`; no setting restores
+Rollback is `POKER_ADMIN_OCR_TEST_ENABLED=false`, which also disables dataset
+import and backup restore until the mode is enabled again; no setting restores
 player-accessible capture or automatic recommendations.
 
 After deployment, verify:
@@ -273,10 +274,13 @@ idempotency; and re-exports and compares the recovered data. It never writes to
 report counts. Preserve scheduler logs and the tested archive name as recovery
 evidence.
 
-For an actual recovery, deploy a fresh backend data volume, use the information
-dialog to restore the tested archive, verify queue/history/benchmark counts,
-and only then switch traffic. Never test a recovery by restoring into the live
-data directory.
+For an actual recovery, deploy a fresh backend data volume with
+`POKER_ADMIN_OCR_TEST_ENABLED=true` and a dedicated `POKER_ADMIN_OCR_TEST_TOKEN`
+(backup restore is an administrator action), unlock **Administrator tools** in
+the information dialog with that token, restore the tested archive, verify
+queue/history/benchmark counts, and only then switch traffic. Disable the mode
+again afterwards unless parser testing continues on that deployment. Never test
+a recovery by restoring into the live data directory.
 
 ## PWA On Cloudflare Workers
 

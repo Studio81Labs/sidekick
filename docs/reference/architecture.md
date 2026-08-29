@@ -84,7 +84,8 @@ path (ADR 0046). `POST /api/jobs` fails closed unless
 `AdminOcrTestAccessPolicy` compares it in constant time.
 `POST /api/benchmarks/import` and `POST /api/backups/restore` share that gate,
 because both persist screenshots the boundary would otherwise refuse, and both
-check it before reading the uploaded archive. `GET /api/admin/ocr-test/session`
+check it before the application reads the archive or opens any store (the
+framework still parses the multipart body first). `GET /api/admin/ocr-test/session`
 lets a client confirm a credential before it reveals any capture control; it
 answers `no-store` and shares the upload rate-limit budget. Every job records an
 explicit `input_context`: uploads and benchmark dataset imports are
