@@ -3326,7 +3326,11 @@ export function useAnalyzerWorkspaceController({
 
   async function onApplicationBackupRestore(backupFile: File) {
     const administratorToken = administrativeAccess.token;
-    if (administratorToken === null || busy || backupRestoring) {
+    if (administratorToken === null) {
+      setError("Unlock administrator tools before restoring a backup.");
+      return;
+    }
+    if (busy || backupRestoring) {
       return;
     }
 
@@ -3467,6 +3471,11 @@ export function useAnalyzerWorkspaceController({
     const input = event.currentTarget;
     const datasetFile = input.files?.[0];
     const administratorToken = administrativeAccess.token;
+    if (datasetFile && administratorToken === null) {
+      setError("Unlock administrator tools before importing datasets.");
+      input.value = "";
+      return;
+    }
     if (
       !datasetFile ||
       administratorToken === null ||
