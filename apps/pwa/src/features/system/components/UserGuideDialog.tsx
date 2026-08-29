@@ -27,12 +27,12 @@ const GUIDE_TOPICS: GuideTopic[] = [
     label: "Player workflow",
     title: "Analyze imported hand histories",
     introduction:
-      "Player analysis is import-first. Hands reach the workspace as imported hand histories, and screenshots are not a player data path.",
+      "Player analysis will be based on imported hand histories; this console handles administrator OCR testing.",
     steps: [
       {
-        title: "Work from imported hands",
+        title: "Imported hand histories are not available yet",
         description:
-          "Imported hand histories are the player data path. They carry the table state player analysis reasons about.",
+          "Player analysis will work from imported hand histories, not screenshots. This console currently supports administrator OCR testing only.",
       },
       {
         title: "Screenshots are not a player path",

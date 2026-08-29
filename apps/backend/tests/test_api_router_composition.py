@@ -741,28 +741,20 @@ def test_jobs_mutation_router_maps_typed_errors() -> None:
     def blocked_delete(_job_id: str) -> None:
         raise JobMutationConflictError("A benchmark dataset import is still pending")
 
-    def blocked_approval(_job_id: str, _state: CanonicalState) -> JobRecord:
-        raise JobMutationConflictError("A benchmark dataset import is still pending")
-
     runtime = JobsMutationRuntime(
         update_metadata=missing_metadata,
         delete_job=blocked_delete,
-        approve_job=blocked_approval,
+        approve_job=lambda _job_id, _state: job_record(),
     )
     with make_client(jobs_mutation_runtime=runtime) as client:
         missing_metadata_response = client.put("/api/jobs/missing/metadata", json={})
         pending_import = client.delete("/api/jobs/job-1")
-        blocked_approval_response = client.post("/api/jobs/job-1/approve", json={})
 
     assert (missing_metadata_response.status_code, missing_metadata_response.json()) == (
         404,
         {"detail": "Job not found"},
     )
     assert (pending_import.status_code, pending_import.json()) == (
-        409,
-        {"detail": "A benchmark dataset import is still pending"},
-    )
-    assert (blocked_approval_response.status_code, blocked_approval_response.json()) == (
         409,
         {"detail": "A benchmark dataset import is still pending"},
     )

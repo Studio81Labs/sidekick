@@ -244,10 +244,10 @@ packages.
 
 File-backed persistence is organized under `app/storage`. Repository contracts
 live in `app/storage/ports.py`, job and benchmark adapters are split between
-`file_job_store.py` and `file_benchmark_store.py`, and shared durability and
-legacy-decoding helpers live in `persistence.py`. The package root preserves the
-package namespace without re-exporting adapter or persistence symbols;
-consumers import the owned modules directly.
+`file_job_store.py` and `file_benchmark_store.py`, and shared durability helpers
+and a strict job-record loader live in `persistence.py`. The package root
+preserves the package namespace without re-exporting adapter or persistence
+symbols; consumers import the owned modules directly.
 
 `app/workspace.py` composes those repositories with the process-wide and
 cross-process coordination boundary. `WorkspaceCoordinator` owns startup job
@@ -565,9 +565,9 @@ verifies that identity before data access. Production configuration rejects
 write enablement and omits every mutation from tool discovery. Staging remains
 read-only unless an operator explicitly sets `POKER_MCP_ALLOW_WRITES=true`.
 
-The read surface exposes environment health, processing jobs, individual jobs,
-history search, and parser benchmark summaries. The staging write surface is
-limited to approving a user-reviewed canonical state. Administrative backup,
+The read surface exposes environment status, the processing queue, individual
+jobs, history search, and parser benchmark summaries. The staging write surface
+is limited to approving a user-reviewed canonical state. Administrative backup,
 dataset, benchmark-run, and bulk-archive APIs remain outside the gateway.
 
 Hosted MCP is mounted on the existing backend at `/mcp`, disabled by default,

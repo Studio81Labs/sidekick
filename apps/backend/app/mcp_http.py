@@ -63,10 +63,7 @@ def build_hosted_mcp_runtime(
         environment=environment,
         api_base_url=public_origin,
         allow_writes=settings.mcp_allow_writes,
-        request_timeout_seconds=max(
-            settings.external_request_timeout_seconds,
-            settings.local_solver_timeout_seconds + 10,
-        ),
+        request_timeout_seconds=settings.external_request_timeout_seconds,
         api_proxy_secret=settings.proxy_shared_secret,
     )
     client = httpx.AsyncClient(

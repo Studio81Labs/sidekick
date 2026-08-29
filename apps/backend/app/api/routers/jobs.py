@@ -195,7 +195,5 @@ def create_job_mutations_router(runtime: JobMutationService) -> APIRouter:
             return runtime.approve_job(job_id, state)
         except JobTransportNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except JobMutationConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     return router

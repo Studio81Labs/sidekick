@@ -261,7 +261,9 @@ describe("Analyzer administrative capture", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/Player analysis is import-first/i),
+      within(dialog).getByText(
+        /Player analysis will be based on imported hand histories/i,
+      ),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("button", {

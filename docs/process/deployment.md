@@ -86,8 +86,12 @@ import and backup restore until the mode is enabled again; no setting restores
 player-accessible capture or automatic recommendations.
 
 This release removes the V1 recommendation and training routes and the
-"recommended" job status; reset the staging `POKER_DATA_DIR` (or delete jobs
-in that status) before deploying, because no migration is provided.
+"recommended" job status; reset the staging `POKER_DATA_DIR` (or delete jobs in
+that status) before deploying, because no migration is provided. A job persisted
+with the removed `recommended` status is rejected when the backend validates its
+store at startup, so the process fails to start until that record is removed;
+backup archives exported before this release that contain such a job are refused
+by `POST /api/backups/restore` with a 400.
 
 After deployment, verify:
 

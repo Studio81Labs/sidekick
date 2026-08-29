@@ -4775,7 +4775,7 @@ describe("frontend source architecture", () => {
     expect(
       domainCompatibilityFacadeImportAllowed(
         ["shared", "api", "training.ts"],
-        ["domains", "training", "api", "trainingApi.ts"],
+        ["domains", "history", "api", "historyApi.ts"],
       ),
     ).toBe(false);
     expect(
