@@ -223,6 +223,26 @@ as learning evidence. Conflict resolutions are retained audit events, so a
 deletion request must be ordered after them before deletion can proceed. These
 contracts are not yet connected to V1 routes or file-backed storage, so they do
 not make the hosted screenshot workflow a V2 player-data path.
+Hero decision-point extraction lives in
+`app/domain/imported_hands/decisions.py` and consumes the aggregate's
+per-action decision contexts instead of recomputing pot, wager, call, or
+stack arithmetic. Each decision point binds its stable identity, source
+chronology, import provenance, active canonical revision, and deletion
+generation. Only a hero action whose approved origin is player-selected
+becomes a decision point; forced/system, client-automatic, and
+unresolved-origin hero actions are retained as excluded actions with
+reasons and are never graded. A hand with no voluntary hero action (a
+big-blind walk) is an explicit `no_decision` outcome, not a failure, and
+a hand that cannot be extracted reports one rejection reason
+(`not_active`, `unresolved_conflict`, `invalid_revision_lineage`,
+`incomplete_hand_state`, `incomplete_economics`, or `unreconciled_pot`)
+instead of failing silently. The amount to call and the current wager
+exclude dead antes; a seat's street and hand commitments include them.
+Decision points are `Decimal`-native and N-player rather than reusing
+`app/domain/poker`'s `float`-typed, single-opponent `CanonicalState`. No
+concept tag is attached until the versioned taxonomy lands in #417, and
+the atomic supersede/deactivate/rebuild lifecycle for this derived
+learning state lands with the local store in #432.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, and benchmarks
