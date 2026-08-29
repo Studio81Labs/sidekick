@@ -85,7 +85,6 @@ import {
 } from "../../features/workspace/lib/historyPersistence";
 import {
   jobMutationExpectationReached,
-  projectionMutationLeaseTargetReached,
   projectionMutationTargetReached,
 } from "../../features/workspace/lib/mutationLeaseExpectations";
 import { createMutationRequestId } from "../../features/workspace/lib/mutationLeaseFactories";
@@ -132,6 +131,12 @@ import {
 
 type JobNavigationMode = "push" | "replace" | false;
 
+/**
+ * Automation was the only producer of queue attention entries (#413), so the
+ * panel always renders without them until the machinery itself is removed.
+ */
+const NO_JOB_ATTENTION: Readonly<Record<string, string | undefined>> = {};
+
 export type AnalyzerWorkspaceControllerProps = {
   mutationOwnerId: string;
   navigation: AnalyzerRouteNavigation;
@@ -157,9 +162,7 @@ export function useAnalyzerWorkspaceController({
   } = useAnalyzerRecoveryWorkflow();
   const { activeJobId, selectActiveJob } = useAnalyzerActiveSelection();
   const {
-    attentionByJobId: jobAttention,
     clearJobAttention: clearWorkflowJobAttention,
-    markJobAttention,
     queueProgress,
     requestQueueAbort,
     setQueueProgress,
@@ -341,6 +344,7 @@ export function useAnalyzerWorkspaceController({
     dialogOpen: pipelineDialogOpen,
     loading: pipelineLoading,
     loadCapabilities: loadPipelineCapabilities,
+    refreshCapabilities: refreshPipelineCapabilities,
     openDialog: openPipelineDialog,
     providerLabel,
     selection: pipelineSelection,
@@ -1869,32 +1873,6 @@ export function useAnalyzerWorkspaceController({
           cachedIds,
           processingRemovalCandidateIdsRef.current,
         );
-        const nextJobsById = new Map(
-          nextJobs.map((candidate) => [candidate.id, candidate]),
-        );
-        const recoveredJobIds = new Set(
-          incomingJobs.flatMap((incomingJob) => {
-            const currentJob = currentJobsById.get(incomingJob.id);
-            const reconciledJob = nextJobsById.get(incomingJob.id);
-            const reachedPersistedProjectionTarget =
-              processingLease?.kind === "projection"
-                ? projectionMutationLeaseTargetReached(
-                    processingLease,
-                    incomingJob,
-                  )
-                : null;
-            const reachedRecoveryTarget =
-              incomingJob.error === null &&
-              (reachedPersistedProjectionTarget ??
-                incomingJob.approved_state !== null);
-            return currentJob &&
-              reconciledJob !== currentJob &&
-              reachedRecoveryTarget
-              ? [incomingJob.id]
-              : [];
-          }),
-        );
-        clearJobAttentionEntries(recoveredJobIds);
         const preservedMissingDirtyJob =
           formDirtyRef.current &&
           currentActiveJob !== null &&
@@ -2604,7 +2582,7 @@ export function useAnalyzerWorkspaceController({
   async function checkAdministrativeCapability() {
     setCheckingCapability(true);
     try {
-      await loadPipelineCapabilities();
+      await refreshPipelineCapabilities();
     } finally {
       setCheckingCapability(false);
     }
@@ -2729,7 +2707,7 @@ export function useAnalyzerWorkspaceController({
       );
     } else if (attentionMessages.length > 0) {
       setError(
-        `${attentionMessages.length} screenshot${attentionMessages.length === 1 ? "" : "s"} need attention. Check the highlighted queue items.`,
+        `${attentionMessages.length} screenshot${attentionMessages.length === 1 ? "" : "s"} need attention. Check the failed queue items.`,
       );
     }
     setFiles([]);
@@ -4051,7 +4029,7 @@ export function useAnalyzerWorkspaceController({
       : null,
     queue: {
       activeJobId: job?.id ?? null,
-      attentionByJobId: jobAttention,
+      attentionByJobId: NO_JOB_ATTENTION,
       busy,
       clearDisabled: historyLoading || busy || clearableJobs.length === 0,
       count: filmstripCount,

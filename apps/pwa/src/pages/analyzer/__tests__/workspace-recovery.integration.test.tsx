@@ -2756,7 +2756,7 @@ describe("Analyzer workspace recovery", () => {
     });
     expect(
       await screen.findByText(
-        "2 screenshots need attention. Check the highlighted queue items.",
+        "2 screenshots need attention. Check the failed queue items.",
       ),
     ).toBeInTheDocument();
   });

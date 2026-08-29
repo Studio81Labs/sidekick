@@ -1218,7 +1218,7 @@ describe("Analyzer hand review", () => {
 
     expect(
       await screen.findByText(
-        "1 screenshot need attention. Check the highlighted queue items.",
+        "1 screenshot need attention. Check the failed queue items.",
       ),
     ).toBeInTheDocument();
     expect(

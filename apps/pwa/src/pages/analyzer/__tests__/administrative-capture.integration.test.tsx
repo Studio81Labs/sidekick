@@ -139,12 +139,19 @@ describe("Analyzer administrative capture", () => {
   });
 
   it("checks the deployment capability on demand", async () => {
-    fetchMock().mockResolvedValueOnce(
-      jsonResponse({
-        ...pipelineCapabilitiesFixture,
-        administrative_ocr_test: { enabled: false },
-      }),
-    );
+    fetchMock()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ...pipelineCapabilitiesFixture,
+          administrative_ocr_test: { enabled: false },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          ...pipelineCapabilitiesFixture,
+          administrative_ocr_test: { enabled: true },
+        }),
+      );
     render(<App />);
     const user = userEvent.setup();
 
@@ -156,6 +163,15 @@ describe("Analyzer administrative capture", () => {
     expect(
       await screen.findByText("Disabled on this deployment."),
     ).toBeInTheDocument();
+    expect(fetchMock()).toHaveBeenCalledTimes(1);
+
+    // The control exists to ask the server, so a cached answer must not stand in.
+    await user.click(screen.getByRole("button", { name: "Check deployment" }));
+
+    expect(
+      await screen.findByText("Enabled on this deployment."),
+    ).toBeInTheDocument();
+    expect(fetchMock()).toHaveBeenCalledTimes(2);
   });
 
   it("renders the import-first workspace and unlocks capture on demand", async () => {
@@ -1356,7 +1372,7 @@ describe("Analyzer administrative capture", () => {
     ).toBeInTheDocument();
     expect(
       await screen.findByText(
-        "1 screenshot need attention. Check the highlighted queue items.",
+        "1 screenshot need attention. Check the failed queue items.",
       ),
     ).toBeInTheDocument();
     expect(fetchMock()).toHaveBeenCalledTimes(4);

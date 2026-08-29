@@ -79,6 +79,55 @@ describe("usePipelineSelection", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("always asks the server when capabilities are refreshed", async () => {
+    const onError = vi.fn();
+    // A fresh Response per call: a single instance can only be read once.
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(jsonResponse(capabilities)));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => usePipelineSelection({ onError }), {
+      wrapper,
+    });
+
+    await expect(result.current.loadCapabilities()).resolves.toEqual(
+      capabilities,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await waitFor(() =>
+      expect(result.current.capabilities).toEqual(capabilities),
+    );
+
+    // The cached load short-circuits; the refresh must not.
+    await expect(result.current.loadCapabilities()).resolves.toEqual(
+      capabilities,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await expect(result.current.refreshCapabilities()).resolves.toEqual(
+      capabilities,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("reports a refresh failure through the shared error channel", async () => {
+    const onError = vi.fn();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(capabilities))
+      .mockRejectedValueOnce(new TypeError("offline"));
+    vi.stubGlobal("fetch", fetchMock);
+    const { result } = renderHook(() => usePipelineSelection({ onError }), {
+      wrapper,
+    });
+
+    await result.current.loadCapabilities();
+    await expect(result.current.refreshCapabilities()).resolves.toBeNull();
+
+    expect(onError).toHaveBeenCalledWith("offline");
+  });
+
   it("reports a human-readable error and lets a later load retry", async () => {
     const onError = vi.fn();
     const fetchMock = vi
