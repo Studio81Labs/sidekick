@@ -98,6 +98,8 @@ the Poker Hero UI first, then let the agent inspect or continue the resulting
 job. Backup restore, dataset import, benchmark execution, and bulk archival are
 not exposed.
 
+The local stdio gateway's screenshot upload tool now targets the administrative OCR test boundary and is denied unless the deployment enables that mode; the gateway does not carry the administrative token, so screenshot uploads are made through the PWA administrator tools instead.
+
 ## Incident containment
 
 1. Revoke the affected principal.

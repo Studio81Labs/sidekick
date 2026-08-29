@@ -91,7 +91,7 @@ The main provider switches are:
   vision may use deployment-defined IDs such as `pokerstars`
 - `POKER_PARSER_ENABLED_PROVIDERS` and
   `POKER_PARSER_ENABLED_LAYOUT_PROFILES`: JSON lists of additional installed
-  parsers and layout IDs a user may select for each new upload or live capture;
+  parsers and layout IDs an administrator may select for each OCR test upload or live capture;
   the deployment defaults are always enabled and the UI shows only compatible
   parser/layout combinations
 - `POKER_RECOMMENDATION_PROVIDER`: `rule_based`, `mock`, `local_solver`, `external_solver`, or `llm_advice`
@@ -139,6 +139,13 @@ calibrated coordinates/templates are added.
 - `POKER_CORS_ORIGINS`: JSON list of direct browser origins
 - `POKER_PROXY_SHARED_SECRET`: optional Worker-to-backend credential, at least
   32 characters; leave empty for local development
+- `POKER_ADMIN_OCR_TEST_ENABLED` and `POKER_ADMIN_OCR_TEST_TOKEN`: administrative
+  OCR test mode for screenshot upload and live capture (ADR 0046). Disabled by
+  default; when enabled every `POST /api/jobs` upload must carry the token as
+  `Authorization: Bearer ...`, and the resulting jobs are marked
+  `administrative_test` so they can never request recommendations or enter
+  training. The token must contain at least 32 printable ASCII characters and
+  differ from `POKER_PROXY_SHARED_SECRET`
 - `POKER_MCP_ENABLED` and `POKER_MCP_PUBLIC_URL`: hosted MCP kill switch and
   exact public HTTPS `/mcp` endpoint; hosted access defaults off
 - `POKER_MCP_ALLOW_WRITES`: staging-only server write gate, independent of

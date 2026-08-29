@@ -77,6 +77,20 @@ Screenshot parsing runs outside those stripes, then reloads and merges into the
 latest job record so slow OCR does not block unrelated jobs and deleted uploads
 cannot be recreated by parser completion.
 
+Screenshot upload is an administrative OCR test surface, not a player data
+path (ADR 0046). `POST /api/jobs` fails closed unless
+`POKER_ADMIN_OCR_TEST_ENABLED` is set and the request carries the deployment's
+`POKER_ADMIN_OCR_TEST_TOKEN` as a bearer credential; the application-layer
+`AdminOcrTestAccessPolicy` compares it in constant time. Every job records an
+explicit `input_context`: uploads and benchmark dataset imports are
+`administrative_test`, while records persisted before the boundary load as
+`legacy_player`. Recommendation, training-decision, and training-review
+transitions refuse administrative jobs with `403`, and training progress and
+lesson exports exclude them, so administrative inputs never become learning
+evidence. The local stdio MCP gateway's screenshot tool receives the same
+denial. `GET /api/pipeline` advertises `administrative_ocr_test.enabled` so
+operators can see the deployment state.
+
 FastAPI composition remains in `app/bootstrap.py`, while extracted transport
 adapters live under `app/api/routers`. Health and pipeline queries dispatch
 through `app/application/system.py`; MCP configuration and principal operations
@@ -141,13 +155,25 @@ detail and invalidate processing/history/training. Cache seeding preserves newer
 concurrent screenshot metadata from an older workflow response, while a
 delete-superseded write generation prevents late approval/recommendation
 responses from recreating permanently removed detail entries. Analyzer
-composition retains automation,
-lease handoff, abort registration, and optional training-decision sequencing.
+composition retains lease handoff, abort registration, and optional
+training-decision sequencing; control-panel automation was removed with the
+import-first boundary.
 Screenshot upload now uses a capture-owned command over the generated jobs
 adapter. It preserves the caller upload request ID, selected pipeline, and abort
 signal, seeds confirmed job detail, and invalidates processing only. Analyzer
 composition continues to own per-file queue progress, independent failures,
 projection leases, capture sources, and optional post-upload automation.
+
+The player workspace is import-first: the control rail shows an import-first
+notice instead of capture controls. An operator can unlock the administrative
+OCR test tools from the toolbar **Administrator tools** dialog; the token is
+held only in component state and sent as `Authorization: Bearer ...` with each
+upload or capture. While unlocked, the capture panel renders under an explicit
+administrative banner; a `401`/`403` upload response re-locks the tools. Jobs
+with `input_context: "administrative_test"` carry an `Admin test` badge in the
+queue, history, details, and review panels, and their recommendation and
+training-decision controls are withheld.
+
 Training decisions and review completion/reopen operations now use a
 training-owned command family. The generated-contract adapters preserve the
 legacy positional function signatures, and confirmed responses update job
