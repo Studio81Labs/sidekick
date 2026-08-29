@@ -173,6 +173,10 @@ class HandDecisionExtraction(ImportedHandModel):
                 raise ValueError(
                     "a not_extractable outcome cannot retain decision points"
                 )
+            if self.excluded_actions:
+                raise ValueError(
+                    "a not_extractable outcome cannot retain excluded actions"
+                )
             if self.canonical_revision is not None:
                 raise ValueError(
                     "a not_extractable outcome cannot bind a canonical revision"

@@ -9,12 +9,14 @@ from pydantic import ValidationError
 from app.domain.imported_hands import (
     DeletionReceipt,
     DeletionRequest,
+    ExcludedHeroAction,
     HandDecisionExtraction,
     HeroDecisionPoint,
     ImportProvenance,
     ImportedHandLifecycle,
     ImportedHandRecord,
     ImportedHandState,
+    UserCorrection,
     extract_hero_decision_points,
 )
 from test_imported_hand_models import (
@@ -30,6 +32,7 @@ from test_imported_hand_models import (
     multi_street_decision_record,
     origin_confirmation_record,
     raw_source,
+    reapproval_extraction_record,
     state_with_reviewed_action_origin,
     user_confirmed_origin_corrections,
     wager_action,
@@ -901,9 +904,83 @@ def test_extraction_binds_every_decision_to_hand_history_provenance() -> None:
     )
 
 
+def test_extraction_binds_every_decision_to_the_active_revision() -> None:
+    """A hand corrected and reapproved must extract revision 2's state.
+
+    #411's fixture list named "reapproval", but no test built one: every
+    other extraction fixture carries a single canonical revision, so an
+    implementation hard-coded to revision 1 (or ``canonical_revisions[0]``)
+    would still pass all of them. Revision 2 here corrects hero's first hole
+    card, a value revision 1 never had, so reading the wrong revision
+    surfaces the wrong card.
+    """
+
+    detected_state = multi_street_decision_record().canonical_revisions[0].state
+    assert detected_state.hero_cards[0].rank == "A"
+    corrected_payload = detected_state.model_dump()
+    corrected_payload["hero_cards"][0] = {"rank": "T", "suit": "hearts"}
+    corrected_state = ImportedHandState.model_validate(corrected_payload)
+    assert corrected_state.hero_cards[0].rank == "T"
+    correction = UserCorrection(
+        field_pointer="/hero_cards/0/rank",
+        detected_value="A",
+        approved_value="T",
+        corrected_at=NOW,
+        reason="Hero's hole card corrected from a reread of the hand history",
+    )
+    record = reapproval_extraction_record(
+        detected_state, corrected_state, [correction]
+    )
+    assert record.active_state_for_extraction == corrected_state
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    assert extraction.canonical_revision == 2
+    assert len(extraction.decision_points) == 4
+    assert all(
+        point.canonical_revision == 2 for point in extraction.decision_points
+    )
+    assert all(
+        point.state.hero_cards[0].rank == "T"
+        for point in extraction.decision_points
+    )
+
+
+def test_extraction_carries_a_nonzero_deletion_generation_when_extractable() -> None:
+    """Every existing nonzero ``deletion_generation`` fixture is a rejected or
+    permanently deleted record; prove the counter also reaches every decision
+    point on a record that is fully extractable.
+    """
+
+    record = baseline_decision_record()
+    record = record.model_copy(
+        update={
+            "lifecycle": record.lifecycle.model_copy(
+                update={"deletion_generation": 3}
+            )
+        }
+    )
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    assert extraction.rejection is None
+    assert extraction.deletion_generation == 3
+    assert extraction.decision_points
+    assert all(
+        point.deletion_generation == 3 for point in extraction.decision_points
+    )
+
+
 def sample_decision_point() -> HeroDecisionPoint:
     extraction = extract_hero_decision_points(baseline_decision_record())
     return extraction.decision_points[0]
+
+
+def sample_excluded_action() -> ExcludedHeroAction:
+    extraction = extract_hero_decision_points(hero_fold_decision_record())
+    return extraction.excluded_actions[0]
 
 
 @pytest.mark.parametrize(
@@ -932,6 +1009,19 @@ def sample_decision_point() -> HeroDecisionPoint:
                 "decision_points": [],
             },
             "cannot bind a canonical revision",
+        ),
+        (
+            {"outcome": "not_extractable", "rejection": "not_active"},
+            "cannot retain decision points",
+        ),
+        (
+            {
+                "outcome": "not_extractable",
+                "rejection": "not_active",
+                "decision_points": [],
+                "excluded_actions": [sample_excluded_action()],
+            },
+            "cannot retain excluded actions",
         ),
         (
             {"outcome": "decisions", "canonical_revision": None},

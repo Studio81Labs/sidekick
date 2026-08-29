@@ -11914,6 +11914,43 @@ def extraction_record_for_state(
     )
 
 
+def reapproval_extraction_record(
+    detected_state: ImportedHandState,
+    corrected_state: ImportedHandState,
+    corrections: list[UserCorrection],
+) -> ImportedHandRecord:
+    """Build a two-revision extraction-ready record: a corrected reapproval.
+
+    Revision 1 approves ``detected_state`` untouched. Revision 2 applies
+    ``corrections`` to reach ``corrected_state`` and becomes the sole active
+    revision, mirroring a hand that was corrected and reapproved after its
+    first approval.
+    """
+
+    first_approval = extraction_record_for_state(detected_state)
+    first_revision = first_approval.canonical_revisions[0]
+    second_approved_at = first_revision.approved_at + timedelta(minutes=1)
+    second_revision = first_revision.model_copy(
+        update={
+            "revision": 2,
+            "approved_at": second_approved_at,
+            "state": corrected_state,
+            "corrections": corrections,
+        }
+    )
+    return ImportedHandRecord(
+        identity=first_approval.identity,
+        raw_sources=first_approval.raw_sources,
+        detections=first_approval.detections,
+        canonical_revisions=[first_revision, second_revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 2,
+            "changed_at": second_approved_at,
+        },
+    )
+
+
 def automatic_action(
     sequence: int,
     actor_id: str,
