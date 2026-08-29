@@ -1,7 +1,9 @@
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
+from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
 from app.bootstrap import create_app
 from app.config import Settings
 from api_test_support import (
@@ -71,3 +73,26 @@ def test_disabled_deployment_ignores_configured_token(tmp_path: Path) -> None:
     response = _post_upload(TestClient(app), ADMIN_OCR_TEST_HEADERS)
 
     assert response.status_code == 403
+
+
+def test_upload_fails_closed_on_an_unexpected_authorization_decision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Only an explicit "authorized" decision may proceed: a future decision member
+    # must deny rather than fall through and open the upload surface. The policy is
+    # patched before the app is built because bootstrap binds `authorize` once.
+    monkeypatch.setattr(
+        AdminOcrTestAccessPolicy,
+        "authorize",
+        lambda _self, _authorization_header: "expired",
+    )
+    client = make_client(tmp_path)
+
+    response = _post_upload(client, ADMIN_OCR_TEST_HEADERS)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "Administrative OCR test authorization was refused"
+    )
+    assert not (tmp_path / "jobs").exists() or not any((tmp_path / "jobs").iterdir())

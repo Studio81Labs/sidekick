@@ -128,16 +128,23 @@ def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
         ),
     ) -> JobRecord:
         decision = runtime.authorize_administrator(authorization)
-        if decision == "disabled":
+        if decision != "authorized":
+            # Fail closed: only an explicit authorization proceeds, so a decision
+            # this router does not recognize denies instead of opening the surface.
+            if decision == "disabled":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Administrative OCR test mode is disabled",
+                )
+            if decision == "unauthorized":
+                raise HTTPException(
+                    status_code=401,
+                    detail="Administrative OCR test authorization is required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
             raise HTTPException(
                 status_code=403,
-                detail="Administrative OCR test mode is disabled",
-            )
-        if decision == "unauthorized":
-            raise HTTPException(
-                status_code=401,
-                detail="Administrative OCR test authorization is required",
-                headers={"WWW-Authenticate": "Bearer"},
+                detail="Administrative OCR test authorization was refused",
             )
 
         pipeline_request = JobUploadPipelineRequest(
