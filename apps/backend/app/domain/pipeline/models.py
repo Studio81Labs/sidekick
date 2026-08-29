@@ -34,6 +34,12 @@ class PipelineSelection(BaseModel):
     )
 
 
+class AdministrativeOcrTestCapability(BaseModel):
+    """Whether this deployment enables the administrator-only OCR test surface."""
+
+    enabled: bool
+
+
 class PipelineCapabilities(BaseModel):
     defaults: PipelineSelection
     parser_providers: list[PipelineOption]
@@ -41,3 +47,4 @@ class PipelineCapabilities(BaseModel):
     parser_layout_compatibility: dict[str, list[str]]
     recommendation_providers: list[PipelineOption]
     recommendation_engines: list[PipelineOption]
+    administrative_ocr_test: AdministrativeOcrTestCapability

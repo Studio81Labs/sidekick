@@ -191,3 +191,15 @@ def test_upload_rejects_layout_not_supported_by_selected_parser(
         "Layout profile 'pokerstars' is not supported by parser provider 'ocr_cv'"
     )
     assert list((tmp_path / "jobs").iterdir()) == []
+
+
+def test_pipeline_reports_administrative_ocr_test_capability(tmp_path: Path) -> None:
+    enabled = make_client(tmp_path)
+    disabled = make_client(
+        tmp_path / "disabled",
+        admin_ocr_test_enabled=False,
+        admin_ocr_test_token=None,
+    )
+
+    assert enabled.get("/api/pipeline").json()["administrative_ocr_test"] == {"enabled": True}
+    assert disabled.get("/api/pipeline").json()["administrative_ocr_test"] == {"enabled": False}

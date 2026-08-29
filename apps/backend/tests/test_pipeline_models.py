@@ -25,11 +25,13 @@ def test_pipeline_capabilities_parse_nested_contracts() -> None:
         recommendation_engines=[
             {"id": "postflop_solver", "label": "Postflop solver"}
         ],
+        administrative_ocr_test={"enabled": True},
     )
 
     assert capabilities.defaults.recommendation_engine == "postflop_solver"
     assert capabilities.parser_providers[0].available is True
     assert capabilities.recommendation_engines[0].unavailable_reason is None
+    assert capabilities.administrative_ocr_test.enabled is True
 
 
 @pytest.mark.parametrize(

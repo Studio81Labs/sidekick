@@ -6,6 +6,7 @@ from app.config import (
     Settings,
 )
 from app.domain.pipeline import (
+    AdministrativeOcrTestCapability,
     PipelineCapabilities,
     PipelineOption,
     PipelineSelection,
@@ -330,4 +331,7 @@ def pipeline_capabilities(settings: Settings) -> PipelineCapabilities:
             _recommendation_option(settings, value) for value in recommendations
         ],
         recommendation_engines=[_solver_engine_option(value) for value in engines],
+        administrative_ocr_test=AdministrativeOcrTestCapability(
+            enabled=settings.admin_ocr_test_enabled,
+        ),
     )

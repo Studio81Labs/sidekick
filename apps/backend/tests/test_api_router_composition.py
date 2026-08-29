@@ -59,7 +59,11 @@ from app.domain.hands import (
     ScreenshotMetadataRequest,
 )
 from app.domain.health import HealthResponse
-from app.domain.pipeline import PipelineCapabilities, PipelineSelection
+from app.domain.pipeline import (
+    AdministrativeOcrTestCapability,
+    PipelineCapabilities,
+    PipelineSelection,
+)
 from app.domain.poker import CanonicalState
 from app.domain.training import (
     TrainingDecisionRequest,
@@ -86,6 +90,7 @@ def pipeline_capabilities() -> PipelineCapabilities:
         parser_layout_compatibility={},
         recommendation_providers=[],
         recommendation_engines=[],
+        administrative_ocr_test=AdministrativeOcrTestCapability(enabled=True),
     )
 
 
