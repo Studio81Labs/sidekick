@@ -15,7 +15,7 @@ import {
   canonicalState,
   deferredResponse,
   detectedState,
-  disableAutomation,
+  unlockAdministrativeAccess,
   fetchMock,
   jobRecord,
   jsonResponse,

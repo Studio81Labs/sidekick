@@ -1,5 +1,7 @@
-import { AutomationDialog } from "../../features/automation/components/AutomationDialog";
+import { AdministrativeAccessDialog } from "../../features/admin-ocr-test/components/AdministrativeAccessDialog";
 import { BenchmarkDialog } from "../../features/benchmark/components/BenchmarkDialog";
+import { AdministrativeTestBanner } from "../../features/capture/components/AdministrativeTestBanner";
+import { ImportFirstNotice } from "../../features/capture/components/ImportFirstNotice";
 import { InputSourcePanel } from "../../features/capture/components/InputSourcePanel";
 import { TablePreview } from "../../features/capture/components/TablePreview";
 import { HistoryPanel } from "../../features/history/components/HistoryPanel";
@@ -33,7 +35,14 @@ export function AnalyzerWorkspaceComposition(
       <AnalyzerToolbar {...view.toolbar} />
       <AnalyzerWorkspaceLayout>
         <AnalyzerControlRail>
-          <InputSourcePanel {...view.inputSource} />
+          {view.inputSource ? (
+            <>
+              <AdministrativeTestBanner {...view.administrativeBanner} />
+              <InputSourcePanel {...view.inputSource} />
+            </>
+          ) : (
+            <ImportFirstNotice />
+          )}
           <ScreenshotQueuePanel {...view.queue} />
           <HistoryPanel {...view.history} />
         </AnalyzerControlRail>
@@ -47,8 +56,8 @@ export function AnalyzerWorkspaceComposition(
         {view.dialogs.screenshotDetails ? (
           <ScreenshotDetailsDialog {...view.dialogs.screenshotDetails} />
         ) : null}
-        {view.dialogs.automation ? (
-          <AutomationDialog {...view.dialogs.automation} />
+        {view.dialogs.administrativeAccess ? (
+          <AdministrativeAccessDialog {...view.dialogs.administrativeAccess} />
         ) : null}
         {view.dialogs.pipeline ? (
           <PipelineDialog {...view.dialogs.pipeline} />

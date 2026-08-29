@@ -17,6 +17,13 @@ describe("UserGuideDialog", () => {
       }),
     ).toBeInTheDocument();
     expect(
+      screen.getByRole("heading", { name: "Analyze imported hand histories" }),
+    ).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Next topic: Quick start" }),
+    );
+    expect(
       screen.getByRole("heading", { name: "Review your first hand" }),
     ).toBeInTheDocument();
 
@@ -24,7 +31,7 @@ describe("UserGuideDialog", () => {
       screen.getByRole("button", { name: "Next topic: Input and queue" }),
     );
     expect(
-      screen.getByRole("heading", { name: "Capture and process screenshots" }),
+      screen.getByRole("heading", { name: "Administrator OCR test tools" }),
     ).toBeInTheDocument();
 
     await userEvent.click(

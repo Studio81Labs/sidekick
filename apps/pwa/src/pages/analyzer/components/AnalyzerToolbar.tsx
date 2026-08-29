@@ -2,7 +2,7 @@ import {
   CircleHelp,
   FlaskConical,
   Info,
-  Settings,
+  ShieldCheck,
   SlidersHorizontal,
   Target,
 } from "lucide-react";
@@ -12,35 +12,29 @@ import { ButtonControl } from "../../../shared/components/FormControls";
 import { SummaryMetric } from "../../../shared/components/SummaryMetric";
 
 export interface AnalyzerToolbarProps {
-  automationEnabled: boolean;
+  administrativeUnlocked: boolean;
   busy: boolean;
   historyTotal: number;
-  liveStatusLabel: string;
-  onConfigureAutomation: () => void;
   onConfigurePipeline: () => void;
+  onOpenAdministrativeTools: () => void;
   onOpenBenchmark: () => void;
   onOpenHelp: () => void;
   onOpenInfo: () => void;
   onOpenTraining: () => void;
-  onToggleAutomation: () => void;
   queueCount: number;
-  screenSharing: boolean;
 }
 
 export function AnalyzerToolbar({
-  automationEnabled,
+  administrativeUnlocked,
   busy,
   historyTotal,
-  liveStatusLabel,
-  onConfigureAutomation,
   onConfigurePipeline,
+  onOpenAdministrativeTools,
   onOpenBenchmark,
   onOpenHelp,
   onOpenInfo,
   onOpenTraining,
-  onToggleAutomation,
   queueCount,
-  screenSharing,
 }: AnalyzerToolbarProps) {
   return (
     <section className="toolbar" aria-label="Analyzer controls">
@@ -65,42 +59,22 @@ export function AnalyzerToolbar({
           label="reviewed"
           value={historyTotal}
         />
-        <div
-          className={screenSharing ? "source-status active" : "source-status"}
-        >
-          <span aria-hidden="true" />
-          <strong>{liveStatusLabel}</strong>
-        </div>
         <i aria-hidden="true" />
-        <div className="automation-header-control">
-          <ButtonControl
-            variant="secondary"
-            className={
-              automationEnabled
-                ? "automation-master active"
-                : "automation-master"
-            }
-            onClick={onToggleAutomation}
-            aria-pressed={automationEnabled}
-            aria-label={`Automation ${automationEnabled ? "On" : "Off"}`}
-          >
-            <span className="switch-mini" aria-hidden="true">
-              <span />
-            </span>
-            <span className="automation-master-text">
-              <strong>Automation</strong>
-              <span>{automationEnabled ? "On" : "Off"}</span>
-            </span>
-          </ButtonControl>
-          <ButtonControl
-            variant="secondary"
-            className="automation-config-button"
-            onClick={onConfigureAutomation}
-            aria-label="Configure automation"
-          >
-            <Settings size={17} aria-hidden="true" />
-          </ButtonControl>
-        </div>
+        <ButtonControl
+          variant="secondary"
+          iconOnly
+          className={
+            administrativeUnlocked
+              ? "header-icon-button active"
+              : "header-icon-button"
+          }
+          onClick={onOpenAdministrativeTools}
+          aria-pressed={administrativeUnlocked}
+          title="Administrator tools"
+          aria-label="Administrator tools"
+        >
+          <ShieldCheck size={18} aria-hidden="true" />
+        </ButtonControl>
         <ButtonControl
           variant="secondary"
           iconOnly

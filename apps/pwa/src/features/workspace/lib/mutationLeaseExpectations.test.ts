@@ -4,18 +4,10 @@ import { jobRecord } from "../../../test/analyzerHarness";
 import {
   jobMutationExpectationReached,
   projectionMutationLeaseTargetReached,
-  projectionMutationTarget,
 } from "./mutationLeaseExpectations";
 import type { ProjectionMutationLease } from "./mutationLeaseTypes";
 
 describe("mutation lease expectations", () => {
-  it("derives the upload target from the enabled automation steps", () => {
-    expect(projectionMutationTarget(false, true, true)).toBe("parsed");
-    expect(projectionMutationTarget(true, false, true)).toBe("parsed");
-    expect(projectionMutationTarget(true, true, false)).toBe("approved");
-    expect(projectionMutationTarget(true, true, true)).toBe("recommended");
-  });
-
   it("matches persisted screenshot metadata exactly and in order", () => {
     const job = jobRecord({
       title: "River bluff",

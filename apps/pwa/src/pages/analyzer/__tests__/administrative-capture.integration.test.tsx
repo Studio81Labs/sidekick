@@ -5,12 +5,12 @@ import { describe, expect, it, vi } from "vitest";
 import type { DetectedState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
 import {
+  ADMINISTRATOR_TOKEN,
   AnalyzerTestApp as App,
   approvedJob,
   canonicalState,
   deferredResponse,
   detectedState,
-  disableAutomation,
   fetchMock,
   jobRecord,
   jsonResponse,
@@ -22,11 +22,143 @@ import {
   stubCanvasCapture,
   stubDisplayMedia,
   switchToUploadMode,
+  unlockAdministrativeAccess,
   uploadScreenshot,
 } from "../../../test/analyzerHarness";
 
-describe("Analyzer capture and automation", () => {
-  it("renders live capture first and exposes upload mode", async () => {
+const pipelineCapabilitiesFixture = {
+  defaults: {
+    parser_provider: "mock",
+    parser_layout_profile: "generic",
+    recommendation_provider: "mock",
+    recommendation_engine: null,
+  },
+  parser_providers: [
+    {
+      id: "mock",
+      label: "Mock parser",
+      available: true,
+      unavailable_reason: null,
+    },
+  ],
+  parser_layout_profiles: [
+    {
+      id: "generic",
+      label: "Generic",
+      available: true,
+      unavailable_reason: null,
+    },
+  ],
+  parser_layout_compatibility: { mock: ["generic"] },
+  recommendation_providers: [
+    {
+      id: "mock",
+      label: "Mock recommendation",
+      available: true,
+      unavailable_reason: null,
+    },
+  ],
+  administrative_ocr_test: { enabled: true },
+  recommendation_engines: [],
+};
+
+describe("Analyzer administrative capture", () => {
+  it("keeps the player workspace import-first until an administrator unlocks", async () => {
+    render(<App />);
+
+    expect(screen.getByRole("region", { name: "Input" })).toHaveTextContent(
+      "administrator-only parser test tools",
+    );
+    expect(
+      screen.queryByLabelText("Choose screenshots"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Input mode" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Automation/ }),
+    ).not.toBeInTheDocument();
+    expect(fetchMock()).not.toHaveBeenCalled();
+  });
+
+  it("shows the administrative banner and capture controls only while unlocked", async () => {
+    render(<App />);
+    const user = await unlockAdministrativeAccess();
+
+    expect(
+      screen.getByRole("note", { name: "Administrative OCR test mode" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("group", { name: "Input mode" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator tools" }),
+    );
+
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Input mode" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("sends the administrator credential with uploads", async () => {
+    const created = jobRecord({ input_context: "administrative_test" });
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(processingQueueResponse([created]));
+    render(<App />);
+
+    await uploadScreenshot();
+
+    const [, init] = fetchMock().mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("Authorization")).toBe(
+      `Bearer ${ADMINISTRATOR_TOKEN}`,
+    );
+  });
+
+  it.each([
+    [
+      401,
+      "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    ],
+    [403, "Administrative OCR test mode is disabled on this deployment."],
+  ])("locks again when the server answers %i", async (status, message) => {
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse({ detail: "denied" }, status))
+      .mockResolvedValue(processingQueueResponse([]));
+    render(<App />);
+
+    await uploadScreenshot();
+
+    expect(await screen.findByText(message)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("checks the deployment capability on demand", async () => {
+    fetchMock().mockResolvedValueOnce(
+      jsonResponse({
+        ...pipelineCapabilitiesFixture,
+        administrative_ocr_test: { enabled: false },
+      }),
+    );
+    render(<App />);
+    const user = userEvent.setup();
+
+    await user.click(
+      screen.getByRole("button", { name: "Administrator tools" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Check deployment" }));
+
+    expect(
+      await screen.findByText("Disabled on this deployment."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the import-first workspace and unlocks capture on demand", async () => {
     fetchMock().mockResolvedValueOnce(
       jsonResponse({
         status: "ok",
@@ -41,10 +173,12 @@ describe("Analyzer capture and automation", () => {
     expect(
       screen.getByRole("heading", { name: "Poker Training Analyzer" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Share window" })).toBeEnabled();
     expect(
-      screen.getByRole("button", { name: "Automation On" }),
-    ).toHaveAttribute("aria-pressed", "true");
+      screen.queryByRole("button", { name: "Share window" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Administrator tools" }),
+    ).toHaveAttribute("aria-pressed", "false");
     expect(screen.getByLabelText("Screenshots queue")).toBeInTheDocument();
     expect(
       screen.getByText("No screenshots uploaded or captured yet"),
@@ -74,16 +208,12 @@ describe("Analyzer capture and automation", () => {
       screen.queryByRole("dialog", { name: "About Poker Training Analyzer" }),
     ).not.toBeInTheDocument();
 
-    await user.click(
-      screen.getByRole("button", { name: "Configure automation" }),
-    );
+    await unlockAdministrativeAccess(user);
+
     expect(
-      screen.getByRole("dialog", { name: "Configure automation" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("switch", { name: /Auto-approve parsed state/ }),
-    ).toHaveAttribute("aria-checked", "true");
-    await user.click(screen.getByRole("button", { name: "Done" }));
+      screen.getByRole("button", { name: "Administrator tools" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Share window" })).toBeEnabled();
 
     await switchToUploadMode(user);
 
@@ -106,18 +236,18 @@ describe("Analyzer capture and automation", () => {
     const dialog = screen.getByRole("dialog", {
       name: "How to use Poker Training Analyzer",
     });
-    const quickStartTopic = within(dialog).getByRole("button", {
-      name: "Quick start",
+    const playerWorkflowTopic = within(dialog).getByRole("button", {
+      name: "Player workflow",
     });
 
-    expect(quickStartTopic).toHaveFocus();
+    expect(playerWorkflowTopic).toHaveFocus();
     expect(
       within(dialog).getByRole("heading", {
-        name: "Review your first hand",
+        name: "Analyze imported hand histories",
       }),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/complete review moves from a screenshot/i),
+      within(dialog).getByText(/Player analysis is import-first/i),
     ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("button", {
@@ -126,12 +256,17 @@ describe("Analyzer capture and automation", () => {
     ).toBeDisabled();
     await user.click(
       within(dialog).getByRole("button", {
-        name: "Automation",
+        name: "Input and queue",
       }),
     );
     expect(
+      within(dialog).getByRole("heading", {
+        name: "Administrator OCR test tools",
+      }),
+    ).toBeInTheDocument();
+    expect(
       within(dialog).getByText(
-        /deployment may independently auto-approve confidence-eligible/i,
+        /token is held in memory for this session only/i,
       ),
     ).toBeInTheDocument();
     const topicArticle = within(dialog).getByRole("article");
@@ -514,70 +649,6 @@ describe("Analyzer capture and automation", () => {
         String(input).endsWith("/api/history"),
       ),
     ).toBe(true);
-  });
-
-  it("restores automation settings across reloads", async () => {
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Automation On" }));
-    await user.click(
-      screen.getByRole("button", { name: "Configure automation" }),
-    );
-    await user.click(
-      screen.getByRole("switch", {
-        name: /Auto-request recommendation/,
-      }),
-    );
-    await user.click(
-      screen.getByRole("switch", {
-        name: /Allow parser warnings/,
-      }),
-    );
-    await user.click(screen.getByRole("button", { name: "Done" }));
-    firstRender.unmount();
-
-    render(<App />);
-
-    expect(
-      screen.getByRole("button", { name: "Automation Off" }),
-    ).toHaveAttribute("aria-pressed", "false");
-    await user.click(
-      screen.getByRole("button", { name: "Configure automation" }),
-    );
-    expect(
-      screen.getByRole("switch", {
-        name: /Auto-approve parsed state/,
-      }),
-    ).toHaveAttribute("aria-checked", "true");
-    expect(
-      screen.getByRole("switch", {
-        name: /Auto-request recommendation/,
-      }),
-    ).toHaveAttribute("aria-checked", "false");
-    expect(
-      screen.getByRole("switch", {
-        name: /Allow parser warnings/,
-      }),
-    ).toHaveAttribute("aria-checked", "true");
-  });
-
-  it("uses safe automation defaults when saved settings are malformed", () => {
-    window.localStorage.setItem(
-      "poker-training-automation-v1",
-      JSON.stringify({
-        enabled: "yes",
-        autoApprove: true,
-        autoRecommend: true,
-        allowWarnings: false,
-      }),
-    );
-
-    render(<App />);
-
-    expect(
-      screen.getByRole("button", { name: "Automation On" }),
-    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("uploads a screenshot, populates parser state, and enables approval", async () => {
@@ -1218,7 +1289,7 @@ describe("Analyzer capture and automation", () => {
       .mockResolvedValueOnce(processingQueueResponse([firstJob, secondJob]));
     render(<App />);
     const user = userEvent.setup();
-    await disableAutomation(user);
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     const input = screen.getByLabelText("Choose screenshots");
 
@@ -1256,7 +1327,7 @@ describe("Analyzer capture and automation", () => {
       .mockResolvedValueOnce(processingQueueResponse([firstJob, thirdJob]));
     render(<App />);
     const user = userEvent.setup();
-    await disableAutomation(user);
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
 
     await user.upload(screen.getByLabelText("Choose screenshots"), [
@@ -1315,6 +1386,7 @@ describe("Analyzer capture and automation", () => {
     render(<App />);
     const user = userEvent.setup();
 
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(screen.getByLabelText("Choose screenshots"), [
       new File(["first"], "first.png", { type: "image/png" }),
@@ -1354,8 +1426,9 @@ describe("Analyzer capture and automation", () => {
       value: undefined,
     });
     render(<App />);
+    const user = await unlockAdministrativeAccess();
 
-    await userEvent.click(screen.getByRole("button", { name: "Share window" }));
+    await user.click(screen.getByRole("button", { name: "Share window" }));
 
     expect(
       await screen.findByText(
@@ -1373,7 +1446,7 @@ describe("Analyzer capture and automation", () => {
       .mockResolvedValueOnce(processingQueueResponse([created]));
     render(<App />);
     const user = userEvent.setup();
-    await disableAutomation(user);
+    await unlockAdministrativeAccess(user);
 
     await user.click(screen.getByRole("button", { name: "Tab" }));
     await user.click(screen.getByRole("button", { name: "Share tab" }));
@@ -1420,830 +1493,6 @@ describe("Analyzer capture and automation", () => {
     expect(screen.getByAltText("Uploaded poker table screenshot")).toHaveClass(
       "hidden",
     );
-  });
-
-  it("runs capture, approval, and recommendation through automation", async () => {
-    stubDisplayMedia("window");
-    stubCanvasCapture();
-    const created = jobRecord({ original_filename: "screen-capture.png" });
-    const approved = {
-      ...approvedJob(),
-      original_filename: "screen-capture.png",
-    };
-    const recommended = {
-      ...recommendedJob(),
-      original_filename: "screen-capture.png",
-    };
-    fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(approved))
-      .mockResolvedValueOnce(jsonResponse(recommended))
-      .mockResolvedValueOnce(processingQueueResponse([recommended]))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          total: 1,
-          jobs: [
-            {
-              ...recommended,
-              archived_at: "2026-07-10T00:01:00Z",
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(processingQueueResponse([]));
-    render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Share window" }));
-    expect(
-      await screen.findByText("Window sharing active"),
-    ).toBeInTheDocument();
-    setSharedPreviewSize();
-
-    await user.click(screen.getByRole("button", { name: "Capture and parse" }));
-
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Approve state" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", {
-        name: "Open screenshot 1: screen-capture.png",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Reopen history item 1" }),
-    ).not.toBeInTheDocument();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: "Clear reviewed" }));
-
-    const historyItem = await screen.findByRole("button", {
-      name: "Reopen history item 1",
-    });
-    expect(within(historyItem).getByText("raise")).toBeInTheDocument();
-    expect(within(historyItem).getByText("A♥")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", {
-        name: "Open screenshot 1: screen-capture.png",
-      }),
-    ).not.toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledTimes(6);
-    expect(fetchMock().mock.calls[0][0]).toBe("http://localhost:8000/api/jobs");
-    expect(fetchMock().mock.calls[1][0]).toBe(
-      "http://localhost:8000/api/jobs/job-123/approve",
-    );
-    expect(fetchMock().mock.calls[2][0]).toBe(
-      "http://localhost:8000/api/jobs/job-123/recommend",
-    );
-    expect(fetchMock().mock.calls[3][0]).toBe("http://localhost:8000/api/jobs");
-    expect(fetchMock().mock.calls[4][0]).toBe(
-      "http://localhost:8000/api/history",
-    );
-    expect(fetchMock().mock.calls[4][1]?.method).toBe("PUT");
-    expect(fetchMock().mock.calls[5][0]).toBe("http://localhost:8000/api/jobs");
-    expect(JSON.parse(String(fetchMock().mock.calls[4][1]?.body))).toEqual({
-      job_ids: ["job-123"],
-    });
-    expect(
-      JSON.parse(String(fetchMock().mock.calls[1][1]?.body)).user_approved,
-    ).toBe(true);
-  });
-
-  it("deletes an automated capture and cancels only its recommendation", async () => {
-    stubDisplayMedia("window");
-    stubCanvasCapture();
-    const jobId = "c".repeat(32);
-    const created = jobRecord({
-      id: jobId,
-      original_filename: "delete-capture.png",
-    });
-    const approved = {
-      ...approvedJob(),
-      id: jobId,
-      original_filename: created.original_filename,
-    };
-    let recommendationAborted = false;
-    fetchMock().mockImplementation((url, options) => {
-      if (url === "http://localhost:8000/api/jobs") {
-        if (options?.method === "POST") {
-          return Promise.resolve(jsonResponse(created, 201));
-        }
-        return Promise.resolve(processingQueueResponse([]));
-      }
-      if (url === `http://localhost:8000/api/jobs/${jobId}/approve`) {
-        return Promise.resolve(jsonResponse(approved));
-      }
-      if (url === `http://localhost:8000/api/jobs/${jobId}/recommend`) {
-        const signal = options?.signal as AbortSignal | undefined;
-        return new Promise<Response>((_resolve, reject) => {
-          signal?.addEventListener(
-            "abort",
-            () => {
-              recommendationAborted = true;
-              reject(new DOMException("Aborted", "AbortError"));
-            },
-            { once: true },
-          );
-        });
-      }
-      if (
-        url === `http://localhost:8000/api/jobs/${jobId}` &&
-        options?.method === "DELETE"
-      ) {
-        return Promise.resolve(new Response(null, { status: 204 }));
-      }
-      throw new Error(`Unexpected request: ${String(url)}`);
-    });
-    render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Share window" }));
-    expect(
-      await screen.findByText("Window sharing active"),
-    ).toBeInTheDocument();
-    setSharedPreviewSize();
-    await user.click(screen.getByRole("button", { name: "Capture and parse" }));
-
-    await waitFor(() =>
-      expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}/recommend`,
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      ),
-    );
-    await user.click(
-      screen.getByRole("button", {
-        name: "Manage screenshot 1: delete-capture.png",
-      }),
-    );
-    const dialog = screen.getByRole("dialog", { name: "Screenshot details" });
-    await user.click(
-      within(dialog).getByRole("button", { name: "Delete screenshot" }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Delete permanently" }),
-    );
-
-    await waitFor(() => expect(recommendationAborted).toBe(true));
-    expect(
-      screen.getByText("No screenshots uploaded or captured yet"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Screen capture failed/)).not.toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ).toBeNull(),
-    );
-  });
-
-  it("runs upload, approval, and recommendation through automation", async () => {
-    const created = jobRecord({ original_filename: "uploaded.png" });
-    const approved = { ...approvedJob(), original_filename: "uploaded.png" };
-    const recommended = {
-      ...recommendedJob(),
-      original_filename: "uploaded.png",
-    };
-    fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(approved))
-      .mockResolvedValueOnce(jsonResponse(recommended))
-      .mockResolvedValueOnce(processingQueueResponse([recommended]))
-      .mockResolvedValueOnce(
-        jsonResponse({
-          total: 1,
-          jobs: [
-            {
-              ...recommended,
-              archived_at: "2026-07-10T00:01:00Z",
-            },
-          ],
-        }),
-      )
-      .mockResolvedValueOnce(processingQueueResponse([]));
-    render(<App />);
-    const user = userEvent.setup();
-
-    await switchToUploadMode(user);
-    await user.upload(
-      screen.getByLabelText("Choose screenshots"),
-      new File(["uploaded"], "uploaded.png", { type: "image/png" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Open screenshot 1: uploaded.png" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Reopen history item 1" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Clear reviewed" }));
-
-    expect(
-      await screen.findByRole("button", { name: "Reopen history item 1" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Open screenshot 1: uploaded.png" }),
-    ).not.toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledTimes(6);
-    expect(fetchMock().mock.calls[0][0]).toBe("http://localhost:8000/api/jobs");
-    expect(fetchMock().mock.calls[1][0]).toBe(
-      "http://localhost:8000/api/jobs/job-123/approve",
-    );
-    expect(fetchMock().mock.calls[2][0]).toBe(
-      "http://localhost:8000/api/jobs/job-123/recommend",
-    );
-    expect(fetchMock().mock.calls[3][0]).toBe("http://localhost:8000/api/jobs");
-    expect(fetchMock().mock.calls[4][0]).toBe(
-      "http://localhost:8000/api/history",
-    );
-    expect(fetchMock().mock.calls[5][0]).toBe("http://localhost:8000/api/jobs");
-  });
-
-  it("deletes an automated recommendation and continues the upload queue", async () => {
-    const firstJobId = "1".repeat(32);
-    const secondJobId = "2".repeat(32);
-    const firstCreated = jobRecord({
-      id: firstJobId,
-      original_filename: "delete-automated.png",
-    });
-    const firstApproved = {
-      ...approvedJob(),
-      id: firstJobId,
-      original_filename: firstCreated.original_filename,
-    };
-    const secondCreated = jobRecord({
-      id: secondJobId,
-      original_filename: "continue-automated.png",
-    });
-    const secondApproved = {
-      ...approvedJob(),
-      id: secondJobId,
-      original_filename: secondCreated.original_filename,
-    };
-    const secondRecommended = {
-      ...recommendedJob(),
-      id: secondJobId,
-      original_filename: secondCreated.original_filename,
-    };
-    let uploadCount = 0;
-    let firstRecommendationAborted = false;
-    let secondRecommendationCompleted = false;
-
-    fetchMock().mockImplementation((url, options) => {
-      if (url === "http://localhost:8000/api/jobs") {
-        if (options?.method === "POST") {
-          uploadCount += 1;
-          return Promise.resolve(
-            jsonResponse(uploadCount === 1 ? firstCreated : secondCreated, 201),
-          );
-        }
-        return Promise.resolve(
-          processingQueueResponse(
-            secondRecommendationCompleted ? [secondRecommended] : [],
-          ),
-        );
-      }
-      if (url === `http://localhost:8000/api/jobs/${firstJobId}/approve`) {
-        return Promise.resolve(jsonResponse(firstApproved));
-      }
-      if (url === `http://localhost:8000/api/jobs/${firstJobId}/recommend`) {
-        const signal = options?.signal as AbortSignal | undefined;
-        return new Promise<Response>((_resolve, reject) => {
-          if (signal?.aborted) {
-            firstRecommendationAborted = true;
-            reject(new DOMException("Aborted", "AbortError"));
-            return;
-          }
-          signal?.addEventListener(
-            "abort",
-            () => {
-              firstRecommendationAborted = true;
-              reject(new DOMException("Aborted", "AbortError"));
-            },
-            { once: true },
-          );
-        });
-      }
-      if (
-        url === `http://localhost:8000/api/jobs/${firstJobId}` &&
-        options?.method === "DELETE"
-      ) {
-        return Promise.resolve(new Response(null, { status: 204 }));
-      }
-      if (url === `http://localhost:8000/api/jobs/${secondJobId}/approve`) {
-        return Promise.resolve(jsonResponse(secondApproved));
-      }
-      if (url === `http://localhost:8000/api/jobs/${secondJobId}/recommend`) {
-        secondRecommendationCompleted = true;
-        return Promise.resolve(jsonResponse(secondRecommended));
-      }
-      throw new Error(`Unexpected request: ${String(url)}`);
-    });
-    render(<App />);
-    const user = userEvent.setup();
-
-    await switchToUploadMode(user);
-    await user.upload(screen.getByLabelText("Choose screenshots"), [
-      new File(["first"], firstCreated.original_filename, {
-        type: "image/png",
-      }),
-      new File(["second"], secondCreated.original_filename, {
-        type: "image/png",
-      }),
-    ]);
-    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-
-    await waitFor(() =>
-      expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${firstJobId}/recommend`,
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      ),
-    );
-    await user.click(
-      screen.getByRole("button", {
-        name: "Manage screenshot 1: delete-automated.png",
-      }),
-    );
-    const dialog = screen.getByRole("dialog", { name: "Screenshot details" });
-    await user.click(
-      within(dialog).getByRole("button", { name: "Delete screenshot" }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Delete permanently" }),
-    );
-
-    await waitFor(() => expect(firstRecommendationAborted).toBe(true));
-    const remainingItem = await screen.findByRole("button", {
-      name: "Open screenshot 1: continue-automated.png",
-    });
-    expect(
-      await within(remainingItem).findByText("recommended"),
-    ).toBeInTheDocument();
-    expect(screen.queryByText("delete-automated.png")).not.toBeInTheDocument();
-    expect(secondRecommendationCompleted).toBe(true);
-    expect(screen.queryByText(/Import aborted/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/need attention/)).not.toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ).toBeNull(),
-    );
-  });
-
-  it("mutates an unrelated queue job during automated recommendation", async () => {
-    const recommendationJobId = "7".repeat(32);
-    const unrelatedJobId = "8".repeat(32);
-    const unrelatedJob = approvedJob();
-    unrelatedJob.id = unrelatedJobId;
-    unrelatedJob.original_filename = "unrelated-queue.png";
-    const updatedUnrelatedJob = {
-      ...unrelatedJob,
-      title: "Reviewed independently",
-      updated_at: "2026-07-10T00:03:00Z",
-    };
-    const created = jobRecord({
-      id: recommendationJobId,
-      original_filename: "automated-solver.png",
-    });
-    const approved = {
-      ...approvedJob(),
-      id: recommendationJobId,
-      original_filename: created.original_filename,
-    };
-    const recommended = {
-      ...recommendedJob(),
-      id: recommendationJobId,
-      original_filename: created.original_filename,
-    };
-    const pendingRecommendation = deferredResponse();
-    let unrelatedDeleted = false;
-    window.localStorage.setItem(
-      "poker-training-processing-v1",
-      JSON.stringify([unrelatedJob]),
-    );
-    window.localStorage.setItem("poker-training-processing-total-v1", "1");
-    fetchMock().mockImplementation((url, options) => {
-      if (url === "http://localhost:8000/api/jobs") {
-        if (options?.method === "POST") {
-          return Promise.resolve(jsonResponse(created, 201));
-        }
-        return Promise.resolve(processingQueueResponse([recommended]));
-      }
-      if (
-        url === `http://localhost:8000/api/jobs/${recommendationJobId}/approve`
-      ) {
-        return Promise.resolve(jsonResponse(approved));
-      }
-      if (
-        url ===
-        `http://localhost:8000/api/jobs/${recommendationJobId}/recommend`
-      ) {
-        return pendingRecommendation.promise;
-      }
-      if (url === `http://localhost:8000/api/jobs/${unrelatedJobId}/metadata`) {
-        return Promise.resolve(jsonResponse(updatedUnrelatedJob));
-      }
-      if (
-        url === `http://localhost:8000/api/jobs/${unrelatedJobId}` &&
-        options?.method === "DELETE"
-      ) {
-        unrelatedDeleted = true;
-        return Promise.resolve(new Response(null, { status: 204 }));
-      }
-      if (url === "http://localhost:8000/api/history") {
-        return Promise.resolve(
-          jsonResponse({
-            total: 0,
-            jobs: [],
-            snapshot_version: "history-after-unrelated-delete",
-          }),
-        );
-      }
-      throw new Error(`Unexpected request: ${String(url)}`);
-    });
-    render(<App />);
-    const user = userEvent.setup();
-
-    await switchToUploadMode(user);
-    await user.upload(
-      screen.getByLabelText("Choose screenshots"),
-      new File(["solver"], created.original_filename, { type: "image/png" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-    await waitFor(() =>
-      expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${recommendationJobId}/recommend`,
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      ),
-    );
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /Manage screenshot \d+: unrelated-queue\.png/,
-      }),
-    );
-    const dialog = screen.getByRole("dialog", { name: "Screenshot details" });
-    await user.type(
-      within(dialog).getByLabelText("Title"),
-      "Reviewed independently",
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Save details" }),
-    );
-    await waitFor(() =>
-      expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${unrelatedJobId}/metadata`,
-        expect.objectContaining({ method: "PUT" }),
-      ),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Delete screenshot" }),
-    );
-    await user.click(
-      within(dialog).getByRole("button", { name: "Delete permanently" }),
-    );
-
-    await waitFor(() => expect(unrelatedDeleted).toBe(true));
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).not.toBeNull();
-    expect(
-      screen.queryByText(
-        "Finishing recovery from a previous action. Try again in a moment.",
-      ),
-    ).not.toBeInTheDocument();
-
-    await act(async () => {
-      pendingRecommendation.resolve(jsonResponse(recommended));
-      await pendingRecommendation.promise;
-    });
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(screen.queryByText("unrelated-queue.png")).not.toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ).toBeNull(),
-    );
-  });
-
-  it("restores the persisted provider error when upload automation fails", async () => {
-    const jobId = "f".repeat(32);
-    const created = jobRecord({
-      id: jobId,
-      original_filename: "recommendation-failed.png",
-    });
-    const approved = {
-      ...approvedJob(),
-      id: jobId,
-      original_filename: "recommendation-failed.png",
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    const failedJob: JobRecord = {
-      ...approved,
-      status: "error",
-      error: "Solver unavailable",
-      updated_at: "2026-07-10T00:02:00Z",
-    };
-    fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(approved))
-      .mockResolvedValueOnce(
-        jsonResponse({ detail: "Solver unavailable" }, 502),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          total: 1,
-          jobs: [failedJob],
-          snapshot_version: "failed-processing-snapshot",
-        }),
-      );
-    const firstRender = render(<App />);
-    const user = userEvent.setup();
-
-    await switchToUploadMode(user);
-    await user.upload(
-      screen.getByLabelText("Choose screenshots"),
-      new File(["failed"], "recommendation-failed.png", { type: "image/png" }),
-    );
-    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-
-    const attentionItem = await screen.findByRole("button", {
-      name: "Open screenshot 1: recommendation-failed.png",
-    });
-    expect(await within(attentionItem).findByText("error")).toBeInTheDocument();
-    expect(
-      within(attentionItem).getByText("Solver unavailable"),
-    ).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        JSON.parse(
-          String(window.localStorage.getItem("poker-training-processing-v1")),
-        ),
-      ).toEqual([
-        {
-          ...failedJob,
-          upload_request_id: expect.any(String),
-        },
-      ]),
-    );
-
-    firstRender.unmount();
-    render(<App />);
-
-    const restoredItem = await screen.findByRole("button", {
-      name: "Open screenshot 1: recommendation-failed.png",
-    });
-    expect(within(restoredItem).getByText("error")).toBeInTheDocument();
-    expect(
-      within(restoredItem).getByText("Solver unavailable"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeEnabled();
-    expect(
-      screen.getByRole("button", {
-        name: "Clear reviewed",
-      }),
-    ).toBeDisabled();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-synced"),
-    ).toBe("true");
-  });
-
-  it("clears upload attention after reconciliation restores a completed recommendation", async () => {
-    const jobId = "3".repeat(32);
-    const created = jobRecord({
-      id: jobId,
-      original_filename: "recommendation-response-lost.png",
-    });
-    const approved = {
-      ...approvedJob(),
-      id: jobId,
-      original_filename: "recommendation-response-lost.png",
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    const persistedRecommendation = {
-      ...recommendedJob(),
-      id: jobId,
-      original_filename: "recommendation-response-lost.png",
-      updated_at: "2026-07-10T00:02:00Z",
-    };
-    const pendingQueue = deferredResponse();
-    fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(approved))
-      .mockRejectedValueOnce(
-        new TypeError("Connection lost after recommendation"),
-      )
-      .mockReturnValueOnce(pendingQueue.promise);
-    render(<App />);
-    const user = userEvent.setup();
-
-    await switchToUploadMode(user);
-    await user.upload(
-      screen.getByLabelText("Choose screenshots"),
-      new File(["lost-response"], "recommendation-response-lost.png", {
-        type: "image/png",
-      }),
-    );
-    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-
-    const attentionItem = await screen.findByRole("button", {
-      name: "Open screenshot 1: recommendation-response-lost.png",
-    });
-    expect(attentionItem).toHaveClass("attention");
-    expect(
-      within(attentionItem).getByText("Connection lost after recommendation"),
-    ).toBeInTheDocument();
-
-    await act(async () => {
-      pendingQueue.resolve(
-        processingQueueResponse(
-          [persistedRecommendation],
-          "persisted-automation-recommendation",
-        ),
-      );
-      await pendingQueue.promise;
-    });
-
-    await waitFor(() =>
-      expect(
-        within(attentionItem).getByText("recommended"),
-      ).toBeInTheDocument(),
-    );
-    expect(attentionItem).not.toHaveClass("attention");
-    expect(
-      within(attentionItem).queryByText("Connection lost after recommendation"),
-    ).not.toBeInTheDocument();
-    expect(
-      JSON.parse(
-        String(window.localStorage.getItem("poker-training-processing-v1")),
-      ),
-    ).toEqual([
-      {
-        ...persistedRecommendation,
-        upload_request_id: expect.any(String),
-      },
-    ]);
-  });
-
-  it("settles upload recovery after a lost correctable recommendation response", async () => {
-    const jobId = "4".repeat(32);
-    const created = jobRecord({
-      id: jobId,
-      original_filename: "correctable-response-lost.png",
-    });
-    const approved = {
-      ...approvedJob(),
-      id: jobId,
-      original_filename: created.original_filename,
-      updated_at: "2026-07-10T00:01:00Z",
-    };
-    const pendingQueue = deferredResponse();
-    const finalQueue = deferredResponse();
-    let uploadRequestId = "";
-    let recommendationRequestId = "";
-    let processingReads = 0;
-    fetchMock().mockImplementation((url, request) => {
-      if (url === "http://localhost:8000/api/jobs") {
-        if (request?.method === "POST") {
-          uploadRequestId = String(
-            (request.body as FormData).get("upload_request_id"),
-          );
-          return Promise.resolve(jsonResponse(created, 201));
-        }
-        processingReads += 1;
-        return processingReads === 1
-          ? pendingQueue.promise
-          : nextDeferredResponse(finalQueue);
-      }
-      if (url === `http://localhost:8000/api/jobs/${jobId}/approve`) {
-        return Promise.resolve(jsonResponse(approved));
-      }
-      if (url === `http://localhost:8000/api/jobs/${jobId}/recommend`) {
-        recommendationRequestId = String(
-          (request?.headers as Record<string, string>)[
-            "X-Recommendation-Request-ID"
-          ],
-        );
-        return Promise.reject(
-          new TypeError("Connection lost after correctable recommendation"),
-        );
-      }
-      throw new Error(`Unexpected request: ${String(url)}`);
-    });
-    render(<App />);
-    const user = userEvent.setup();
-
-    await switchToUploadMode(user);
-    await user.upload(
-      screen.getByLabelText("Choose screenshots"),
-      new File(["lost-response"], created.original_filename, {
-        type: "image/png",
-      }),
-    );
-    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-
-    expect(
-      await screen.findByText(
-        "Connection lost after correctable recommendation",
-      ),
-    ).toBeInTheDocument();
-    const persistedLease = JSON.parse(
-      String(
-        window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ),
-    );
-    expect(uploadRequestId).not.toBe("");
-    expect(recommendationRequestId).not.toBe("");
-    expect(persistedLease.expectedUploads).toEqual([
-      {
-        requestId: uploadRequestId,
-        target: "recommended",
-        recommendationRequestId,
-      },
-    ]);
-
-    await user.click(screen.getByRole("button", { name: "Automation On" }));
-    const pendingAttempt: JobRecord = {
-      ...approved,
-      upload_request_id: uploadRequestId,
-      recommendation_request_id: recommendationRequestId,
-      recommendation_pending: true,
-      updated_at: "2026-07-10T00:02:00Z",
-    };
-    await act(async () => {
-      pendingQueue.resolve(
-        processingQueueResponse([pendingAttempt], "pending-automation-attempt"),
-      );
-      await pendingQueue.promise;
-    });
-
-    const pendingItem = screen.getByRole("button", {
-      name: "Open screenshot 1: correctable-response-lost.png",
-    });
-    expect(pendingItem).toHaveClass("attention");
-    expect(
-      within(pendingItem).getByText(
-        "Connection lost after correctable recommendation",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-    ).not.toBeNull();
-    await waitFor(() => expect(processingReads).toBeGreaterThanOrEqual(2));
-    window.dispatchEvent(
-      new StorageEvent("storage", {
-        key: "poker-training-processing-v1",
-      }),
-    );
-    await waitFor(() => expect(processingReads).toBeGreaterThanOrEqual(3));
-
-    const persistedAttempt: JobRecord = {
-      ...approved,
-      upload_request_id: uploadRequestId,
-      recommendation_request_id: recommendationRequestId,
-      recommendation_pending: false,
-      updated_at: "2026-07-10T00:03:00Z",
-    };
-    await act(async () => {
-      finalQueue.resolve(
-        processingQueueResponse(
-          [persistedAttempt],
-          "correctable-automation-attempt",
-        ),
-      );
-      await finalQueue.promise;
-    });
-
-    await waitFor(() =>
-      expect(
-        window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ).toBeNull(),
-    );
-    const recoveredItem = screen.getByRole("button", {
-      name: "Open screenshot 1: correctable-response-lost.png",
-    });
-    expect(recoveredItem).not.toHaveClass("attention");
-    expect(
-      within(recoveredItem).queryByText(
-        "Connection lost after correctable recommendation",
-      ),
-    ).not.toBeInTheDocument();
-    expect(
-      JSON.parse(
-        String(window.localStorage.getItem("poker-training-processing-v1")),
-      ),
-    ).toEqual([persistedAttempt]);
   });
 
   it("invalidates an older history restore while clearing reviewed jobs", async () => {
@@ -2340,13 +1589,9 @@ describe("Analyzer capture and automation", () => {
   });
 
   it("keeps completed jobs in processing when history persistence fails", async () => {
-    const created = jobRecord({ original_filename: "retry.png" });
-    const approved = { ...approvedJob(), original_filename: "retry.png" };
     const recommended = { ...recommendedJob(), original_filename: "retry.png" };
     fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(approved))
-      .mockResolvedValueOnce(jsonResponse(recommended))
+      .mockResolvedValueOnce(jsonResponse(recommended, 201))
       .mockResolvedValueOnce(processingQueueResponse([recommended]))
       .mockResolvedValueOnce(
         jsonResponse({ detail: "History storage is unavailable" }, 500),
@@ -2358,6 +1603,7 @@ describe("Analyzer capture and automation", () => {
     render(<App />);
     const user = userEvent.setup();
 
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(
       screen.getByLabelText("Choose screenshots"),
@@ -2593,19 +1839,12 @@ describe("Analyzer capture and automation", () => {
   });
 
   it("clears persisted jobs when the bounded browser history cache is unavailable", async () => {
-    const created = jobRecord({ original_filename: "storage-disabled.png" });
-    const approved = {
-      ...approvedJob(),
-      original_filename: "storage-disabled.png",
-    };
     const recommended = {
       ...recommendedJob(),
       original_filename: "storage-disabled.png",
     };
     fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(approved))
-      .mockResolvedValueOnce(jsonResponse(recommended))
+      .mockResolvedValueOnce(jsonResponse(recommended, 201))
       .mockResolvedValueOnce(processingQueueResponse([recommended]))
       .mockResolvedValueOnce(
         jsonResponse({
@@ -2622,6 +1861,7 @@ describe("Analyzer capture and automation", () => {
     render(<App />);
     const user = userEvent.setup();
 
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     await user.upload(
       screen.getByLabelText("Choose screenshots"),
@@ -2653,119 +1893,6 @@ describe("Analyzer capture and automation", () => {
     ).toBeNull();
   });
 
-  it("stops automation before approval when parser warnings are not allowed", async () => {
-    stubDisplayMedia("window");
-    stubCanvasCapture();
-    const created = jobRecord({
-      parser_result: {
-        state: detectedState,
-        confidences: { hero_cards: 0.71, street: 0.9 },
-        warnings: ["Hero cards need manual review"],
-        raw: {},
-      },
-    });
-    fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(processingQueueResponse([created]));
-    render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Share window" }));
-    expect(
-      await screen.findByText("Window sharing active"),
-    ).toBeInTheDocument();
-    setSharedPreviewSize();
-
-    await user.click(screen.getByRole("button", { name: "Capture and parse" }));
-
-    expect(
-      await screen.findByText(
-        "Automation stopped: parser warnings need manual review",
-      ),
-    ).toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledTimes(2);
-    expect(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    ).toBeDisabled();
-  });
-
-  it("allows threshold-eligible parser warnings when browser automation permits them", async () => {
-    window.localStorage.setItem(
-      "poker-training-automation-v1",
-      JSON.stringify({
-        enabled: true,
-        autoApprove: true,
-        autoRecommend: true,
-        allowWarnings: true,
-      }),
-    );
-    const created = jobRecord({
-      parser_result: {
-        ...jobRecord().parser_result!,
-        warnings: ["Hero cards need manual review"],
-      },
-    });
-    fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(jsonResponse(approvedJob()))
-      .mockResolvedValueOnce(jsonResponse(recommendedJob()))
-      .mockResolvedValueOnce(processingQueueResponse([recommendedJob()]));
-    render(<App />);
-    const user = userEvent.setup();
-    await switchToUploadMode(user);
-    await user.upload(
-      screen.getByLabelText("Choose screenshots"),
-      new File(["warning"], "warning.png", { type: "image/png" }),
-    );
-
-    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(fetchMock().mock.calls.map(([input]) => String(input))).toContain(
-      "http://localhost:8000/api/jobs/job-123/approve",
-    );
-  });
-
-  it("stops automation before approval when parser confidence misses configured requirements", async () => {
-    stubDisplayMedia("window");
-    stubCanvasCapture();
-    const created = jobRecord({
-      parser_auto_approval_eligible: false,
-      parser_result: {
-        state: detectedState,
-        confidences: {
-          ...jobRecord().parser_result!.confidences,
-          hero_cards: 0.2,
-        },
-        warnings: [],
-        raw: {},
-      },
-    });
-    fetchMock()
-      .mockResolvedValueOnce(jsonResponse(created, 201))
-      .mockResolvedValueOnce(processingQueueResponse([created]));
-    render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "Share window" }));
-    expect(
-      await screen.findByText("Window sharing active"),
-    ).toBeInTheDocument();
-    setSharedPreviewSize();
-
-    await user.click(screen.getByRole("button", { name: "Capture and parse" }));
-
-    expect(
-      await screen.findByText(
-        "Automation stopped: parser confidence is below the configured auto-approval requirements",
-      ),
-    ).toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledTimes(2);
-    expect(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    ).toBeDisabled();
-  });
-
   it("rejects a selected source that does not match the active share mode", async () => {
     const stop = vi.fn();
     const getDisplayMedia = vi.fn().mockResolvedValue({
@@ -2779,7 +1906,7 @@ describe("Analyzer capture and automation", () => {
       value: { getDisplayMedia },
     });
     render(<App />);
-    const user = userEvent.setup();
+    const user = await unlockAdministrativeAccess();
 
     await user.click(screen.getByRole("button", { name: "Tab" }));
     await user.click(screen.getByRole("button", { name: "Share tab" }));

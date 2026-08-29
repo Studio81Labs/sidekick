@@ -1,44 +1,11 @@
-import type { CanonicalState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
 import { type PersistedJobMutationScope } from "./mutationLeaseTypes";
-import { toCanonicalState } from "../../../domains/poker/model/canonicalPokerState";
-import {
-  formToCanonical,
-  stateToForm,
-} from "../../../domains/poker/model/pokerStateConversion";
 
 export type ActiveRecommendationRequest = {
   mutationScope: PersistedJobMutationScope;
   controller: AbortController;
   ownsMutationLease: boolean;
 };
-
-export function autoApprovalState(
-  job: JobRecord,
-  allowWarnings: boolean,
-): CanonicalState {
-  if (!job.parser_result) {
-    throw new Error("Automation stopped: parser did not return a state");
-  }
-  if (!allowWarnings && job.parser_result.warnings.length > 0) {
-    throw new Error("Automation stopped: parser warnings need manual review");
-  }
-  if (job.parser_auto_approval_eligible !== true) {
-    throw new Error(
-      job.parser_auto_approval_eligible === false
-        ? "Automation stopped: parser confidence is below the configured auto-approval requirements"
-        : "Automation stopped: parser confidence eligibility needs manual review",
-    );
-  }
-
-  const state = formToCanonical(
-    stateToForm(toCanonicalState(job.parser_result.state)),
-  );
-  if (state.hero_cards.length === 0 || !state.street) {
-    throw new Error("Automation stopped: parser state needs manual review");
-  }
-  return state;
-}
 
 export function isHistoryReady(job: JobRecord): boolean {
   return (

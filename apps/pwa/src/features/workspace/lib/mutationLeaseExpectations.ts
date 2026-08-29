@@ -99,14 +99,3 @@ export function jobMutationExpectationReached(
   }
   return job.benchmark_included === expectation.included;
 }
-
-export function projectionMutationTarget(
-  runAutomation: boolean,
-  autoApprove: boolean,
-  autoRecommend: boolean,
-): ProjectionMutationTarget {
-  if (!runAutomation || !autoApprove) {
-    return "parsed";
-  }
-  return autoRecommend ? "recommended" : "approved";
-}

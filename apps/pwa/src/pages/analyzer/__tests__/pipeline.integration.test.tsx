@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AnalyzerTestApp as App,
-  disableAutomation,
+  unlockAdministrativeAccess,
   fetchMock,
   jobRecord,
   jsonResponse,
@@ -241,7 +241,7 @@ describe("Analyzer pipeline", () => {
     );
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
 
-    await disableAutomation(user);
+    await unlockAdministrativeAccess(user);
     await switchToUploadMode(user);
     const file = new File(["image"], "poker-table.png", { type: "image/png" });
     await user.upload(screen.getByLabelText("Choose screenshots"), file);

@@ -98,6 +98,9 @@ export function jobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
   return {
     id: "job-123",
     status: "parsed",
+    // Mocked uploads stand in for records persisted before #413 so review and
+    // recommendation flows stay testable; administrative scenarios override it.
+    input_context: "legacy_player",
     upload_request_id: null,
     original_filename: "table.png",
     image_filename: "job-123.png",
@@ -276,19 +279,28 @@ export async function switchToUploadMode(user = userEvent.setup()) {
   return user;
 }
 
-export async function disableAutomation(user = userEvent.setup()) {
-  const automationButton = screen.queryByRole("button", {
-    name: "Automation On",
-  });
-  if (automationButton) {
-    await user.click(automationButton);
+export const ADMINISTRATOR_TOKEN =
+  "test-administrative-ocr-token-0123456789abcdef";
+
+export async function unlockAdministrativeAccess(user = userEvent.setup()) {
+  if (screen.queryByRole("note", { name: "Administrative OCR test mode" })) {
+    return user;
   }
+  await user.click(screen.getByRole("button", { name: "Administrator tools" }));
+  await user.type(
+    screen.getByLabelText("Administrative OCR test token"),
+    ADMINISTRATOR_TOKEN,
+  );
+  await user.click(screen.getByRole("button", { name: "Unlock" }));
+  await user.click(
+    screen.getByRole("button", { name: "Close administrator tools" }),
+  );
   return user;
 }
 
 export async function uploadScreenshot(name = "table.png") {
   const user = userEvent.setup();
-  await disableAutomation(user);
+  await unlockAdministrativeAccess(user);
   await switchToUploadMode(user);
   const input = screen.getByLabelText("Choose screenshots");
   const file = new File(["not-real-image-bytes"], name, { type: "image/png" });

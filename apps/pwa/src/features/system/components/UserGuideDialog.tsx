@@ -23,6 +23,26 @@ interface GuideTopic {
 
 const GUIDE_TOPICS: GuideTopic[] = [
   {
+    id: "player-workflow",
+    label: "Player workflow",
+    title: "Analyze imported hand histories",
+    introduction:
+      "Player analysis is import-first. Hands reach the workspace as imported hand histories, and every review, recommendation, and training decision is based on that imported data.",
+    steps: [
+      {
+        title: "Work from imported hands",
+        description:
+          "Imported hand histories are the player data path. They carry the table state the solver reasons about and the decisions Training progress scores.",
+      },
+      {
+        title: "Screenshots are not a player path",
+        description:
+          "Screenshot upload and live capture are administrator-only parser test tools. They stay hidden until an administrator unlocks them and are not used for player analysis.",
+      },
+    ],
+    note: "Because screenshots are administrative test inputs, they never request recommendations, create decision points, or enter training.",
+  },
+  {
     id: "quick-start",
     label: "Quick start",
     title: "Review your first hand",
@@ -30,9 +50,9 @@ const GUIDE_TOPICS: GuideTopic[] = [
       "A complete review moves from a screenshot to a verified table state, then to educational guidance.",
     steps: [
       {
-        title: "Add a screenshot",
+        title: "Open a hand",
         description:
-          "Choose Upload for saved images or Live to capture a frame from a browser tab, window, or screen.",
+          "Select an imported hand from the queue or History. Screenshot upload and live capture are administrator-only parser test tools.",
       },
       {
         title: "Verify the detected state",
@@ -60,10 +80,15 @@ const GUIDE_TOPICS: GuideTopic[] = [
   {
     id: "input-queue",
     label: "Input and queue",
-    title: "Capture and process screenshots",
+    title: "Administrator OCR test tools",
     introduction:
-      "Each screenshot is an independent queue item, so a failed image does not discard successful work from the same batch.",
+      "Screenshot upload and live capture exist only to test the parser. They are hidden until an administrator unlocks them, and the server verifies the credential on every upload or capture.",
     steps: [
+      {
+        title: "Unlock administrator tools",
+        description:
+          "Open Administrator tools in the header and enter the deployment's administrative OCR test token. The token is held in memory for this session only and is never stored.",
+      },
       {
         title: "Upload one or many images",
         description:
@@ -72,20 +97,15 @@ const GUIDE_TOPICS: GuideTopic[] = [
       {
         title: "Capture a shared source",
         description:
-          "Open Live, choose Tab, Window, or Screen, and share through the browser picker. Browser support determines which source types are available.",
+          "Open Live, choose Tab, Window, or Screen, and share through the browser picker. Capture a still image when the complete hand state is visible; only the image is analyzed, not webpage HTML.",
       },
       {
-        title: "Capture the useful frame",
+        title: "Test inputs stay administrative",
         description:
-          "Once sharing is active, capture a still image when the complete hand state is visible. Only the image is analyzed, not webpage HTML.",
-      },
-      {
-        title: "Manage queue items",
-        description:
-          "Select any queue row to review it. Open screenshot details with the pencil button to add a title, comment, or tags, or to delete the image.",
+          "Uploaded and captured hands are marked as administrative test data. They never request recommendations, create decision points, or enter training.",
       },
     ],
-    note: "For large batches, the processing overlay reports progress and can abort the remaining unprocessed items.",
+    note: "Lock the tools again from the banner or the dialog when testing is finished. Locking also stops any active screen share.",
   },
   {
     id: "review-state",
@@ -116,36 +136,6 @@ const GUIDE_TOPICS: GuideTopic[] = [
       },
     ],
     note: "Missing context is left visible rather than guessed. A fallback recommendation can be less specific than a fully supported solver tree.",
-  },
-  {
-    id: "automation",
-    label: "Automation",
-    title: "Automate trusted parts of the workflow",
-    introduction:
-      "Automation can move high-confidence screenshots through approval and recommendation while leaving uncertain hands for you.",
-    steps: [
-      {
-        title: "Turn on the master control",
-        description:
-          "Use Automation in the header to enable or pause control-panel automation for new uploads and captured frames. A deployment may independently auto-approve confidence-eligible, warning-free parses even when this browser control is off.",
-      },
-      {
-        title: "Choose automated actions",
-        description:
-          "Open the gear to configure auto-approval, automatic recommendations, and whether parser warnings may pass without review.",
-      },
-      {
-        title: "Review attention items",
-        description:
-          "Automation continues through the batch when one hand fails. Items needing attention remain in the queue with their own status.",
-      },
-      {
-        title: "Take manual control again",
-        description:
-          "Use refresh on a processed hand to unlock its state and recommendation controls before making corrections.",
-      },
-    ],
-    note: "The backend applies its configured confidence requirements before control-panel automation may approve a hand. Automation-only hands are not scored in Training progress because no pre-reveal player decision was recorded.",
   },
   {
     id: "recommendations",

@@ -1,0 +1,6 @@
+.import-first-notice p {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}

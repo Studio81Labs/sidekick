@@ -16,12 +16,16 @@ import {
 } from "../../shared/lib/screenshotMetadata";
 import { screenshotLabel } from "../../shared/lib/screenshotPresentation";
 import { PERSISTED_JOB_ID_PATTERN } from "../../shared/lib/jobIdentity";
-import { useAutomationSettings } from "../../features/automation/hooks/useAutomationSettings";
 import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchmarkController";
 import {
   applicationBackupUrl,
   restoreApplicationBackupCommand,
 } from "../../features/backups/services/restoreApplicationBackupCommand";
+import {
+  administrativeAccessDenial,
+  administrativeAccessDenialMessage,
+} from "../../features/admin-ocr-test/lib/administrativeAccess";
+import { useAdministrativeAccess } from "../../features/admin-ocr-test/hooks/useAdministrativeAccess";
 import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource";
 import { uploadScreenshotCommand } from "../../features/capture/services/uploadScreenshotCommand";
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
@@ -82,7 +86,6 @@ import {
 import {
   jobMutationExpectationReached,
   projectionMutationLeaseTargetReached,
-  projectionMutationTarget,
   projectionMutationTargetReached,
 } from "../../features/workspace/lib/mutationLeaseExpectations";
 import { createMutationRequestId } from "../../features/workspace/lib/mutationLeaseFactories";
@@ -122,7 +125,6 @@ import {
 } from "../../features/training/lib/trainingFocusPresentation";
 import { trainingReviewQueueStatus } from "../../features/training/lib/trainingQueuePresentation";
 import {
-  autoApprovalState,
   createLocalErrorJob,
   isHistoryReady,
   isProcessingJobInProgress,
@@ -364,13 +366,10 @@ export function useAnalyzerWorkspaceController({
     stopShare: onStopScreenShare,
     videoRef,
   } = useCaptureSource({ onError: setError });
-  const {
-    dialogOpen: automationDialogOpen,
-    setDialogOpen: setAutomationDialogOpen,
-    settings: automationSettings,
-    update: updateAutomationSettings,
-    updateAutoApprove: updateAutomationApprove,
-  } = useAutomationSettings();
+  const administrativeAccess = useAdministrativeAccess({
+    onLock: onStopScreenShare,
+  });
+  const [checkingCapability, setCheckingCapability] = useState(false);
   const {
     closeDialog: closeInfoDialog,
     dialogOpen: infoDialogOpen,
@@ -902,15 +901,6 @@ export function useAnalyzerWorkspaceController({
       : "No table selected";
   const frameStreet = form.street === "" ? "No street" : form.street;
   const queueCount = jobs.length > 0 ? jobs.length : files.length;
-  const liveStatusLabel = screenSharing
-    ? `${screenSourceLabel ?? shareModeLabel(shareMode)} sharing`
-    : inputMode === "upload"
-      ? "Upload queue"
-      : "Live capture";
-  const automationEnabled = automationSettings.enabled;
-  const automationApprove = automationSettings.autoApprove;
-  const automationRecommend = automationSettings.autoRecommend;
-  const automationAllowWarnings = automationSettings.allowWarnings;
   const clearableJobs = useMemo(() => jobs.filter(isHistoryReady), [jobs]);
   const historySearchActive = historySearchResults !== null;
   const visibleHistory = historySearchResults ?? history;
@@ -1882,7 +1872,7 @@ export function useAnalyzerWorkspaceController({
         const nextJobsById = new Map(
           nextJobs.map((candidate) => [candidate.id, candidate]),
         );
-        const recoveredAutomationIds = new Set(
+        const recoveredJobIds = new Set(
           incomingJobs.flatMap((incomingJob) => {
             const currentJob = currentJobsById.get(incomingJob.id);
             const reconciledJob = nextJobsById.get(incomingJob.id);
@@ -1893,21 +1883,18 @@ export function useAnalyzerWorkspaceController({
                     incomingJob,
                   )
                 : null;
-            const reachedCurrentAutomationTarget =
-              incomingJob.approved_state !== null &&
-              (!automationRecommend || incomingJob.recommendation !== null);
-            const reachedAutomationTarget =
+            const reachedRecoveryTarget =
               incomingJob.error === null &&
               (reachedPersistedProjectionTarget ??
-                reachedCurrentAutomationTarget);
+                incomingJob.approved_state !== null);
             return currentJob &&
               reconciledJob !== currentJob &&
-              reachedAutomationTarget
+              reachedRecoveryTarget
               ? [incomingJob.id]
               : [];
           }),
         );
-        clearJobAttentionEntries(recoveredAutomationIds);
+        clearJobAttentionEntries(recoveredJobIds);
         const preservedMissingDirtyJob =
           formDirtyRef.current &&
           currentActiveJob !== null &&
@@ -2614,77 +2601,17 @@ export function useAnalyzerWorkspaceController({
     }
   }
 
-  async function runConfiguredAutomation(
-    created: JobRecord,
-    recommendationRequestId: string | null,
-    signal?: AbortSignal,
-  ): Promise<JobRecord> {
-    if (!automationApprove) {
-      return created;
-    }
-    if (signal?.aborted) {
-      throw new DOMException("Aborted", "AbortError");
-    }
-
-    const approvalState = autoApprovalState(created, automationAllowWarnings);
-    markPersistedJobSessionUnsynced(created);
-    const approved = preserveUploadRequestId(
-      (
-        await approveStateCommand(queryClient, {
-          jobId: created.id,
-          state: approvalState,
-          signal,
-        })
-      ).job,
-      created,
-    );
-    applyApprovedJob(approved, approvalState);
-
-    if (!automationRecommend) {
-      return approved;
-    }
-
-    const recommendationController = new AbortController();
-    const abortRecommendation = () => recommendationController.abort();
-    if (signal?.aborted) {
-      abortRecommendation();
-    } else {
-      signal?.addEventListener("abort", abortRecommendation, { once: true });
-    }
-    activeRecommendationRequestsRef.current.set(approved.id, {
-      mutationScope: persistedJobMutationScope(approved),
-      controller: recommendationController,
-      ownsMutationLease: false,
-    });
-    markPersistedJobSessionUnsynced(approved);
+  async function checkAdministrativeCapability() {
+    setCheckingCapability(true);
     try {
-      const recommended = preserveUploadRequestId(
-        (
-          await requestRecommendationCommand(queryClient, {
-            jobId: approved.id,
-            requestId: recommendationRequestId ?? createMutationRequestId(),
-            signal: recommendationController.signal,
-          })
-        ).job,
-        approved,
-      );
-      if (jobsRef.current.some((candidate) => candidate.id === approved.id)) {
-        applyRecommendedJob(recommended);
-      }
-      return recommended;
+      await loadPipelineCapabilities();
     } finally {
-      signal?.removeEventListener("abort", abortRecommendation);
-      if (
-        activeRecommendationRequestsRef.current.get(approved.id)?.controller ===
-        recommendationController
-      ) {
-        activeRecommendationRequestsRef.current.delete(approved.id);
-      }
+      setCheckingCapability(false);
     }
   }
 
   async function uploadSelectedFiles(
-    runAutomation: boolean,
+    administratorToken: string,
     expectedUploads: ProjectionMutationLease["expectedUploads"],
   ): Promise<JobRecord[]> {
     const selectedFiles = [...files];
@@ -2703,6 +2630,7 @@ export function useAnalyzerWorkspaceController({
 
     const completedJobs: JobRecord[] = [];
     const attentionMessages: string[] = [];
+    let administrativeDenialMessage: string | null = null;
     let completedCount = 0;
     let failedCount = 0;
     let skippedCount = 0;
@@ -2732,77 +2660,33 @@ export function useAnalyzerWorkspaceController({
       const expectedUpload = expectedUploads[index];
       try {
         const { job: created } = await uploadScreenshotCommand(queryClient, {
+          administratorToken,
           file: selectedFile,
           requestId: expectedUpload.requestId,
           signal: controller.signal,
           pipeline: pipelineSelection ?? undefined,
         });
-        updateExpectedUpload(
-          expectedUploadIndex,
-          projectionMutationTarget(
-            runAutomation,
-            automationApprove,
-            automationRecommend,
-          ),
-        );
+        updateExpectedUpload(expectedUploadIndex, "parsed");
         appendJob(created);
-        let completed = created;
-        let includeCompletedJob = true;
-        if (runAutomation) {
-          try {
-            completed = await runConfiguredAutomation(
-              created,
-              expectedUpload.recommendationRequestId,
-              controller.signal,
-            );
-          } catch (automationError) {
-            const confirmedJob = jobsRef.current.find(
-              (candidate) => candidate.id === created.id,
-            );
-            if (isAbortError(automationError) && controller.signal.aborted) {
-              if (confirmedJob) {
-                completedJobs.push(confirmedJob);
-              }
-              completedCount += 1;
-              skippedCount = selectedFiles.length - completedCount;
-              discardUnstartedUploads(index + 1);
-              break;
-            }
-            if (!confirmedJob) {
-              updateExpectedUpload(expectedUploadIndex, "failed");
-              includeCompletedJob = false;
-            } else if (
-              !mutationFailureMayHavePersistedSideEffect(automationError)
-            ) {
-              updateExpectedUpload(
-                expectedUploadIndex,
-                confirmedJob.recommendation !== null
-                  ? "recommended"
-                  : confirmedJob.approved_state !== null
-                    ? "approved"
-                    : "parsed",
-              );
-            }
-            if (confirmedJob) {
-              const message = messageFromError(
-                automationError,
-                "Automation stopped for this screenshot",
-              );
-              markJobAttention(created.id, message);
-              completed = confirmedJob;
-              attentionMessages.push(`${selectedFile.name}: ${message}`);
-              failedCount += 1;
-            }
-          }
-        }
-        if (includeCompletedJob) {
-          completedJobs.push(completed);
-        }
+        completedJobs.push(created);
         completedCount += 1;
       } catch (uploadError) {
         if (isAbortError(uploadError)) {
           skippedCount = selectedFiles.length - completedCount;
           discardUnstartedUploads(index + 1);
+          break;
+        }
+        const denial =
+          uploadError instanceof ApiResponseError
+            ? administrativeAccessDenial(uploadError.status)
+            : null;
+        if (denial !== null) {
+          updateExpectedUpload(expectedUploadIndex, "failed");
+          administrativeDenialMessage =
+            administrativeAccessDenialMessage(denial);
+          administrativeAccess.lock();
+          skippedCount = selectedFiles.length - completedCount;
+          discardUnstartedUploads(index);
           break;
         }
         if (
@@ -2837,7 +2721,9 @@ export function useAnalyzerWorkspaceController({
     if (completedJobs.length > 1) {
       activateJob(completedJobs[0], "replace");
     }
-    if (controller.signal.aborted || queueAbortRequestedRef.current) {
+    if (administrativeDenialMessage !== null) {
+      setError(administrativeDenialMessage);
+    } else if (controller.signal.aborted || queueAbortRequestedRef.current) {
       setError(
         `Import aborted. ${skippedCount} unprocessed screenshot${skippedCount === 1 ? "" : "s"} discarded.`,
       );
@@ -2857,19 +2743,20 @@ export function useAnalyzerWorkspaceController({
     if (files.length === 0 || mutationRecoveryPending(["processing"])) {
       return;
     }
+    const administratorToken = administrativeAccess.token;
+    if (administratorToken === null) {
+      setError(
+        "Unlock administrator tools before uploading or capturing screenshots.",
+      );
+      return;
+    }
     setBusy(true);
     setError(null);
     beginProcessingMembershipMutation();
-    const uploadTarget = projectionMutationTarget(
-      automationEnabled,
-      automationApprove,
-      automationRecommend,
-    );
     const expectedUploads = files.map(() => ({
       requestId: createMutationRequestId(),
-      target: uploadTarget,
-      recommendationRequestId:
-        uploadTarget === "recommended" ? createMutationRequestId() : null,
+      target: "parsed" as const,
+      recommendationRequestId: null,
     }));
     installMutationLease(
       "processing",
@@ -2882,7 +2769,7 @@ export function useAnalyzerWorkspaceController({
     );
     try {
       const completedJobs = await uploadSelectedFiles(
-        automationEnabled,
+        administratorToken,
         expectedUploads,
       );
       settlePersistedMutationLease("processing", completedJobs, false);
@@ -2901,8 +2788,10 @@ export function useAnalyzerWorkspaceController({
   async function captureAndParseScreen(
     file: File,
     uploadRequestId: string,
+    administratorToken: string,
   ): Promise<JobRecord> {
     const { job: created } = await uploadScreenshotCommand(queryClient, {
+      administratorToken,
       file,
       requestId: uploadRequestId,
       pipeline: pipelineSelection ?? undefined,
@@ -2913,6 +2802,13 @@ export function useAnalyzerWorkspaceController({
 
   async function onCaptureScreen() {
     if (mutationRecoveryPending(["processing"])) {
+      return;
+    }
+    const administratorToken = administrativeAccess.token;
+    if (administratorToken === null) {
+      setError(
+        "Unlock administrator tools before uploading or capturing screenshots.",
+      );
       return;
     }
     setBusy(true);
@@ -2930,30 +2826,20 @@ export function useAnalyzerWorkspaceController({
           processingJobsForCache(jobsRef.current),
         ),
       );
-      const uploadTarget = projectionMutationTarget(
-        automationEnabled,
-        automationApprove,
-        automationRecommend,
-      );
       const uploadRequestId = createMutationRequestId();
-      const recommendationRequestId =
-        uploadTarget === "recommended" ? createMutationRequestId() : null;
       expectedUploadIndex = trackExpectedUpload(
         uploadRequestId,
-        uploadTarget,
-        recommendationRequestId,
+        "parsed",
+        null,
       );
-      const created = await captureAndParseScreen(captureFile, uploadRequestId);
+      const created = await captureAndParseScreen(
+        captureFile,
+        uploadRequestId,
+        administratorToken,
+      );
       capturedJobId = created.id;
-      updateExpectedUpload(expectedUploadIndex, uploadTarget);
-      let completed = created;
-      if (automationEnabled) {
-        completed = await runConfiguredAutomation(
-          created,
-          recommendationRequestId,
-        );
-      }
-      settlePersistedMutationLease("processing", [completed], false);
+      updateExpectedUpload(expectedUploadIndex, "parsed");
+      settlePersistedMutationLease("processing", [created], false);
       if (processingMutationLeaseRef.current !== null) {
         scheduleMutationLeaseRevalidation();
       }
@@ -2964,9 +2850,13 @@ export function useAnalyzerWorkspaceController({
           : (jobsRef.current.find(
               (candidate) => candidate.id === capturedJobId,
             ) ?? null);
-      const deletedDuringAutomation =
+      const denial =
+        captureError instanceof ApiResponseError
+          ? administrativeAccessDenial(captureError.status)
+          : null;
+      const deletedAfterUpload =
         capturedJobId !== null && confirmedJob === null;
-      if (deletedDuringAutomation) {
+      if (deletedAfterUpload) {
         updateExpectedUpload(expectedUploadIndex, "failed");
         settlePersistedMutationLease("processing", jobsRef.current, false);
       } else if (
@@ -2987,7 +2877,10 @@ export function useAnalyzerWorkspaceController({
       if (processingMutationLeaseRef.current !== null) {
         scheduleMutationLeaseRevalidation();
       }
-      if (!deletedDuringAutomation) {
+      if (denial !== null) {
+        administrativeAccess.lock();
+        setError(administrativeAccessDenialMessage(denial));
+      } else if (!deletedAfterUpload) {
         setError(messageFromError(captureError, "Screen capture failed"));
       }
     } finally {
@@ -4116,12 +4009,11 @@ export function useAnalyzerWorkspaceController({
 
   return {
     toolbar: {
-      automationEnabled,
+      administrativeUnlocked: administrativeAccess.unlocked,
       busy,
       historyTotal,
-      liveStatusLabel,
-      onConfigureAutomation: () => setAutomationDialogOpen(true),
       onConfigurePipeline: openPipelineDialog,
+      onOpenAdministrativeTools: administrativeAccess.openDialog,
       onOpenBenchmark: () => {
         openBenchmarkDialog();
         navigation.openBenchmarks();
@@ -4132,31 +4024,31 @@ export function useAnalyzerWorkspaceController({
         openTrainingDialog();
         navigation.openTraining();
       },
-      onToggleAutomation: () =>
-        updateAutomationSettings((current) => ({
-          ...current,
-          enabled: !current.enabled,
-        })),
       queueCount,
-      screenSharing,
     },
-    inputSource: {
+    administrativeBanner: {
       busy,
-      files,
-      inputMode,
-      livePreviewVisible,
-      onCapture: onCaptureScreen,
-      onFilesChange: setFiles,
-      onInputModeChange: setInputMode,
-      onShareModeChange: setShareMode,
-      onStartOrViewShare: () =>
-        screenSharing ? setLivePreviewVisible(true) : onStartScreenShare(),
-      onStopShare: onStopScreenShare,
-      onUpload,
-      screenSharing,
-      screenSourceLabel,
-      shareMode,
+      onLock: administrativeAccess.lock,
     },
+    inputSource: administrativeAccess.unlocked
+      ? {
+          busy,
+          files,
+          inputMode,
+          livePreviewVisible,
+          onCapture: onCaptureScreen,
+          onFilesChange: setFiles,
+          onInputModeChange: setInputMode,
+          onShareModeChange: setShareMode,
+          onStartOrViewShare: () =>
+            screenSharing ? setLivePreviewVisible(true) : onStartScreenShare(),
+          onStopShare: onStopScreenShare,
+          onUpload,
+          screenSharing,
+          screenSourceLabel,
+          shareMode,
+        }
+      : null,
     queue: {
       activeJobId: job?.id ?? null,
       attentionByJobId: jobAttention,
@@ -4294,24 +4186,16 @@ export function useAnalyzerWorkspaceController({
             title: screenshotTitle,
           }
         : null,
-      automation: automationDialogOpen
+      administrativeAccess: administrativeAccess.dialogOpen
         ? {
-            allowWarnings: automationAllowWarnings,
-            autoApprove: automationApprove,
-            autoRecommend: automationRecommend,
-            enabled: automationEnabled,
-            onAllowWarningsChange: (value: boolean) =>
-              updateAutomationSettings((current) => ({
-                ...current,
-                allowWarnings: value,
-              })),
-            onAutoApproveChange: updateAutomationApprove,
-            onAutoRecommendChange: (value: boolean) =>
-              updateAutomationSettings((current) => ({
-                ...current,
-                autoRecommend: value,
-              })),
-            onClose: () => setAutomationDialogOpen(false),
+            capabilityEnabled:
+              pipelineCapabilities?.administrative_ocr_test.enabled ?? null,
+            checkingCapability,
+            onCheckCapability: () => void checkAdministrativeCapability(),
+            onClose: administrativeAccess.closeDialog,
+            onLock: administrativeAccess.lock,
+            onUnlock: administrativeAccess.unlock,
+            unlocked: administrativeAccess.unlocked,
           }
         : null,
       pipeline: pipelineDialogOpen
