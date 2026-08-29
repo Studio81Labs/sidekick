@@ -3,7 +3,6 @@
 from fastapi import APIRouter, Header, Response
 
 from app.api.administrative_access import require_administrator
-
 from app.application.admin_ocr_test import AdminOcrTestService
 from app.domain.admin_ocr_test import AdminOcrTestSession
 

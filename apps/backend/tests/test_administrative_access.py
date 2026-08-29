@@ -14,6 +14,7 @@ def test_disabled_decision_is_forbidden() -> None:
 
     assert raised.value.status_code == 403
     assert raised.value.detail == "Administrative OCR test mode is disabled"
+    assert raised.value.headers == {"Cache-Control": "no-store"}
 
 
 def test_unauthorized_decision_requires_bearer() -> None:
@@ -22,7 +23,10 @@ def test_unauthorized_decision_requires_bearer() -> None:
 
     assert raised.value.status_code == 401
     assert raised.value.detail == "Administrative OCR test authorization is required"
-    assert raised.value.headers == {"WWW-Authenticate": "Bearer"}
+    assert raised.value.headers == {
+        "WWW-Authenticate": "Bearer",
+        "Cache-Control": "no-store",
+    }
 
 
 def test_unknown_decision_fails_closed() -> None:
