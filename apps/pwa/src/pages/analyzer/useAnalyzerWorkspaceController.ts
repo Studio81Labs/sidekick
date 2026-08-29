@@ -349,7 +349,6 @@ export function useAnalyzerWorkspaceController({
     dialogOpen: pipelineDialogOpen,
     loading: pipelineLoading,
     loadCapabilities: loadPipelineCapabilities,
-    refreshCapabilities: refreshPipelineCapabilities,
     openDialog: openPipelineDialog,
     providerLabel,
     selection: pipelineSelection,
@@ -378,7 +377,6 @@ export function useAnalyzerWorkspaceController({
   const administrativeAccess = useAdministrativeAccess({
     onLock: onStopScreenShare,
   });
-  const [checkingCapability, setCheckingCapability] = useState(false);
   const {
     closeDialog: closeInfoDialog,
     dialogOpen: infoDialogOpen,
@@ -2584,15 +2582,6 @@ export function useAnalyzerWorkspaceController({
     }
   }
 
-  async function checkAdministrativeCapability() {
-    setCheckingCapability(true);
-    try {
-      await refreshPipelineCapabilities();
-    } finally {
-      setCheckingCapability(false);
-    }
-  }
-
   async function uploadSelectedFiles(
     administratorToken: string,
     expectedUploads: ProjectionMutationLease["expectedUploads"],
@@ -3321,8 +3310,23 @@ export function useAnalyzerWorkspaceController({
     }
   }
 
+  /** Locks the tools on an administrative denial; false for other failures. */
+  function reportAdministrativeDenial(failure: unknown): boolean {
+    const denial =
+      failure instanceof ApiResponseError
+        ? administrativeAccessDenial(failure.status)
+        : null;
+    if (denial === null) {
+      return false;
+    }
+    administrativeAccess.lock();
+    setError(administrativeAccessDenialMessage(denial));
+    return true;
+  }
+
   async function onApplicationBackupRestore(backupFile: File) {
-    if (busy || backupRestoring) {
+    const administratorToken = administrativeAccess.token;
+    if (administratorToken === null || busy || backupRestoring) {
       return;
     }
 
@@ -3331,6 +3335,7 @@ export function useAnalyzerWorkspaceController({
     setError(null);
     try {
       const { result } = await restoreApplicationBackupCommand(queryClient, {
+        administratorToken,
         file: backupFile,
       });
       resetBenchmark();
@@ -3358,9 +3363,11 @@ export function useAnalyzerWorkspaceController({
           : `Backup already present: ${reusedItems} ${reusedItems === 1 ? "record" : "records"} verified`,
       );
     } catch (backupError) {
-      setError(
-        messageFromError(backupError, "Could not restore application backup"),
-      );
+      if (!reportAdministrativeDenial(backupError)) {
+        setError(
+          messageFromError(backupError, "Could not restore application backup"),
+        );
+      }
     } finally {
       setBackupRestoring(false);
       setBusy(false);
@@ -3459,7 +3466,12 @@ export function useAnalyzerWorkspaceController({
   ) {
     const input = event.currentTarget;
     const datasetFile = input.files?.[0];
-    if (!datasetFile || benchmarkOperationsLocked) {
+    const administratorToken = administrativeAccess.token;
+    if (
+      !datasetFile ||
+      administratorToken === null ||
+      benchmarkOperationsLocked
+    ) {
       input.value = "";
       return;
     }
@@ -3505,6 +3517,7 @@ export function useAnalyzerWorkspaceController({
     let restoreAfterImport = false;
     try {
       const { result } = await importBenchmarkDatasetCommand(queryClient, {
+        administratorToken,
         file: datasetFile,
         requestId: benchmarkImportRequestId,
       });
@@ -3531,9 +3544,11 @@ export function useAnalyzerWorkspaceController({
       } else {
         scheduleMutationLeaseRevalidation();
       }
-      setError(
-        messageFromError(benchmarkError, "Could not import parser dataset"),
-      );
+      if (!reportAdministrativeDenial(benchmarkError)) {
+        setError(
+          messageFromError(benchmarkError, "Could not import parser dataset"),
+        );
+      }
     } finally {
       input.value = "";
       endProcessingMembershipMutation(restoreAfterImport);
@@ -4173,14 +4188,12 @@ export function useAnalyzerWorkspaceController({
         : null,
       administrativeAccess: administrativeAccess.dialogOpen
         ? {
-            capabilityEnabled:
-              pipelineCapabilities?.administrative_ocr_test.enabled ?? null,
-            checkingCapability,
-            onCheckCapability: () => void checkAdministrativeCapability(),
+            busy,
             onClose: administrativeAccess.closeDialog,
             onLock: administrativeAccess.lock,
             onUnlock: administrativeAccess.unlock,
             unlocked: administrativeAccess.unlocked,
+            verifying: administrativeAccess.verifying,
           }
         : null,
       pipeline: pipelineDialogOpen
@@ -4201,6 +4214,7 @@ export function useAnalyzerWorkspaceController({
       help: helpDialogOpen ? { onClose: () => setHelpDialogOpen(false) } : null,
       info: infoDialogOpen
         ? {
+            administrativeUnlocked: administrativeAccess.unlocked,
             backupDownloadUrl: applicationBackupUrl(),
             backupRestoring,
             busy,
@@ -4263,6 +4277,7 @@ export function useAnalyzerWorkspaceController({
         : null,
       benchmark: benchmarkDialogOpen
         ? {
+            administrativeUnlocked: administrativeAccess.unlocked,
             busy,
             comparisonProgress: benchmarkComparisonProgress,
             comparisonReport: benchmarkComparisonReport,

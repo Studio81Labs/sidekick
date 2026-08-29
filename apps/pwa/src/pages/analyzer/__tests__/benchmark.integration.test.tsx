@@ -9,6 +9,7 @@ import type {
 import type { DetectedState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
 import {
+  ADMINISTRATOR_TOKEN,
   AnalyzerTestApp as App,
   approvedJob,
   benchmarkOverviewForJob,
@@ -1059,6 +1060,7 @@ describe("Analyzer benchmarks", () => {
       );
     render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
 
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
     const dialog = await screen.findByRole("dialog", {
@@ -1114,9 +1116,13 @@ describe("Analyzer benchmarks", () => {
     expect(fetchMock().mock.calls[1][1]).toMatchObject({
       method: "POST",
       headers: {
+        Authorization: `Bearer ${ADMINISTRATOR_TOKEN}`,
         "X-Benchmark-Import-Request-ID": expect.any(String),
       },
     });
+    expect(
+      new Headers(fetchMock().mock.calls[1][1]?.headers).get("Authorization"),
+    ).toBe(`Bearer ${ADMINISTRATOR_TOKEN}`);
     const form = fetchMock().mock.calls[1][1]?.body as FormData;
     expect(form.get("file")).toBe(dataset);
     expect(fetchMock()).toHaveBeenNthCalledWith(
@@ -1131,6 +1137,56 @@ describe("Analyzer benchmarks", () => {
         { credentials: "include" },
       ),
     );
+  });
+
+  it("withholds dataset import until the administrator tools are unlocked", async () => {
+    fetchMock().mockImplementation(() =>
+      Promise.resolve(
+        jsonResponse({
+          included_cases: 0,
+          latest_report: null,
+          recent_reports: [],
+        }),
+      ),
+    );
+    render(<App />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
+    const lockedDialog = await screen.findByRole("dialog", {
+      name: "Parser benchmark",
+    });
+    expect(
+      within(lockedDialog).getByRole("button", { name: "Import dataset" }),
+    ).toBeDisabled();
+    expect(
+      within(lockedDialog).getByLabelText("Parser dataset ZIP"),
+    ).toBeDisabled();
+    expect(
+      within(lockedDialog).getByText(
+        "Unlock administrator tools to import datasets.",
+      ),
+    ).toBeInTheDocument();
+
+    await user.click(
+      within(lockedDialog).getByRole("button", { name: "Done" }),
+    );
+    await unlockAdministrativeAccess(user);
+    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Parser benchmark",
+    });
+
+    await waitFor(() =>
+      expect(
+        within(dialog).getByRole("button", { name: "Import dataset" }),
+      ).toBeEnabled(),
+    );
+    expect(
+      within(dialog).queryByText(
+        "Unlock administrator tools to import datasets.",
+      ),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps a verified report current after an idempotent dataset import", async () => {
@@ -1189,6 +1245,7 @@ describe("Analyzer benchmarks", () => {
     );
     render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
 
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
     const dialog = await screen.findByRole("dialog", {
@@ -1259,6 +1316,7 @@ describe("Analyzer benchmarks", () => {
       );
     render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
 
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
     const reviewDialog = await screen.findByRole("dialog", {
@@ -1389,6 +1447,7 @@ describe("Analyzer benchmarks", () => {
       .mockReturnValueOnce(pendingQueue.promise);
     render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
 
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
     const dialog = await screen.findByRole("dialog", {
@@ -1495,6 +1554,7 @@ describe("Analyzer benchmarks", () => {
       .mockReturnValueOnce(pendingQueue.promise);
     render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
 
     const heroCards = await screen.findByLabelText(/Hero cards/);
     await user.clear(heroCards);
@@ -1626,6 +1686,7 @@ describe("Analyzer benchmarks", () => {
       );
     const firstRender = render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
 
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
     const dialog = await screen.findByRole("dialog", {
@@ -1755,6 +1816,7 @@ describe("Analyzer benchmarks", () => {
     );
     const firstRender = render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
 
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
     const dialog = await screen.findByRole("dialog", {
@@ -2097,6 +2159,7 @@ describe("Analyzer benchmarks", () => {
       );
     render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
@@ -2215,6 +2278,7 @@ describe("Analyzer benchmarks", () => {
       );
     render(<App />);
     const user = userEvent.setup();
+    await unlockAdministrativeAccess(user);
     const historyPanel = screen.getByLabelText("Session history");
 
     await user.click(

@@ -36,8 +36,8 @@ export function usePipelineSelection({ onError }: UsePipelineSelectionOptions) {
     );
   }, [capabilities]);
 
-  /** Always asks the server, for controls whose only purpose is to re-check it. */
-  const refreshCapabilities = useCallback(async () => {
+  const loadCapabilities = useCallback(async () => {
+    if (capabilities) return capabilities;
     const result = await refetch();
     if (result.error) {
       onError(
@@ -46,12 +46,7 @@ export function usePipelineSelection({ onError }: UsePipelineSelectionOptions) {
       return null;
     }
     return result.data ?? null;
-  }, [onError, refetch]);
-
-  const loadCapabilities = useCallback(async () => {
-    if (capabilities) return capabilities;
-    return refreshCapabilities();
-  }, [capabilities, refreshCapabilities]);
+  }, [capabilities, onError, refetch]);
 
   function openDialog() {
     setDialogOpen(true);
@@ -113,7 +108,6 @@ export function usePipelineSelection({ onError }: UsePipelineSelectionOptions) {
     loading: isFetching,
     openDialog,
     providerLabel,
-    refreshCapabilities,
     selection,
     setDialogOpen,
     setSelection,

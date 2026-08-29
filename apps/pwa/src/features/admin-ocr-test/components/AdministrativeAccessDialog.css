@@ -13,12 +13,6 @@
   font-size: 12px;
 }
 
-.administrative-access-status .button-control {
-  font-size: 11px;
-  min-height: 26px;
-  padding: 4px 8px;
-}
-
 .administrative-access-form {
   display: grid;
   gap: 10px;

@@ -22,6 +22,7 @@ function dialogProps(
   overrides: Partial<InfoDialogProps> = {},
 ): InfoDialogProps {
   return {
+    administrativeUnlocked: true,
     backupDownloadUrl: "http://localhost:8000/api/backups/export",
     backupRestoring: false,
     busy: false,
@@ -80,6 +81,26 @@ describe("InfoDialog", () => {
     expect(input).toHaveValue("");
     expect(props.onMcpCloseBlockedChange).toHaveBeenCalledWith(true);
     expect(props.onClose).toHaveBeenCalledTimes(2);
+    expect(
+      within(dialog).queryByText(
+        "Unlock administrator tools to restore a backup.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("withholds the restore control while the administrator tools are locked", () => {
+    render(<InfoDialog {...dialogProps({ administrativeUnlocked: false })} />);
+
+    expect(
+      screen.getByRole("button", { name: "Restore application backup" }),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Application backup ZIP")).toBeDisabled();
+    expect(
+      screen.getByText("Unlock administrator tools to restore a backup."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Download application backup" }),
+    ).toHaveAttribute("aria-disabled", "false");
   });
 
   it("distinguishes loading from unavailable provider details", () => {

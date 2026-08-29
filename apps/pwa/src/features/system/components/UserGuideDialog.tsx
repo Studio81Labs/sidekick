@@ -82,7 +82,7 @@ const GUIDE_TOPICS: GuideTopic[] = [
     label: "Input and queue",
     title: "Administrator OCR test tools",
     introduction:
-      "Screenshot upload and live capture exist only to test the parser. They are hidden until an administrator unlocks them, and the server verifies the credential on every upload or capture.",
+      "Screenshot upload and live capture exist only to test the parser. They are hidden until an administrator unlocks them, and the server verifies the credential on every upload or capture. Benchmark dataset import and application backup restore need the same credential.",
     steps: [
       {
         title: "Unlock administrator tools",

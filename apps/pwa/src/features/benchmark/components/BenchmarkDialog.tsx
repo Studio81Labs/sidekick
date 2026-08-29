@@ -23,6 +23,7 @@ import { BenchmarkReportOverview } from "./BenchmarkReportOverview";
 import { BenchmarkReportResults } from "./BenchmarkReportResults";
 
 export interface BenchmarkDialogProps {
+  administrativeUnlocked: boolean;
   busy: boolean;
   comparisonProgress: BenchmarkComparisonProgress | null;
   comparisonReport: BenchmarkReport | null;
@@ -63,6 +64,7 @@ export interface BenchmarkDialogProps {
 }
 
 export function BenchmarkDialog({
+  administrativeUnlocked,
   comparisonProgress,
   comparisonReport,
   comparisonReportLoading,
@@ -188,6 +190,7 @@ export function BenchmarkDialog({
       </div>
 
       <BenchmarkDialogActions
+        administrativeUnlocked={administrativeUnlocked}
         closeDisabled={closeDisabled}
         datasetExportDisabled={datasetExportDisabled}
         datasetInputRef={datasetInputRef}

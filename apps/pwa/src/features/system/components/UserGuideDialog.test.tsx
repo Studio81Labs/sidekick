@@ -33,6 +33,11 @@ describe("UserGuideDialog", () => {
     expect(
       screen.getByRole("heading", { name: "Administrator OCR test tools" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Benchmark dataset import and application backup restore need the same credential/,
+      ),
+    ).toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("button", { name: "Close user guide" }),

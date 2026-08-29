@@ -36,6 +36,7 @@ describe("import benchmark dataset command", () => {
     const file = new File(["dataset"], "dataset.zip");
 
     const outcome = await importBenchmarkDatasetCommand(queryClient, {
+      administratorToken: "administrator-token",
       file,
       requestId: "request-1",
     });
@@ -59,7 +60,10 @@ describe("import benchmark dataset command", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       "http://localhost:8000/api/benchmarks/import",
       expect.objectContaining({
-        headers: { "X-Benchmark-Import-Request-ID": "request-1" },
+        headers: {
+          Authorization: "Bearer administrator-token",
+          "X-Benchmark-Import-Request-ID": "request-1",
+        },
       }),
     );
     const form = fetchMock.mock.calls[0]?.[1]?.body as FormData;
@@ -81,6 +85,7 @@ describe("import benchmark dataset command", () => {
 
     await expect(
       importBenchmarkDatasetCommand(queryClient, {
+        administratorToken: "administrator-token",
         file: new File(["dataset"], "dataset.zip"),
         requestId: "request-2",
       }),

@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -13,13 +13,12 @@ function dialogProps(
   overrides: Partial<AdministrativeAccessDialogProps> = {},
 ): AdministrativeAccessDialogProps {
   return {
-    capabilityEnabled: null,
-    checkingCapability: false,
-    onCheckCapability: vi.fn(),
+    busy: false,
     onClose: vi.fn(),
     onLock: vi.fn(),
-    onUnlock: vi.fn(() => true),
+    onUnlock: vi.fn(async () => "unlocked" as const),
     unlocked: false,
+    verifying: false,
     ...overrides,
   };
 }
@@ -29,57 +28,97 @@ describe("AdministrativeAccessDialog", () => {
     const props = dialogProps();
     render(<AdministrativeAccessDialog {...props} />);
 
+    expect(
+      screen.getByText(
+        "The token is verified with the server before any capture control is shown.",
+      ),
+    ).toBeInTheDocument();
     const input = screen.getByLabelText("Administrative OCR test token");
     expect(input).toHaveAttribute("type", "password");
     await userEvent.type(input, "secret-token");
     await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
 
     expect(props.onUnlock).toHaveBeenCalledWith("secret-token");
+    await waitFor(() => expect(input).toHaveValue(""));
   });
 
-  it("explains a blank token instead of unlocking", async () => {
-    const props = dialogProps({ onUnlock: vi.fn(() => false) });
+  it("explains a blank token instead of asking the server", async () => {
+    const props = dialogProps({
+      onUnlock: vi.fn(async () => "blank" as const),
+    });
     render(<AdministrativeAccessDialog {...props} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
 
     expect(
-      screen.getByText("Enter the administrative OCR test token."),
+      await screen.findByText("Enter the administrative OCR test token."),
     ).toBeInTheDocument();
   });
 
-  it("offers lock and deployment check once unlocked", async () => {
-    const props = dialogProps({ unlocked: true, capabilityEnabled: true });
-    render(<AdministrativeAccessDialog {...props} />);
+  it.each([
+    [
+      "unauthorized" as const,
+      "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    ],
+    [
+      "disabled" as const,
+      "Administrative OCR test mode is disabled on this deployment.",
+    ],
+    [
+      "unavailable" as const,
+      "Could not verify the administrative OCR test token. Check the connection and try again.",
+    ],
+  ])(
+    "reports a %s verification and keeps the draft",
+    async (result, message) => {
+      const props = dialogProps({ onUnlock: vi.fn(async () => result) });
+      render(<AdministrativeAccessDialog {...props} />);
+
+      const input = screen.getByLabelText("Administrative OCR test token");
+      await userEvent.type(input, "secret-token");
+      await userEvent.click(screen.getByRole("button", { name: "Unlock" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(message);
+      expect(input).toHaveValue("secret-token");
+    },
+  );
+
+  it("waits for the verification before accepting another attempt", () => {
+    render(
+      <AdministrativeAccessDialog {...dialogProps({ verifying: true })} />,
+    );
+
+    expect(screen.getByRole("button", { name: "Verifying…" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Unlock" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers lock once unlocked and holds it while a batch runs", async () => {
+    const props = dialogProps({ unlocked: true });
+    const { rerender } = render(<AdministrativeAccessDialog {...props} />);
 
     expect(
       screen.queryByLabelText("Administrative OCR test token"),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Enabled on this deployment.")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Lock administrator tools" }),
-    );
-    await userEvent.click(
-      screen.getByRole("button", { name: "Check deployment" }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Close administrator tools" }),
     );
 
     expect(props.onLock).toHaveBeenCalledOnce();
-    expect(props.onCheckCapability).toHaveBeenCalledOnce();
     expect(props.onClose).toHaveBeenCalledOnce();
-  });
 
-  it("reports a disabled deployment", () => {
-    render(
+    rerender(
       <AdministrativeAccessDialog
-        {...dialogProps({ capabilityEnabled: false })}
+        {...dialogProps({ busy: true, unlocked: true })}
       />,
     );
-
     expect(
-      screen.getByText("Disabled on this deployment."),
-    ).toBeInTheDocument();
+      screen.getByRole("button", { name: "Lock administrator tools" }),
+    ).toBeDisabled();
   });
 });

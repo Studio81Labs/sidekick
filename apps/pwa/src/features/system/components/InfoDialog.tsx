@@ -20,6 +20,7 @@ export interface InfoProviderSummary {
 }
 
 export interface InfoDialogProps {
+  administrativeUnlocked: boolean;
   backupDownloadUrl: string;
   backupRestoring: boolean;
   busy: boolean;
@@ -32,6 +33,7 @@ export interface InfoDialogProps {
 }
 
 export function InfoDialog({
+  administrativeUnlocked,
   backupDownloadUrl,
   backupRestoring,
   busy,
@@ -44,7 +46,9 @@ export function InfoDialog({
 }: InfoDialogProps) {
   const backupInputRef = useRef<HTMLInputElement | null>(null);
   const closeDisabled = backupRestoring || mcpCloseBlocked;
-  const backupControlsDisabled = busy || backupRestoring;
+  // Restoring a backup mints jobs, so the server requires the same
+  // administrator credential the upload path uses.
+  const restoreDisabled = busy || backupRestoring || !administrativeUnlocked;
 
   return (
     <DialogFrame className="info-dialog" titleId="info-dialog-title">
@@ -141,7 +145,7 @@ export function InfoDialog({
             <ButtonControl
               variant="secondary"
               onClick={() => backupInputRef.current?.click()}
-              disabled={backupControlsDisabled}
+              disabled={restoreDisabled}
               aria-label="Restore application backup"
             >
               <Upload size={14} aria-hidden="true" />
@@ -151,7 +155,7 @@ export function InfoDialog({
               ref={backupInputRef}
               accept=".zip,application/zip"
               aria-label="Application backup ZIP"
-              disabled={backupControlsDisabled}
+              disabled={restoreDisabled}
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0] ?? null;
                 event.currentTarget.value = "";
@@ -161,6 +165,11 @@ export function InfoDialog({
               }}
             />
           </div>
+          {administrativeUnlocked ? null : (
+            <p className="data-recovery-lock-note">
+              Unlock administrator tools to restore a backup.
+            </p>
+          )}
         </section>
       </div>
 

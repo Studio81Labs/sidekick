@@ -4,6 +4,7 @@ import {
   administrativeAccessDenial,
   administrativeAccessDenialMessage,
   normalizeAdministratorToken,
+  unlockFailureMessage,
 } from "./administrativeAccess";
 
 describe("administrativeAccess", () => {
@@ -25,6 +26,21 @@ describe("administrativeAccess", () => {
     );
     expect(administrativeAccessDenialMessage("unauthorized")).toBe(
       "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    );
+  });
+
+  it("explains every way a server-verified unlock can fail", () => {
+    expect(unlockFailureMessage("blank")).toBe(
+      "Enter the administrative OCR test token.",
+    );
+    expect(unlockFailureMessage("unauthorized")).toBe(
+      administrativeAccessDenialMessage("unauthorized"),
+    );
+    expect(unlockFailureMessage("disabled")).toBe(
+      administrativeAccessDenialMessage("disabled"),
+    );
+    expect(unlockFailureMessage("unavailable")).toBe(
+      "Could not verify the administrative OCR test token. Check the connection and try again.",
     );
   });
 });

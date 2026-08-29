@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { DetectedState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
+import { ApiResponseError } from "../../../shared/api/core";
 import {
   ADMINISTRATOR_TOKEN,
   AnalyzerTestApp as App,
+  administratorVerificationMock,
   approvedJob,
   canonicalState,
   deferredResponse,
@@ -14,6 +16,7 @@ import {
   fetchMock,
   jobRecord,
   jsonResponse,
+  mockAdministratorVerification,
   nextDeferredResponse,
   processingQueueResponse,
   recommendation,
@@ -25,42 +28,6 @@ import {
   unlockAdministrativeAccess,
   uploadScreenshot,
 } from "../../../test/analyzerHarness";
-
-const pipelineCapabilitiesFixture = {
-  defaults: {
-    parser_provider: "mock",
-    parser_layout_profile: "generic",
-    recommendation_provider: "mock",
-    recommendation_engine: null,
-  },
-  parser_providers: [
-    {
-      id: "mock",
-      label: "Mock parser",
-      available: true,
-      unavailable_reason: null,
-    },
-  ],
-  parser_layout_profiles: [
-    {
-      id: "generic",
-      label: "Generic",
-      available: true,
-      unavailable_reason: null,
-    },
-  ],
-  parser_layout_compatibility: { mock: ["generic"] },
-  recommendation_providers: [
-    {
-      id: "mock",
-      label: "Mock recommendation",
-      available: true,
-      unavailable_reason: null,
-    },
-  ],
-  administrative_ocr_test: { enabled: true },
-  recommendation_engines: [],
-};
 
 describe("Analyzer administrative capture", () => {
   it("keeps the player workspace import-first until an administrator unlocks", async () => {
@@ -138,40 +105,75 @@ describe("Analyzer administrative capture", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("checks the deployment capability on demand", async () => {
-    fetchMock()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          ...pipelineCapabilitiesFixture,
-          administrative_ocr_test: { enabled: false },
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          ...pipelineCapabilitiesFixture,
-          administrative_ocr_test: { enabled: true },
-        }),
-      );
+  it("verifies the typed token with the server before showing any control", async () => {
+    const verification = administratorVerificationMock();
     render(<App />);
     const user = userEvent.setup();
 
     await user.click(
       screen.getByRole("button", { name: "Administrator tools" }),
     );
-    await user.click(screen.getByRole("button", { name: "Check deployment" }));
+    await user.type(
+      screen.getByLabelText("Administrative OCR test token"),
+      `  ${ADMINISTRATOR_TOKEN}  `,
+    );
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
 
     expect(
-      await screen.findByText("Disabled on this deployment."),
+      await screen.findByRole("note", {
+        name: "Administrative OCR test mode",
+      }),
     ).toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledTimes(1);
+    expect(verification).toHaveBeenCalledWith(ADMINISTRATOR_TOKEN);
+    expect(fetchMock()).not.toHaveBeenCalled();
+  });
 
-    // The control exists to ask the server, so a cached answer must not stand in.
-    await user.click(screen.getByRole("button", { name: "Check deployment" }));
+  it.each([
+    [
+      "a rejected token",
+      new ApiResponseError("denied", 401),
+      "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    ],
+    [
+      "a disabled deployment",
+      new ApiResponseError("disabled", 403),
+      "Administrative OCR test mode is disabled on this deployment.",
+    ],
+    [
+      "an unreachable server",
+      new TypeError("offline"),
+      "Could not verify the administrative OCR test token. Check the connection and try again.",
+    ],
+  ])("refuses to unlock on %s", async (_label, failure, message) => {
+    mockAdministratorVerification(failure);
+    render(<App />);
+    const user = userEvent.setup();
 
+    await user.click(
+      screen.getByRole("button", { name: "Administrator tools" }),
+    );
+    await user.type(
+      screen.getByLabelText("Administrative OCR test token"),
+      "wrong-token",
+    );
+    await user.click(screen.getByRole("button", { name: "Unlock" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(
-      await screen.findByText("Enabled on this deployment."),
-    ).toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledTimes(2);
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "Input mode" }),
+    ).not.toBeInTheDocument();
+    // The draft stays so the operator can correct a mistyped credential.
+    expect(screen.getByLabelText("Administrative OCR test token")).toHaveValue(
+      "wrong-token",
+    );
+    expect(fetchMock()).not.toHaveBeenCalled();
   });
 
   it("renders the import-first workspace and unlocks capture on demand", async () => {
@@ -624,6 +626,27 @@ describe("Analyzer administrative capture", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
+    const lockedDialog = screen.getByRole("dialog", {
+      name: "About Poker Training Analyzer",
+    });
+    expect(
+      within(lockedDialog).getByRole("button", {
+        name: "Restore application backup",
+      }),
+    ).toBeDisabled();
+    expect(
+      within(lockedDialog).getByText(
+        "Unlock administrator tools to restore a backup.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      within(lockedDialog).getByRole("button", {
+        name: "Close app information",
+      }),
+    );
+
+    await unlockAdministrativeAccess(user);
+    await user.click(screen.getByRole("button", { name: "About this app" }));
     const dialog = screen.getByRole("dialog", {
       name: "About Poker Training Analyzer",
     });
@@ -632,6 +655,11 @@ describe("Analyzer administrative capture", () => {
         name: "Download application backup",
       }),
     ).toHaveAttribute("href", "http://localhost:8000/api/backups/export");
+    expect(
+      within(dialog).queryByText(
+        "Unlock administrator tools to restore a backup.",
+      ),
+    ).not.toBeInTheDocument();
 
     const file = new File(["backup"], "poker-hero-backup.zip", {
       type: "application/zip",
@@ -658,6 +686,9 @@ describe("Analyzer administrative capture", () => {
     );
     expect(restoreCall).toBeDefined();
     expect(restoreCall?.[1]?.method).toBe("POST");
+    expect(new Headers(restoreCall?.[1]?.headers).get("Authorization")).toBe(
+      `Bearer ${ADMINISTRATOR_TOKEN}`,
+    );
     expect(restoreCall?.[1]?.body).toBeInstanceOf(FormData);
     expect((restoreCall?.[1]?.body as FormData).get("file")).toBe(file);
     expect(

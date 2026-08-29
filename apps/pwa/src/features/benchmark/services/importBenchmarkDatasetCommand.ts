@@ -7,6 +7,7 @@ import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
 
 export type ImportBenchmarkDatasetCommand = {
+  administratorToken: string;
   file: File;
   requestId: string;
 };
@@ -15,7 +16,11 @@ export async function importBenchmarkDatasetCommand(
   queryClient: QueryClient,
   command: ImportBenchmarkDatasetCommand,
 ) {
-  const result = await importBenchmarkDataset(command.file, command.requestId);
+  const result = await importBenchmarkDataset(
+    command.file,
+    command.requestId,
+    command.administratorToken,
+  );
   const detailKeys = [...new Set(result.job_ids)].map((jobId) =>
     jobQueryKeys.detail(jobId),
   );

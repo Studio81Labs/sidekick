@@ -9,41 +9,34 @@ import {
   FormField,
   TextInput,
 } from "../../../shared/components/FormControls";
+import type { AdministrativeUnlockResult } from "../hooks/useAdministrativeAccess";
+import { unlockFailureMessage } from "../lib/administrativeAccess";
 
 export interface AdministrativeAccessDialogProps {
-  capabilityEnabled: boolean | null;
-  checkingCapability: boolean;
-  onCheckCapability: () => void;
+  busy: boolean;
   onClose: () => void;
   onLock: () => void;
-  onUnlock: (token: string) => boolean;
+  onUnlock: (token: string) => Promise<AdministrativeUnlockResult>;
   unlocked: boolean;
-}
-
-function capabilityStatus(enabled: boolean | null): string {
-  if (enabled === null) {
-    return "Availability is verified by the server on every upload or capture.";
-  }
-  return enabled
-    ? "Enabled on this deployment."
-    : "Disabled on this deployment.";
+  verifying: boolean;
 }
 
 export function AdministrativeAccessDialog({
-  capabilityEnabled,
-  checkingCapability,
-  onCheckCapability,
+  busy,
   onClose,
   onLock,
   onUnlock,
   unlocked,
+  verifying,
 }: AdministrativeAccessDialogProps) {
   const [draft, setDraft] = useState("");
   const [validation, setValidation] = useState<string | null>(null);
 
-  function submit() {
-    if (!onUnlock(draft)) {
-      setValidation("Enter the administrative OCR test token.");
+  async function submit() {
+    const result = await onUnlock(draft);
+    if (result !== "unlocked") {
+      // The draft survives so the operator can correct a mistyped token.
+      setValidation(unlockFailureMessage(result));
       return;
     }
     setDraft("");
@@ -68,14 +61,8 @@ export function AdministrativeAccessDialog({
           points, or enter training.
         </p>
         <p className="administrative-access-status">
-          {capabilityStatus(capabilityEnabled)}{" "}
-          <ButtonControl
-            variant="ghost"
-            onClick={onCheckCapability}
-            disabled={checkingCapability}
-          >
-            Check deployment
-          </ButtonControl>
+          The token is verified with the server before any capture control is
+          shown.
         </p>
         {unlocked ? (
           <div className="administrative-access-unlocked">
@@ -83,7 +70,7 @@ export function AdministrativeAccessDialog({
               Unlocked for this session. The token stays in memory until you
               lock these tools or reload the page.
             </p>
-            <ButtonControl variant="secondary" onClick={onLock}>
+            <ButtonControl variant="secondary" onClick={onLock} disabled={busy}>
               Lock administrator tools
             </ButtonControl>
           </div>
@@ -92,7 +79,7 @@ export function AdministrativeAccessDialog({
             className="administrative-access-form"
             onSubmit={(event) => {
               event.preventDefault();
-              submit();
+              void submit();
             }}
           >
             <FormField label="Administrative OCR test token">
@@ -108,7 +95,9 @@ export function AdministrativeAccessDialog({
                 {validation}
               </p>
             ) : null}
-            <ButtonControl type="submit">Unlock</ButtonControl>
+            <ButtonControl type="submit" disabled={verifying}>
+              {verifying ? "Verifying…" : "Unlock"}
+            </ButtonControl>
           </form>
         )}
       </div>

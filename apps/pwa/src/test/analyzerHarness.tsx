@@ -4,10 +4,41 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import { AppProviders } from "../app/providers/AppProviders";
+import * as adminOcrTestApi from "../domains/admin-ocr-test/api/adminOcrTestApi";
+import type { AdministrativeSession } from "../domains/admin-ocr-test/api/adminOcrTestApi";
 import AnalyzerPage from "../pages/analyzer/AnalyzerPage";
 import type { CanonicalState, DetectedState } from "../shared/types/poker";
 import type { JobRecord } from "../shared/types/jobs";
 import type { RecommendationResult } from "../shared/types/recommendations";
+
+const AUTHORIZED_SESSION: AdministrativeSession = {
+  enabled: true,
+  authorized: true,
+};
+
+/**
+ * The unlock now asks the server, but the workspace suites drive `fetch` with
+ * strict once-queues. Spying on the adapter keeps the credential check out of
+ * those queues, so their call-count assertions stay about the flow under test.
+ * A spy (rather than `vi.mock`) survives suites that import `AnalyzerPage`
+ * before this harness.
+ */
+export function administratorVerificationMock() {
+  return vi.spyOn(adminOcrTestApi, "verifyAdministratorToken");
+}
+
+/** Overrides the next administrator verification for one scenario. */
+export function mockAdministratorVerification(
+  outcome: AdministrativeSession | Error,
+) {
+  const verification = administratorVerificationMock();
+  if (outcome instanceof Error) {
+    verification.mockRejectedValueOnce(outcome);
+  } else {
+    verification.mockResolvedValueOnce(outcome);
+  }
+  return verification;
+}
 
 export function AnalyzerTestApp({ children }: { children?: ReactNode }) {
   return <AppProviders>{children ?? <AnalyzerPage />}</AppProviders>;
@@ -292,6 +323,8 @@ export async function unlockAdministrativeAccess(user = userEvent.setup()) {
     ADMINISTRATOR_TOKEN,
   );
   await user.click(screen.getByRole("button", { name: "Unlock" }));
+  // The unlock is only granted once the server confirms the token.
+  await screen.findByRole("note", { name: "Administrative OCR test mode" });
   await user.click(
     screen.getByRole("button", { name: "Close administrator tools" }),
   );
@@ -312,6 +345,7 @@ export async function uploadScreenshot(name = "table.png") {
 }
 
 beforeEach(() => {
+  administratorVerificationMock().mockResolvedValue(AUTHORIZED_SESSION);
   window.localStorage.clear();
   window.localStorage.setItem("poker-training-processing-v1", "[]");
   window.localStorage.setItem("poker-training-processing-total-v1", "0");

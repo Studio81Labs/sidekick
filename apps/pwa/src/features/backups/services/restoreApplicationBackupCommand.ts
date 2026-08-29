@@ -13,6 +13,7 @@ import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
 export { applicationBackupUrl };
 
 export type RestoreApplicationBackupCommand = {
+  administratorToken: string;
   file: File;
 };
 
@@ -20,7 +21,10 @@ export async function restoreApplicationBackupCommand(
   queryClient: QueryClient,
   command: RestoreApplicationBackupCommand,
 ) {
-  const result = await restoreApplicationBackup(command.file);
+  const result = await restoreApplicationBackup(
+    command.file,
+    command.administratorToken,
+  );
   const cache = {
     removed: [
       jobQueryKeys.all,
