@@ -78,6 +78,46 @@ def read_argv(pid):
     return rest.split(b"\0")[:argc]
 
 
+# Node options that take their value as the next argument (when not written
+# as --option=value); their value is never the script operand.
+NODE_VALUE_OPTIONS = {
+    "-r", "--require", "--import", "--loader", "--experimental-loader", "-C", "--conditions",
+    "--env-file", "--env-file-if-exists", "--input-type", "--title", "--test-reporter",
+    "--test-reporter-destination", "--test-name-pattern", "--test-skip-pattern", "--test-shard",
+    "--test-concurrency", "--test-timeout", "--watch-path", "--openssl-config", "--icu-data-dir",
+    "--report-directory", "--report-filename", "--report-signal", "--redirect-warnings",
+    "--secure-heap", "--secure-heap-min", "--disable-warning", "--experimental-policy",
+    "--policy-integrity", "--experimental-default-type", "--stack-trace-limit",
+    "--heapsnapshot-signal", "--diagnostic-dir", "--cpu-prof-dir", "--cpu-prof-name",
+    "--cpu-prof-interval", "--heap-prof-dir", "--heap-prof-name", "--heap-prof-interval",
+    "--experimental-sea-config", "--snapshot-blob", "--build-snapshot-config",
+    "--localstorage-file", "--experimental-config-file", "--trace-event-categories",
+    "--trace-event-file-pattern", "--unhandled-rejections", "--dns-result-order",
+    "--tls-cipher-list", "--tls-keylog", "--use-largepages", "--max-http-header-size",
+    "--http-parser", "--inspect-port", "--debug-port", "--inspect-publish-uid", "--icu-data-dir",
+}
+# Node invocations that execute no script file at all.
+NODE_NO_SCRIPT_OPTIONS = {"-e", "--eval", "-p", "--print", "-i", "--interactive", "-c", "--check",
+                          "-v", "--version", "-h", "--help"}
+
+
+def node_script(rest):
+    """The script operand node would run, or None (REPL, -e/-p, stdin, ...)."""
+    i = 0
+    while i < len(rest):
+        arg = rest[i]
+        if arg == "--":
+            return rest[i + 1] if i + 1 < len(rest) and rest[i + 1] != "-" else None
+        name = arg.split("=", 1)[0]
+        if name in NODE_NO_SCRIPT_OPTIONS:
+            return None
+        if arg.startswith("-") and arg != "-":
+            i += 2 if (name in NODE_VALUE_OPTIONS and "=" not in arg) else 1
+            continue
+        return None if arg == "-" else arg
+    return None
+
+
 def classify(argv, root):
     if not argv:
         return ""
@@ -89,8 +129,9 @@ def classify(argv, root):
     scripts = (root + "/node_modules/", root + "/apps/pwa/node_modules/")
     if argv0.startswith(worktree):
         return "path"
-    if base == "node" and any(a.startswith(scripts) for a in rest):
-        return "path"
+    if base == "node":
+        script = node_script(rest)
+        return "path" if script is not None and script.startswith(scripts) else ""
     if re.fullmatch(r"[Pp]ython[0-9.]*", base) and (
         rest[:2] == ["-m", "uvicorn"]
         or (len(rest) > 1 and rest[0] == "-c" and rest[1].startswith("from multiprocessing."))
@@ -122,7 +163,8 @@ classify_pid_ps() {
       | "$ROOT_DIR/apps/pwa/node_modules/"* | "$ROOT_DIR/solver-plugins/"*)
       echo path ;;
     node | */node)
-      case " $args" in
+      case " $args " in
+        *" -e "* | *" --eval "* | *" --eval="* | *" -p "* | *" --print "* | *" --print="* | *" -i "* | *" -c "* | *" --check "*) ;;
         *" $ROOT_DIR/node_modules/"* | *" $ROOT_DIR/apps/pwa/node_modules/"*) echo path ;;
       esac ;;
     python | python[0-9]* | */python | */python[0-9]* | Python | */Python)
