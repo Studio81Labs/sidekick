@@ -30,20 +30,70 @@ cwd_of() {
   fi
 }
 
-# argv_of <pid>: sets ARGV0 (argv[0] verbatim, spaces included) and ARGS (the
-# remaining arguments, space-joined). Linux reads /proc; on macOS `ps -o comm`
-# is argv[0] verbatim and `ps -o command` is argv[0] followed by the arguments.
+# Exact argument boundaries matter: a process is matched only when a whole
+# argument is a worktree script path, never when an argument merely mentions
+# it. Linux exposes argv NUL-separated in /proc; macOS exposes it through
+# sysctl(KERN_PROCARGS2), read here with a few lines of Python (the backend
+# venv's interpreter, else python3). Only when neither is available does the
+# space-joined `ps` output serve as a last resort.
+ARGV_PYTHON="$ROOT_DIR/apps/backend/.venv/bin/python"
+[ -x "$ARGV_PYTHON" ] || ARGV_PYTHON=$(command -v python3 2>/dev/null || true)
+
+# macos_argv <pid>: prints argv, one element per line; fails if unavailable.
+macos_argv() {
+  [ -n "$ARGV_PYTHON" ] || return 1
+  "$ARGV_PYTHON" - "$1" <<'PY'
+import ctypes, ctypes.util, struct, sys
+pid = int(sys.argv[1])
+libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+size = ctypes.c_size_t(0)
+if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+    sys.exit(1)
+buf = ctypes.create_string_buffer(size.value)
+if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
+    sys.exit(1)
+raw = buf.raw[: size.value]
+argc = struct.unpack("=i", raw[:4])[0]
+rest = raw[4:]
+rest = rest[rest.find(b"\0"):].lstrip(b"\0")  # skip the executable path
+args = rest.split(b"\0")[:argc]
+sys.stdout.write("\n".join(a.decode("utf-8", "replace") for a in args) + "\n")
+PY
+}
+
+# argv_of <pid>: sets ARGV0 (argv[0] verbatim) and ARGV_REST (the remaining
+# arguments, one per line). Fails when the process is gone.
 argv_of() {
   if [ -r "/proc/$1/cmdline" ]; then
     ARGV0=$(tr '\0' '\n' < "/proc/$1/cmdline" | head -n 1)
-    ARGS=$(tr '\0' ' ' < "/proc/$1/cmdline")
+    ARGV_REST=$(tr '\0' '\n' < "/proc/$1/cmdline" | sed '1d')
   else
     ARGV0=$(ps -o comm= -p "$1" 2>/dev/null) || return 1
-    ARGS=$(ps -o command= -p "$1" 2>/dev/null)
+    if argv=$(macos_argv "$1" 2>/dev/null) && [ -n "$argv" ]; then
+      ARGV_REST=$(printf '%s\n' "$argv" | sed '1d')
+    else
+      args=$(ps -o command= -p "$1" 2>/dev/null)
+      args=${args#"$ARGV0"}
+      ARGV_REST=$(printf '%s\n' "${args# }" | tr ' ' '\n')
+    fi
   fi
   [ -n "$ARGV0" ] || return 1
-  ARGS=${ARGS#"$ARGV0"}
-  ARGS=${ARGS# }
+}
+
+# classify_args: reads arguments (one per line) on stdin and prints "uvicorn"
+# for `-m uvicorn ...` / multiprocessing workers, "script" when a whole
+# argument is a path under this worktree's node_modules, else nothing.
+classify_args() {
+  awk -v root="$ROOT_DIR" '
+    NR == 1 { a1 = $0 }
+    NR == 2 { a2 = $0 }
+    index($0, root "/node_modules/") == 1 || index($0, root "/apps/pwa/node_modules/") == 1 { script = 1 }
+    END {
+      if (a1 == "-m" && a2 == "uvicorn") print "uvicorn"
+      else if (a1 == "-c" && index(a2, "from multiprocessing.") == 1) print "uvicorn"
+      else if (script) print "script"
+    }'
 }
 
 # Snapshot first so the filtering below cannot match its own processes, then
@@ -61,19 +111,13 @@ for pid in $candidates; do
       | "$ROOT_DIR/apps/pwa/node_modules/"* | "$ROOT_DIR/solver-plugins/"*)
       kind=path ;;
     node | */node)
-      # A script argument must *start* with the worktree path (argument
-      # boundary: start of the argument string or after a space); an argument
-      # that merely mentions the path somewhere inside does not count.
-      case " $ARGS" in
-        *" $ROOT_DIR/node_modules/"* | *" $ROOT_DIR/apps/pwa/node_modules/"*) kind=path ;;
-      esac ;;
+      [ "$(printf '%s\n' "$ARGV_REST" | classify_args)" = script ] && kind=path ;;
     python | python[0-9]* | */python | */python[0-9]* | Python | */Python)
-      case $ARGS in
-        "-m uvicorn" | "-m uvicorn "* | "-c from multiprocessing."*)
-          case "$(cwd_of "$pid")" in
-            "$ROOT_DIR" | "$ROOT_DIR"/*) kind=cwd ;;
-          esac ;;
-      esac ;;
+      if [ "$(printf '%s\n' "$ARGV_REST" | classify_args)" = uvicorn ]; then
+        case "$(cwd_of "$pid")" in
+          "$ROOT_DIR" | "$ROOT_DIR"/*) kind=cwd ;;
+        esac
+      fi ;;
   esac
   [ -n "$kind" ] && pids="$pids $pid"
 done
