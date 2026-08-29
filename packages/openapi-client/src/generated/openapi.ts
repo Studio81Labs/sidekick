@@ -262,23 +262,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/jobs/{job_id}/decision": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    /** Record Training Decision */
-    put: operations["job_decision_record"];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   "/api/jobs/{job_id}/image": {
     parameters: {
       query?: never;
@@ -308,41 +291,6 @@ export interface paths {
     put: operations["job_metadata_update"];
     post?: never;
     delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/jobs/{job_id}/recommend": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Recommend */
-    post: operations["job_recommend"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/jobs/{job_id}/training-review": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    /** Complete Training Review */
-    put: operations["job_training_review_complete"];
-    post?: never;
-    /** Reopen Training Review */
-    delete: operations["job_training_review_reopen"];
     options?: never;
     head?: never;
     patch?: never;
@@ -426,40 +374,6 @@ export interface paths {
     };
     /** Get Pipeline Capabilities */
     get: operations["pipeline_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/training/lessons/export": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Export Training Lessons */
-    get: operations["training_lessons_export"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/training/progress": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get Training Progress */
-    get: operations["training_progress_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -758,10 +672,6 @@ export interface components {
       parser_layout_profile?: string | null;
       /** Parser Provider */
       parser_provider?: string | null;
-      /** Recommendation Engine */
-      recommendation_engine?: string | null;
-      /** Recommendation Provider */
-      recommendation_provider?: string | null;
       /** Upload Request Id */
       upload_request_id?: string | null;
     };
@@ -985,12 +895,6 @@ export interface components {
       id?: string;
       /** Image Filename */
       image_filename: string;
-      /**
-       * Input Context
-       * @default legacy_player
-       * @enum {string}
-       */
-      input_context: "legacy_player" | "administrative_test";
       /** Notes */
       notes?: string | null;
       /** Original Filename */
@@ -1002,33 +906,16 @@ export interface components {
       /** Parser Provider */
       parser_provider: string;
       parser_result?: components["schemas"]["ParserResult"] | null;
-      recommendation?: components["schemas"]["RecommendationResult"] | null;
-      /** Recommendation Engine */
-      recommendation_engine?: string | null;
-      /**
-       * Recommendation Pending
-       * @default false
-       */
-      recommendation_pending: boolean;
-      /** Recommendation Provider */
-      recommendation_provider: string;
-      /** Recommendation Request Id */
-      recommendation_request_id?: string | null;
       /**
        * Status
        * @default created
        * @enum {string}
        */
-      status: "created" | "parsed" | "approved" | "recommended" | "error";
+      status: "created" | "parsed" | "approved" | "error";
       /** Tags */
       tags?: string[];
       /** Title */
       title?: string | null;
-      training_decision?: components["schemas"]["TrainingDecision"] | null;
-      /** Training Review Note */
-      training_review_note?: string | null;
-      /** Training Reviewed At */
-      training_reviewed_at?: string | null;
       /**
        * Updated At
        * Format: date-time
@@ -1125,10 +1012,6 @@ export interface components {
       parser_layout_profiles: components["schemas"]["PipelineOption"][];
       /** Parser Providers */
       parser_providers: components["schemas"]["PipelineOption"][];
-      /** Recommendation Engines */
-      recommendation_engines: components["schemas"]["PipelineOption"][];
-      /** Recommendation Providers */
-      recommendation_providers: components["schemas"]["PipelineOption"][];
     };
     /** PipelineOption */
     PipelineOption: {
@@ -1150,10 +1033,6 @@ export interface components {
       parser_layout_profile: string;
       /** Parser Provider */
       parser_provider: string;
-      /** Recommendation Engine */
-      recommendation_engine?: string | null;
-      /** Recommendation Provider */
-      recommendation_provider: string;
     };
     /** PostflopAction */
     PostflopAction: {
@@ -1191,24 +1070,6 @@ export interface components {
       /** Amount */
       amount: number;
     };
-    /** RecommendationResult */
-    RecommendationResult: {
-      /**
-       * Action
-       * @enum {string}
-       */
-      action: "fold" | "check" | "call" | "bet" | "raise";
-      /** Confidence */
-      confidence: number;
-      /** Explanation */
-      explanation: string;
-      /** Raw */
-      raw?: {
-        [key: string]: unknown;
-      };
-      /** Sizing */
-      sizing?: number | null;
-    };
     /** ScreenshotMetadataRequest */
     ScreenshotMetadataRequest: {
       /** Notes */
@@ -1217,446 +1078,6 @@ export interface components {
       tags?: string[];
       /** Title */
       title?: string | null;
-    };
-    /** TrainingActionDifference */
-    TrainingActionDifference: {
-      /** Average Ev Loss Bb */
-      average_ev_loss_bb?: number | null;
-      /**
-       * Decision Action
-       * @enum {string}
-       */
-      decision_action: "fold" | "check" | "call" | "bet" | "raise";
-      /**
-       * Ev Compared Hands
-       * @default 0
-       */
-      ev_compared_hands: number;
-      /** Hands */
-      hands: number;
-      /**
-       * Needs Review Hands
-       * @default 0
-       */
-      needs_review_hands: number;
-      /**
-       * Recommended Action
-       * @enum {string}
-       */
-      recommended_action: "fold" | "check" | "call" | "bet" | "raise";
-    };
-    /** TrainingCertaintySummary */
-    TrainingCertaintySummary: {
-      /** Action Accuracy */
-      action_accuracy: number;
-      /** Action Matches */
-      action_matches: number;
-      /** Average Ev Loss Bb */
-      average_ev_loss_bb?: number | null;
-      /**
-       * Certainty
-       * @enum {string}
-       */
-      certainty: "low" | "medium" | "high";
-      /**
-       * Ev Compared Hands
-       * @default 0
-       */
-      ev_compared_hands: number;
-      /** Exact Accuracy */
-      exact_accuracy: number;
-      /** Exact Matches */
-      exact_matches: number;
-      /** Hands */
-      hands: number;
-      /**
-       * Needs Review Hands
-       * @default 0
-       */
-      needs_review_hands: number;
-      trend?: components["schemas"]["TrainingTrend"] | null;
-    };
-    /** TrainingDecision */
-    TrainingDecision: {
-      /**
-       * Action
-       * @enum {string}
-       */
-      action: "fold" | "check" | "call" | "bet" | "raise";
-      /** Certainty */
-      certainty?: ("low" | "medium" | "high") | null;
-      /**
-       * Recorded At
-       * Format: date-time
-       */
-      recorded_at?: string;
-      /** Sizing */
-      sizing?: number | null;
-    };
-    /** TrainingDecisionRequest */
-    TrainingDecisionRequest: {
-      /**
-       * Action
-       * @enum {string}
-       */
-      action: "fold" | "check" | "call" | "bet" | "raise";
-      /** Certainty */
-      certainty?: ("low" | "medium" | "high") | null;
-      /** Sizing */
-      sizing?: number | null;
-    };
-    /** TrainingPositionSummary */
-    TrainingPositionSummary: {
-      /** Action Accuracy */
-      action_accuracy: number;
-      /** Action Matches */
-      action_matches: number;
-      /** Average Ev Loss Bb */
-      average_ev_loss_bb?: number | null;
-      /**
-       * Ev Compared Hands
-       * @default 0
-       */
-      ev_compared_hands: number;
-      /** Exact Accuracy */
-      exact_accuracy: number;
-      /** Exact Matches */
-      exact_matches: number;
-      /**
-       * Needs Review Hands
-       * @default 0
-       */
-      needs_review_hands: number;
-      /** Position */
-      position: string;
-      /** Reviewed Hands */
-      reviewed_hands: number;
-      trend?: components["schemas"]["TrainingTrend"] | null;
-    };
-    /** TrainingProgress */
-    TrainingProgress: {
-      /** Action Accuracy */
-      action_accuracy: number;
-      /** Action Differences */
-      action_differences?: components["schemas"]["TrainingActionDifference"][];
-      /** Action Matches */
-      action_matches: number;
-      /** Average Ev Loss Bb */
-      average_ev_loss_bb?: number | null;
-      /** Certainty Summaries */
-      certainty_summaries?: components["schemas"]["TrainingCertaintySummary"][];
-      /** Different Actions */
-      different_actions: number;
-      /**
-       * Ev Compared Hands
-       * @default 0
-       */
-      ev_compared_hands: number;
-      /** Exact Accuracy */
-      exact_accuracy: number;
-      /** Exact Matches */
-      exact_matches: number;
-      /**
-       * Lesson Count
-       * @default 0
-       */
-      lesson_count: number;
-      /** Lesson Hands */
-      lesson_hands?: components["schemas"]["TrainingRecentHand"][];
-      /**
-       * Lesson Matching Hands
-       * @default 0
-       */
-      lesson_matching_hands: number;
-      /** Needs Review Hands */
-      needs_review_hands: number;
-      /** Position Summaries */
-      position_summaries?: components["schemas"]["TrainingPositionSummary"][];
-      /** Recent Hands */
-      recent_hands?: components["schemas"]["TrainingRecentHand"][];
-      /**
-       * Recent Matching Hands
-       * @default 0
-       */
-      recent_matching_hands: number;
-      /** Review Queue */
-      review_queue?: components["schemas"]["TrainingRecentHand"][];
-      /**
-       * Review Queue Hands
-       * @default 0
-       */
-      review_queue_hands: number;
-      /** Review Street Counts */
-      review_street_counts?: {
-        [key: string]: number;
-      };
-      /** Reviewed Hands */
-      reviewed_hands: number;
-      solver_coverage: components["schemas"]["TrainingSolverCoverage"];
-      /** Street Summaries */
-      street_summaries?: components["schemas"]["TrainingStreetSummary"][];
-      trend?: components["schemas"]["TrainingTrend"] | null;
-      /**
-       * Unpositioned Hands
-       * @default 0
-       */
-      unpositioned_hands: number;
-      /**
-       * Unpositioned Needs Review Hands
-       * @default 0
-       */
-      unpositioned_needs_review_hands: number;
-      /**
-       * Unrated Hands
-       * @default 0
-       */
-      unrated_hands: number;
-      /**
-       * Unrated Needs Review Hands
-       * @default 0
-       */
-      unrated_needs_review_hands: number;
-    };
-    /** TrainingRecentHand */
-    TrainingRecentHand: {
-      /**
-       * Decision Action
-       * @enum {string}
-       */
-      decision_action: "fold" | "check" | "call" | "bet" | "raise";
-      /** Decision Certainty */
-      decision_certainty?: ("low" | "medium" | "high") | null;
-      /** Decision Sizing */
-      decision_sizing?: number | null;
-      /** Ev Loss Bb */
-      ev_loss_bb?: number | null;
-      /** Hero Cards */
-      hero_cards?: components["schemas"]["Card"][];
-      /** Job Id */
-      job_id: string;
-      /** Original Filename */
-      original_filename: string;
-      /**
-       * Outcome
-       * @enum {string}
-       */
-      outcome: "match" | "mixed" | "same_action" | "mixed_action" | "different";
-      /**
-       * Recommended Action
-       * @enum {string}
-       */
-      recommended_action: "fold" | "check" | "call" | "bet" | "raise";
-      /** Recommended Sizing */
-      recommended_sizing?: number | null;
-      /**
-       * Recorded At
-       * Format: date-time
-       */
-      recorded_at: string;
-      /** Review Note */
-      review_note?: string | null;
-      /** Reviewed At */
-      reviewed_at?: string | null;
-      /** Street */
-      street: ("preflop" | "flop" | "turn" | "river") | null;
-    };
-    /** TrainingReviewRequest */
-    TrainingReviewRequest: {
-      /** Note */
-      note?: string | null;
-    };
-    /** TrainingSolverCoverage */
-    TrainingSolverCoverage: {
-      /**
-       * Fallback Hands
-       * @default 0
-       */
-      fallback_hands: number;
-      /**
-       * Fallback Rate
-       * @default 0
-       */
-      fallback_rate: number;
-      /** Fallback Reasons */
-      fallback_reasons?: components["schemas"]["TrainingSolverFallbackSummary"][];
-      /** Routes */
-      routes?: components["schemas"]["TrainingSolverRouteSummary"][];
-      /** Total Hands */
-      total_hands: number;
-      /**
-       * Tracked Hands
-       * @default 0
-       */
-      tracked_hands: number;
-      trend?: components["schemas"]["TrainingSolverCoverageTrend"] | null;
-      /**
-       * Unattributed Hands
-       * @default 0
-       */
-      unattributed_hands: number;
-    };
-    /** TrainingSolverCoverageTrend */
-    TrainingSolverCoverageTrend: {
-      /** Attribution Rate Delta */
-      attribution_rate_delta: number;
-      /** Fallback Rate Delta */
-      fallback_rate_delta: number;
-      /** Previous Attribution Rate */
-      previous_attribution_rate: number;
-      /** Previous Fallback Rate */
-      previous_fallback_rate: number;
-      /** Recent Attribution Rate */
-      recent_attribution_rate: number;
-      /** Recent Fallback Rate */
-      recent_fallback_rate: number;
-      /** Window Hands */
-      window_hands: number;
-    };
-    /** TrainingSolverFallbackSummary */
-    TrainingSolverFallbackSummary: {
-      /**
-       * Action Accuracy
-       * @default 0
-       */
-      action_accuracy: number;
-      /**
-       * Action Matches
-       * @default 0
-       */
-      action_matches: number;
-      /** Average Ev Loss Bb */
-      average_ev_loss_bb?: number | null;
-      /**
-       * Ev Compared Hands
-       * @default 0
-       */
-      ev_compared_hands: number;
-      /**
-       * Exact Accuracy
-       * @default 0
-       */
-      exact_accuracy: number;
-      /**
-       * Exact Matches
-       * @default 0
-       */
-      exact_matches: number;
-      /** Hands */
-      hands: number;
-      /** Key */
-      key: string;
-      /** Reason */
-      reason: string;
-      /** Street Counts */
-      street_counts?: {
-        [key: string]: number;
-      };
-      trend?: components["schemas"]["TrainingTrend"] | null;
-    };
-    /** TrainingSolverRouteSummary */
-    TrainingSolverRouteSummary: {
-      /**
-       * Action Accuracy
-       * @default 0
-       */
-      action_accuracy: number;
-      /**
-       * Action Matches
-       * @default 0
-       */
-      action_matches: number;
-      /** Average Ev Loss Bb */
-      average_ev_loss_bb?: number | null;
-      /** Engine */
-      engine: string;
-      /**
-       * Ev Compared Hands
-       * @default 0
-       */
-      ev_compared_hands: number;
-      /**
-       * Exact Accuracy
-       * @default 0
-       */
-      exact_accuracy: number;
-      /**
-       * Exact Matches
-       * @default 0
-       */
-      exact_matches: number;
-      /**
-       * Fallback Hands
-       * @default 0
-       */
-      fallback_hands: number;
-      /** Hands */
-      hands: number;
-      /** Key */
-      key: string;
-      /** Street Counts */
-      street_counts?: {
-        [key: string]: number;
-      };
-      trend?: components["schemas"]["TrainingTrend"] | null;
-    };
-    /** TrainingStreetSummary */
-    TrainingStreetSummary: {
-      /** Action Accuracy */
-      action_accuracy: number;
-      /** Action Matches */
-      action_matches: number;
-      /** Average Ev Loss Bb */
-      average_ev_loss_bb?: number | null;
-      /**
-       * Ev Compared Hands
-       * @default 0
-       */
-      ev_compared_hands: number;
-      /** Exact Accuracy */
-      exact_accuracy: number;
-      /** Exact Matches */
-      exact_matches: number;
-      /** Reviewed Hands */
-      reviewed_hands: number;
-      /**
-       * Street
-       * @enum {string}
-       */
-      street: "preflop" | "flop" | "turn" | "river";
-      trend?: components["schemas"]["TrainingTrend"] | null;
-    };
-    /** TrainingTrend */
-    TrainingTrend: {
-      /** Action Accuracy Delta */
-      action_accuracy_delta: number;
-      /** Average Ev Loss Delta Bb */
-      average_ev_loss_delta_bb?: number | null;
-      /** Exact Accuracy Delta */
-      exact_accuracy_delta: number;
-      /** Previous Action Accuracy */
-      previous_action_accuracy: number;
-      /** Previous Average Ev Loss Bb */
-      previous_average_ev_loss_bb?: number | null;
-      /**
-       * Previous Ev Compared Hands
-       * @default 0
-       */
-      previous_ev_compared_hands: number;
-      /** Previous Exact Accuracy */
-      previous_exact_accuracy: number;
-      /** Recent Action Accuracy */
-      recent_action_accuracy: number;
-      /** Recent Average Ev Loss Bb */
-      recent_average_ev_loss_bb?: number | null;
-      /**
-       * Recent Ev Compared Hands
-       * @default 0
-       */
-      recent_ev_compared_hands: number;
-      /** Recent Exact Accuracy */
-      recent_exact_accuracy: number;
-      /** Window Hands */
-      window_hands: number;
     };
     /** ValidationError */
     ValidationError: {
@@ -2239,41 +1660,6 @@ export interface operations {
       };
     };
   };
-  job_decision_record: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        job_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["TrainingDecisionRequest"];
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["JobRecord"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
   job_image_get: {
     parameters: {
       query?: never;
@@ -2322,107 +1708,6 @@ export interface operations {
         "application/json": components["schemas"]["ScreenshotMetadataRequest"];
       };
     };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["JobRecord"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  job_recommend: {
-    parameters: {
-      query?: never;
-      header?: {
-        "X-Recommendation-Request-ID"?: string | null;
-      };
-      path: {
-        job_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["JobRecord"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  job_training_review_complete: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        job_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: {
-      content: {
-        "application/json":
-          | components["schemas"]["TrainingReviewRequest"]
-          | null;
-      };
-    };
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["JobRecord"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  job_training_review_reopen: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        job_id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
     responses: {
       /** @description Successful Response */
       200: {
@@ -2595,90 +1880,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["PipelineCapabilities"];
-        };
-      };
-    };
-  };
-  training_lessons_export: {
-    parameters: {
-      query?: {
-        lesson_order?: "recent" | "ev_loss";
-        lesson_street?: ("preflop" | "flop" | "turn" | "river") | null;
-        lesson_query?: string | null;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "text/markdown": string;
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  training_progress_get: {
-    parameters: {
-      query?: {
-        review_order?: "recent" | "ev_loss";
-        review_street?: ("preflop" | "flop" | "turn" | "river") | null;
-        review_certainty?: ("low" | "medium" | "high" | "unrated") | null;
-        review_position?: string | null;
-        review_unpositioned?: boolean;
-        review_decision_action?:
-          | ("fold" | "check" | "call" | "bet" | "raise")
-          | null;
-        review_recommended_action?:
-          | ("fold" | "check" | "call" | "bet" | "raise")
-          | null;
-        lesson_order?: "recent" | "ev_loss";
-        lesson_street?: ("preflop" | "flop" | "turn" | "river") | null;
-        lesson_query?: string | null;
-        solver_fallback_key?: string | null;
-        solver_route_key?: string | null;
-        solver_unattributed?: boolean;
-        recent_street?: ("preflop" | "flop" | "turn" | "river") | null;
-        recent_position?: string | null;
-        recent_unpositioned?: boolean;
-        recent_certainty?: ("low" | "medium" | "high" | "unrated") | null;
-      };
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["TrainingProgress"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };
