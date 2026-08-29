@@ -1,6 +1,8 @@
 """Administrative OCR test session transport endpoints."""
 
-from fastapi import APIRouter, Header, HTTPException, Response
+from fastapi import APIRouter, Header, Response
+
+from app.api.administrative_access import require_administrator
 
 from app.application.admin_ocr_test import AdminOcrTestService
 from app.domain.admin_ocr_test import AdminOcrTestSession
@@ -24,25 +26,7 @@ def create_admin_ocr_test_router(runtime: AdminOcrTestService) -> APIRouter:
             include_in_schema=False,
         ),
     ) -> AdminOcrTestSession:
-        decision = runtime.authorize_administrator(authorization)
-        if decision != "authorized":
-            # Clients unlock the administrative capture controls on a 200, so an
-            # unrecognized decision denies instead of confirming the credential.
-            if decision == "disabled":
-                raise HTTPException(
-                    status_code=403,
-                    detail="Administrative OCR test mode is disabled",
-                )
-            if decision == "unauthorized":
-                raise HTTPException(
-                    status_code=401,
-                    detail="Administrative OCR test authorization is required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            raise HTTPException(
-                status_code=403,
-                detail="Administrative OCR test authorization was refused",
-            )
+        require_administrator(runtime.authorize_administrator(authorization))
 
         # The confirmation is scoped to the presented credential, so no cache
         # between the client and the backend may replay it for another request.

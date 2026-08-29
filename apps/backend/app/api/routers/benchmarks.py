@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.application.benchmarks import BenchmarkService
+from app.api.administrative_access import require_administrator
 from app.api.dependencies import (
     BACKGROUND_TASK_STATE_KEY,
     BenchmarkConfigurationError,
@@ -134,26 +135,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             include_in_schema=False,
         ),
     ) -> BenchmarkDatasetImportResult:
-        decision = runtime.authorize_administrator(authorization)
-        if decision != "authorized":
-            # Dataset import mints administrative test jobs from screenshots, so
-            # it shares the ADR 0046 upload credential and fails closed on any
-            # decision this router does not recognize.
-            if decision == "disabled":
-                raise HTTPException(
-                    status_code=403,
-                    detail="Administrative OCR test mode is disabled",
-                )
-            if decision == "unauthorized":
-                raise HTTPException(
-                    status_code=401,
-                    detail="Administrative OCR test authorization is required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-            raise HTTPException(
-                status_code=403,
-                detail="Administrative OCR test authorization was refused",
-            )
+        require_administrator(runtime.authorize_administrator(authorization))
 
         archive_bytes = await file.read(runtime.max_dataset_upload_bytes + 1)
         if len(archive_bytes) > runtime.max_dataset_upload_bytes:
