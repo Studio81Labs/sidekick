@@ -19,11 +19,19 @@ async function unlockAdministrativeAccess(page: Page): Promise<void> {
     return;
   }
   await page.getByRole("button", { name: "Administrator tools" }).click();
-  await page
+  const dialog = page.getByRole("dialog", { name: "Administrator tools" });
+  await dialog
     .getByLabel("Administrative OCR test token")
     .fill(ADMINISTRATOR_TOKEN);
-  await page.getByRole("button", { name: "Unlock" }).click();
-  await page.getByRole("button", { name: "Close administrator tools" }).click();
+  await dialog.getByRole("button", { name: "Unlock" }).click();
+  // The deployment verifies the credential before any capture control appears,
+  // so the dialog only reports the unlocked state once that round trip lands.
+  await expect(
+    dialog.getByRole("button", { name: "Lock administrator tools" }),
+  ).toBeVisible();
+  await dialog
+    .getByRole("button", { name: "Close administrator tools" })
+    .click();
   await expect(banner).toBeVisible();
 }
 

@@ -65,6 +65,9 @@ while [ ! -f "$PROVIDER_READY_FILE" ]; do
 done
 
 cd "$DATA_DIR"
+# The suite exports, imports and restores archives back to back within seconds,
+# so the production per-minute data-transfer budget (covered by the backend unit
+# tests) is raised here instead of pacing the browser scenarios.
 env -i \
   HOME="${HOME:-$DATA_DIR}" \
   PATH="${PATH:-}" \
@@ -78,6 +81,7 @@ env -i \
   POKER_EXTERNAL_REQUEST_TIMEOUT_SECONDS=40 \
   POKER_ADMIN_OCR_TEST_ENABLED=true \
   POKER_ADMIN_OCR_TEST_TOKEN=e2e-administrative-ocr-test-token-0123456789 \
+  POKER_API_RATE_LIMIT_DATA_TRANSFERS_PER_MINUTE=60 \
   POKER_CORS_ORIGINS='["http://127.0.0.1:4174"]' \
   "$PYTHON_BIN" -m uvicorn app.main:app \
     --host 127.0.0.1 \

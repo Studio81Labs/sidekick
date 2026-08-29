@@ -32,11 +32,19 @@ async function unlockAdministrativeAccess(page: Page): Promise<void> {
     return;
   }
   await page.getByRole("button", { name: "Administrator tools" }).click();
-  await page
+  const dialog = page.getByRole("dialog", { name: "Administrator tools" });
+  await dialog
     .getByLabel("Administrative OCR test token")
     .fill(ADMINISTRATOR_TOKEN);
-  await page.getByRole("button", { name: "Unlock" }).click();
-  await page.getByRole("button", { name: "Close administrator tools" }).click();
+  await dialog.getByRole("button", { name: "Unlock" }).click();
+  // The deployment verifies the credential before any capture control appears,
+  // so the dialog only reports the unlocked state once that round trip lands.
+  await expect(
+    dialog.getByRole("button", { name: "Lock administrator tools" }),
+  ).toBeVisible();
+  await dialog
+    .getByRole("button", { name: "Close administrator tools" })
+    .click();
   await expect(banner).toBeVisible();
 }
 
@@ -577,12 +585,27 @@ test("unlocks and relocks the administrative OCR test tools", async ({
   await page.getByRole("button", { name: "Administrator tools" }).click();
   const dialog = page.getByRole("dialog", { name: "Administrator tools" });
   await expect(dialog).toBeVisible();
-  await dialog.getByRole("button", { name: "Check deployment" }).click();
-  await expect(dialog).toContainText("Enabled on this deployment.");
+  await expect(dialog).toContainText(
+    "The token is verified with the server before any capture control is shown.",
+  );
   await dialog
     .getByLabel("Administrative OCR test token")
     .fill(ADMINISTRATOR_TOKEN);
+  const sessionResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/admin/ocr-test/session` &&
+      response.request().method() === "GET",
+  );
   await dialog.getByRole("button", { name: "Unlock" }).click();
+  const sessionResponse = await sessionResponsePromise;
+  expect(sessionResponse.status()).toBe(200);
+  expect(await sessionResponse.request().headerValue("authorization")).toBe(
+    `Bearer ${ADMINISTRATOR_TOKEN}`,
+  );
+  expect(await sessionResponse.json()).toEqual({
+    authorized: true,
+    enabled: true,
+  });
   await expect(
     dialog.getByRole("button", { name: "Lock administrator tools" }),
   ).toBeVisible();
@@ -619,70 +642,125 @@ test("unlocks and relocks the administrative OCR test tools", async ({
   await expect(page.getByLabel("Choose screenshots")).toHaveCount(0);
 });
 
-test("relocks when the deployment rejects the administrative token", async ({
+test("refuses to unlock when the deployment rejects the administrative token", async ({
   page,
-}, testInfo) => {
+}) => {
+  const attemptedJobUploads: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.url() === `${BACKEND_URL}/api/jobs` &&
+      request.method() === "POST"
+    ) {
+      attemptedJobUploads.push(request.url());
+    }
+  });
+
   await page.goto("/");
   await expectAnalyzerReady(page);
 
   await page.getByRole("button", { name: "Administrator tools" }).click();
-  await page
+  const dialog = page.getByRole("dialog", { name: "Administrator tools" });
+  await dialog
     .getByLabel("Administrative OCR test token")
     .fill("rejected-administrative-ocr-test-token-98765");
-  await page.getByRole("button", { name: "Unlock" }).click();
-  await page.getByRole("button", { name: "Close administrator tools" }).click();
-  await page
-    .getByRole("group", { name: "Input mode" })
-    .getByRole("button", { name: "Upload" })
-    .click();
-
-  const filename = attemptFilename("rejected-token", testInfo);
-  await page.getByLabel("Choose screenshots").setInputFiles({
-    name: filename,
-    mimeType: "image/png",
-    buffer: VALID_PNG,
-  });
-  const rejectedUploadPromise = page.waitForResponse(
+  const rejectedSessionPromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/jobs` &&
-      response.request().method() === "POST" &&
-      response.status() === 401,
+      response.url() === `${BACKEND_URL}/api/admin/ocr-test/session` &&
+      response.request().method() === "GET",
   );
-  await page.getByRole("button", { name: "Upload and parse" }).click();
-  const rejectedUpload = await rejectedUploadPromise;
-  expect(await rejectedUpload.json()).toEqual({
+  await dialog.getByRole("button", { name: "Unlock" }).click();
+  const rejectedSession = await rejectedSessionPromise;
+  expect(rejectedSession.status()).toBe(401);
+  expect(rejectedSession.headers()["www-authenticate"]).toBe("Bearer");
+  expect(await rejectedSession.json()).toEqual({
     detail: "Administrative OCR test authorization is required",
   });
-  expect(rejectedUpload.headers()["www-authenticate"]).toBe("Bearer");
 
+  await expect(dialog.getByRole("alert")).toHaveText(
+    "The administrative OCR test token was rejected. Unlock administrator" +
+      " tools again with the deployment's token.",
+  );
   await expect(
-    page
-      .getByText(
-        "The administrative OCR test token was rejected. Unlock administrator" +
-          " tools again with the deployment's token.",
-      )
-      .first(),
-  ).toBeVisible();
+    dialog.getByRole("button", { name: "Lock administrator tools" }),
+  ).toHaveCount(0);
+  await dialog
+    .getByRole("button", { name: "Close administrator tools" })
+    .click();
+
   await expect(
     page.getByRole("note", { name: "Administrative OCR test mode" }),
   ).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Input mode" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Input" })).toContainText(
     IMPORT_FIRST_NOTICE,
   );
   await expect(page.getByLabel("Choose screenshots")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Upload and parse" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Capture and parse" }),
+  ).toHaveCount(0);
+  expect(attemptedJobUploads).toEqual([]);
+});
 
-  const persistedJobsResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs`,
+test("keeps dataset import and backup restore behind administrator tools", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expectAnalyzerReady(page);
+
+  const benchmarkDialog = page.getByRole("dialog", {
+    name: "Parser benchmark",
+  });
+  const importDatasetButton = benchmarkDialog.getByRole("button", {
+    name: "Import dataset",
+  });
+  await page.getByRole("button", { name: "Parser benchmark" }).click();
+  await expect(benchmarkDialog).toBeVisible();
+  await expect(importDatasetButton).toBeDisabled();
+  await expect(benchmarkDialog.getByLabel("Parser dataset ZIP")).toBeDisabled();
+  await expect(benchmarkDialog).toContainText(
+    "Unlock administrator tools to import datasets.",
   );
-  expect(persistedJobsResponse.ok()).toBe(true);
-  const persistedJobs = (await persistedJobsResponse.json()) as {
-    jobs: Array<{ original_filename: string }>;
-  };
-  expect(
-    persistedJobs.jobs.some(
-      (candidate) => candidate.original_filename === filename,
-    ),
-  ).toBe(false);
+  await benchmarkDialog.getByRole("button", { name: "Done" }).click();
+  await expect(benchmarkDialog).toHaveCount(0);
+
+  const infoDialog = page.getByRole("dialog", {
+    name: "About Poker Training Analyzer",
+  });
+  const restoreBackupButton = infoDialog.getByRole("button", {
+    name: "Restore application backup",
+  });
+  await page.getByRole("button", { name: "About this app" }).click();
+  await expect(infoDialog).toBeVisible();
+  await expect(restoreBackupButton).toBeDisabled();
+  await expect(infoDialog.getByLabel("Application backup ZIP")).toBeDisabled();
+  await expect(infoDialog).toContainText(
+    "Unlock administrator tools to restore a backup.",
+  );
+  await infoDialog.getByRole("button", { name: "Done" }).click();
+  await expect(infoDialog).toHaveCount(0);
+
+  await unlockAdministrativeAccess(page);
+
+  await page.getByRole("button", { name: "Parser benchmark" }).click();
+  await expect(importDatasetButton).toBeEnabled();
+  await expect(benchmarkDialog.getByLabel("Parser dataset ZIP")).toBeEnabled();
+  await expect(benchmarkDialog).not.toContainText(
+    "Unlock administrator tools to import datasets.",
+  );
+  await benchmarkDialog.getByRole("button", { name: "Done" }).click();
+  await expect(benchmarkDialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: "About this app" }).click();
+  await expect(restoreBackupButton).toBeEnabled();
+  await expect(infoDialog.getByLabel("Application backup ZIP")).toBeEnabled();
+  await expect(infoDialog).not.toContainText(
+    "Unlock administrator tools to restore a backup.",
+  );
+  await infoDialog.getByRole("button", { name: "Done" }).click();
+  await expect(infoDialog).toHaveCount(0);
 });
 
 test("marks an administrative upload and withholds its recommendation", async ({
@@ -793,6 +871,38 @@ test("requires an administrator credential for the screenshot upload API", async
   expect(capabilitiesResponse.ok()).toBe(true);
   expect(await capabilitiesResponse.json()).toMatchObject({
     administrative_ocr_test: { enabled: true },
+  });
+});
+
+test("confirms the administrator credential through the session check API", async ({
+  page,
+}) => {
+  const sessionUrl = `${BACKEND_URL}/api/admin/ocr-test/session`;
+
+  const anonymousSession = await page.request.get(sessionUrl);
+  expect(anonymousSession.status()).toBe(401);
+  expect(anonymousSession.headers()["www-authenticate"]).toBe("Bearer");
+  expect(await anonymousSession.json()).toEqual({
+    detail: "Administrative OCR test authorization is required",
+  });
+
+  const rejectedSession = await page.request.get(sessionUrl, {
+    headers: { Authorization: "Bearer not-the-deployment-token" },
+  });
+  expect(rejectedSession.status()).toBe(401);
+  expect(rejectedSession.headers()["www-authenticate"]).toBe("Bearer");
+  expect(await rejectedSession.json()).toEqual({
+    detail: "Administrative OCR test authorization is required",
+  });
+
+  const authorizedSession = await page.request.get(sessionUrl, {
+    headers: ADMINISTRATOR_HEADERS,
+  });
+  expect(authorizedSession.status()).toBe(200);
+  expect(authorizedSession.headers()["cache-control"]).toBe("no-store");
+  expect(await authorizedSession.json()).toEqual({
+    authorized: true,
+    enabled: true,
   });
 });
 
@@ -4276,6 +4386,9 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   };
   const expectedIncludedCases = initialOverview.included_cases + 1;
 
+  // The legacy reload drops the in-memory credential, so dataset import stays
+  // locked until the administrator unlocks the tools again.
+  await unlockAdministrativeAccess(page);
   await page.getByRole("button", { name: "Parser benchmark" }).click();
   const benchmarkDialog = page.getByRole("dialog", {
     name: "Parser benchmark",
@@ -4354,7 +4467,42 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   );
   const datasetPath = await download.path();
   expect(datasetPath).not.toBeNull();
+  if (datasetPath === null) {
+    throw new Error("Dataset export did not produce a local download");
+  }
 
+  const datasetMultipart = {
+    file: {
+      name: download.suggestedFilename(),
+      mimeType: "application/zip",
+      buffer: await readFile(datasetPath),
+    },
+  };
+  const anonymousImport = await page.request.post(
+    `${BACKEND_URL}/api/benchmarks/import`,
+    { multipart: datasetMultipart },
+  );
+  expect(anonymousImport.status()).toBe(401);
+  expect(anonymousImport.headers()["www-authenticate"]).toBe("Bearer");
+  expect(await anonymousImport.json()).toEqual({
+    detail: "Administrative OCR test authorization is required",
+  });
+  const authorizedImport = await page.request.post(
+    `${BACKEND_URL}/api/benchmarks/import`,
+    { headers: ADMINISTRATOR_HEADERS, multipart: datasetMultipart },
+  );
+  expect(authorizedImport.status()).toBe(200);
+  expect(await authorizedImport.json()).toMatchObject({
+    imported_cases: 0,
+    included_cases: expectedIncludedCases,
+    reused_cases: expectedIncludedCases,
+  });
+
+  const importRequestPromise = page.waitForRequest(
+    (request) =>
+      request.url() === `${BACKEND_URL}/api/benchmarks/import` &&
+      request.method() === "POST",
+  );
   const importResponsePromise = page.waitForResponse(
     (response) =>
       response.url() === `${BACKEND_URL}/api/benchmarks/import` &&
@@ -4362,7 +4510,11 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   );
   await benchmarkDialog
     .getByLabel("Parser dataset ZIP")
-    .setInputFiles(datasetPath ?? "");
+    .setInputFiles(datasetPath);
+  const importRequest = await importRequestPromise;
+  expect(await importRequest.headerValue("authorization")).toBe(
+    `Bearer ${ADMINISTRATOR_TOKEN}`,
+  );
   const importResponse = await importResponsePromise;
   expect(importResponse.ok()).toBe(true);
   const importResult = (await importResponse.json()) as {
@@ -4436,6 +4588,9 @@ test("downloads and verifies an application backup through recovery", async ({
   const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
   await expect(pendingJob.queueItem).toContainText("parsed");
 
+  // The legacy reload drops the in-memory credential, so backup restore stays
+  // locked until the administrator unlocks the tools again.
+  await unlockAdministrativeAccess(page);
   await page.getByRole("button", { name: "About this app" }).click();
   const infoDialog = page.getByRole("dialog", {
     name: "About Poker Training Analyzer",
@@ -4454,7 +4609,41 @@ test("downloads and verifies an application backup through recovery", async ({
   );
   const backupPath = await download.path();
   expect(backupPath).not.toBeNull();
+  if (backupPath === null) {
+    throw new Error("Backup export did not produce a local download");
+  }
 
+  const backupMultipart = {
+    file: {
+      name: download.suggestedFilename(),
+      mimeType: "application/zip",
+      buffer: await readFile(backupPath),
+    },
+  };
+  const anonymousRestore = await page.request.post(
+    `${BACKEND_URL}/api/backups/restore`,
+    { multipart: backupMultipart },
+  );
+  expect(anonymousRestore.status()).toBe(401);
+  expect(anonymousRestore.headers()["www-authenticate"]).toBe("Bearer");
+  expect(await anonymousRestore.json()).toEqual({
+    detail: "Administrative OCR test authorization is required",
+  });
+  const authorizedRestore = await page.request.post(
+    `${BACKEND_URL}/api/backups/restore`,
+    { headers: ADMINISTRATOR_HEADERS, multipart: backupMultipart },
+  );
+  expect(authorizedRestore.status()).toBe(200);
+  expect(await authorizedRestore.json()).toMatchObject({
+    imported_benchmark_reports: 0,
+    imported_jobs: 0,
+  });
+
+  const restoreRequestPromise = page.waitForRequest(
+    (request) =>
+      request.url() === `${BACKEND_URL}/api/backups/restore` &&
+      request.method() === "POST",
+  );
   const restoreResponsePromise = page.waitForResponse(
     (response) =>
       response.url() === `${BACKEND_URL}/api/backups/restore` &&
@@ -4462,7 +4651,11 @@ test("downloads and verifies an application backup through recovery", async ({
   );
   await infoDialog
     .getByLabel("Application backup ZIP")
-    .setInputFiles(backupPath ?? "");
+    .setInputFiles(backupPath);
+  const restoreRequest = await restoreRequestPromise;
+  expect(await restoreRequest.headerValue("authorization")).toBe(
+    `Bearer ${ADMINISTRATOR_TOKEN}`,
+  );
   const restoreResponse = await restoreResponsePromise;
   expect(restoreResponse.ok()).toBe(true);
   const restoreResult = (await restoreResponse.json()) as {
