@@ -1,6 +1,22 @@
 {
   "components": {
     "schemas": {
+      "AdminOcrTestSession": {
+        "description": "Server confirmation that a presented administrator credential is valid.",
+        "properties": {
+          "authorized": {
+            "title": "Authorized",
+            "type": "boolean"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": ["enabled", "authorized"],
+        "title": "AdminOcrTestSession",
+        "type": "object"
+      },
       "AdministrativeOcrTestCapability": {
         "description": "Whether this deployment enables the administrator-only OCR test surface.",
         "properties": {
@@ -3346,6 +3362,34 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/admin/ocr-test/session": {
+      "get": {
+        "operationId": "admin_ocr_test_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOcrTestSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Admin Ocr Test Session"
+      }
+    },
     "/api/backups/export": {
       "get": {
         "operationId": "backups_export",

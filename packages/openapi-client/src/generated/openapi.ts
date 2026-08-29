@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+  "/api/admin/ocr-test/session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Admin Ocr Test Session */
+    get: operations["admin_ocr_test_session_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   "/api/backups/export": {
     parameters: {
       query?: never;
@@ -455,6 +472,16 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * AdminOcrTestSession
+     * @description Server confirmation that a presented administrator credential is valid.
+     */
+    AdminOcrTestSession: {
+      /** Authorized */
+      authorized: boolean;
+      /** Enabled */
+      enabled: boolean;
+    };
     /**
      * AdministrativeOcrTestCapability
      * @description Whether this deployment enables the administrator-only OCR test surface.
@@ -1653,6 +1680,35 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+  admin_ocr_test_session_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AdminOcrTestSession"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
   backups_export: {
     parameters: {
       query?: never;
