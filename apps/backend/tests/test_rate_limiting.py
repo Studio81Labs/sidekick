@@ -207,6 +207,7 @@ def test_limiter_requires_a_complete_positive_policy() -> None:
     ("method", "path", "expected"),
     [
         ("POST", "/api/jobs", "uploads"),
+        ("GET", "/api/admin/ocr-test/session", "uploads"),
         ("post", "/api/jobs/job-1/recommend", "recommendations"),
         ("POST", "/api/benchmarks/run", "benchmarks"),
         ("GET", "/api/backups/export", "data_transfers"),

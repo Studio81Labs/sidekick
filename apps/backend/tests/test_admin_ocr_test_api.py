@@ -105,6 +105,85 @@ def test_upload_fails_closed_on_an_unexpected_authorization_decision(
     assert not (tmp_path / "jobs").exists() or not any((tmp_path / "jobs").iterdir())
 
 
+def _session(client: TestClient, headers: dict[str, str] | None = None):
+    return client.get("/api/admin/ocr-test/session", headers=headers)
+
+
+def test_session_confirms_a_valid_administrator_bearer(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    response = _session(client, ADMIN_OCR_TEST_HEADERS)
+
+    assert response.status_code == 200
+    assert response.json() == {"enabled": True, "authorized": True}
+    # The PWA unlocks capture on this answer, so no cache may replay it.
+    assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_session_requires_a_valid_administrator_bearer(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    missing = _session(client)
+    wrong_scheme = _session(client, {"Authorization": f"Basic {ADMIN_OCR_TEST_TOKEN}"})
+    wrong_token = _session(client, {"Authorization": f"Bearer {ADMIN_OCR_TEST_TOKEN}x"})
+
+    for response in (missing, wrong_scheme, wrong_token):
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+        assert response.json()["detail"] == (
+            "Administrative OCR test authorization is required"
+        )
+
+
+def test_session_is_forbidden_when_administrative_mode_is_disabled(
+    tmp_path: Path,
+) -> None:
+    client = make_client(
+        tmp_path,
+        admin_ocr_test_enabled=False,
+        admin_ocr_test_token=None,
+    )
+    configured = TestClient(
+        create_app(
+            Settings(
+                data_dir=tmp_path / "configured",
+                parser_provider="mock",
+                recommendation_provider="mock",
+                admin_ocr_test_enabled=False,
+                admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
+            )
+        )
+    )
+
+    disabled = _session(client, ADMIN_OCR_TEST_HEADERS)
+    ignored_token = _session(configured, ADMIN_OCR_TEST_HEADERS)
+
+    for response in (disabled, ignored_token):
+        assert response.status_code == 403
+        assert response.json()["detail"] == (
+            "Administrative OCR test mode is disabled"
+        )
+
+
+def test_session_fails_closed_on_an_unexpected_authorization_decision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        AdminOcrTestAccessPolicy,
+        "authorize",
+        lambda _self, _authorization_header: "expired",
+    )
+    client = make_client(tmp_path)
+
+    response = _session(client, ADMIN_OCR_TEST_HEADERS)
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == (
+        "Administrative OCR test authorization was refused"
+    )
+
+
 def _dataset_archive(tmp_path: Path) -> bytes:
     source = make_client(tmp_path / "dataset-source")
     job_id = upload_job(source).json()["id"]

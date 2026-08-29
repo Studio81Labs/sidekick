@@ -56,8 +56,17 @@ class AdminOcrTestAccessPolicy:
         return "unauthorized"
 
 
+@dataclass(frozen=True)
+class AdminOcrTestService:
+    """Application operations required by the administrative session transport."""
+
+    enabled: bool
+    authorize_administrator: AuthorizeAdministrator
+
+
 __all__ = [
     "AdminOcrTestAccessDecision",
     "AdminOcrTestAccessPolicy",
+    "AdminOcrTestService",
     "AuthorizeAdministrator",
 ]

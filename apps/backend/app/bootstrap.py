@@ -49,7 +49,10 @@ from app.api.dependencies import (
     JobUploadParserProviderError,
     JobUploadUnexpectedParserError,
 )
-from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
+from app.application.admin_ocr_test import (
+    AdminOcrTestAccessPolicy,
+    AdminOcrTestService,
+)
 from app.application.backups import ApplicationBackupExport, BackupService
 from app.application.benchmarks import (
     BenchmarkDatasetExport,
@@ -70,6 +73,7 @@ from app.application.mcp_admin import McpAdminService
 from app.application.training import TrainingProgressQuery, TrainingService
 from app.application.system import SystemQueryService
 from app.api.dependencies import PipelineCapabilitiesUnavailableError
+from app.api.routers.admin_ocr_test import create_admin_ocr_test_router
 from app.api.routers.backups import create_backups_router
 from app.api.routers.benchmarks import create_benchmarks_router
 from app.api.routers.health import create_health_router
@@ -1398,8 +1402,13 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         process_upload=process_uploaded_image,
         authorize_administrator=admin_ocr_test_policy.authorize,
     )
+    admin_ocr_test_runtime = AdminOcrTestService(
+        enabled=active_settings.admin_ocr_test_enabled,
+        authorize_administrator=admin_ocr_test_policy.authorize,
+    )
     app.include_router(create_health_router(api_runtime))
     app.include_router(create_pipeline_router(api_runtime))
+    app.include_router(create_admin_ocr_test_router(admin_ocr_test_runtime))
     app.include_router(create_mcp_admin_router(mcp_admin_runtime))
     app.include_router(create_training_router(training_runtime))
 
