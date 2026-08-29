@@ -13,6 +13,7 @@ from api_test_support import (
     approve_job,
     load_only_job,
     make_client,
+    mark_legacy_player,
     upload_job,
 )
 
@@ -90,6 +91,7 @@ def test_processing_queue_keeps_mutated_benchmark_imports(
     failed_id = upload_job(client, filename="failed-import.png").json()["id"]
     store = FileJobStore(tmp_path)
     for job_id in (pristine_id, decision_id, failed_id):
+        mark_legacy_player(tmp_path, job_id)
         approve_job(client, job_id)
         imported_job = store.get(job_id)
         imported_job.parser_result = None
@@ -130,6 +132,7 @@ def test_processing_queue_keeps_correctable_benchmark_attempts(
 
     client = make_client(tmp_path)
     job_id = upload_job(client, filename="correctable-import.png").json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     store = FileJobStore(tmp_path)
     imported_job = store.get(job_id)
@@ -284,6 +287,7 @@ def test_approval_rejects_coerced_numeric_state(
 def test_reapproval_clears_previous_recommendation(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     client.put(
         f"/api/jobs/{job_id}/decision",

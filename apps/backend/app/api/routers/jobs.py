@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
 from app.api.dependencies import (
+    JobInputContextError,
     JobMutationConflictError,
     JobRecommendationConfigurationError,
     JobRecommendationInputError,
@@ -245,6 +246,8 @@ def create_job_mutations_router(runtime: JobMutationService) -> APIRouter:
     ) -> JobRecord:
         try:
             return runtime.record_training_decision(job_id, decision)
+        except JobInputContextError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except JobTransportNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except JobMutationConflictError as exc:
@@ -277,6 +280,8 @@ def create_job_recommendation_router(
     ) -> JobRecord:
         try:
             return runtime.recommend(job_id, recommendation_request_id)
+        except JobInputContextError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except JobTransportNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except JobMutationConflictError as exc:

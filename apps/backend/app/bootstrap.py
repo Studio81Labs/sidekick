@@ -37,6 +37,7 @@ from app.api.dependencies import (
     BenchmarkDatasetInputError,
     BenchmarkInputError,
     BenchmarkTransportNotFoundError,
+    JobInputContextError,
     JobMutationConflictError,
     JobRecommendationConfigurationError,
     JobRecommendationInputError,
@@ -1018,12 +1019,22 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         except JobNotFoundError as exc:
             raise KeyError("Job not found") from exc
 
+    def require_learning_eligible(job: JobRecord, transition: str) -> None:
+        if job.input_context == "administrative_test":
+            raise JobInputContextError(
+                f"Administrative OCR test inputs cannot {transition}"
+            )
+
+    def learning_eligible_jobs() -> list[JobRecord]:
+        return [job for job in store.list() if job.input_context != "administrative_test"]
+
     def complete_training_review(
         job_id: str,
         review: TrainingReviewRequest | None,
     ) -> JobRecord:
         with job_lock_for(job_id):
             job = training_job(job_id)
+            require_learning_eligible(job, "enter training review")
             if job.training_decision is None or job.recommendation is None:
                 raise ValueError(
                     "A completed decision comparison is required before review"
@@ -1044,6 +1055,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
     def reopen_training_review(job_id: str) -> JobRecord:
         with job_lock_for(job_id):
             job = training_job(job_id)
+            require_learning_eligible(job, "enter training review")
             if job.training_decision is None or job.recommendation is None:
                 raise ValueError(
                     "A completed decision comparison is required before reopening review"
@@ -1057,7 +1069,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
 
     def get_training_progress(query: TrainingProgressQuery) -> TrainingProgress:
         return summarize_training(
-            store.list(),
+            learning_eligible_jobs(),
             review_order=query.review_order,
             review_street=query.review_street,
             review_certainty=query.review_certainty,
@@ -1082,7 +1094,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         lesson_query: str | None,
     ) -> tuple[str, str]:
         document, lesson_count = build_training_lessons_markdown(
-            store.list(),
+            learning_eligible_jobs(),
             lesson_street=lesson_street,
             lesson_query=lesson_query,
             lesson_order=lesson_order,
@@ -1171,6 +1183,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 job = store.get(job_id)
             except JobNotFoundError as exc:
                 raise JobTransportNotFoundError("Job not found") from exc
+            require_learning_eligible(job, "record training decisions")
             if job.approved_state is None or not job.approved_state.user_approved:
                 raise JobMutationConflictError(
                     "Approve corrected state before recording your decision"
@@ -1200,6 +1213,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 job = store.get(job_id)
             except JobNotFoundError as exc:
                 raise JobTransportNotFoundError("Job not found") from exc
+            require_learning_eligible(job, "request recommendations")
             if job.approved_state is None or not job.approved_state.user_approved:
                 raise JobMutationConflictError(
                     "Approve corrected state before requesting recommendation"

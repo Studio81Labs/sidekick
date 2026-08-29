@@ -20,7 +20,11 @@ from app.mcp_gateway import (
 from app.domain.hands import JobRecord
 from app.domain.poker import CanonicalState
 from app.domain.training import TrainingDecisionRequest
-from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
+from api_test_support import (
+    ADMIN_OCR_TEST_HEADERS,
+    ADMIN_OCR_TEST_TOKEN,
+    mark_legacy_player,
+)
 
 VALID_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
@@ -310,6 +314,10 @@ def test_staging_gateway_completes_training_workflow(tmp_path: Path) -> None:
     )
     assert uploaded.status_code == 201
     submitted_job = JobRecord.model_validate(uploaded.json())
+    # The seeded upload is an administrative OCR test input, which may never
+    # feed training. The gateway's training workflow runs on player-captured
+    # records, so the seeded job is re-persisted as one.
+    mark_legacy_player(tmp_path / "data", submitted_job.id)
     assert submitted_job.status == "parsed"
     assert submitted_job.upload_request_id == "mcp-upload-1"
     assert submitted_job.parser_result is not None

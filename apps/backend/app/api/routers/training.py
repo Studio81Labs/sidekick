@@ -3,6 +3,7 @@
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
+from app.api.dependencies import JobInputContextError
 from app.application.training import TrainingProgressQuery, TrainingService
 from app.api.response_contracts import MARKDOWN_RESPONSE_CONTENT
 from app.domain.poker import Street
@@ -34,6 +35,8 @@ def create_training_router(runtime: TrainingService) -> APIRouter:
             return runtime.complete_review(job_id, review)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except JobInputContextError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -47,6 +50,8 @@ def create_training_router(runtime: TrainingService) -> APIRouter:
             return runtime.reopen_review(job_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc.args[0])) from exc
+        except JobInputContextError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 

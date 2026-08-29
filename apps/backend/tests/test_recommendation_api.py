@@ -16,6 +16,7 @@ from api_test_support import (
     APPROVED_STATE,
     approve_job,
     make_client,
+    mark_legacy_player,
     upload_job,
     upload_job_with_pipeline,
 )
@@ -29,6 +30,7 @@ def test_upload_parse_approve_and_recommend(tmp_path: Path) -> None:
 
     assert upload.status_code == 201
     job = upload.json()
+    mark_legacy_player(tmp_path, job["id"])
     assert job["status"] == "parsed"
     assert job["parser_result"]["state"]["hero_cards"][0]["rank"] == "A"
     assert job["parser_result"]["confidences"]["hero_cards"] == 0.99
@@ -77,6 +79,7 @@ def test_recommendation_uses_provider_selected_when_job_was_uploaded(
         recommendation_provider="rule_based",
     )
     job_id = upload.json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
 
     response = client.post(f"/api/jobs/{job_id}/recommend")
@@ -91,6 +94,7 @@ def test_recommendation_does_not_require_a_completed_job_parser_to_remain_enable
 ) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     store = FileJobStore(tmp_path)
     job = store.get(job_id)
     job.parser_provider = "llm_vision"
@@ -124,6 +128,7 @@ def test_recommendation_does_not_require_a_persisted_provider_to_remain_enabled(
         recommendation_provider="rule_based",
     )
     job_id = upload.json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     settings.recommendation_enabled_providers = []
     monkeypatch.setattr(
@@ -154,6 +159,7 @@ def test_recommendation_preserves_decision_recorded_while_provider_runs(
 
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     imported_job = FileJobStore(tmp_path).get(job_id)
     imported_job.parser_result = None
@@ -236,6 +242,7 @@ def test_superseded_recommendation_cannot_overwrite_newer_attempt(
     provider = SupersededRecommendationProvider()
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     monkeypatch.setattr("app.bootstrap.build_provider", lambda settings: provider)
     first_responses = []
@@ -282,6 +289,7 @@ def test_superseded_recommendation_cannot_overwrite_newer_attempt(
 def test_app_startup_recovers_interrupted_recommendation(tmp_path: Path) -> None:
     initial_client = make_client(tmp_path)
     job_id = upload_job(initial_client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(initial_client, job_id)
     store = FileJobStore(tmp_path)
     interrupted_job = store.get(job_id)
@@ -309,6 +317,7 @@ def test_app_startup_loads_legacy_non_actionable_recommendation_sizing(
 ) -> None:
     initial_client = make_client(tmp_path)
     job_id = upload_job(initial_client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(initial_client, job_id)
     recommendation_response = initial_client.post(f"/api/jobs/{job_id}/recommend")
     assert recommendation_response.status_code == 200
@@ -332,6 +341,7 @@ def test_app_startup_loads_legacy_non_actionable_recommendation_sizing(
 def test_app_startup_loads_legacy_zero_wager_sizing(tmp_path: Path) -> None:
     initial_client = make_client(tmp_path)
     job_id = upload_job(initial_client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(initial_client, job_id)
     decision_response = initial_client.put(
         f"/api/jobs/{job_id}/decision",
@@ -361,6 +371,7 @@ def test_recommend_requires_approval(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     upload = upload_job(client)
     job_id = upload.json()["id"]
+    mark_legacy_player(tmp_path, job_id)
 
     response = client.post(f"/api/jobs/{job_id}/recommend")
 
@@ -373,6 +384,7 @@ def test_provider_configuration_errors_are_http_errors_and_stored(
 ) -> None:
     client = make_client(tmp_path, recommendation_provider="missing")
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
 
     response = client.post(f"/api/jobs/{job_id}/recommend")
@@ -402,6 +414,7 @@ def test_provider_runtime_errors_are_stored_retryable_and_not_archived(
 
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     monkeypatch.setattr("app.bootstrap.build_provider", lambda settings: FailingProvider())
 
@@ -457,6 +470,7 @@ def test_unexpected_provider_setup_errors_clear_pending(
         )
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
 
     with pytest.raises(RuntimeError, match="exploded"):
@@ -472,6 +486,7 @@ def test_unexpected_provider_setup_errors_clear_pending(
 def test_recommend_reports_missing_required_fields(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id, {"street": "flop", "user_approved": True})
 
     response = client.post(f"/api/jobs/{job_id}/recommend")
@@ -491,6 +506,7 @@ def test_multiway_ev_recommendation_requires_committed_opponent_count(
         recommendation_provider="local_solver",
     )
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
 
     response = client.post(f"/api/jobs/{job_id}/recommend")
@@ -514,6 +530,7 @@ def test_local_ev_requires_total_opponent_wager_when_not_derivable(
         local_solver_engine="local_ev",
     )
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(
         client,
         job_id,
@@ -555,6 +572,7 @@ def test_local_ev_requires_aggregate_multiway_commitments(
         local_solver_engine="local_ev",
     )
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(
         client,
         job_id,
@@ -599,6 +617,7 @@ def test_cfr_only_recommend_reports_missing_postflop_fields(
         postflop_solver_fallback_enabled=False,
     )
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     state = {**APPROVED_STATE, "players_in_hand": 2, missing_field: value}
     approve_job(client, job_id, state)
 
@@ -619,6 +638,7 @@ def test_cfr_only_unsupported_state_is_user_correctable(tmp_path: Path) -> None:
         postflop_solver_fallback_enabled=False,
     )
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(
         client,
         job_id,
@@ -648,6 +668,7 @@ def test_provider_configuration_errors_are_http_errors(
 
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     monkeypatch.setattr("app.bootstrap.build_provider", lambda settings: MisconfiguredProvider())
 

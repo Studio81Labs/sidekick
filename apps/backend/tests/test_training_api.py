@@ -3,12 +3,18 @@ from pathlib import Path
 import pytest
 
 from app.storage.file_job_store import FileJobStore
-from api_test_support import approve_job, make_client, upload_job
+from api_test_support import (
+    approve_job,
+    make_client,
+    mark_legacy_player,
+    upload_job,
+)
 
 
 def test_records_training_decision_before_recommendation(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
 
     response = client.put(
@@ -30,6 +36,7 @@ def test_records_training_decision_before_recommendation(tmp_path: Path) -> None
 def test_training_progress_reports_completed_decision_reviews(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     client.put(
         f"/api/jobs/{job_id}/decision",
@@ -280,6 +287,7 @@ def test_completed_training_review_leaves_accuracy_and_clears_pending_queue(
 ) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     client.put(
         f"/api/jobs/{job_id}/decision",
@@ -405,6 +413,7 @@ def test_completed_training_review_leaves_accuracy_and_clears_pending_queue(
 def test_training_review_requires_a_non_exact_comparison(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
 
     incomplete = client.put(f"/api/jobs/{job_id}/training-review")
     incomplete_reopen = client.delete(f"/api/jobs/{job_id}/training-review")
@@ -435,6 +444,7 @@ def test_training_review_requires_a_non_exact_comparison(tmp_path: Path) -> None
 def test_training_review_rejects_supported_mixed_line(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
     client.put(
         f"/api/jobs/{job_id}/decision",
@@ -470,6 +480,7 @@ def test_training_decision_requires_approval_and_precedes_recommendation(
 ) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
+    mark_legacy_player(tmp_path, job_id)
 
     before_approval = client.put(
         f"/api/jobs/{job_id}/decision",
