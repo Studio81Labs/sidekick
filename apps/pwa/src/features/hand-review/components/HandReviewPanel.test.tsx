@@ -18,7 +18,6 @@ function panelProps(
   return {
     busy: false,
     canApprove: true,
-    children: <div>Decision slot</div>,
     editor: {} as HandStateEditorProps,
     job: {
       id: "job-1",
@@ -65,7 +64,6 @@ describe("HandReviewPanel", () => {
     render(<HandReviewPanel {...props} />);
 
     expect(screen.getByText("Hand state editor")).toBeInTheDocument();
-    expect(screen.getByText("Decision slot")).toBeInTheDocument();
     await userEvent.click(
       screen.getByRole("button", { name: "Approve state" }),
     );

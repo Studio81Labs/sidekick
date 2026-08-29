@@ -20,8 +20,6 @@ describe("useSystemInfoDialog", () => {
         jsonResponse({
           environment: "local",
           parser_provider: "ocr_cv",
-          recommendation_engine: "postflop_solver",
-          recommendation_provider: "local_solver",
           status: "ok",
         }),
       ),
@@ -45,8 +43,6 @@ describe("useSystemInfoDialog", () => {
       jsonResponse({
         environment: "local",
         parser_provider: "ocr_cv",
-        recommendation_engine: "postflop_solver",
-        recommendation_provider: "local_solver",
         status: "ok",
       }),
     );
@@ -82,8 +78,6 @@ describe("useSystemInfoDialog", () => {
         jsonResponse({
           environment: "local",
           parser_provider: "ocr_cv",
-          recommendation_engine: "postflop_solver",
-          recommendation_provider: "local_solver",
           status: "ok",
         }),
       );
@@ -126,8 +120,6 @@ describe("useSystemInfoDialog", () => {
       jsonResponse({
         environment: "local",
         parser_provider: "ocr_cv",
-        recommendation_engine: "postflop_solver",
-        recommendation_provider: "local_solver",
         status: "ok",
       }),
     );

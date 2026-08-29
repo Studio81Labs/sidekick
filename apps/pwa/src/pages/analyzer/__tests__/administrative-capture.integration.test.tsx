@@ -17,7 +17,6 @@ import {
   jobRecord,
   jsonResponse,
   mockAdministratorVerification,
-  nextDeferredResponse,
   processingQueueResponse,
   setSharedPreviewSize,
   stubCanvasCapture,
@@ -179,8 +178,6 @@ describe("Analyzer administrative capture", () => {
       jsonResponse({
         status: "ok",
         parser_provider: "ocr_cv",
-        recommendation_provider: "local_solver",
-        recommendation_engine: "postflop_solver",
       }),
     );
     render(<App />);
@@ -387,8 +384,6 @@ describe("Analyzer administrative capture", () => {
           jsonResponse({
             status: "ok",
             parser_provider: "auto",
-            recommendation_provider: "local_solver",
-            recommendation_engine: "postflop_solver",
           }),
         );
       }
@@ -439,8 +434,6 @@ describe("Analyzer administrative capture", () => {
           jsonResponse({
             status: "ok",
             parser_provider: "ocr_cv",
-            recommendation_provider: "local_solver",
-            recommendation_engine: "postflop_solver",
           }),
         );
       }
@@ -481,8 +474,6 @@ describe("Analyzer administrative capture", () => {
               status: "ok",
               environment: "staging",
               parser_provider: "ocr_cv",
-              recommendation_provider: "local_solver",
-              recommendation_engine: "postflop_solver",
             }),
           );
         }
@@ -597,8 +588,6 @@ describe("Analyzer administrative capture", () => {
             jsonResponse({
               status: "ok",
               parser_provider: "ocr_cv",
-              recommendation_provider: "local_solver",
-              recommendation_engine: "postflop_solver",
             }),
           );
         }

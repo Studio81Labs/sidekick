@@ -383,7 +383,6 @@ export function useHandReviewState({
     completedPostflopActionsAtLimit,
     confidenceSummary,
     confidences,
-    currentStateApproved,
     form,
     formBaselineRef,
     formDirtyRef,

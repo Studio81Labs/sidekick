@@ -56,9 +56,9 @@ export function AdministrativeAccessDialog({
       <div className="administrative-access-body">
         <p>
           Screenshot upload and live window, screen, or tab capture are
-          administrator-only OCR test tools. Test inputs are marked as
-          administrative data and never request recommendations, create decision
-          points, or enter training.
+          administrator-only OCR test tools. Uploads and captures are
+          administrative OCR test data used for parser diagnostics and
+          ground-truth approval; they are not player analysis.
         </p>
         <p className="administrative-access-status">
           The token is verified with the server before any capture control is

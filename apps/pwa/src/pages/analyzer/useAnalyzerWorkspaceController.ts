@@ -87,7 +87,6 @@ import {
 import { PERSISTED_MUTATION_LEASE_MS } from "../../features/workspace/lib/mutationLeaseStorage";
 import type {
   JobMutationExpectation,
-  JobMutationLease,
   PersistedJobMutationScope,
   PersistedMutationLease,
   ProjectionMutationLease,
@@ -231,7 +230,6 @@ export function useAnalyzerWorkspaceController({
     completedPostflopActionsAtLimit,
     confidenceSummary,
     confidences,
-    currentStateApproved,
     form,
     formBaselineRef,
     formDirtyRef,
@@ -2259,28 +2257,6 @@ export function useAnalyzerWorkspaceController({
     }
   }
 
-  function preserveNewerScreenshotMetadata(incoming: JobRecord): JobRecord {
-    const current = jobsRef.current.find(
-      (candidate) => candidate.id === incoming.id,
-    );
-    const currentUpdatedAt = current
-      ? Date.parse(current.updated_at)
-      : Number.NaN;
-    const incomingUpdatedAt = Date.parse(incoming.updated_at);
-    return current &&
-      Number.isFinite(currentUpdatedAt) &&
-      (!Number.isFinite(incomingUpdatedAt) ||
-        currentUpdatedAt > incomingUpdatedAt)
-      ? {
-          ...incoming,
-          title: current.title ?? null,
-          notes: current.notes ?? null,
-          tags: screenshotTags(current),
-          updated_at: current.updated_at,
-        }
-      : incoming;
-  }
-
   async function uploadSelectedFiles(
     administratorToken: string,
     expectedUploads: ProjectionMutationLease["expectedUploads"],
@@ -2976,7 +2952,6 @@ export function useAnalyzerWorkspaceController({
       tags,
     };
     beginPersistedJobMutation(managedJob, expectation);
-    let restoreAfterMutation = false;
     let deletedRemotely = false;
     setScreenshotMetadataSaving(true);
     setError(null);
@@ -3017,12 +2992,10 @@ export function useAnalyzerWorkspaceController({
         metadataError instanceof ApiResponseError &&
         metadataError.status === 404;
       if (deletedRemotely) {
-        restoreAfterMutation = true;
         reconcileAuthoritativeScreenshotRemoval(managedJob, mutationScope);
         toast.warning("Screenshot was already deleted elsewhere");
       } else if (mutationFailureMayHavePersistedSideEffect(metadataError)) {
         markPersistedJobMutationUncertain(mutationScope, managedJob.id);
-        restoreAfterMutation = true;
       }
       if (!deletedRemotely) {
         setError(

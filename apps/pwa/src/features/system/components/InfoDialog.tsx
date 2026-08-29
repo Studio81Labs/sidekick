@@ -54,7 +54,7 @@ export function InfoDialog({
       <DialogHeader
         titleId="info-dialog-title"
         title="About Poker Training Analyzer"
-        subtitle="Post-hand Texas Hold'em review and training"
+        subtitle="Administrator OCR test console"
         closeLabel="Close app information"
         closeDisabled={closeDisabled}
         onClose={onClose}
@@ -95,7 +95,7 @@ export function InfoDialog({
           </p>
         </section>
         <section className="info-dialog-section">
-          <h3>Training scope</h3>
+          <h3>Product scope</h3>
           <p>
             Designed for post-hand study. It does not place bets or interact
             directly with a poker client.

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -8,9 +7,7 @@ import {
 } from "./HandReviewWorkspace";
 
 vi.mock("../../../features/hand-review/components/HandReviewPanel", () => ({
-  HandReviewPanel: ({ children }: { children?: ReactNode }) => (
-    <div>Hand review shell{children}</div>
-  ),
+  HandReviewPanel: () => <div>Hand review shell</div>,
 }));
 
 afterEach(cleanup);

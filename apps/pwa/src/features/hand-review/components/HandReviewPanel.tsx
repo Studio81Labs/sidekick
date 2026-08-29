@@ -1,5 +1,4 @@
 import { Check, RefreshCcw } from "lucide-react";
-import type { ReactNode } from "react";
 import "./HandReviewPanel.css";
 
 import { ButtonControl } from "../../../shared/components/FormControls";
@@ -10,7 +9,6 @@ import type { JobRecord } from "../../../shared/types/jobs";
 export interface HandReviewPanelProps {
   busy: boolean;
   canApprove: boolean;
-  children?: ReactNode;
   editor: HandStateEditorProps;
   job: JobRecord | null;
   onApprove: () => void | Promise<void>;
@@ -20,7 +18,6 @@ export interface HandReviewPanelProps {
 export function HandReviewPanel({
   busy,
   canApprove,
-  children,
   editor,
   job,
   onApprove,
@@ -39,7 +36,6 @@ export function HandReviewPanel({
 
       <div className="review-scroll">
         <HandStateEditor {...editor} />
-        {children}
       </div>
 
       <div className="review-actions">
