@@ -61,8 +61,11 @@ for pid in $candidates; do
       | "$ROOT_DIR/apps/pwa/node_modules/"* | "$ROOT_DIR/solver-plugins/"*)
       kind=path ;;
     node | */node)
-      case $ARGS in
-        *"$ROOT_DIR/node_modules/"* | *"$ROOT_DIR/apps/pwa/node_modules/"*) kind=path ;;
+      # A script argument must *start* with the worktree path (argument
+      # boundary: start of the argument string or after a space); an argument
+      # that merely mentions the path somewhere inside does not count.
+      case " $ARGS" in
+        *" $ROOT_DIR/node_modules/"* | *" $ROOT_DIR/apps/pwa/node_modules/"*) kind=path ;;
       esac ;;
     python | python[0-9]* | */python | */python[0-9]* | Python | */Python)
       case $ARGS in
