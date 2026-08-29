@@ -26,6 +26,7 @@ describe("upload screenshot command", () => {
     const controller = new AbortController();
 
     const outcome = await uploadScreenshotCommand(queryClient, {
+      administratorToken: "secret-token",
       file,
       requestId: "upload-1",
       signal: controller.signal,
@@ -54,6 +55,10 @@ describe("upload screenshot command", () => {
       "http://localhost:8000/api/jobs",
       expect.objectContaining({ signal: controller.signal }),
     );
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(new Headers(init.headers).get("Authorization")).toBe(
+      "Bearer secret-token",
+    );
   });
 
   it("leaves Query state untouched when one upload fails", async () => {
@@ -68,6 +73,7 @@ describe("upload screenshot command", () => {
 
     await expect(
       uploadScreenshotCommand(queryClient, {
+        administratorToken: "secret-token",
         file: new File(["screenshot"], "table.png"),
         requestId: "upload-2",
       }),

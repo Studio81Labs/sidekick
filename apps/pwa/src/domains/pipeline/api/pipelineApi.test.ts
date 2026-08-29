@@ -6,6 +6,7 @@ import { getPipelineCapabilities, toPipelineCapabilities } from "./pipelineApi";
 afterEach(resetApiMocks);
 
 const response = {
+  administrative_ocr_test: { enabled: true },
   defaults: {
     parser_layout_profile: "fortuna_nations",
     parser_provider: "ocr_cv",
@@ -22,6 +23,15 @@ const response = {
 describe("pipeline API adapter", () => {
   it("normalizes optional generated fields for the stable domain value", () => {
     expect(toPipelineCapabilities(response)).toEqual(response);
+  });
+
+  it("maps the administrative OCR test capability", () => {
+    expect(
+      toPipelineCapabilities({
+        ...response,
+        administrative_ocr_test: { enabled: false },
+      }).administrative_ocr_test,
+    ).toEqual({ enabled: false });
   });
 
   it("reads capabilities through the shared transport", async () => {

@@ -69,6 +69,7 @@ describe("Analyzer pipeline", () => {
               unavailable_reason: null,
             },
           ],
+          administrative_ocr_test: { enabled: false },
           recommendation_engines: [],
         }),
       )
@@ -172,6 +173,7 @@ describe("Analyzer pipeline", () => {
               unavailable_reason: null,
             },
           ],
+          administrative_ocr_test: { enabled: false },
           recommendation_engines: [
             {
               id: "postflop_solver",

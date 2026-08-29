@@ -29,6 +29,7 @@ export function imageUrl(jobId: string): string {
 export async function uploadScreenshot(
   file: File,
   uploadRequestId: string,
+  administratorToken: string,
   signal?: AbortSignal,
   pipeline?: PipelineSelection,
 ): Promise<JobRecord> {
@@ -46,6 +47,7 @@ export async function uploadScreenshot(
   const response = await requestJson<JobRecordResponse>("/api/jobs", {
     method: "POST",
     body: form,
+    headers: { Authorization: `Bearer ${administratorToken}` },
     signal,
   });
   const job = toJobRecord(response);

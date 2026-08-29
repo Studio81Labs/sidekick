@@ -1135,6 +1135,7 @@ describe("Analyzer screenshot management", () => {
                 unavailable_reason: null,
               },
             ],
+            administrative_ocr_test: { enabled: false },
             recommendation_engines: [],
           }),
         );

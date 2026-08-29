@@ -5,6 +5,7 @@ import type { TrainingDecision } from "./training";
 export interface JobRecord {
   id: string;
   status: "created" | "parsed" | "approved" | "recommended" | "error";
+  input_context?: "legacy_player" | "administrative_test";
   upload_request_id?: string | null;
   original_filename: string;
   title?: string | null;

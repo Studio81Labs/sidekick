@@ -6,6 +6,7 @@ import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
 import type { PipelineSelection } from "../../../shared/types/pipeline";
 
 export type UploadScreenshotCommand = {
+  administratorToken: string;
   file: File;
   pipeline?: PipelineSelection;
   requestId: string;
@@ -19,6 +20,7 @@ export async function uploadScreenshotCommand(
   const job = await uploadScreenshot(
     command.file,
     command.requestId,
+    command.administratorToken,
     command.signal,
     command.pipeline,
   );

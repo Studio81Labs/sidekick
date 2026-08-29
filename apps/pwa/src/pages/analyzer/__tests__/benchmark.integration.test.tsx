@@ -129,6 +129,7 @@ describe("Analyzer benchmarks", () => {
               unavailable_reason: null,
             },
           ],
+          administrative_ocr_test: { enabled: false },
           recommendation_engines: [],
         }),
       )
@@ -741,6 +742,7 @@ describe("Analyzer benchmarks", () => {
               unavailable_reason: null,
             },
           ],
+          administrative_ocr_test: { enabled: false },
           recommendation_engines: [],
         }),
       )
@@ -3635,6 +3637,7 @@ describe("Analyzer benchmarks", () => {
               unavailable_reason: null,
             },
           ],
+          administrative_ocr_test: { enabled: false },
           recommendation_engines: [],
         }),
       )
