@@ -3,6 +3,7 @@ import { Archive } from "lucide-react";
 import "./ScreenshotQueuePanel.css";
 import { humanReadableMessage } from "../../../shared/api/core";
 import { ButtonControl } from "../../../shared/components/FormControls";
+import { JobInputContextBadge } from "../../../shared/components/JobInputContextBadge";
 import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
 import { ScreenshotRailItem } from "../../../shared/components/ScreenshotRailItem";
 import { screenshotLabel } from "../../../shared/lib/screenshotPresentation";
@@ -95,7 +96,10 @@ export function ScreenshotQueuePanel({
                   <span>{screenshotLabel(candidate)}</span>
                   <small>{queueDetail(candidate, attention)}</small>
                 </span>
-                <JobStatusBadge status={candidate.status} />
+                <span className="batch-status">
+                  <JobInputContextBadge density="compact" job={candidate} />
+                  <JobStatusBadge status={candidate.status} />
+                </span>
               </ScreenshotRailItem>
             );
           })}

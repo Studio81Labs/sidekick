@@ -1935,4 +1935,42 @@ describe("Analyzer administrative capture", () => {
       screen.getByRole("button", { name: "Capture and parse" }),
     ).toBeDisabled();
   });
+
+  it("marks administrative jobs and withholds recommendation and training controls", async () => {
+    const created = jobRecord({ input_context: "administrative_test" });
+    const approved = {
+      ...approvedJob(),
+      input_context: "administrative_test" as const,
+    };
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(processingQueueResponse([created]))
+      .mockResolvedValueOnce(jsonResponse(approved));
+    render(<App />);
+
+    const user = await uploadScreenshot();
+    expect(
+      screen.getAllByLabelText("Administrative OCR test input").length,
+    ).toBeGreaterThan(0);
+    await user.click(
+      await screen.findByRole("button", { name: "Approve state" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Approve state" }),
+      ).toBeDisabled(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Request recommendation" }),
+    ).toBeDisabled();
+    expect(
+      screen.queryByLabelText("Your training decision"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Administrative test inputs never request recommendations or enter training.",
+      ),
+    ).toBeInTheDocument();
+  });
 });

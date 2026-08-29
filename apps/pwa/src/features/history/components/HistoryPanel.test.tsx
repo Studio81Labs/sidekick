@@ -239,4 +239,25 @@ describe("HistoryPanel", () => {
       screen.getByText("Cleared reviewed hands will appear here."),
     ).toBeInTheDocument();
   });
+
+  it("marks administrative test jobs and leaves legacy jobs unmarked", () => {
+    const administrativeItem = historyItem(
+      jobRecord({ input_context: "administrative_test" }),
+    );
+    const { rerender } = render(
+      <HistoryPanel
+        {...panelProps({ items: [administrativeItem], total: 1 })}
+      />,
+    );
+
+    expect(
+      screen.getByLabelText("Administrative OCR test input"),
+    ).toBeInTheDocument();
+
+    rerender(<HistoryPanel {...panelProps()} />);
+
+    expect(
+      screen.queryByLabelText("Administrative OCR test input"),
+    ).not.toBeInTheDocument();
+  });
 });

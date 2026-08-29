@@ -88,4 +88,35 @@ describe("HandReviewPanel", () => {
     expect(props.onRecommend).toHaveBeenCalledOnce();
     expect(props.onResetToParser).toHaveBeenCalledOnce();
   });
+
+  it("marks administrative test jobs and leaves legacy jobs unmarked", () => {
+    const legacyProps = panelProps();
+    const administrativeJob: JobRecord = {
+      ...legacyProps.job!,
+      input_context: "administrative_test",
+    };
+    const { rerender } = render(
+      <HandReviewPanel {...panelProps({ job: administrativeJob })} />,
+    );
+
+    expect(
+      screen.getByLabelText("Administrative OCR test input"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Administrative test inputs never request recommendations or enter training.",
+      ),
+    ).toBeInTheDocument();
+
+    rerender(<HandReviewPanel {...legacyProps} />);
+
+    expect(
+      screen.queryByLabelText("Administrative OCR test input"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Administrative test inputs never request recommendations or enter training.",
+      ),
+    ).not.toBeInTheDocument();
+  });
 });

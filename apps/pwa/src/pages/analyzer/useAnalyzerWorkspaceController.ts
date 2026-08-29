@@ -10,6 +10,7 @@ import { useAnalyzerRouteRestore } from "./useAnalyzerRouteRestore";
 import { selectedFilesLabel } from "../../features/capture/components/InputSourcePanel";
 import { shareModeLabel } from "../../features/capture/lib/captureSource";
 import { type HistoryItem } from "../../features/history/lib/historyPresentation";
+import { isAdministrativeTestJob } from "../../shared/lib/jobInputContext";
 import {
   parseScreenshotTags,
   screenshotTags,
@@ -246,7 +247,7 @@ export function useAnalyzerWorkspaceController({
     approvalKey,
     benchmarkApprovalKey,
     canApprove,
-    canRecommend,
+    canRecommend: rawCanRecommend,
     cancelTrainingReviewNoteEdit,
     completedPostflopActionCounts,
     completedPostflopActionsAtLimit,
@@ -295,6 +296,10 @@ export function useAnalyzerWorkspaceController({
     onActiveJobChange: selectActiveJob,
     onError: setError,
   });
+  // Administrative test inputs never request recommendations or enter
+  // training: #413 confines learning transitions to legacy player jobs.
+  const canRecommend =
+    rawCanRecommend && !(job && isAdministrativeTestJob(job));
   const {
     certaintyFilter: trainingCertaintyFilter,
     dialogOpen: trainingDialogOpen,
@@ -4118,7 +4123,9 @@ export function useAnalyzerWorkspaceController({
             }
           : null,
       trainingDecision:
-        currentStateApproved && !activeRecommendation
+        currentStateApproved &&
+        !activeRecommendation &&
+        !(job && isAdministrativeTestJob(job))
           ? {
               action: trainingAction,
               busy,
