@@ -20,8 +20,8 @@ from app.domain.imported_hands import (
 from test_imported_hand_models import (
     IDENTITY,
     NOW,
+    ante_decision_record,
     automatic_action,
-    contested_decision_record,
     decision_context_board,
     extraction_ready_state_payload,
     extraction_record_for_state,
@@ -597,6 +597,38 @@ def test_extraction_never_grades_a_forced_post() -> None:
     )
 
 
+def test_extraction_never_grades_a_posted_ante() -> None:
+    record = ante_decision_record()
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    assert [
+        (point.street, point.action_sequence, point.table_action.action_type)
+        for point in extraction.decision_points
+    ] == [("preflop", 4, "call")]
+    assert [
+        (
+            excluded.street,
+            excluded.action_sequence,
+            excluded.action_type,
+            excluded.reason,
+        )
+        for excluded in extraction.excluded_actions
+    ] == [
+        ("preflop", 0, "post_ante", "forced_or_system"),
+        ("preflop", 2, "post_small_blind", "forced_or_system"),
+    ]
+    # The ante is dead money: it never answers the blind, so the call the
+    # decision reports is the full blind gap the hero's own action declares.
+    decision = extraction.decision_points[0]
+    assert decision.state.amount_to_call == Decimal("0.5")
+    assert decision.state.amount_to_call == decision.table_action.amount
+    seats = {seat.player_id: seat for seat in decision.state.seats}
+    assert seats["hero"].street_commitment == Decimal("0.75")
+    assert seats["hero"].live_commitment == Decimal("0.5")
+
+
 def test_extraction_excludes_client_automatic_actions() -> None:
     record = hero_automatic_action_record()
 
@@ -792,6 +824,30 @@ def test_extraction_rejects_an_unreconciled_pot(pot_evidence: str) -> None:
     assert extraction.canonical_revision is None
 
 
+def test_extraction_emits_from_the_walk_it_proved_complete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A drifted extraction gate cannot silently erase hero decisions."""
+
+    record = multi_street_decision_record()
+    expected = extract_hero_decision_points(record)
+    assert expected.outcome == "decisions"
+    assert len(expected.decision_points) == 4
+
+    monkeypatch.setattr(
+        ImportedHandRecord,
+        "active_hero_decision_contexts",
+        property(lambda self: []),
+    )
+
+    assert record.active_hero_decision_contexts == []
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    assert len(extraction.decision_points) == 4
+    assert extraction == expected
+
+
 def test_extraction_is_deterministic_for_the_same_record() -> None:
     record = multi_street_decision_record()
 
@@ -879,6 +935,22 @@ def sample_decision_point() -> HeroDecisionPoint:
         ),
         (
             {"outcome": "decisions", "canonical_revision": None},
+            "requires its canonical revision",
+        ),
+        (
+            {
+                "outcome": "no_decision",
+                "rejection": "not_active",
+                "decision_points": [],
+            },
+            "cannot report a rejection",
+        ),
+        (
+            {
+                "outcome": "no_decision",
+                "canonical_revision": None,
+                "decision_points": [],
+            },
             "requires its canonical revision",
         ),
         (
