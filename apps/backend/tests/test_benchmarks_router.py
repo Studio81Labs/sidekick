@@ -19,6 +19,7 @@ from app.api.dependencies import (
 )
 from app.api.routers.benchmarks import create_benchmarks_router
 from app.api.routers.health import create_health_router
+from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
 from app.domain.benchmarks import (
     BenchmarkDatasetImportReceipt,
     BenchmarkDatasetImportResult,
@@ -30,6 +31,10 @@ from app.domain.benchmarks import (
 from app.domain.hands import JobRecord
 from app.domain.health import HealthResponse
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
+from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
+
+
+ADMIN_OCR_TEST_POLICY = AdminOcrTestAccessPolicy.for_token(ADMIN_OCR_TEST_TOKEN)
 
 
 def job_record() -> JobRecord:
@@ -98,6 +103,7 @@ def default_runtime() -> BenchmarksRuntime:
         resume_import=lambda _request_id: None,
         get_report=lambda _report_id: benchmark_report(),
         run=lambda _request: benchmark_report(),
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
 
 
@@ -166,6 +172,7 @@ def test_benchmarks_router_delegates_validated_requests_and_streams_exports() ->
         resume_import=resume_import,
         get_report=get_report,
         run=run,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     with make_client(runtime) as client:
         responses = [
@@ -187,7 +194,10 @@ def test_benchmarks_router_delegates_validated_requests_and_streams_exports() ->
             client.post(
                 "/api/benchmarks/import",
                 files={"file": ("dataset.zip", b"dataset", "application/zip")},
-                headers={"X-Benchmark-Import-Request-ID": "import-1"},
+                headers={
+                    **ADMIN_OCR_TEST_HEADERS,
+                    "X-Benchmark-Import-Request-ID": "import-1",
+                },
             ),
             client.get("/api/benchmarks/imports/import-1"),
             client.get("/api/benchmarks/report-1"),
@@ -254,11 +264,15 @@ def test_benchmarks_router_preserves_request_validation_and_upload_bounds() -> N
             client.post(
                 "/api/benchmarks/import",
                 files={"file": ("dataset.zip", b"zip", "application/zip")},
-                headers={"X-Benchmark-Import-Request-ID": "invalid request id"},
+                headers={
+                    **ADMIN_OCR_TEST_HEADERS,
+                    "X-Benchmark-Import-Request-ID": "invalid request id",
+                },
             ),
             client.post(
                 "/api/benchmarks/import",
                 files={"file": ("dataset.zip", b"four", "application/zip")},
+                headers=ADMIN_OCR_TEST_HEADERS,
             ),
             client.post("/api/benchmarks/run", json={}),
         ]
@@ -324,6 +338,7 @@ def test_benchmark_import_runs_application_work_outside_event_loop() -> None:
             import_task = asyncio.create_task(client.post(
                 "/api/benchmarks/import",
                 files={"file": ("dataset.zip", b"zip", "application/zip")},
+                headers=ADMIN_OCR_TEST_HEADERS,
             ))
             try:
                 while not import_started.is_set():
@@ -385,6 +400,7 @@ def test_benchmarks_router_maps_typed_application_errors() -> None:
         resume_import=lambda _request_id: None,
         get_report=fail_get_report,
         run=fail_run,
+        authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     with make_client(runtime) as client:
         responses = [
@@ -394,6 +410,7 @@ def test_benchmarks_router_maps_typed_application_errors() -> None:
             client.post(
                 "/api/benchmarks/import",
                 files={"file": ("dataset.zip", b"zip", "application/zip")},
+                headers=ADMIN_OCR_TEST_HEADERS,
             ),
             client.get("/api/benchmarks/imports/missing"),
             client.get("/api/benchmarks/missing"),
@@ -417,6 +434,70 @@ def test_benchmarks_router_maps_typed_application_errors() -> None:
         (404, {"detail": "Benchmark report not found"}),
         (500, {"detail": "Parser configuration error: parser is unavailable"}),
     ]
+
+
+def test_benchmarks_router_refuses_import_without_the_administrator_credential() -> None:
+    imports: list[bytes] = []
+
+    def should_not_import(
+        archive_bytes: bytes,
+        _request_id: str | None,
+    ) -> BenchmarkDatasetImportResult:
+        imports.append(archive_bytes)
+        return benchmark_import_result()
+
+    def runtime_deciding(decision: str) -> BenchmarksRuntime:
+        return replace(
+            default_runtime(),
+            import_dataset=should_not_import,
+            authorize_administrator=lambda _authorization_header: decision,
+        )
+
+    with make_client(runtime_deciding("disabled")) as client:
+        disabled = client.post(
+            "/api/benchmarks/import",
+            files={"file": ("dataset.zip", b"dataset", "application/zip")},
+            headers=ADMIN_OCR_TEST_HEADERS,
+        )
+    authorizing = replace(default_runtime(), import_dataset=should_not_import)
+    with make_client(authorizing) as client:
+        missing = client.post(
+            "/api/benchmarks/import",
+            files={"file": ("dataset.zip", b"dataset", "application/zip")},
+        )
+    with make_client(runtime_deciding("expired")) as client:
+        unexpected = client.post(
+            "/api/benchmarks/import",
+            files={"file": ("dataset.zip", b"dataset", "application/zip")},
+            headers=ADMIN_OCR_TEST_HEADERS,
+        )
+
+    assert (disabled.status_code, disabled.json()) == (
+        403,
+        {"detail": "Administrative OCR test mode is disabled"},
+    )
+    assert (missing.status_code, missing.json()) == (
+        401,
+        {"detail": "Administrative OCR test authorization is required"},
+    )
+    assert missing.headers["WWW-Authenticate"] == "Bearer"
+    assert (unexpected.status_code, unexpected.json()) == (
+        403,
+        {"detail": "Administrative OCR test authorization was refused"},
+    )
+    assert imports == []
+
+
+def test_benchmarks_router_denies_before_reading_an_oversize_archive() -> None:
+    runtime = replace(default_runtime(), max_dataset_upload_bytes=3)
+
+    with make_client(runtime) as client:
+        response = client.post(
+            "/api/benchmarks/import",
+            files={"file": ("dataset.zip", b"far too large", "application/zip")},
+        )
+
+    assert response.status_code == 401
 
 
 def test_benchmarks_router_preserves_public_operation_ids() -> None:

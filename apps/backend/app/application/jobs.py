@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from app.application.admin_ocr_test import AdminOcrTestAccessDecision
+from app.application.admin_ocr_test import (
+    AdminOcrTestAccessDecision,
+    AuthorizeAdministrator,
+)
 from app.domain.pipeline import PipelineSelection
 from app.domain.hands import (
     ArchiveJobsRequest,
@@ -27,7 +30,6 @@ RecordTrainingDecision = Callable[[str, TrainingDecisionRequest], JobRecord]
 RecommendJob = Callable[[str, str | None], JobRecord]
 ResolveUploadPipeline = Callable[["JobUploadPipelineRequest"], PipelineSelection]
 ProcessUpload = Callable[["JobUploadRequest"], JobRecord]
-AuthorizeAdministrator = Callable[[str | None], AdminOcrTestAccessDecision]
 ListJobHistory = Callable[[int, int, str | None], JobHistory]
 ArchiveJobs = Callable[[ArchiveJobsRequest, int], JobHistory]
 

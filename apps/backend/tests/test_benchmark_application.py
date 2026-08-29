@@ -5,6 +5,7 @@ from app.api.dependencies import (
 )
 from app.api.dependencies import BenchmarkImportStatus as CompatibilityBenchmarkImportStatus
 from app.api.dependencies import BenchmarksRuntime
+from app.application.admin_ocr_test import AdminOcrTestAccessDecision
 from app.application.benchmarks import (
     BenchmarkDatasetExport,
     BenchmarkImportStatus,
@@ -76,6 +77,12 @@ def test_benchmark_service_dispatches_use_cases() -> None:
         calls.append(("run", request))
         return report
 
+    def authorize_administrator(
+        authorization_header: str | None,
+    ) -> AdminOcrTestAccessDecision:
+        calls.append(("authorize", authorization_header))
+        return "authorized"
+
     service = BenchmarkService(
         update_inclusion=update_inclusion,
         get_overview=get_overview,
@@ -86,6 +93,7 @@ def test_benchmark_service_dispatches_use_cases() -> None:
         resume_import=resume_import,
         get_report=get_report,
         run=run,
+        authorize_administrator=authorize_administrator,
     )
 
     assert service.max_dataset_upload_bytes == 1024
@@ -97,6 +105,7 @@ def test_benchmark_service_dispatches_use_cases() -> None:
     assert service.resume_import("import-a") is None
     assert service.get_report("report-a") is report
     assert service.run(run_request) is report
+    assert service.authorize_administrator("Bearer token") == "authorized"
     assert calls == [
         ("update", "job-a", selection),
         ("overview", "ocr_cv", "fortuna"),
@@ -106,6 +115,7 @@ def test_benchmark_service_dispatches_use_cases() -> None:
         ("resume", "import-a"),
         ("get_report", "report-a"),
         ("run", run_request),
+        ("authorize", "Bearer token"),
     ]
 
 

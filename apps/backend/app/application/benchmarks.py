@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
+from app.application.admin_ocr_test import AuthorizeAdministrator
 from app.domain.benchmarks import (
     BenchmarkDatasetImportReceipt,
     BenchmarkDatasetImportResult,
@@ -58,3 +59,4 @@ class BenchmarkService:
     resume_import: ResumeBenchmarkImport
     get_report: GetBenchmarkReport
     run: RunBenchmark
+    authorize_administrator: AuthorizeAdministrator

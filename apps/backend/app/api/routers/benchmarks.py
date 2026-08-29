@@ -128,7 +128,33 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             max_length=128,
             pattern=BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
         ),
+        authorization: str | None = Header(
+            default=None,
+            alias="Authorization",
+            include_in_schema=False,
+        ),
     ) -> BenchmarkDatasetImportResult:
+        decision = runtime.authorize_administrator(authorization)
+        if decision != "authorized":
+            # Dataset import mints administrative test jobs from screenshots, so
+            # it shares the ADR 0046 upload credential and fails closed on any
+            # decision this router does not recognize.
+            if decision == "disabled":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Administrative OCR test mode is disabled",
+                )
+            if decision == "unauthorized":
+                raise HTTPException(
+                    status_code=401,
+                    detail="Administrative OCR test authorization is required",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+            raise HTTPException(
+                status_code=403,
+                detail="Administrative OCR test authorization was refused",
+            )
+
         archive_bytes = await file.read(runtime.max_dataset_upload_bytes + 1)
         if len(archive_bytes) > runtime.max_dataset_upload_bytes:
             raise HTTPException(

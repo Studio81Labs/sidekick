@@ -101,6 +101,46 @@ def approve_job(client: TestClient, job_id: str, state: dict[str, object] | None
     return client.post(f"/api/jobs/{job_id}/approve", json=state or APPROVED_STATE)
 
 
+def import_benchmark_dataset(
+    client: TestClient,
+    archive_bytes: bytes,
+    *,
+    request_id: str | None = None,
+    headers: dict[str, str] | None = None,
+):
+    """Post a parser dataset archive with the administrator credential.
+
+    Dataset import mints administrative test jobs, so it shares the upload
+    boundary's bearer. Pass `headers={}` to exercise the unauthenticated path.
+    """
+    request_headers = dict(ADMIN_OCR_TEST_HEADERS if headers is None else headers)
+    if request_id is not None:
+        request_headers["X-Benchmark-Import-Request-ID"] = request_id
+    return client.post(
+        "/api/benchmarks/import",
+        files={"file": ("dataset.zip", archive_bytes, "application/zip")},
+        headers=request_headers,
+    )
+
+
+def restore_application_backup(
+    client: TestClient,
+    archive_bytes: bytes,
+    *,
+    headers: dict[str, str] | None = None,
+):
+    """Post an application backup archive with the administrator credential.
+
+    Restore can re-persist screenshots captured before the boundary, so it
+    shares the upload bearer. Pass `headers={}` for the unauthenticated path.
+    """
+    return client.post(
+        "/api/backups/restore",
+        files={"file": ("backup.zip", archive_bytes, "application/zip")},
+        headers=dict(ADMIN_OCR_TEST_HEADERS if headers is None else headers),
+    )
+
+
 def mark_legacy_player(data_dir: Path, job_id: str) -> None:
     """Re-persist a stored job as a player-captured record.
 

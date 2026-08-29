@@ -1573,6 +1573,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         max_upload_bytes=active_settings.max_backup_upload_bytes,
         export_backup=export_application_backup,
         restore_backup=restore_uploaded_application_backup,
+        authorize_administrator=admin_ocr_test_policy.authorize,
     )
     app.include_router(create_backups_router(backups_runtime))
 
@@ -1785,6 +1786,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         resume_import=resume_benchmark_import,
         get_report=get_benchmark_report,
         run=run_parser_benchmark,
+        authorize_administrator=admin_ocr_test_policy.authorize,
     )
     app.include_router(create_benchmarks_router(benchmarks_runtime))
 

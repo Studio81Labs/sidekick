@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 AdminOcrTestAccessDecision = Literal["authorized", "disabled", "unauthorized"]
+AuthorizeAdministrator = Callable[[str | None], AdminOcrTestAccessDecision]
 
 
 def _digest(value: str) -> bytes:
@@ -54,4 +56,8 @@ class AdminOcrTestAccessPolicy:
         return "unauthorized"
 
 
-__all__ = ["AdminOcrTestAccessDecision", "AdminOcrTestAccessPolicy"]
+__all__ = [
+    "AdminOcrTestAccessDecision",
+    "AdminOcrTestAccessPolicy",
+    "AuthorizeAdministrator",
+]
