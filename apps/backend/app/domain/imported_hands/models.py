@@ -57,6 +57,9 @@ NonNegativeInteger = Annotated[int, Field(ge=0, strict=True)]
 
 ParticipationStatus = Literal["dealt_in", "sitting_out", "not_dealt", "unknown"]
 AnteMode = Literal["per_player", "big_blind", "unknown"]
+GameVariant = Literal["texas_holdem"]
+BettingLimit = Literal["no_limit", "pot_limit", "fixed_limit", "unknown"]
+TableSize = Annotated[int, Field(ge=2, le=10, strict=True)]
 StreetName = Literal["preflop", "flop", "turn", "river"]
 ActionType = Literal[
     "post_ante",
@@ -494,9 +497,9 @@ Economics = Annotated[
 
 
 class GameContext(ImportedHandModel):
-    variant: Literal["texas_holdem"] = "texas_holdem"
-    betting_limit: Literal["no_limit", "pot_limit", "fixed_limit", "unknown"]
-    table_size: Annotated[int, Field(ge=2, le=10, strict=True)]
+    variant: GameVariant = "texas_holdem"
+    betting_limit: BettingLimit
+    table_size: TableSize
     blinds: BlindStructure
     economics: Economics
 
@@ -2671,6 +2674,25 @@ class ImportedHandRecord(ImportedHandModel):
         """Return the bare hero decisions behind ``active_hero_decision_contexts``."""
 
         return [context.action for context in self.active_hero_decision_contexts]
+
+    @property
+    def active_pot_reconciles_for_extraction(self) -> bool:
+        """Report the extraction gate's pot verdict for the active revision.
+
+        The independent comparator needs the active detection and revision,
+        which only the aggregate resolves, so callers outside it reuse this
+        verdict instead of reconciling the pot a second time.
+        """
+
+        context = self._active_extraction_context()
+        if context is None:
+            return False
+        state, detection, revision = context
+        return _pot_reconciliation_ready_for_extraction(
+            state,
+            detection=detection,
+            revision=revision,
+        )
 
 
 class ReimportDisposition(ImportedHandModel):
