@@ -455,6 +455,14 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    /**
+     * AdministrativeOcrTestCapability
+     * @description Whether this deployment enables the administrator-only OCR test surface.
+     */
+    AdministrativeOcrTestCapability: {
+      /** Enabled */
+      enabled: boolean;
+    };
     /** ApplicationBackupRestoreResult */
     ApplicationBackupRestoreResult: {
       /** Imported Benchmark Reports */
@@ -950,6 +958,12 @@ export interface components {
       id?: string;
       /** Image Filename */
       image_filename: string;
+      /**
+       * Input Context
+       * @default legacy_player
+       * @enum {string}
+       */
+      input_context: "legacy_player" | "administrative_test";
       /** Notes */
       notes?: string | null;
       /** Original Filename */
@@ -1074,6 +1088,7 @@ export interface components {
     };
     /** PipelineCapabilities */
     PipelineCapabilities: {
+      administrative_ocr_test: components["schemas"]["AdministrativeOcrTestCapability"];
       defaults: components["schemas"]["PipelineSelection"];
       /** Parser Layout Compatibility */
       parser_layout_compatibility: {

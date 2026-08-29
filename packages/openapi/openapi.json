@@ -1,6 +1,18 @@
 {
   "components": {
     "schemas": {
+      "AdministrativeOcrTestCapability": {
+        "description": "Whether this deployment enables the administrator-only OCR test surface.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": ["enabled"],
+        "title": "AdministrativeOcrTestCapability",
+        "type": "object"
+      },
       "ApplicationBackupRestoreResult": {
         "properties": {
           "imported_benchmark_reports": {
@@ -1542,6 +1554,12 @@
             "title": "Image Filename",
             "type": "string"
           },
+          "input_context": {
+            "default": "legacy_player",
+            "enum": ["legacy_player", "administrative_test"],
+            "title": "Input Context",
+            "type": "string"
+          },
           "notes": {
             "anyOf": [
               {
@@ -1908,6 +1926,9 @@
       },
       "PipelineCapabilities": {
         "properties": {
+          "administrative_ocr_test": {
+            "$ref": "#/components/schemas/AdministrativeOcrTestCapability"
+          },
           "defaults": {
             "$ref": "#/components/schemas/PipelineSelection"
           },
@@ -1956,7 +1977,8 @@
           "parser_layout_profiles",
           "parser_layout_compatibility",
           "recommendation_providers",
-          "recommendation_engines"
+          "recommendation_engines",
+          "administrative_ocr_test"
         ],
         "title": "PipelineCapabilities",
         "type": "object"
