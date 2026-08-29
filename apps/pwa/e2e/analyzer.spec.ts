@@ -15,6 +15,44 @@ const VALID_PNG = Buffer.from(
 );
 const BACKEND_URL = "http://127.0.0.1:8010";
 const PROVIDER_URL = "http://127.0.0.1:8011";
+const ADMINISTRATOR_TOKEN = "e2e-administrative-ocr-test-token-0123456789";
+const ADMINISTRATOR_HEADERS = {
+  Authorization: `Bearer ${ADMINISTRATOR_TOKEN}`,
+};
+const IMPORT_FIRST_NOTICE =
+  "Screenshot upload and live capture are administrator-only parser test tools";
+const ADMINISTRATIVE_REVIEW_NOTICE =
+  "Administrative test inputs never request recommendations or enter training.";
+
+async function unlockAdministrativeAccess(page: Page): Promise<void> {
+  const banner = page.getByRole("note", {
+    name: "Administrative OCR test mode",
+  });
+  if (await banner.isVisible()) {
+    return;
+  }
+  await page.getByRole("button", { name: "Administrator tools" }).click();
+  await page
+    .getByLabel("Administrative OCR test token")
+    .fill(ADMINISTRATOR_TOKEN);
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.getByRole("button", { name: "Close administrator tools" }).click();
+  await expect(banner).toBeVisible();
+}
+
+// Records persisted before #413 deserialize as `legacy_player`, so the provider
+// stub drops the `input_context` key to produce a player-owned hand without
+// adding a test switch to the product.
+async function markLegacyJobs(
+  page: Page,
+  jobIds: readonly string[],
+): Promise<void> {
+  const response = await page.request.post(
+    `${PROVIDER_URL}/control/legacy-jobs`,
+    { data: { job_ids: jobIds } },
+  );
+  expect(response.ok()).toBe(true);
+}
 
 function attemptFilename(base: string, testInfo: TestInfo): string {
   return [
@@ -73,7 +111,7 @@ async function samplePngPixels(
   }, imageBytes.toString("base64"));
 }
 
-async function captureAutomatedFrame(page: Page): Promise<{
+async function captureAdministrativeFrame(page: Page): Promise<{
   id: string;
   original_filename: string;
   queueItem: Locator;
@@ -98,11 +136,14 @@ async function captureAutomatedFrame(page: Page): Promise<{
   const queueItem = page.getByRole("button", {
     name: filenamePattern(uploadedJob.original_filename),
   });
-  await expect(queueItem).toContainText("recommended");
+  await expect(queueItem).toContainText("parsed");
+  await expect(
+    queueItem.getByLabel("Administrative OCR test input"),
+  ).toContainText("Admin test");
   return { ...uploadedJob, queueItem };
 }
 
-async function uploadValidScreenshot(
+async function uploadAdministrativeScreenshot(
   page: Page,
   filename: string,
 ): Promise<{ id: string; queueItem: Locator }> {
@@ -128,13 +169,60 @@ async function uploadValidScreenshot(
   return { id: uploadedJob.id, queueItem };
 }
 
+// The workspace serves its cached processing snapshot while the session is
+// marked synced, so a record the provider stub rewrote behind the app's back is
+// only read again once those markers are gone. A document init script clears
+// them so the workspace cannot re-mark the session between the removal and the
+// navigation.
+const QUEUE_REVALIDATION_FLAG = "poker-hero-e2e-force-queue-revalidation";
+const queueRevalidationPages = new WeakSet<Page>();
+
+async function forceQueueRevalidation(page: Page): Promise<void> {
+  if (!queueRevalidationPages.has(page)) {
+    queueRevalidationPages.add(page);
+    await page.addInitScript((flag) => {
+      if (sessionStorage.getItem(flag) === null) {
+        return;
+      }
+      sessionStorage.removeItem(flag);
+      sessionStorage.removeItem("poker-training-processing-synced");
+      sessionStorage.removeItem("poker-training-history-synced");
+    }, QUEUE_REVALIDATION_FLAG);
+  }
+  await page.evaluate((flag) => {
+    sessionStorage.setItem(flag, "1");
+  }, QUEUE_REVALIDATION_FLAG);
+}
+
+// Administrative test inputs never reach recommendations or training, so a
+// scenario that needs a player-owned hand uploads through the administrative
+// surface and then reloads the record as a legacy one.
+async function uploadLegacyScreenshot(
+  page: Page,
+  filename: string,
+): Promise<{ id: string; queueItem: Locator }> {
+  await prepareUploadInput(page);
+  const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
+  await markLegacyJobs(page, [uploadedJob.id]);
+  await forceQueueRevalidation(page);
+  await page.goto(`/analyzer/jobs/${uploadedJob.id}`);
+  await expectAnalyzerReady(page);
+  await expect(
+    page.getByAltText("Uploaded poker table screenshot"),
+  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${uploadedJob.id}/image`);
+  await expect(
+    uploadedJob.queueItem.getByLabel("Administrative OCR test input"),
+  ).toHaveCount(0);
+  return uploadedJob;
+}
+
 async function createReviewedLesson(
   page: Page,
   filename: string,
   note: string,
   options: { boardCards?: string; street?: "flop" | "turn" } = {},
 ): Promise<{ id: string }> {
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   if (options.boardCards !== undefined) {
     await page.getByLabel("Board cards").fill(options.boardCards);
   }
@@ -182,7 +270,7 @@ async function createPendingTrainingReview(
     street: "flop" | "turn" | "river";
   },
 ): Promise<{ id: string }> {
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   const handReview = page.getByRole("region", { name: "Hand review" });
   if (options.boardCards !== undefined) {
     await handReview.getByLabel("Board cards").fill(options.boardCards);
@@ -293,6 +381,7 @@ async function createApprovedScreenshot(
   potSize: number,
 ): Promise<{ id: string }> {
   const uploadResponse = await page.request.post(`${BACKEND_URL}/api/jobs`, {
+    headers: ADMINISTRATOR_HEADERS,
     multipart: {
       file: {
         name: filename,
@@ -320,6 +409,7 @@ async function createApprovedScreenshot(
     },
   );
   expect(approveResponse.ok()).toBe(true);
+  await markLegacyJobs(page, [uploadedJob.id]);
   return { id: uploadedJob.id };
 }
 
@@ -329,13 +419,18 @@ async function expectAnalyzerReady(page: Page): Promise<void> {
   ).toBeVisible();
 }
 
-async function openUploadInput(page: Page): Promise<void> {
-  await page.goto("/");
-  await expectAnalyzerReady(page);
+async function prepareUploadInput(page: Page): Promise<void> {
+  await unlockAdministrativeAccess(page);
   await page
     .getByRole("group", { name: "Input mode" })
     .getByRole("button", { name: "Upload" })
     .click();
+}
+
+async function openUploadInput(page: Page): Promise<void> {
+  await page.goto("/");
+  await expectAnalyzerReady(page);
+  await prepareUploadInput(page);
 }
 
 type CaptureSurface = "browser" | "monitor" | "window";
@@ -442,15 +537,272 @@ async function installCaptureStreams(
   );
 }
 
+test("keeps screenshot upload and live capture locked for players", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expectAnalyzerReady(page);
+
+  await expect(page.getByRole("region", { name: "Input" })).toContainText(
+    IMPORT_FIRST_NOTICE,
+  );
+  await expect(
+    page.getByRole("note", { name: "Administrative OCR test mode" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("group", { name: "Input mode" })).toHaveCount(0);
+  await expect(page.getByLabel("Choose screenshots")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Upload and parse" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Capture and parse" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: /^Automation/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "Configure automation" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Administrator tools" }),
+  ).toBeVisible();
+});
+
+test("unlocks and relocks the administrative OCR test tools", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await expectAnalyzerReady(page);
+
+  await page.getByRole("button", { name: "Administrator tools" }).click();
+  const dialog = page.getByRole("dialog", { name: "Administrator tools" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Check deployment" }).click();
+  await expect(dialog).toContainText("Enabled on this deployment.");
+  await dialog
+    .getByLabel("Administrative OCR test token")
+    .fill(ADMINISTRATOR_TOKEN);
+  await dialog.getByRole("button", { name: "Unlock" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "Lock administrator tools" }),
+  ).toBeVisible();
+  await dialog
+    .getByRole("button", { name: "Close administrator tools" })
+    .click();
+  await expect(dialog).toHaveCount(0);
+
+  const banner = page.getByRole("note", {
+    name: "Administrative OCR test mode",
+  });
+  await expect(banner).toBeVisible();
+  const inputMode = page.getByRole("group", { name: "Input mode" });
+  await expect(inputMode).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Share window" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Capture and parse" }),
+  ).toBeVisible();
+  await inputMode.getByRole("button", { name: "Upload" }).click();
+  await expect(page.getByLabel("Choose screenshots")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Upload and parse" }),
+  ).toBeVisible();
+
+  await banner
+    .getByRole("button", { name: "Lock administrator tools" })
+    .click();
+  await expect(banner).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Input" })).toContainText(
+    IMPORT_FIRST_NOTICE,
+  );
+  await expect(page.getByLabel("Choose screenshots")).toHaveCount(0);
+});
+
+test("relocks when the deployment rejects the administrative token", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/");
+  await expectAnalyzerReady(page);
+
+  await page.getByRole("button", { name: "Administrator tools" }).click();
+  await page
+    .getByLabel("Administrative OCR test token")
+    .fill("rejected-administrative-ocr-test-token-98765");
+  await page.getByRole("button", { name: "Unlock" }).click();
+  await page.getByRole("button", { name: "Close administrator tools" }).click();
+  await page
+    .getByRole("group", { name: "Input mode" })
+    .getByRole("button", { name: "Upload" })
+    .click();
+
+  const filename = attemptFilename("rejected-token", testInfo);
+  await page.getByLabel("Choose screenshots").setInputFiles({
+    name: filename,
+    mimeType: "image/png",
+    buffer: VALID_PNG,
+  });
+  const rejectedUploadPromise = page.waitForResponse(
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.request().method() === "POST" &&
+      response.status() === 401,
+  );
+  await page.getByRole("button", { name: "Upload and parse" }).click();
+  const rejectedUpload = await rejectedUploadPromise;
+  expect(await rejectedUpload.json()).toEqual({
+    detail: "Administrative OCR test authorization is required",
+  });
+  expect(rejectedUpload.headers()["www-authenticate"]).toBe("Bearer");
+
+  await expect(
+    page
+      .getByText(
+        "The administrative OCR test token was rejected. Unlock administrator" +
+          " tools again with the deployment's token.",
+      )
+      .first(),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("note", { name: "Administrative OCR test mode" }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Input" })).toContainText(
+    IMPORT_FIRST_NOTICE,
+  );
+  await expect(page.getByLabel("Choose screenshots")).toHaveCount(0);
+
+  const persistedJobsResponse = await page.request.get(
+    `${BACKEND_URL}/api/jobs`,
+  );
+  expect(persistedJobsResponse.ok()).toBe(true);
+  const persistedJobs = (await persistedJobsResponse.json()) as {
+    jobs: Array<{ original_filename: string }>;
+  };
+  expect(
+    persistedJobs.jobs.some(
+      (candidate) => candidate.original_filename === filename,
+    ),
+  ).toBe(false);
+});
+
+test("marks an administrative upload and withholds its recommendation", async ({
+  page,
+}, testInfo) => {
+  await openUploadInput(page);
+  const filename = attemptFilename("administrative-upload", testInfo);
+  const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
+
+  await expect(
+    uploadedJob.queueItem.getByLabel("Administrative OCR test input"),
+  ).toContainText("Admin test");
+  const handReview = page.getByRole("region", { name: "Hand review" });
+  await expect(
+    handReview.getByLabel("Administrative OCR test input"),
+  ).toContainText("Admin test");
+  await expect(handReview).toContainText(ADMINISTRATIVE_REVIEW_NOTICE);
+  const recommendButton = page.getByRole("button", {
+    name: "Request recommendation",
+  });
+  await expect(recommendButton).toBeDisabled();
+
+  await page.getByRole("button", { name: "Approve state" }).click();
+  await expect(uploadedJob.queueItem).toContainText("approved");
+  await expect(recommendButton).toBeDisabled();
+  await expect(
+    page.getByRole("region", { name: "Your training decision" }),
+  ).toHaveCount(0);
+
+  const refusedRecommendation = await page.request.post(
+    `${BACKEND_URL}/api/jobs/${uploadedJob.id}/recommend`,
+  );
+  expect(refusedRecommendation.status()).toBe(403);
+  const persistedResponse = await page.request.get(
+    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
+  );
+  expect(persistedResponse.ok()).toBe(true);
+  expect(await persistedResponse.json()).toMatchObject({
+    input_context: "administrative_test",
+    recommendation: null,
+    status: "approved",
+  });
+
+  const progressResponse = await page.request.get(
+    `${BACKEND_URL}/api/training/progress`,
+  );
+  expect(progressResponse.ok()).toBe(true);
+  const progress = (await progressResponse.json()) as {
+    recent_hands: Array<{ job_id: string }>;
+    review_queue: Array<{ job_id: string }>;
+  };
+  expect(
+    [...progress.recent_hands, ...progress.review_queue].some(
+      (hand) => hand.job_id === uploadedJob.id,
+    ),
+  ).toBe(false);
+
+  await page.getByRole("button", { name: "Clear reviewed" }).click();
+  await expect(uploadedJob.queueItem).toBeHidden();
+});
+
+test("requires an administrator credential for the screenshot upload API", async ({
+  page,
+}, testInfo) => {
+  const filename = attemptFilename("administrative-api", testInfo);
+  const multipart = {
+    file: {
+      name: filename,
+      mimeType: "image/png",
+      buffer: VALID_PNG,
+    },
+  };
+
+  const anonymousUpload = await page.request.post(`${BACKEND_URL}/api/jobs`, {
+    multipart,
+  });
+  expect(anonymousUpload.status()).toBe(401);
+  expect(anonymousUpload.headers()["www-authenticate"]).toBe("Bearer");
+  expect(await anonymousUpload.json()).toEqual({
+    detail: "Administrative OCR test authorization is required",
+  });
+
+  const rejectedUpload = await page.request.post(`${BACKEND_URL}/api/jobs`, {
+    headers: { Authorization: "Bearer not-the-deployment-token" },
+    multipart,
+  });
+  expect(rejectedUpload.status()).toBe(401);
+
+  const authorizedUpload = await page.request.post(`${BACKEND_URL}/api/jobs`, {
+    headers: ADMINISTRATOR_HEADERS,
+    multipart,
+  });
+  expect(authorizedUpload.status()).toBe(201);
+  const authorizedJob = (await authorizedUpload.json()) as { id: string };
+  expect(authorizedJob).toMatchObject({
+    input_context: "administrative_test",
+    original_filename: filename,
+    status: "parsed",
+  });
+  const cleanupResponse = await page.request.delete(
+    `${BACKEND_URL}/api/jobs/${authorizedJob.id}`,
+  );
+  expect(cleanupResponse.status()).toBe(204);
+
+  const capabilitiesResponse = await page.request.get(
+    `${BACKEND_URL}/api/pipeline`,
+  );
+  expect(capabilitiesResponse.ok()).toBe(true);
+  expect(await capabilitiesResponse.json()).toMatchObject({
+    administrative_ocr_test: { enabled: true },
+  });
+});
+
 test("captures repeated shared-window frames into persisted history", async ({
   page,
 }) => {
   await installCaptureStreams(page);
   await page.goto("/");
   await expectAnalyzerReady(page);
-  await expect(
-    page.getByRole("button", { name: "Automation On" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await unlockAdministrativeAccess(page);
 
   await page.getByRole("button", { name: "Share window" }).click();
   await expect(page.getByText("Window sharing active")).toBeVisible();
@@ -465,10 +817,16 @@ test("captures repeated shared-window frames into persisted history", async ({
     )
     .toEqual({ height: 360, width: 640 });
 
-  const firstCapture = await captureAutomatedFrame(page);
+  const firstCapture = await captureAdministrativeFrame(page);
   await expect(
     page.getByRole("region", { name: "Recommendation" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Request recommendation" }),
+  ).toBeDisabled();
+  await expect(page.getByRole("region", { name: "Hand review" })).toContainText(
+    ADMINISTRATIVE_REVIEW_NOTICE,
+  );
   await expect(preview).not.toHaveClass(/active/);
   await expect(
     page.getByAltText("Uploaded poker table screenshot"),
@@ -496,20 +854,17 @@ test("captures repeated shared-window frames into persisted history", async ({
   const persistedJob = (await persistedResponse.json()) as {
     approved_state: unknown;
     archived_at: string | null;
+    input_context: string;
     recommendation: { raw: Record<string, string> } | null;
     status: string;
     upload_request_id: string | null;
   };
   expect(persistedJob).toMatchObject({
-    approved_state: expect.any(Object),
+    approved_state: null,
     archived_at: null,
-    recommendation: {
-      raw: {
-        engine: "e2e_provider_stub",
-        provider: "external_solver",
-      },
-    },
-    status: "recommended",
+    input_context: "administrative_test",
+    recommendation: null,
+    status: "parsed",
     upload_request_id: expect.any(String),
   });
 
@@ -552,12 +907,12 @@ test("captures repeated shared-window frames into persisted history", async ({
     )
     .toBe(true);
 
-  const secondCapture = await captureAutomatedFrame(page);
+  const secondCapture = await captureAdministrativeFrame(page);
   expect(secondCapture.original_filename).not.toBe(
     firstCapture.original_filename,
   );
-  await expect(firstCapture.queueItem).toContainText("recommended");
-  await expect(secondCapture.queueItem).toContainText("recommended");
+  await expect(firstCapture.queueItem).toContainText("parsed");
+  await expect(secondCapture.queueItem).toContainText("parsed");
   const secondImageResponse = await page.request.get(
     `${BACKEND_URL}/api/jobs/${secondCapture.id}/image`,
   );
@@ -577,6 +932,14 @@ test("captures repeated shared-window frames into persisted history", async ({
       ).__pokerHeroDisplayMediaCalls,
   );
   expect(displayMediaCalls).toBe(1);
+
+  // Administrative captures never reach `recommended`, so each frame is
+  // approved by hand before it can leave the queue.
+  for (const capture of [firstCapture, secondCapture]) {
+    await capture.queueItem.click();
+    await page.getByRole("button", { name: "Approve state" }).click();
+    await expect(capture.queueItem).toContainText("approved");
+  }
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(firstCapture.queueItem).toBeHidden();
@@ -621,6 +984,7 @@ test("rejects a mismatched share source and recovers with a tab", async ({
   await installCaptureStreams(page, ["browser", "browser"]);
   await page.goto("/");
   await expectAnalyzerReady(page);
+  await unlockAdministrativeAccess(page);
 
   await page.getByRole("button", { name: "Share window" }).click();
   await expect(
@@ -669,10 +1033,10 @@ test("rejects a mismatched share source and recovers with a tab", async ({
     ),
   ).toBeHidden();
 
-  const capture = await captureAutomatedFrame(page);
+  const capture = await captureAdministrativeFrame(page);
   await expect(
     page.getByRole("region", { name: "Recommendation" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   const activeShareState = await page.evaluate(() => {
     const fixtureWindow = window as typeof window & {
       __pokerHeroCaptureFixtures: Array<{
@@ -707,6 +1071,8 @@ test("rejects a mismatched share source and recovers with a tab", async ({
     ],
   });
 
+  await page.getByRole("button", { name: "Approve state" }).click();
+  await expect(capture.queueItem).toContainText("approved");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(capture.queueItem).toBeHidden();
   const archivedResponse = await page.request.get(
@@ -741,6 +1107,7 @@ test("recovers after the browser share picker is cancelled", async ({
   await installCaptureStreams(page, ["cancel", "window"]);
   await page.goto("/");
   await expectAnalyzerReady(page);
+  await unlockAdministrativeAccess(page);
 
   await page.getByRole("button", { name: "Share window" }).click();
   await expect(page.getByText("Screen sharing was cancelled")).toBeVisible();
@@ -789,10 +1156,10 @@ test("recovers after the browser share picker is cancelled", async ({
     )
     .toEqual({ height: 360, width: 640 });
 
-  const capture = await captureAutomatedFrame(page);
+  const capture = await captureAdministrativeFrame(page);
   await expect(
     page.getByRole("region", { name: "Recommendation" }),
-  ).toBeVisible();
+  ).toHaveCount(0);
   const recoveredState = await page.evaluate(() => {
     const fixtureWindow = window as typeof window & {
       __pokerHeroCaptureFixtures: Array<{
@@ -824,6 +1191,8 @@ test("recovers after the browser share picker is cancelled", async ({
     streams: [{ readyState: "live", surface: "window" }],
   });
 
+  await page.getByRole("button", { name: "Approve state" }).click();
+  await expect(capture.queueItem).toContainText("approved");
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(capture.queueItem).toBeHidden();
   const archivedResponse = await page.request.get(
@@ -858,12 +1227,7 @@ test("reviews one screenshot from upload through persisted history", async ({
   await openUploadInput(page);
   const filename = attemptFilename("manual-flow", testInfo);
 
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
-
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   const queueItem = uploadedJob.queueItem;
   await expect(page.getByLabel("Hero cards")).toHaveValue("Ah Kd");
   await expect(page.getByLabel("Board cards")).toHaveValue("Qs Jc 2h");
@@ -910,8 +1274,7 @@ test("overlays delete confirmation without resizing screenshot details", async (
   await openUploadInput(page);
   const filename = attemptFilename("delete-overlay", testInfo);
 
-  await page.getByRole("button", { name: "Automation On" }).click();
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const includeResponse = await page.request.put(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark`,
@@ -926,6 +1289,9 @@ test("overlays delete confirmation without resizing screenshot details", async (
     .click();
 
   const dialog = page.getByRole("dialog", { name: "Screenshot details" });
+  await expect(
+    dialog.getByLabel("Administrative OCR test input"),
+  ).toContainText("Admin test");
   const before = await dialog.boundingBox();
   expect(before).not.toBeNull();
 
@@ -977,10 +1343,6 @@ test("completes and reopens a training review from persisted progress", async ({
   await openUploadInput(page);
   const filename = attemptFilename("training-review", testInfo);
 
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
   );
@@ -991,7 +1353,7 @@ test("completes and reopens a training review from persisted progress", async ({
     reviewed_hands: number;
   };
 
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -1135,10 +1497,6 @@ test("continues through a filtered persisted training review queue", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const staleProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -1301,10 +1659,6 @@ test("continues through a filtered persisted training review queue", async ({
 
 test("drills into persisted solver attribution", async ({ page }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const fixturePrefix = [
     "solver-attribution",
@@ -1391,10 +1745,6 @@ test("drills into persisted solver attribution", async ({ page }, testInfo) => {
 
 test("drills into a persisted solver fallback", async ({ page }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const fixturePrefix = [
     "solver-fallback",
@@ -1486,10 +1836,6 @@ test("renders persisted solver evidence and prioritizes EV loss", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const fixturePrefix = "solver-evidence-";
   await completeStaleTrainingReviews(page, fixturePrefix);
@@ -1502,7 +1848,7 @@ test("renders persisted solver evidence and prioritizes EV loss", async ({
   };
 
   const filename = attemptFilename("solver-evidence", testInfo);
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -1638,10 +1984,6 @@ test("opens the suggested highest-loss action pattern", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   await completeStaleTrainingReviews(page, "suggested-pattern-");
   const initialProgressResponse = await page.request.get(
@@ -1796,10 +2138,6 @@ test("opens the suggested normalized-position review focus", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   await completeStaleTrainingReviews(page, "suggested-position-");
   const initialProgressResponse = await page.request.get(
@@ -1961,10 +2299,6 @@ test("opens the suggested certainty review focus", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   await completeStaleTrainingReviews(page, "suggested-certainty-");
   const initialProgressResponse = await page.request.get(
@@ -2121,10 +2455,6 @@ test("opens the suggested certainty review focus", async ({
 
 test("opens the suggested street review focus", async ({ page }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   await completeStaleTrainingReviews(page, "suggested-street-");
   const initialProgressResponse = await page.request.get(
@@ -2284,10 +2614,6 @@ test("opens legacy review focus by unrated and unpositioned state", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   await completeStaleTrainingReviews(page, "legacy-focus-");
   const initialProgressResponse = await page.request.get(
@@ -2476,10 +2802,6 @@ async function verifyGradedSupportedMix(
   evidenceCase: (typeof gradedSupportedMixCases)[number],
 ): Promise<void> {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -2495,7 +2817,7 @@ async function verifyGradedSupportedMix(
   };
 
   const filename = attemptFilename(evidenceCase.filename, testInfo);
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -2674,10 +2996,6 @@ test("applies the solver policy-support frequency boundary", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -2698,7 +3016,7 @@ test("applies the solver policy-support frequency boundary", async ({
     expectedLabel: string,
     needsReview: boolean,
   ) {
-    const uploadedJob = await uploadValidScreenshot(page, filename);
+    const uploadedJob = await uploadLegacyScreenshot(page, filename);
     await page.getByRole("button", { name: "Approve state" }).click();
     const decisionPanel = page.getByRole("region", {
       name: "Your training decision",
@@ -2881,10 +3199,6 @@ async function verifyUnsupportedPolicyCandidate(
   evidenceCase: (typeof unsupportedPolicyCases)[number],
 ): Promise<void> {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -2901,7 +3215,7 @@ async function verifyUnsupportedPolicyCandidate(
   };
 
   const filename = attemptFilename(evidenceCase.filename, testInfo);
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -3102,10 +3416,6 @@ async function verifySupportedUngradedMix(
   evidenceCase: (typeof supportedUngradedMixCases)[number],
 ): Promise<void> {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -3122,7 +3432,7 @@ async function verifySupportedUngradedMix(
   };
 
   const filename = attemptFilename(evidenceCase.filename, testInfo);
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -3295,10 +3605,6 @@ async function verifyNonDistinctEvidence(
   evidenceCase: (typeof nonDistinctEvidenceCases)[number],
 ): Promise<void> {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -3315,7 +3621,7 @@ async function verifyNonDistinctEvidence(
   };
 
   const filename = attemptFilename(evidenceCase.filename, testInfo);
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -3434,10 +3740,6 @@ test("reviews a sizing difference at the tolerance boundary", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -3457,7 +3759,7 @@ test("reviews a sizing difference at the tolerance boundary", async ({
   };
 
   const filename = attemptFilename("sizing-boundary-review", testInfo);
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -3564,10 +3866,6 @@ test("reviews a supported mixed action taken at a different size", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -3587,7 +3885,7 @@ test("reviews a supported mixed action taken at a different size", async ({
   };
 
   const filename = attemptFilename("mixed-sizing-review", testInfo);
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -3708,10 +4006,6 @@ test("treats sub-tolerance sizing drift as an exact line", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -3731,7 +4025,7 @@ test("treats sub-tolerance sizing drift as an exact line", async ({
   };
 
   const filename = attemptFilename("sizing-tolerance", testInfo);
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   const decisionPanel = page.getByRole("region", {
     name: "Your training decision",
@@ -3835,10 +4129,6 @@ test("filters and exports persisted lesson notes", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const initialProgressResponse = await page.request.get(
     `${BACKEND_URL}/api/training/progress`,
@@ -3974,11 +4264,7 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   await openUploadInput(page);
   const filename = attemptFilename("benchmark-dataset", testInfo);
 
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
 
   const initialOverviewResponse = await page.request.get(
@@ -4136,11 +4422,7 @@ test("downloads and verifies an application backup through recovery", async ({
   await openUploadInput(page);
   const filename = attemptFilename("application-backup", testInfo);
 
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
-  const archivedJob = await uploadValidScreenshot(page, filename);
+  const archivedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
   await page.getByRole("button", { name: "Request recommendation" }).click();
   await expect(archivedJob.queueItem).toContainText("recommended");
@@ -4151,7 +4433,7 @@ test("downloads and verifies an application backup through recovery", async ({
     "application-backup-pending",
     testInfo,
   );
-  const pendingJob = await uploadValidScreenshot(page, pendingFilename);
+  const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
   await expect(pendingJob.queueItem).toContainText("parsed");
 
   await page.getByRole("button", { name: "About this app" }).click();
@@ -4235,15 +4517,12 @@ test("downloads and verifies an application backup through recovery", async ({
   await expect(pendingJob.queueItem).toBeHidden();
 });
 
-test("continues an automated batch when one screenshot is invalid", async ({
+test("continues a screenshot batch when one upload is invalid", async ({
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  const validFilename = attemptFilename("automated-valid", testInfo);
-  const invalidFilename = attemptFilename("automated-invalid", testInfo);
-  await expect(
-    page.getByRole("button", { name: "Automation On" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  const validFilename = attemptFilename("batch-valid", testInfo);
+  const invalidFilename = attemptFilename("batch-invalid", testInfo);
 
   await page.getByLabel("Choose screenshots").setInputFiles([
     {
@@ -4269,136 +4548,55 @@ test("continues an automated batch when one screenshot is invalid", async ({
   const invalidItem = page.getByRole("button", {
     name: filenamePattern(invalidFilename),
   });
-  await expect(validItem).toContainText("recommended");
+  await expect(validItem).toContainText("parsed");
   await expect(invalidItem).toContainText(
     "Upload must contain supported image data",
   );
   await expect(invalidItem).toContainText("error");
   await expect(
     page.getByText(
-      "1 screenshot need attention. Check the highlighted queue items.",
+      "1 screenshot need attention. Check the failed queue items.",
     ),
   ).toBeVisible();
+
+  const batchJobsResponse = await page.request.get(`${BACKEND_URL}/api/jobs`);
+  expect(batchJobsResponse.ok()).toBe(true);
+  const batchJobs = (await batchJobsResponse.json()) as {
+    jobs: Array<{
+      input_context: string;
+      original_filename: string;
+      status: string;
+    }>;
+  };
+  expect(
+    batchJobs.jobs.find(
+      (candidate) => candidate.original_filename === validFilename,
+    ),
+  ).toMatchObject({
+    input_context: "administrative_test",
+    status: "parsed",
+  });
+  expect(
+    batchJobs.jobs.some(
+      (candidate) => candidate.original_filename === invalidFilename,
+    ),
+  ).toBe(false);
+
+  // The surviving upload is an administrative test input, so it is approved by
+  // hand and never offers a recommendation.
+  await validItem.click();
   await expect(
-    page.getByRole("region", { name: "Recommendation" }),
-  ).toBeVisible();
+    page.getByRole("button", { name: "Request recommendation" }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Approve state" }).click();
+  await expect(validItem).toContainText("approved");
+  await expect(
+    page.getByRole("button", { name: "Request recommendation" }),
+  ).toBeDisabled();
 
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(validItem).toBeHidden();
   await expect(invalidItem).toBeVisible();
-});
-
-test("continues an automated batch after a recommendation provider failure", async ({
-  page,
-}, testInfo) => {
-  await openUploadInput(page);
-  const failedFilename = attemptFilename(
-    "automated-provider-failure",
-    testInfo,
-  );
-  const successfulFilename = attemptFilename(
-    "automated-provider-success",
-    testInfo,
-  );
-  await expect(
-    page.getByRole("button", { name: "Automation On" }),
-  ).toHaveAttribute("aria-pressed", "true");
-
-  const armFailureResponse = await page.request.post(
-    `${PROVIDER_URL}/control/fail-next-recommendation`,
-  );
-  expect(armFailureResponse.ok()).toBe(true);
-
-  await page.getByLabel("Choose screenshots").setInputFiles([
-    {
-      name: failedFilename,
-      mimeType: "image/png",
-      buffer: VALID_PNG,
-    },
-    {
-      name: successfulFilename,
-      mimeType: "image/png",
-      buffer: VALID_PNG,
-    },
-  ]);
-  await page.getByRole("button", { name: "Upload and parse" }).click();
-
-  await expect(
-    page.getByRole("dialog", { name: "Processing queue" }),
-  ).toBeHidden();
-  const failedItem = page.getByRole("button", {
-    name: filenamePattern(failedFilename),
-  });
-  const successfulItem = page.getByRole("button", {
-    name: filenamePattern(successfulFilename),
-  });
-  await expect(failedItem).toContainText("error");
-  await expect(failedItem).toContainText(
-    "external_solver request failed with status 503",
-  );
-  await expect(successfulItem).toContainText("recommended");
-  await expect(
-    page.getByText(
-      "1 screenshot need attention. Check the highlighted queue items.",
-    ),
-  ).toBeVisible();
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        sessionStorage.getItem("poker-training-processing-mutation-v1"),
-      ),
-    )
-    .toBeNull();
-
-  const processingJobsResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs`,
-  );
-  expect(processingJobsResponse.ok()).toBe(true);
-  const processingJobs = (await processingJobsResponse.json()) as {
-    jobs: Array<{
-      approved_state: unknown;
-      error: string | null;
-      original_filename: string;
-      recommendation: { raw: Record<string, string> } | null;
-      recommendation_request_id: string | null;
-      status: string;
-    }>;
-  };
-  const failedJob = processingJobs.jobs.find(
-    (candidate) => candidate.original_filename === failedFilename,
-  );
-  const successfulJob = processingJobs.jobs.find(
-    (candidate) => candidate.original_filename === successfulFilename,
-  );
-  expect(failedJob).toMatchObject({
-    approved_state: expect.any(Object),
-    error: "external_solver request failed with status 503",
-    recommendation: null,
-    recommendation_request_id: expect.any(String),
-    status: "error",
-  });
-  expect(successfulJob).toMatchObject({
-    error: null,
-    recommendation: {
-      raw: {
-        engine: "e2e_provider_stub",
-        provider: "external_solver",
-      },
-    },
-    recommendation_request_id: expect.any(String),
-    status: "recommended",
-  });
-
-  await successfulItem.click();
-  await expect(
-    page.getByRole("region", { name: "Recommendation" }),
-  ).toBeVisible();
-  await page.getByRole("button", { name: "Clear reviewed" }).click();
-  await expect(successfulItem).toBeHidden();
-  await expect(failedItem).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Request recommendation" }),
-  ).toBeEnabled();
 });
 
 const retryableRecommendationFailureCases = [
@@ -4445,8 +4643,7 @@ for (const failureCase of retryableRecommendationFailureCases) {
     await openUploadInput(page);
     const filename = attemptFilename(failureCase.filename, testInfo);
 
-    await page.getByRole("button", { name: "Automation On" }).click();
-    const uploadedJob = await uploadValidScreenshot(page, filename);
+    const uploadedJob = await uploadLegacyScreenshot(page, filename);
     await page.getByRole("button", { name: "Approve state" }).click();
     await expect(
       page.getByRole("region", { name: "Your training decision" }),
@@ -4516,8 +4713,7 @@ test("reconciles a recommendation that completes after page reload", async ({
   await openUploadInput(page);
   const filename = attemptFilename("recommendation-reload", testInfo);
 
-  await page.getByRole("button", { name: "Automation On" }).click();
-  const uploadedJob = await uploadValidScreenshot(page, filename);
+  const uploadedJob = await uploadLegacyScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
 
   const armBlockResponse = await page.request.post(
@@ -4638,9 +4834,6 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
 }, testInfo) => {
   await openUploadInput(page);
   const filename = attemptFilename("parser-retry", testInfo);
-  await expect(
-    page.getByRole("button", { name: "Automation On" }),
-  ).toHaveAttribute("aria-pressed", "true");
 
   const armFailureResponse = await page.request.post(
     `${PROVIDER_URL}/control/fail-next-parser`,
@@ -4729,26 +4922,43 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   await expect(matchingQueueItems).toContainText(
     "Vision parser request failed with status 503",
   );
-  await page
-    .getByRole("group", { name: "Input mode" })
-    .getByRole("button", { name: "Upload" })
-    .click();
+  await prepareUploadInput(page);
 
   await page.getByLabel("Choose screenshots").setInputFiles({
     name: filename,
     mimeType: "image/png",
     buffer: VALID_PNG,
   });
+  const recoveredUploadPromise = page.waitForResponse(
+    (response) =>
+      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.request().method() === "POST" &&
+      response.ok(),
+  );
   await page.getByRole("button", { name: "Upload and parse" }).click();
+  const recoveredJob = (await (await recoveredUploadPromise).json()) as {
+    id: string;
+  };
 
   await expect(matchingQueueItems).toHaveCount(2);
   const failedQueueItem = matchingQueueItems.filter({ hasText: "error" });
-  const recoveredQueueItem = matchingQueueItems.filter({
-    hasText: "recommended",
-  });
   await expect(failedQueueItem).toContainText(
     "Vision parser request failed with status 503",
   );
+  await expect(matchingQueueItems.filter({ hasText: "parsed" })).toContainText(
+    "parsed",
+  );
+
+  await markLegacyJobs(page, [recoveredJob.id]);
+  await forceQueueRevalidation(page);
+  await page.goto(`/analyzer/jobs/${recoveredJob.id}`);
+  await expectAnalyzerReady(page);
+  await expect(matchingQueueItems).toHaveCount(2);
+  await page.getByRole("button", { name: "Approve state" }).click();
+  await page.getByRole("button", { name: "Request recommendation" }).click();
+  const recoveredQueueItem = matchingQueueItems.filter({
+    hasText: "recommended",
+  });
   await expect(recoveredQueueItem).toContainText("recommended");
   await expect(
     page.getByRole("region", { name: "Recommendation" }),
@@ -4800,13 +5010,9 @@ test("restores history and processing after browser storage is cleared", async (
   page,
 }, testInfo) => {
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
 
   const archivedFilename = attemptFilename("storage-reset-history", testInfo);
-  const archivedJob = await uploadValidScreenshot(page, archivedFilename);
+  const archivedJob = await uploadLegacyScreenshot(page, archivedFilename);
   await page.getByLabel("Pot").fill("66.75");
   await page.getByRole("button", { name: "Approve state" }).click();
   await page.getByRole("button", { name: "Request recommendation" }).click();
@@ -4815,7 +5021,7 @@ test("restores history and processing after browser storage is cleared", async (
   await expect(archivedJob.queueItem).toBeHidden();
 
   const pendingFilename = attemptFilename("storage-reset-pending", testInfo);
-  const pendingJob = await uploadValidScreenshot(page, pendingFilename);
+  const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
   await expect(pendingJob.queueItem).toContainText("parsed");
   const historyPanel = page.getByRole("region", { name: "Session history" });
   await expect(
@@ -4866,9 +5072,6 @@ test("restores history and processing after browser storage is cleared", async (
     status: "recommended",
   });
 
-  if (await page.getByRole("button", { name: "Automation On" }).isVisible()) {
-    await page.getByRole("button", { name: "Automation On" }).click();
-  }
   await restoredPendingJob.click();
   await page.getByRole("button", { name: "Approve state" }).click();
   await page.getByRole("button", { name: "Request recommendation" }).click();
@@ -4916,12 +5119,8 @@ test("searches beyond cached history without replacing active work", async ({
   expect(firstHistory.jobs.map((job) => job.id)).not.toContain(targetJob.id);
 
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
   const pendingFilename = attemptFilename("deep-history-pending", testInfo);
-  const pendingJob = await uploadValidScreenshot(page, pendingFilename);
+  const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
   const historyPanel = page.getByRole("region", { name: "Session history" });
   const historyItems = historyPanel.getByRole("button", {
     name: /^Reopen history item /,
@@ -5017,12 +5216,8 @@ test("loads an older page of matching history results", async ({
   expect(newerArchiveResponse.ok()).toBe(true);
 
   await openUploadInput(page);
-  await page.getByRole("button", { name: "Automation On" }).click();
-  await expect(
-    page.getByRole("button", { name: "Automation Off" }),
-  ).toHaveAttribute("aria-pressed", "false");
   const pendingFilename = attemptFilename("paged-history-pending", testInfo);
-  const pendingJob = await uploadValidScreenshot(page, pendingFilename);
+  const pendingJob = await uploadLegacyScreenshot(page, pendingFilename);
   const historyPanel = page.getByRole("region", { name: "Session history" });
   await historyPanel
     .getByRole("button", {
