@@ -141,11 +141,14 @@ calibrated coordinates/templates are added.
   32 characters; leave empty for local development
 - `POKER_ADMIN_OCR_TEST_ENABLED` and `POKER_ADMIN_OCR_TEST_TOKEN`: administrative
   OCR test mode for screenshot upload and live capture (ADR 0046). Disabled by
-  default; when enabled every `POST /api/jobs` upload must carry the token as
+  default; when enabled every `POST /api/jobs` upload, every
+  `POST /api/benchmarks/import` dataset import, and every
+  `POST /api/backups/restore` must carry the token as
   `Authorization: Bearer ...`, and the resulting jobs are marked
   `administrative_test` so they can never request recommendations or enter
-  training. The token must contain at least 32 printable ASCII characters and
-  differ from `POKER_PROXY_SHARED_SECRET`
+  training. Clients confirm a token with `GET /api/admin/ocr-test/session`
+  before revealing capture controls. The token must contain at least 32
+  printable ASCII characters and differ from `POKER_PROXY_SHARED_SECRET`
 - `POKER_MCP_ENABLED` and `POKER_MCP_PUBLIC_URL`: hosted MCP kill switch and
   exact public HTTPS `/mcp` endpoint; hosted access defaults off
 - `POKER_MCP_ALLOW_WRITES`: staging-only server write gate, independent of

@@ -76,12 +76,15 @@ Screenshot upload and live capture are disabled for players. To test parsers
 against representative screenshots, set `POKER_ADMIN_OCR_TEST_ENABLED=true` and
 a dedicated `POKER_ADMIN_OCR_TEST_TOKEN` (`openssl rand -hex 32`; at least 32
 printable ASCII characters, never equal to `POKER_PROXY_SHARED_SECRET`). The
-backend requires that token as `Authorization: Bearer ...` on every upload and
-marks the resulting jobs as administrative test inputs, which cannot request
+backend requires that token as `Authorization: Bearer ...` on every upload,
+every benchmark dataset import, and every backup restore, and marks the
+resulting jobs as administrative test inputs, which cannot request
 recommendations, record training decisions, or enter training progress. Enter
 the token only in the PWA **Administrator tools** dialog; it stays in browser
-memory until locked or reloaded. Rollback is `POKER_ADMIN_OCR_TEST_ENABLED=false`;
-no setting restores player-accessible capture or automatic recommendations.
+memory until locked or reloaded. The PWA verifies the token with the backend
+through `GET /api/admin/ocr-test/session` before it unlocks any capture control.
+Rollback is `POKER_ADMIN_OCR_TEST_ENABLED=false`; no setting restores
+player-accessible capture or automatic recommendations.
 
 After deployment, verify:
 

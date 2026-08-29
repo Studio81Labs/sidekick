@@ -81,7 +81,12 @@ Screenshot upload is an administrative OCR test surface, not a player data
 path (ADR 0046). `POST /api/jobs` fails closed unless
 `POKER_ADMIN_OCR_TEST_ENABLED` is set and the request carries the deployment's
 `POKER_ADMIN_OCR_TEST_TOKEN` as a bearer credential; the application-layer
-`AdminOcrTestAccessPolicy` compares it in constant time. Every job records an
+`AdminOcrTestAccessPolicy` compares it in constant time.
+`POST /api/benchmarks/import` and `POST /api/backups/restore` share that gate,
+because both persist screenshots the boundary would otherwise refuse, and both
+check it before reading the uploaded archive. `GET /api/admin/ocr-test/session`
+lets a client confirm a credential before it reveals any capture control; it
+answers `no-store` and shares the upload rate-limit budget. Every job records an
 explicit `input_context`: uploads and benchmark dataset imports are
 `administrative_test`, while records persisted before the boundary load as
 `legacy_player`. Recommendation, training-decision, and training-review
