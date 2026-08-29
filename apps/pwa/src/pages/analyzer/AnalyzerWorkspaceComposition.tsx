@@ -11,7 +11,6 @@ import { ScreenshotQueuePanel } from "../../features/queue/components/Screenshot
 import { ScreenshotDetailsDialog } from "../../features/screenshots/components/ScreenshotDetailsDialog";
 import { InfoDialog } from "../../features/system/components/InfoDialog";
 import { UserGuideDialog } from "../../features/system/components/UserGuideDialog";
-import { TrainingProgressDialog } from "../../features/training/components/TrainingProgressDialog";
 import {
   AnalyzerControlRail,
   AnalyzerDialogHost,
@@ -64,9 +63,6 @@ export function AnalyzerWorkspaceComposition(
         ) : null}
         {view.dialogs.help ? <UserGuideDialog {...view.dialogs.help} /> : null}
         {view.dialogs.info ? <InfoDialog {...view.dialogs.info} /> : null}
-        {view.dialogs.training ? (
-          <TrainingProgressDialog {...view.dialogs.training} />
-        ) : null}
         {view.dialogs.benchmark ? (
           <BenchmarkDialog {...view.dialogs.benchmark} />
         ) : null}

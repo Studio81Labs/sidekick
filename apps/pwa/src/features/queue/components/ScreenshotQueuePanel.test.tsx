@@ -18,14 +18,8 @@ function jobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
     original_filename: "table.png",
     image_filename: "job-1.png",
     parser_provider: "ocr_cv",
-    recommendation_provider: "local_solver",
     parser_result: null,
     approved_state: null,
-    training_decision: null,
-    recommendation: null,
-    recommendation_pending: false,
-    training_reviewed_at: null,
-    training_review_note: null,
     benchmark_included: false,
     archived_at: null,
     error: null,
@@ -125,14 +119,9 @@ describe("ScreenshotQueuePanel", () => {
     render(
       <ScreenshotQueuePanel
         {...panelProps({
-          count: 5,
+          count: 4,
           jobs: [
             jobRecord({ status: "created" }),
-            jobRecord({
-              id: "job-2",
-              original_filename: "recommendation.png",
-              recommendation_pending: true,
-            }),
             jobRecord({
               id: "job-3",
               original_filename: "error.png",
@@ -155,12 +144,11 @@ describe("ScreenshotQueuePanel", () => {
     );
 
     expect(screen.getByText("Parsing screenshot")).toBeInTheDocument();
-    expect(screen.getByText("Recommendation running")).toBeInTheDocument();
     expect(screen.getByText("Review warnings")).toBeInTheDocument();
     expect(screen.getByText("turn")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Complete the required table details before requesting a recommendation: Opponent wager total. Edit the listed fields, then approve the state again.",
+        "Complete the required table details before approving the state: Opponent wager total. Edit the listed fields, then approve again.",
       ),
     ).toBeInTheDocument();
   });
@@ -194,19 +182,8 @@ describe("ScreenshotQueuePanel", () => {
     ).toBeEnabled();
   });
 
-  it("marks administrative test jobs and leaves legacy jobs unmarked", () => {
-    const administrativeJob = jobRecord({
-      input_context: "administrative_test",
-    });
-    const { rerender } = render(
-      <ScreenshotQueuePanel {...panelProps({ jobs: [administrativeJob] })} />,
-    );
-
-    expect(
-      screen.getByLabelText("Administrative OCR test input"),
-    ).toBeInTheDocument();
-
-    rerender(<ScreenshotQueuePanel {...panelProps()} />);
+  it("renders no input-context badge for queued frames", () => {
+    render(<ScreenshotQueuePanel {...panelProps()} />);
 
     expect(
       screen.queryByLabelText("Administrative OCR test input"),

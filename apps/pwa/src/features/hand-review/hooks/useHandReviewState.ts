@@ -18,14 +18,7 @@ import {
   stateToForm,
 } from "../../../domains/poker/model/pokerStateConversion";
 import { summarizeConfidences } from "../lib/pokerStateConfidence";
-import { recommendationEvidenceFromRaw } from "../../../domains/recommendations/model/recommendationEvidence";
-import { parserRoutingFromRaw } from "../../../domains/recommendations/model/parserRoutingPresentation";
-import {
-  parseTrainingSizing,
-  type TrainingActionOption,
-  type TrainingCertaintyOption,
-  trainingDecisionComparison,
-} from "../../../domains/training/model/trainingDecision";
+import { parserRoutingFromRaw } from "../../../domains/pipeline/model/parserRouting";
 import {
   messageFromError,
   VALIDATION_TOAST_ID,
@@ -55,14 +48,6 @@ export function useHandReviewState({
 }: UseHandReviewStateOptions) {
   const [form, setForm] = useState<StateForm>(() => stateToForm(EMPTY_STATE));
   const [approvedStateKey, setApprovedStateKey] = useState<string | null>(null);
-  const [trainingAction, setTrainingAction] =
-    useState<TrainingActionOption>("");
-  const [trainingSizing, setTrainingSizing] = useState("");
-  const [trainingCertainty, setTrainingCertainty] =
-    useState<TrainingCertaintyOption>("");
-  const [trainingReviewNote, setTrainingReviewNote] = useState("");
-  const [trainingReviewNoteEditing, setTrainingReviewNoteEditing] =
-    useState(false);
   const activeJobIdRef = useRef(activeJobId);
   activeJobIdRef.current = activeJobId;
   const formBaselineRef = useRef(form);
@@ -104,30 +89,6 @@ export function useHandReviewState({
     currentStateKey &&
     approvedStateKey === currentStateKey,
   );
-  const recommendation = currentStateApproved
-    ? (job?.recommendation ?? null)
-    : null;
-  const trainingDecision = currentStateApproved
-    ? (job?.training_decision ?? null)
-    : null;
-  const decisionEvidence = useMemo(
-    () =>
-      recommendation
-        ? recommendationEvidenceFromRaw(recommendation.raw, recommendation)
-        : null,
-    [recommendation],
-  );
-  const decisionComparison = useMemo(
-    () =>
-      recommendation && trainingDecision
-        ? trainingDecisionComparison(
-            trainingDecision.action,
-            trainingDecision.sizing,
-            recommendation,
-          )
-        : null,
-    [recommendation, trainingDecision],
-  );
   const canApprove = Boolean(
     (job?.parser_result || job?.approved_state) &&
     validation.state &&
@@ -135,10 +96,6 @@ export function useHandReviewState({
     validation.state.street &&
     !currentStateApproved,
   );
-  const canRecommend =
-    currentStateApproved &&
-    !job?.recommendation &&
-    !job?.recommendation_pending;
   const completedPostflopActionCounts = useMemo(
     () =>
       form.completed_postflop_actions.reduce<
@@ -170,34 +127,6 @@ export function useHandReviewState({
     if (activeJobId !== null || jobs.length === 0) return;
     alignWorkspaceToJob(jobs[0]);
   }, [activeJobId, jobs]);
-
-  useEffect(() => {
-    if (!currentStateApproved) {
-      setTrainingAction("");
-      setTrainingSizing("");
-      setTrainingCertainty("");
-      return;
-    }
-    setTrainingAction(job?.training_decision?.action ?? "");
-    setTrainingSizing(
-      job?.training_decision?.sizing === null ||
-        job?.training_decision?.sizing === undefined
-        ? ""
-        : String(job.training_decision.sizing),
-    );
-    setTrainingCertainty(job?.training_decision?.certainty ?? "");
-  }, [
-    currentStateApproved,
-    job?.id,
-    job?.training_decision?.action,
-    job?.training_decision?.certainty,
-    job?.training_decision?.sizing,
-  ]);
-
-  useEffect(() => {
-    setTrainingReviewNote(job?.training_review_note ?? "");
-    setTrainingReviewNoteEditing(false);
-  }, [job?.id, job?.training_review_note, job?.training_reviewed_at]);
 
   useEffect(() => {
     if (job && validation.error) {
@@ -439,16 +368,6 @@ export function useHandReviewState({
     setApprovedStateKey(null);
   }
 
-  function startTrainingReviewNoteEdit() {
-    setTrainingReviewNote(job?.training_review_note ?? "");
-    setTrainingReviewNoteEditing(true);
-  }
-
-  function cancelTrainingReviewNoteEdit() {
-    setTrainingReviewNote(job?.training_review_note ?? "");
-    setTrainingReviewNoteEditing(false);
-  }
-
   return {
     activeJobId,
     activeJobIdRef,
@@ -460,22 +379,16 @@ export function useHandReviewState({
     approvedStateKey,
     benchmarkApprovalKey,
     canApprove,
-    canRecommend,
-    cancelTrainingReviewNoteEdit,
     completedPostflopActionCounts,
     completedPostflopActionsAtLimit,
     confidenceSummary,
     confidences,
     currentStateApproved,
-    decisionComparison,
-    decisionEvidence,
     form,
     formBaselineRef,
     formDirtyRef,
     job,
-    parseTrainingSizing,
     parserRoutingFromRaw,
-    recommendation,
     removeCompletedPostflopAction,
     removePostflopAction,
     removePreflopAction,
@@ -484,19 +397,7 @@ export function useHandReviewState({
     setActiveJobId,
     setApprovedStateKey,
     setForm,
-    setTrainingAction,
-    setTrainingCertainty,
-    setTrainingReviewNote,
-    setTrainingReviewNoteEditing,
-    setTrainingSizing,
     stateToForm,
-    startTrainingReviewNoteEdit,
-    trainingAction,
-    trainingCertainty,
-    trainingDecision,
-    trainingReviewNote,
-    trainingReviewNoteEditing,
-    trainingSizing,
     updateCompletedPostflopAction,
     updateForm,
     updatePostflopAction,

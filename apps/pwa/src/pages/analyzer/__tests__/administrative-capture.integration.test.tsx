@@ -19,8 +19,6 @@ import {
   mockAdministratorVerification,
   nextDeferredResponse,
   processingQueueResponse,
-  recommendation,
-  recommendedJob,
   setSharedPreviewSize,
   stubCanvasCapture,
   stubDisplayMedia,
@@ -71,7 +69,7 @@ describe("Analyzer administrative capture", () => {
   });
 
   it("sends the administrator credential with uploads", async () => {
-    const created = jobRecord({ input_context: "administrative_test" });
+    const created = jobRecord();
     fetchMock()
       .mockResolvedValueOnce(jsonResponse(created, 201))
       .mockResolvedValueOnce(processingQueueResponse([created]));
@@ -209,12 +207,13 @@ describe("Analyzer administrative capture", () => {
     expect(
       await screen.findByText("OCR + computer vision"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Postflop solver")).toBeInTheDocument();
     expect(
       screen.getByText(/OCR and computer vision read the cards/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Preflop uses a position-aware training chart/i),
+      screen.getByText(
+        "Back up screenshots, approved ground truth, and benchmark reports in one portable ZIP.",
+      ),
     ).toBeInTheDocument();
     expect(fetchMock().mock.calls[0][0]).toBe(
       "http://localhost:8000/api/health",
@@ -307,27 +306,37 @@ describe("Analyzer administrative capture", () => {
     ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("button", {
-        name: "Next topic: Plugins and data",
+        name: "Next topic: History and files",
       }),
     ).toBeEnabled();
 
-    const pluginsTopic = within(dialog).getByRole("button", {
-      name: "Plugins and data",
+    const historyTopic = within(dialog).getByRole("button", {
+      name: "History and files",
     });
-    const scrollPluginsIntoView = vi.fn();
-    Object.defineProperty(pluginsTopic, "scrollIntoView", {
+    const scrollHistoryIntoView = vi.fn();
+    Object.defineProperty(historyTopic, "scrollIntoView", {
       configurable: true,
-      value: scrollPluginsIntoView,
+      value: scrollHistoryIntoView,
+    });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Next topic: History and files",
+      }),
+    );
+    expect(scrollHistoryIntoView).toHaveBeenCalledWith({
+      block: "nearest",
+      inline: "nearest",
     });
     await user.click(
       within(dialog).getByRole("button", {
         name: "Next topic: Plugins and data",
       }),
     );
-    expect(scrollPluginsIntoView).toHaveBeenCalledWith({
-      block: "nearest",
-      inline: "nearest",
-    });
+    expect(
+      within(dialog).getByRole("heading", {
+        name: "Choose tools and protect your data",
+      }),
+    ).toBeInTheDocument();
     const closeButton = within(dialog).getByRole("button", {
       name: "Close user guide",
     });
@@ -713,8 +722,8 @@ describe("Analyzer administrative capture", () => {
     expect(screen.getByLabelText(/Facing action/)).toHaveValue("bet");
     expect(screen.getByRole("button", { name: "Approve state" })).toBeEnabled();
     expect(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Request recommendation" }),
+    ).not.toBeInTheDocument();
     expect(
       within(screen.getByLabelText("Parser confidence summary")).getByText(
         "/12",
@@ -722,7 +731,7 @@ describe("Analyzer administrative capture", () => {
     ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
-    expect(screen.getAllByText("Demo engine")).toHaveLength(2);
+    expect(screen.getAllByText("Demo engine")).toHaveLength(1);
   });
 
   it("reviews an opponent seat for heads-up postflop solver routing", async () => {
@@ -1544,7 +1553,7 @@ describe("Analyzer administrative capture", () => {
 
   it("invalidates an older history restore while clearing reviewed jobs", async () => {
     const readyJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "7".repeat(32),
       original_filename: "archive-history-race.png",
       updated_at: "2026-07-10T00:01:00Z",
@@ -1636,17 +1645,20 @@ describe("Analyzer administrative capture", () => {
   });
 
   it("keeps completed jobs in processing when history persistence fails", async () => {
-    const recommended = { ...recommendedJob(), original_filename: "retry.png" };
+    const approvedUpload = {
+      ...approvedJob(),
+      original_filename: "retry.png",
+    };
     fetchMock()
-      .mockResolvedValueOnce(jsonResponse(recommended, 201))
-      .mockResolvedValueOnce(processingQueueResponse([recommended]))
+      .mockResolvedValueOnce(jsonResponse(approvedUpload, 201))
+      .mockResolvedValueOnce(processingQueueResponse([approvedUpload]))
       .mockResolvedValueOnce(
         jsonResponse({ detail: "History storage is unavailable" }, 500),
       )
       .mockResolvedValueOnce(
         jsonResponse({ detail: "History storage is unavailable" }, 500),
       )
-      .mockResolvedValueOnce(processingQueueResponse([recommended]));
+      .mockResolvedValueOnce(processingQueueResponse([approvedUpload]));
     render(<App />);
     const user = userEvent.setup();
 
@@ -1657,7 +1669,11 @@ describe("Analyzer administrative capture", () => {
       new File(["retry"], "retry.png", { type: "image/png" }),
     );
     await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", {
+        name: "Open screenshot 1: retry.png",
+      }),
+    ).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Clear reviewed" }));
 
@@ -1681,16 +1697,13 @@ describe("Analyzer administrative capture", () => {
 
   it("releases archive leases after a deterministic conflict", async () => {
     const readyJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "6".repeat(32),
       original_filename: "archive-conflict.png",
     };
     const competingAttempt: JobRecord = {
       ...readyJob,
       status: "approved",
-      recommendation: null,
-      recommendation_pending: true,
-      recommendation_request_id: "other-tab-recommendation",
       updated_at: "2026-07-10T00:01:00Z",
     };
     window.localStorage.setItem(
@@ -1712,8 +1725,7 @@ describe("Analyzer administrative capture", () => {
           return Promise.resolve(
             jsonResponse(
               {
-                detail:
-                  "Only successful approved or recommended jobs can be moved to history",
+                detail: "Only successful approved jobs can be moved to history",
               },
               409,
             ),
@@ -1746,7 +1758,7 @@ describe("Analyzer administrative capture", () => {
 
     expect(
       await screen.findByText(
-        "Only successful approved or recommended jobs can be moved to history",
+        "Only successful approved jobs can be moved to history",
       ),
     ).toBeInTheDocument();
     await waitFor(() =>
@@ -1767,7 +1779,7 @@ describe("Analyzer administrative capture", () => {
   it("refreshes history when a later archive batch fails", async () => {
     window.sessionStorage.removeItem("poker-training-processing-synced");
     const readyJobs = Array.from({ length: 101 }, (_, index) => ({
-      ...recommendedJob(),
+      ...approvedJob(),
       id: index.toString(16).padStart(32, "0"),
       original_filename: `partial-archive-${index + 1}.png`,
     }));
@@ -1886,19 +1898,19 @@ describe("Analyzer administrative capture", () => {
   });
 
   it("clears persisted jobs when the bounded browser history cache is unavailable", async () => {
-    const recommended = {
-      ...recommendedJob(),
+    const approvedUpload = {
+      ...approvedJob(),
       original_filename: "storage-disabled.png",
     };
     fetchMock()
-      .mockResolvedValueOnce(jsonResponse(recommended, 201))
-      .mockResolvedValueOnce(processingQueueResponse([recommended]))
+      .mockResolvedValueOnce(jsonResponse(approvedUpload, 201))
+      .mockResolvedValueOnce(processingQueueResponse([approvedUpload]))
       .mockResolvedValueOnce(
         jsonResponse({
           total: 1,
           jobs: [
             {
-              ...recommended,
+              ...approvedUpload,
               archived_at: "2026-07-10T00:01:00Z",
             },
           ],
@@ -1917,7 +1929,11 @@ describe("Analyzer administrative capture", () => {
       }),
     );
     await user.click(screen.getByRole("button", { name: "Upload and parse" }));
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", {
+        name: "Open screenshot 1: storage-disabled.png",
+      }),
+    ).toBeInTheDocument();
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new DOMException("Storage is disabled", "QuotaExceededError");
     });
@@ -1967,12 +1983,9 @@ describe("Analyzer administrative capture", () => {
     ).toBeDisabled();
   });
 
-  it("marks administrative jobs and withholds recommendation and training controls", async () => {
-    const created = jobRecord({ input_context: "administrative_test" });
-    const approved = {
-      ...approvedJob(),
-      input_context: "administrative_test" as const,
-    };
+  it("marks the workspace administrative and offers no learning controls", async () => {
+    const created = jobRecord();
+    const approved = approvedJob();
     fetchMock()
       .mockResolvedValueOnce(jsonResponse(created, 201))
       .mockResolvedValueOnce(processingQueueResponse([created]))
@@ -1981,8 +1994,11 @@ describe("Analyzer administrative capture", () => {
 
     const user = await uploadScreenshot();
     expect(
-      screen.getAllByLabelText("Administrative OCR test input").length,
-    ).toBeGreaterThan(0);
+      screen.getByRole("note", { name: "Administrative OCR test mode" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Administrative OCR test input"),
+    ).not.toBeInTheDocument();
     await user.click(
       await screen.findByRole("button", { name: "Approve state" }),
     );
@@ -1993,14 +2009,17 @@ describe("Analyzer administrative capture", () => {
       ).toBeDisabled(),
     );
     expect(
-      screen.getByRole("button", { name: "Request recommendation" }),
-    ).toBeDisabled();
+      screen.queryByRole("button", { name: "Request recommendation" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByLabelText("Your training decision"),
     ).not.toBeInTheDocument();
     expect(
+      screen.queryByRole("button", { name: "Training progress" }),
+    ).not.toBeInTheDocument();
+    expect(
       screen.getByText(
-        "Administrative test inputs never request recommendations or enter training.",
+        "Administrator OCR test console for Texas Hold'em screenshots",
       ),
     ).toBeInTheDocument();
   });

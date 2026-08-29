@@ -18,7 +18,6 @@ function toolbarProps(
     onOpenBenchmark: vi.fn(),
     onOpenHelp: vi.fn(),
     onOpenInfo: vi.fn(),
-    onOpenTraining: vi.fn(),
     queueCount: 3,
     ...overrides,
   };
@@ -33,7 +32,9 @@ describe("AnalyzerToolbar", () => {
       screen.getByRole("heading", { name: "Poker Training Analyzer" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Post-hand review for Texas Hold'em screenshots"),
+      screen.getByText(
+        "Administrator OCR test console for Texas Hold'em screenshots",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText("3")).toBeInTheDocument();
     expect(screen.getByText("7")).toBeInTheDocument();
@@ -60,9 +61,6 @@ describe("AnalyzerToolbar", () => {
       screen.getByRole("button", { name: "About this app" }),
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Training progress" }),
-    );
-    await userEvent.click(
       screen.getByRole("button", { name: "Parser benchmark" }),
     );
 
@@ -70,8 +68,10 @@ describe("AnalyzerToolbar", () => {
     expect(props.onConfigurePipeline).toHaveBeenCalledOnce();
     expect(props.onOpenHelp).toHaveBeenCalledOnce();
     expect(props.onOpenInfo).toHaveBeenCalledOnce();
-    expect(props.onOpenTraining).toHaveBeenCalledOnce();
     expect(props.onOpenBenchmark).toHaveBeenCalledOnce();
+    expect(
+      screen.queryByRole("button", { name: "Training progress" }),
+    ).not.toBeInTheDocument();
   });
 
   it("marks the administrator tools button while the session is unlocked", () => {
@@ -89,9 +89,6 @@ describe("AnalyzerToolbar", () => {
 
     expect(
       screen.getByRole("button", { name: "Configure analysis plugins" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Training progress" }),
     ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Parser benchmark" }),

@@ -51,13 +51,6 @@ export default function AnalyzerRoute({ surface }: AnalyzerRouteProps) {
           navigate(path, { replace: options?.replace });
         }
       },
-      openTraining: () => {
-        if (location.pathname !== analyzerPaths.analyzerTraining) {
-          navigate(analyzerPaths.analyzerTraining, {
-            state: { analyzerSurfaceOrigin: true },
-          });
-        }
-      },
       openWorkspace: (options) => {
         if (location.pathname !== analyzerPaths.analyzer) {
           navigate(analyzerPaths.analyzer, { replace: options?.replace });

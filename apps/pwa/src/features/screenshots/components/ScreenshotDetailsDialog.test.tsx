@@ -22,13 +22,7 @@ function jobRecord(overrides: Partial<JobRecord> = {}): JobRecord {
     original_filename: "table.png",
     parser_provider: "ocr_cv",
     parser_result: null,
-    recommendation: null,
-    recommendation_pending: false,
-    recommendation_provider: "local_solver",
     status: "parsed",
-    training_decision: null,
-    training_review_note: null,
-    training_reviewed_at: null,
     updated_at: "2026-08-14T10:00:00Z",
     ...overrides,
   };
@@ -135,20 +129,8 @@ describe("ScreenshotDetailsDialog", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("marks an administrative test job and leaves a legacy job unmarked", () => {
-    const { rerender } = render(
-      <ScreenshotDetailsDialog
-        {...dialogProps({
-          job: jobRecord({ input_context: "administrative_test" }),
-        })}
-      />,
-    );
-
-    expect(
-      screen.getByLabelText("Administrative OCR test input"),
-    ).toBeInTheDocument();
-
-    rerender(<ScreenshotDetailsDialog {...dialogProps()} />);
+  it("renders no input-context badge beside the job status", () => {
+    render(<ScreenshotDetailsDialog {...dialogProps()} />);
 
     expect(
       screen.queryByLabelText("Administrative OCR test input"),

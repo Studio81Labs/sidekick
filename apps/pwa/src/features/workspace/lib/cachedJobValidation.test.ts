@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  detectedState,
-  jobRecord,
-  recommendation,
-} from "../../../test/analyzerHarness";
+import { detectedState, jobRecord } from "../../../test/analyzerHarness";
 import {
   isCachedJobRecord,
   isCachedParserResult,
@@ -52,13 +48,27 @@ describe("cached job validation", () => {
       status: "approved",
       parser_result: null,
       approved_state: { ...detectedState, user_approved: true },
-      recommendation,
       benchmark_included: true,
     });
 
-    expect(isPristineBenchmarkImport(benchmarkImport)).toBe(false);
+    expect(isPristineBenchmarkImport(benchmarkImport)).toBe(true);
     expect(
-      isPristineBenchmarkImport({ ...benchmarkImport, recommendation: null }),
-    ).toBe(true);
+      isPristineBenchmarkImport({
+        ...benchmarkImport,
+        parser_result: jobRecord().parser_result,
+      }),
+    ).toBe(false);
+    expect(
+      isPristineBenchmarkImport({ ...benchmarkImport, error: "failed" }),
+    ).toBe(false);
+  });
+
+  it("rejects a job that reports a status outside the current contract", () => {
+    expect(
+      isCachedJobRecord({
+        ...jobRecord({ id: persistedJobId }),
+        status: "retired-status",
+      }),
+    ).toBe(false);
   });
 });

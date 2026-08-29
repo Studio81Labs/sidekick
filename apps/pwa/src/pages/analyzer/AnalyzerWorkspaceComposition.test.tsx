@@ -54,7 +54,6 @@ const navigation: AnalyzerRouteNavigation = {
   managed: true,
   openBenchmarks: vi.fn(),
   openJob: vi.fn(),
-  openTraining: vi.fn(),
   openWorkspace: vi.fn(),
 };
 
@@ -72,7 +71,6 @@ function mockView(
       pipeline: null,
       queueProcessing: null,
       screenshotDetails: null,
-      training: null,
       ...dialogOverrides,
     },
     handReview: {},

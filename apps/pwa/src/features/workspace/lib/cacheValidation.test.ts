@@ -1,16 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  detectedState,
-  jobRecord,
-  recommendation,
-} from "../../../test/analyzerHarness";
+import { detectedState, jobRecord } from "../../../test/analyzerHarness";
 import {
   isCachedJobRecord,
   isPristineBenchmarkImport,
 } from "./cachedJobValidation";
 import { isCachedDetectedState } from "./cachedPokerStateValidation";
-import { isCachedRecommendation } from "./cachedRecommendationValidation";
 
 const persistedJobId = "a".repeat(32);
 
@@ -24,16 +19,6 @@ describe("workspace cache validation", () => {
       isCachedDetectedState({
         ...detectedState,
         board_cards: [detectedState.hero_cards[0]],
-      }),
-    ).toBe(false);
-  });
-
-  it("rejects action sizing that does not match the recommendation action", () => {
-    expect(
-      isCachedRecommendation({
-        ...recommendation,
-        action: "call",
-        sizing: 4,
       }),
     ).toBe(false);
   });

@@ -22,9 +22,8 @@ export function AdministrativeTestBanner({
       <div className="administrative-test-banner-copy">
         <strong>Administrative OCR test</strong>
         <p>
-          Parser diagnostics only. Uploads and captures are marked as
-          administrative test inputs; they never request recommendations or
-          enter training.
+          Parser diagnostics only. Uploads and captures produce administrative
+          OCR test data, not player analysis.
         </p>
       </div>
       <ButtonControl

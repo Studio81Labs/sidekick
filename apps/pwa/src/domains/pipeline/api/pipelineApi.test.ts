@@ -10,14 +10,10 @@ const response = {
   defaults: {
     parser_layout_profile: "fortuna_nations",
     parser_provider: "ocr_cv",
-    recommendation_engine: "postflop_solver",
-    recommendation_provider: "local_solver",
   },
   parser_layout_compatibility: { ocr_cv: ["fortuna_nations"] },
   parser_layout_profiles: [],
   parser_providers: [],
-  recommendation_engines: [],
-  recommendation_providers: [],
 };
 
 describe("pipeline API adapter", () => {

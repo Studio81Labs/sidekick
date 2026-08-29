@@ -67,32 +67,8 @@ export function reconcilePipelineSelection(
     )?.id ??
     layouts.find((option) => option.available)?.id ??
     capabilities.defaults.parser_layout_profile;
-  const recommendationProvider =
-    availablePipelineOption(
-      capabilities.recommendation_providers,
-      candidate.recommendation_provider,
-    )?.id ??
-    capabilities.recommendation_providers.find((option) => option.available)
-      ?.id ??
-    capabilities.defaults.recommendation_provider;
-  const recommendationEngine =
-    recommendationProvider === "local_solver"
-      ? (availablePipelineOption(
-          capabilities.recommendation_engines,
-          candidate.recommendation_engine,
-        )?.id ??
-        availablePipelineOption(
-          capabilities.recommendation_engines,
-          capabilities.defaults.recommendation_engine,
-        )?.id ??
-        capabilities.recommendation_engines.find((option) => option.available)
-          ?.id ??
-        null)
-      : null;
   return {
     parser_provider: parserProvider,
     parser_layout_profile: parserLayoutProfile,
-    recommendation_provider: recommendationProvider,
-    recommendation_engine: recommendationEngine,
   };
 }

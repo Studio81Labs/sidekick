@@ -82,7 +82,7 @@ describe("requestJson", () => {
     await expect(requestJson("/api/health")).rejects.toEqual(
       expect.objectContaining({
         message:
-          "Complete the required table details before requesting a recommendation: Opponent wager total. Edit the listed fields, then approve the state again.",
+          "Complete the required table details before approving the state: Opponent wager total. Edit the listed fields, then approve again.",
         status: 422,
       }),
     );

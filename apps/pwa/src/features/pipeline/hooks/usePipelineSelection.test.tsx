@@ -16,8 +16,6 @@ const capabilities = {
   defaults: {
     parser_layout_profile: "fortuna_nations",
     parser_provider: "ocr_cv",
-    recommendation_engine: "postflop_solver",
-    recommendation_provider: "local_solver",
   },
   parser_layout_compatibility: { ocr_cv: ["fortuna_nations"] },
   parser_layout_profiles: [
@@ -37,22 +35,6 @@ const capabilities = {
     },
   ],
   administrative_ocr_test: { enabled: false },
-  recommendation_engines: [
-    {
-      available: true,
-      id: "postflop_solver",
-      label: "Postflop solver",
-      unavailable_reason: null,
-    },
-  ],
-  recommendation_providers: [
-    {
-      available: true,
-      id: "local_solver",
-      label: "Local solver",
-      unavailable_reason: null,
-    },
-  ],
 };
 
 describe("usePipelineSelection", () => {
@@ -72,8 +54,10 @@ describe("usePipelineSelection", () => {
     expect(result.current.capabilities).toEqual(capabilities);
     expect(onError).not.toHaveBeenCalled();
 
-    act(() => result.current.updateSelection("recommendation_engine", null));
-    expect(result.current.selection?.recommendation_engine).toBeNull();
+    act(() =>
+      result.current.updateSelection("parser_layout_profile", "generic"),
+    );
+    expect(result.current.selection?.parser_layout_profile).toBe("generic");
 
     await result.current.loadCapabilities();
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -136,7 +120,7 @@ describe("usePipelineSelection", () => {
 
     await expect(result.current.loadCapabilities()).resolves.toBeNull();
     expect(onError).toHaveBeenCalledWith(
-      "Complete the required table details before requesting a recommendation: Opponent wager total. Edit the listed fields, then approve the state again.",
+      "Complete the required table details before approving the state: Opponent wager total. Edit the listed fields, then approve again.",
     );
 
     await expect(result.current.loadCapabilities()).resolves.toEqual(

@@ -21,7 +21,6 @@ describe("mutation lease codec", () => {
       jobId: "job-1",
       baselineUpdatedAt: "2026-08-15T00:00:00Z",
       expectsRemoval: false,
-      expectedRecommendationRequestId: null,
       expectedMutation: null,
     });
   });
@@ -43,13 +42,7 @@ describe("mutation lease codec", () => {
       kind: "projection",
       baselineJobIds: ["job-1"],
       expectedRemovalJobIds: [],
-      expectedUploads: [
-        {
-          requestId: "upload-1",
-          target: "approved",
-          recommendationRequestId: null,
-        },
-      ],
+      expectedUploads: [{ requestId: "upload-1", target: "approved" }],
       benchmarkImportRequestId: null,
       benchmarkImportReceiptObserved: false,
     });

@@ -1,4 +1,4 @@
-export type AnalyzerSurface = "benchmarks" | "job" | "training" | "workspace";
+export type AnalyzerSurface = "benchmarks" | "job" | "workspace";
 
 export interface AnalyzerRouteState {
   jobId: string | null;
@@ -10,7 +10,6 @@ export interface AnalyzerRouteNavigation {
   managed: boolean;
   openBenchmarks: () => void;
   openJob: (jobId: string, options?: AnalyzerRouteNavigationOptions) => void;
-  openTraining: () => void;
   openWorkspace: (options?: AnalyzerRouteNavigationOptions) => void;
 }
 
@@ -22,7 +21,6 @@ export const analyzerPaths = {
   analyzer: "/analyzer",
   analyzerBenchmarks: "/analyzer/benchmarks",
   analyzerJob: "/analyzer/jobs/:jobId",
-  analyzerTraining: "/analyzer/training",
 } as const;
 
 export function analyzerJobPath(jobId: string): string {

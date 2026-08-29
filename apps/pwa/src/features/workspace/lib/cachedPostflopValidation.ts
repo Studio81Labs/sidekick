@@ -5,7 +5,8 @@ import type {
   PostflopAction,
   PostflopActor,
 } from "../../../shared/types/poker";
-import { SIZING_MATCH_TOLERANCE } from "../../../domains/training/model/trainingOptions";
+
+const SIZING_MATCH_TOLERANCE = 0.01;
 
 export function isCachedPostflopAction(
   value: unknown,

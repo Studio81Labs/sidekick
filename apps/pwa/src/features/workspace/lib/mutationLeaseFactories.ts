@@ -32,7 +32,6 @@ export function startPersistedMutationLease(
     jobId: job.id,
     baselineUpdatedAt: job.updated_at,
     expectsRemoval,
-    expectedRecommendationRequestId: null,
     expectedMutation,
     expiresAt: Date.now() + PERSISTED_MUTATION_LEASE_MS,
   };

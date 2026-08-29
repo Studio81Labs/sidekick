@@ -23,17 +23,14 @@ function options(
     activeJobId: null,
     benchmarksOpen: false,
     closeBenchmarks: vi.fn(),
-    closeTraining: vi.fn(),
     jobs: [],
     loadJob: vi.fn(async (jobId) => job(jobId)),
     onError: vi.fn(),
     onJobLoading: vi.fn(),
     onJobUnavailable: vi.fn(),
     openBenchmarks: vi.fn(),
-    openTraining: vi.fn(),
     route: analyzerRouteState("workspace"),
     restoreWorkspace: vi.fn(),
-    trainingOpen: false,
     ...overrides,
   };
 }
@@ -46,41 +43,30 @@ describe("useAnalyzerRouteRestore", () => {
     expect(current.restoreWorkspace).toHaveBeenCalledOnce();
   });
 
-  it("opens only the durable training surface", () => {
-    const current = options({ route: analyzerRouteState("training") });
-    renderHook(() => useAnalyzerRouteRestore(current));
-
-    expect(current.closeBenchmarks).toHaveBeenCalledOnce();
-    expect(current.closeTraining).not.toHaveBeenCalled();
-    expect(current.openTraining).toHaveBeenCalledOnce();
-    expect(current.openBenchmarks).not.toHaveBeenCalled();
-  });
-
   it("opens only the durable benchmark surface", () => {
     const current = options({ route: analyzerRouteState("benchmarks") });
     renderHook(() => useAnalyzerRouteRestore(current));
 
-    expect(current.closeTraining).toHaveBeenCalledOnce();
     expect(current.closeBenchmarks).not.toHaveBeenCalled();
     expect(current.openBenchmarks).toHaveBeenCalledOnce();
-    expect(current.openTraining).not.toHaveBeenCalled();
+    expect(current.restoreWorkspace).not.toHaveBeenCalled();
   });
 
   it("does not reopen an already open durable surface", () => {
     const current = options({
-      route: analyzerRouteState("training"),
-      trainingOpen: true,
+      route: analyzerRouteState("benchmarks"),
+      benchmarksOpen: true,
     });
     renderHook(() => useAnalyzerRouteRestore(current));
 
-    expect(current.openTraining).not.toHaveBeenCalled();
+    expect(current.openBenchmarks).not.toHaveBeenCalled();
   });
 
   it("opens a direct durable surface once under Strict Mode", () => {
-    const current = options({ route: analyzerRouteState("training") });
+    const current = options({ route: analyzerRouteState("benchmarks") });
     renderHook(() => useAnalyzerRouteRestore(current), { wrapper: StrictMode });
 
-    expect(current.openTraining).toHaveBeenCalledOnce();
+    expect(current.openBenchmarks).toHaveBeenCalledOnce();
   });
 
   it("activates a cached durable job without loading it", () => {
@@ -154,7 +140,7 @@ describe("useAnalyzerRouteRestore", () => {
     const view = renderHook(() => useAnalyzerRouteRestore(current));
 
     expect(loadJob).toHaveBeenCalledOnce();
-    current = { ...current, route: analyzerRouteState("training") };
+    current = { ...current, route: analyzerRouteState("benchmarks") };
     view.rerender();
     current = {
       ...current,

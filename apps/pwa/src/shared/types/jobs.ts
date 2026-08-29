@@ -1,11 +1,8 @@
 import type { CanonicalState, ParserResult } from "./poker";
-import type { RecommendationResult } from "./recommendations";
-import type { TrainingDecision } from "./training";
 
 export interface JobRecord {
   id: string;
-  status: "created" | "parsed" | "approved" | "recommended" | "error";
-  input_context?: "legacy_player" | "administrative_test";
+  status: "created" | "parsed" | "approved" | "error";
   upload_request_id?: string | null;
   original_filename: string;
   title?: string | null;
@@ -14,17 +11,9 @@ export interface JobRecord {
   image_filename: string;
   parser_provider: string;
   parser_layout_profile?: string | null;
-  recommendation_provider: string;
-  recommendation_engine?: string | null;
   parser_result: ParserResult | null;
   parser_auto_approval_eligible?: boolean | null;
   approved_state: CanonicalState | null;
-  training_decision: TrainingDecision | null;
-  recommendation: RecommendationResult | null;
-  recommendation_pending: boolean;
-  recommendation_request_id?: string | null;
-  training_reviewed_at: string | null;
-  training_review_note: string | null;
   benchmark_included: boolean;
   archived_at: string | null;
   error: string | null;

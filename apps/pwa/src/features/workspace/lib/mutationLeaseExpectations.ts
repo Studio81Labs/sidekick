@@ -10,7 +10,6 @@ import type {
 export function projectionMutationTargetReached(
   job: JobRecord,
   target: ProjectionMutationTarget,
-  recommendationRequestId: string | null,
 ): boolean {
   if (target === "failed") {
     return false;
@@ -18,22 +17,10 @@ export function projectionMutationTargetReached(
   if (job.status === "error") {
     return true;
   }
-  if (target === "recommended") {
-    return (
-      job.recommendation !== null ||
-      (recommendationRequestId !== null &&
-        job.recommendation_request_id === recommendationRequestId &&
-        !job.recommendation_pending)
-    );
-  }
   if (target === "approved") {
     return job.approved_state !== null;
   }
-  return (
-    job.parser_result !== null ||
-    job.approved_state !== null ||
-    job.recommendation !== null
-  );
+  return job.parser_result !== null || job.approved_state !== null;
 }
 
 export function projectionMutationLeaseTargetReached(
@@ -44,11 +31,7 @@ export function projectionMutationLeaseTargetReached(
     (candidate) => job.upload_request_id === candidate.requestId,
   );
   return expectedUpload
-    ? projectionMutationTargetReached(
-        job,
-        expectedUpload.target,
-        expectedUpload.recommendationRequestId,
-      )
+    ? projectionMutationTargetReached(job, expectedUpload.target)
     : null;
 }
 
@@ -61,32 +44,9 @@ export function jobMutationExpectationReached(
       job.approved_state !== null &&
       job.approved_state.user_approved &&
       approvalKey(job.approved_state) === expectation.approvedStateKey &&
-      job.training_decision === null &&
-      job.recommendation === null &&
-      job.training_reviewed_at === null &&
-      job.training_review_note === null &&
       job.status === "approved" &&
       job.error === null
     );
-  }
-  if (expectation.kind === "training-decision") {
-    return (
-      job.training_decision !== null &&
-      job.training_decision.action === expectation.action &&
-      job.training_decision.sizing === expectation.sizing &&
-      (job.training_decision.certainty ?? null) === expectation.certainty &&
-      job.recommendation === null &&
-      job.training_reviewed_at === null &&
-      job.training_review_note === null &&
-      job.status === "approved" &&
-      job.error === null
-    );
-  }
-  if (expectation.kind === "training-review") {
-    return expectation.reviewed
-      ? job.training_reviewed_at !== null &&
-          job.training_review_note === expectation.note
-      : job.training_reviewed_at === null;
   }
   if (expectation.kind === "metadata") {
     const tags = screenshotTags(job);

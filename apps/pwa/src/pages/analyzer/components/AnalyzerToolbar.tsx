@@ -4,7 +4,6 @@ import {
   Info,
   ShieldCheck,
   SlidersHorizontal,
-  Target,
 } from "lucide-react";
 
 import "./AnalyzerToolbar.css";
@@ -20,7 +19,6 @@ export interface AnalyzerToolbarProps {
   onOpenBenchmark: () => void;
   onOpenHelp: () => void;
   onOpenInfo: () => void;
-  onOpenTraining: () => void;
   queueCount: number;
 }
 
@@ -33,7 +31,6 @@ export function AnalyzerToolbar({
   onOpenBenchmark,
   onOpenHelp,
   onOpenInfo,
-  onOpenTraining,
   queueCount,
 }: AnalyzerToolbarProps) {
   return (
@@ -44,7 +41,9 @@ export function AnalyzerToolbar({
         </div>
         <div>
           <h1>Poker Training Analyzer</h1>
-          <p>Post-hand review for Texas Hold&apos;em screenshots</p>
+          <p>
+            Administrator OCR test console for Texas Hold&apos;em screenshots
+          </p>
         </div>
       </div>
       <div className="toolbar-stats" aria-label="Session status">
@@ -105,17 +104,6 @@ export function AnalyzerToolbar({
           aria-label="About this app"
         >
           <Info size={18} aria-hidden="true" />
-        </ButtonControl>
-        <ButtonControl
-          variant="secondary"
-          iconOnly
-          className="header-icon-button"
-          onClick={onOpenTraining}
-          disabled={busy}
-          title="Training progress"
-          aria-label="Training progress"
-        >
-          <Target size={18} aria-hidden="true" />
         </ButtonControl>
         <ButtonControl
           variant="secondary"

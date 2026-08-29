@@ -58,18 +58,10 @@
   margin-left: 0;
 }
 
-.review-hint {
-  color: var(--muted);
-  font-size: 11px;
-  margin: 0;
-  padding: 0 18px 12px;
-}
-
 @media (max-width: 1180px) {
   .panel-header,
   .review-scroll,
-  .review-actions,
-  .review-hint {
+  .review-actions {
     padding-left: 12px;
     padding-right: 12px;
   }

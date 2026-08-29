@@ -10,7 +10,6 @@ import { useAnalyzerRouteRestore } from "./useAnalyzerRouteRestore";
 import { selectedFilesLabel } from "../../features/capture/components/InputSourcePanel";
 import { shareModeLabel } from "../../features/capture/lib/captureSource";
 import { type HistoryItem } from "../../features/history/lib/historyPresentation";
-import { isAdministrativeTestJob } from "../../shared/lib/jobInputContext";
 import {
   parseScreenshotTags,
   screenshotTags,
@@ -30,21 +29,12 @@ import { useAdministrativeAccess } from "../../features/admin-ocr-test/hooks/use
 import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource";
 import { uploadScreenshotCommand } from "../../features/capture/services/uploadScreenshotCommand";
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
-import {
-  approveStateCommand,
-  requestRecommendationCommand,
-} from "../../features/hand-review/services/handWorkflowCommands";
+import { approveStateCommand } from "../../features/hand-review/services/handWorkflowCommands";
 import { usePipelineSelection } from "../../features/pipeline/hooks/usePipelineSelection";
 import { useScreenshotDetails } from "../../features/screenshots/hooks/useScreenshotDetails";
 import { updateScreenshotMetadataCommand } from "../../features/screenshots/services/updateScreenshotMetadataCommand";
 import { deleteScreenshotCommand } from "../../features/screenshots/services/deleteScreenshotCommand";
 import { useSystemInfoDialog } from "../../features/system/hooks/useSystemInfoDialog";
-import { useTrainingProgress } from "../../features/training/hooks/useTrainingProgress";
-import {
-  completeTrainingReviewCommand,
-  recordTrainingDecisionCommand,
-  reopenTrainingReviewCommand,
-} from "../../features/training/services/trainingReviewCommands";
 import {
   AnalyzerWorkflowProvider,
   useAnalyzerActiveSelection,
@@ -61,7 +51,6 @@ import {
   fetchBenchmarkImportReceiptQuery,
   fetchHistoryPageQuery,
   fetchJobQuery,
-  fetchTrainingProgressQuery,
   getHistorySearchExtent,
   getProcessingQueueExtent,
 } from "../../features/workspace/lib/queryReads";
@@ -71,7 +60,6 @@ import {
   isAbortError,
   messageFromError,
   mutationFailureMayHavePersistedSideEffect,
-  recommendationAttemptMayHavePersistedSideEffect,
 } from "../../shared/lib/errors";
 import type { BenchmarkDatasetImportResult } from "../../shared/types/benchmarks";
 import type { CanonicalState } from "../../shared/types/poker";
@@ -112,18 +100,11 @@ import {
 import {
   isLocalUploadError,
   mergeHistoryItems,
-  newerHistoryJob,
+  newerJob,
   preserveUploadRequestId,
   reconcileHistoryItems,
   reconcileProcessingJobs,
 } from "../../features/workspace/lib/reconciliation";
-import {
-  suggestedActionDifferenceFocus,
-  suggestedCertaintyFocus,
-  suggestedPositionFocus,
-  suggestedTrainingFocus,
-} from "../../features/training/lib/trainingFocusPresentation";
-import { trainingReviewQueueStatus } from "../../features/training/lib/trainingQueuePresentation";
 import {
   createLocalErrorJob,
   isHistoryReady,
@@ -210,7 +191,6 @@ export function useAnalyzerWorkspaceController({
     processingStorageRestoreScheduledRef,
   } = useAnalyzerRecoveryRuntimeServices();
   const {
-    activeRecommendationRequestsRef,
     appMountedRef,
     historySearchRequestRef,
     queueAbortControllerRef,
@@ -247,22 +227,16 @@ export function useAnalyzerWorkspaceController({
     approvalKey,
     benchmarkApprovalKey,
     canApprove,
-    canRecommend: rawCanRecommend,
-    cancelTrainingReviewNoteEdit,
     completedPostflopActionCounts,
     completedPostflopActionsAtLimit,
     confidenceSummary,
     confidences,
     currentStateApproved,
-    decisionComparison,
-    decisionEvidence,
     form,
     formBaselineRef,
     formDirtyRef,
     job,
-    parseTrainingSizing,
     parserRoutingFromRaw,
-    recommendation: activeRecommendation,
     removeCompletedPostflopAction,
     removePostflopAction,
     removePreflopAction,
@@ -271,19 +245,7 @@ export function useAnalyzerWorkspaceController({
     setActiveJobId,
     setApprovedStateKey,
     setForm,
-    setTrainingAction,
-    setTrainingCertainty,
-    setTrainingReviewNote,
-    setTrainingReviewNoteEditing,
-    setTrainingSizing,
     stateToForm,
-    startTrainingReviewNoteEdit,
-    trainingAction,
-    trainingCertainty,
-    trainingDecision: activeTrainingDecision,
-    trainingReviewNote,
-    trainingReviewNoteEditing,
-    trainingSizing,
     updateCompletedPostflopAction,
     updateForm,
     updatePostflopAction,
@@ -295,53 +257,6 @@ export function useAnalyzerWorkspaceController({
     jobs,
     onActiveJobChange: selectActiveJob,
     onError: setError,
-  });
-  // Administrative test inputs never request recommendations or enter
-  // training: #413 confines learning transitions to legacy player jobs.
-  const canRecommend =
-    rawCanRecommend && !(job && isAdministrativeTestJob(job));
-  const {
-    certaintyFilter: trainingCertaintyFilter,
-    dialogOpen: trainingDialogOpen,
-    focusActionDifference: focusTrainingActionDifference,
-    focusReviewCertainty: focusTrainingReviewCertainty,
-    focusReviewPosition: focusTrainingReviewPosition,
-    focusReviewStreet: focusTrainingReviewStreet,
-    lessonOrder: trainingLessonOrder,
-    lessonQuery: trainingLessonQuery,
-    lessonSearch: trainingLessonSearch,
-    lessonStreet: trainingLessonStreet,
-    loading: trainingProgressLoading,
-    openDialog: openTrainingDialog,
-    positionFilter: trainingPositionFilter,
-    progress: trainingProgress,
-    reviewCertainty: trainingReviewCertainty,
-    reviewDifference: trainingReviewDifference,
-    reviewHand: reviewTrainingHand,
-    reviewJobId: trainingReviewJobId,
-    reviewOrder: trainingReviewOrder,
-    reviewPosition: trainingReviewPosition,
-    reviewQueueJobId: trainingReviewQueueJobId,
-    reviewStreet: trainingReviewStreet,
-    selectView: selectTrainingProgressView,
-    setDialogOpen: setTrainingDialogOpen,
-    setLessonSearch: setTrainingLessonSearch,
-    setProgress: setTrainingProgress,
-    setReviewJobId: setTrainingReviewJobId,
-    setReviewQueueJobId: setTrainingReviewQueueJobId,
-    setView: setTrainingProgressView,
-    solverFilter: trainingSolverFilter,
-    streetFilter: trainingStreetFilter,
-    updateCertaintyFilter: updateTrainingCertaintyFilter,
-    updateLessonFilters: updateTrainingLessonFilters,
-    updatePositionFilter: updateTrainingPositionFilter,
-    updateReviewQueue: updateTrainingReviewQueue,
-    updateSolverFilter: updateTrainingSolverFilter,
-    updateStreetFilter: updateTrainingStreetFilter,
-    view: trainingProgressView,
-  } = useTrainingProgress({
-    onError: setError,
-    onOpenJob: upsertAndActivateJob,
   });
   const {
     capabilities: pipelineCapabilities,
@@ -355,7 +270,6 @@ export function useAnalyzerWorkspaceController({
     setDialogOpen: setPipelineDialogOpen,
     setSelection: setPipelineSelection,
     updateParserProvider,
-    updateRecommendationProvider,
     updateSelection: updatePipelineSelection,
   } = usePipelineSelection({ onError: setError });
   const {
@@ -500,36 +414,9 @@ export function useAnalyzerWorkspaceController({
       JSON.stringify(parsedScreenshotTags) !==
         JSON.stringify(screenshotTags(managedJob))),
   );
-  const savedTrainingSizing =
-    activeTrainingDecision?.sizing === null ||
-    activeTrainingDecision?.sizing === undefined
-      ? ""
-      : String(activeTrainingDecision.sizing);
-  const trainingAnswerDraft = Boolean(
-    currentStateApproved &&
-    !activeRecommendation &&
-    (trainingAction !== (activeTrainingDecision?.action ?? "") ||
-      trainingSizing.trim() !== savedTrainingSizing ||
-      trainingCertainty !== (activeTrainingDecision?.certainty ?? "")),
-  );
-  const lessonNoteDraft = Boolean(
-    trainingReviewNoteEditing &&
-    trainingReviewNote.trim() !== (job?.training_review_note ?? ""),
-  );
   const analyzerDirtyVersion = useMemo(
     () => ({}),
-    [
-      files,
-      form,
-      screenshotNotes,
-      screenshotTagInput,
-      screenshotTitle,
-      trainingAction,
-      trainingCertainty,
-      trainingReviewNote,
-      trainingReviewNoteEditing,
-      trainingSizing,
-    ],
+    [files, form, screenshotNotes, screenshotTagInput, screenshotTitle],
   );
   useAnalyzerUpdateSafety(
     {
@@ -538,13 +425,10 @@ export function useAnalyzerWorkspaceController({
       benchmarkOperation:
         benchmarkImporting || benchmarkRunning || benchmarkUpdating,
       detectedStateDraft: formDirtyRef.current,
-      lessonNoteDraft,
       pendingScreenshotFiles: files.length > 0,
       screenCapture: screenSharing,
       screenshotMetadataDraft,
       screenshotMutation: screenshotMetadataSaving || screenshotDeleting,
-      trainingAnswerDraft,
-      trainingReviewMutation: trainingReviewJobId !== null,
       upload: queueProgress !== null,
     },
     analyzerDirtyVersion,
@@ -555,7 +439,6 @@ export function useAnalyzerWorkspaceController({
     activeJobId,
     benchmarksOpen: benchmarkDialogOpen,
     closeBenchmarks: closeBenchmarkDialog,
-    closeTraining: () => setTrainingDialogOpen(false),
     jobs,
     loadJob: (jobId) => fetchJobQuery(queryClient, jobId),
     onError: (routeError) =>
@@ -574,7 +457,6 @@ export function useAnalyzerWorkspaceController({
       navigation.openWorkspace({ replace: true });
     },
     openBenchmarks: openBenchmarkDialog,
-    openTraining: openTrainingDialog,
     route,
     restoreWorkspace: () => {
       const activeWorkspaceJob = jobsRef.current.find(
@@ -588,7 +470,6 @@ export function useAnalyzerWorkspaceController({
         alignWorkspaceToJob(workspaceJob);
       }
     },
-    trainingOpen: trainingDialogOpen,
   });
 
   useEffect(() => {
@@ -925,76 +806,16 @@ export function useAnalyzerWorkspaceController({
     systemInfo?.parser_provider ??
     job?.parser_provider ??
     null;
-  const activeRecommendationProvider =
-    systemInfo?.recommendation_engine ??
-    systemInfo?.recommendation_provider ??
-    job?.recommendation_provider ??
-    null;
-  const activeInfoProviders =
-    activeParserProvider && activeRecommendationProvider
-      ? {
-          recognition: providerLabel(activeParserProvider),
-          recognitionFallbackFrom: activeParserRouting?.fallbackFrom
-            ? providerLabel(activeParserRouting.fallbackFrom)
-            : null,
-          recognitionRoute: activeParserRouting
-            ? providerLabel(activeParserRouting.provider)
-            : null,
-          recommendation: providerLabel(activeRecommendationProvider),
-        }
-      : null;
-  const visibleTrainingHands =
-    trainingProgressView === "review"
-      ? (trainingProgress?.review_queue ?? [])
-      : trainingProgressView === "lessons"
-        ? (trainingProgress?.lesson_hands ?? [])
-        : (trainingProgress?.recent_hands ?? []);
-  const matchingTrainingLessons =
-    trainingProgress?.lesson_matching_hands ??
-    trainingProgress?.lesson_hands?.length ??
-    0;
-  const trainingLessonsExportDisabled =
-    matchingTrainingLessons === 0 ||
-    trainingProgressLoading ||
-    trainingReviewJobId !== null ||
-    busy;
-  const nextReviewHand =
-    trainingProgressView === "lessons" ||
-    (trainingProgressView === "recent" &&
-      (trainingSolverFilter ||
-        trainingPositionFilter ||
-        trainingStreetFilter ||
-        trainingCertaintyFilter))
-      ? null
-      : (trainingProgress?.review_queue[0] ?? null);
-  const reviewQueueStatus = trainingReviewQueueStatus(
-    trainingProgress,
-    trainingProgressView,
-    trainingProgressLoading,
-    trainingReviewOrder,
-    trainingReviewStreet,
-    trainingReviewDifference,
-    trainingReviewCertainty,
-    trainingReviewPosition,
-    trainingLessonStreet,
-    trainingLessonQuery,
-    trainingLessonOrder,
-    trainingSolverFilter,
-    trainingPositionFilter,
-    trainingStreetFilter,
-    trainingCertaintyFilter,
-  );
-  const trainingFocus = trainingProgress
-    ? suggestedTrainingFocus(trainingProgress)
-    : null;
-  const certaintyFocus = trainingProgress
-    ? suggestedCertaintyFocus(trainingProgress)
-    : null;
-  const positionFocus = trainingProgress
-    ? suggestedPositionFocus(trainingProgress)
-    : null;
-  const actionDifferenceFocus = trainingProgress
-    ? suggestedActionDifferenceFocus(trainingProgress)
+  const activeInfoProviders = activeParserProvider
+    ? {
+        recognition: providerLabel(activeParserProvider),
+        recognitionFallbackFrom: activeParserRouting?.fallbackFrom
+          ? providerLabel(activeParserRouting.fallbackFrom)
+          : null,
+        recognitionRoute: activeParserRouting
+          ? providerLabel(activeParserRouting.provider)
+          : null,
+      }
     : null;
 
   function setError(nextError: string | null) {
@@ -1117,29 +938,6 @@ export function useAnalyzerWorkspaceController({
     return true;
   }
 
-  function mutationComposesWithActiveRecommendation(
-    scope: PersistedJobMutationScope,
-  ): boolean {
-    const lease =
-      scope === "processing"
-        ? processingMutationLeaseRef.current
-        : historyMutationLeaseRef.current;
-    if (lease?.ownerId !== mutationOwnerId) {
-      return false;
-    }
-    const activeRequests = [
-      ...activeRecommendationRequestsRef.current.entries(),
-    ].filter(([, request]) => request.mutationScope === scope);
-    if (lease.kind === "job") {
-      return activeRequests.some(([jobId]) => jobId === lease.jobId);
-    }
-    return (
-      lease.kind === "projection" &&
-      lease.benchmarkImportRequestId === null &&
-      activeRequests.length > 0
-    );
-  }
-
   function localUploadDeletionRequiresRecovery(localJob: JobRecord): boolean {
     if (!isLocalUploadError(localJob) || !localJob.upload_request_id) {
       return false;
@@ -1160,7 +958,6 @@ export function useAnalyzerWorkspaceController({
   function trackExpectedUpload(
     requestId: string,
     target: ProjectionMutationTarget,
-    recommendationRequestId: string | null,
   ): number | null {
     const lease = processingMutationLeaseRef.current;
     if (lease?.kind !== "projection") {
@@ -1168,10 +965,7 @@ export function useAnalyzerWorkspaceController({
     }
     const updatedLease: ProjectionMutationLease = {
       ...lease,
-      expectedUploads: [
-        ...lease.expectedUploads,
-        { requestId, target, recommendationRequestId },
-      ],
+      expectedUploads: [...lease.expectedUploads, { requestId, target }],
       expiresAt: Date.now() + PERSISTED_MUTATION_LEASE_MS,
     };
     if (replacePersistedMutationLease("processing", lease, updatedLease)) {
@@ -1197,10 +991,6 @@ export function useAnalyzerWorkspaceController({
     expectedUploads[expectedUploadIndex] = {
       ...expectedUploads[expectedUploadIndex],
       target,
-      recommendationRequestId:
-        target === "recommended"
-          ? expectedUploads[expectedUploadIndex].recommendationRequestId
-          : null,
     };
     const updatedLease: ProjectionMutationLease = {
       ...lease,
@@ -1241,15 +1031,7 @@ export function useAnalyzerWorkspaceController({
       const incomingJob = incomingJobs.find(
         (candidate) => candidate.id === lease.jobId,
       );
-      if (
-        incomingJob !== undefined &&
-        lease.expectedRecommendationRequestId !== null
-      ) {
-        settled =
-          incomingJob.recommendation_request_id ===
-            lease.expectedRecommendationRequestId &&
-          !incomingJob.recommendation_pending;
-      } else if (incomingJob !== undefined && lease.expectedMutation !== null) {
+      if (incomingJob !== undefined && lease.expectedMutation !== null) {
         settled = jobMutationExpectationReached(
           incomingJob,
           lease.expectedMutation,
@@ -1272,11 +1054,7 @@ export function useAnalyzerWorkspaceController({
           const matchingIndex = availableJobs.findIndex(
             (job) =>
               job.upload_request_id === expectedUpload.requestId &&
-              projectionMutationTargetReached(
-                job,
-                expectedUpload.target,
-                expectedUpload.recommendationRequestId,
-              ),
+              projectionMutationTargetReached(job, expectedUpload.target),
           );
           if (matchingIndex === -1) {
             return false;
@@ -1587,39 +1365,6 @@ export function useAnalyzerWorkspaceController({
     return "processing";
   }
 
-  function armPersistedRecommendationLease(
-    mutationScope: PersistedJobMutationScope,
-    jobId: string,
-    recommendationRequestId: string,
-  ): boolean {
-    const leaseRef =
-      mutationScope === "processing"
-        ? processingMutationLeaseRef
-        : historyMutationLeaseRef;
-    const lease = leaseRef.current;
-    if (lease === null) {
-      return true;
-    }
-    if (
-      lease.kind !== "job" ||
-      lease.jobId !== jobId ||
-      lease.ownerId !== mutationOwnerId
-    ) {
-      return false;
-    }
-    const armedLease: JobMutationLease = {
-      ...lease,
-      expectedRecommendationRequestId: recommendationRequestId,
-      expectedMutation: null,
-      expiresAt: Date.now() + PERSISTED_MUTATION_LEASE_MS,
-    };
-    if (!replacePersistedMutationLease(mutationScope, lease, armedLease)) {
-      return false;
-    }
-    setRuntimeMutationLease(mutationScope, armedLease);
-    return true;
-  }
-
   function persistedJobMutationScope(
     persistedJob: JobRecord,
   ): PersistedJobMutationScope {
@@ -1735,30 +1480,6 @@ export function useAnalyzerWorkspaceController({
     },
     [],
   );
-
-  useEffect(() => {
-    const pendingArchivedJobIds = new Set([
-      ...history.flatMap((item) =>
-        item.job.recommendation_pending ? [item.id] : [],
-      ),
-      ...(historySearchResults ?? []).flatMap((item) =>
-        item.job.recommendation_pending ? [item.id] : [],
-      ),
-      ...jobs.flatMap((candidate) =>
-        candidate.archived_at && candidate.recommendation_pending
-          ? [candidate.id]
-          : [],
-      ),
-    ]);
-    if (pendingArchivedJobIds.size === 0) {
-      return;
-    }
-    markHistorySessionUnsynced();
-    const revalidationTimer = window.setInterval(() => {
-      requestHistoryJobRestore([...pendingArchivedJobIds]);
-    }, PROCESSING_QUEUE_REVALIDATION_INTERVAL_MS);
-    return () => window.clearInterval(revalidationTimer);
-  }, [history, historySearchResults, jobs]);
 
   useEffect(() => {
     const cachedJobs = readProcessingQueue();
@@ -2120,7 +1841,7 @@ export function useAnalyzerWorkspaceController({
     ) =>
       mutationLeaseSettled && authoritativeMutationJobIds.has(incomingJob.id)
         ? incomingJob
-        : newerHistoryJob(currentJob, incomingJob);
+        : newerJob(currentJob, incomingJob);
     const resolvedJobIds = new Set(incomingJobsById.keys());
     const currentActiveId = activeJobIdRef.current;
     const currentActiveJob =
@@ -2169,24 +1890,11 @@ export function useAnalyzerWorkspaceController({
       });
       const historyCached = writeHistory(next);
       const cachedHistory = historyCached ? readHistory() : null;
-      const pendingSearchResult = (historySearchResults ?? []).some((item) => {
-        const incomingJob = incomingJobsById.get(item.id);
-        return (
-          incomingJob ? reconciledHistoryJob(item.job, incomingJob) : item.job
-        ).recommendation_pending;
-      });
-      const pendingWorkspaceJob = nextJobs.some(
-        (candidate) =>
-          candidate.archived_at && candidate.recommendation_pending,
-      );
       if (
         historyCached &&
         readCachedHistoryTotal(cachedHistory) !== null &&
         !historyFullRestoreRequestedRef.current &&
         !hasPendingHistoryJobRestore(resolvedJobIds) &&
-        !next.some((item) => item.job.recommendation_pending) &&
-        !pendingSearchResult &&
-        !pendingWorkspaceJob &&
         historyMutationLeaseRef.current === null
       ) {
         markHistorySessionSynced();
@@ -2247,7 +1955,7 @@ export function useAnalyzerWorkspaceController({
         ? mutationLeaseSettled &&
           authoritativeMutationJobIds.has(incomingJob.id)
           ? incomingJob
-          : newerHistoryJob(candidate, incomingJob)
+          : newerJob(candidate, incomingJob)
         : candidate;
     });
     const reconciledActiveJob =
@@ -2299,7 +2007,6 @@ export function useAnalyzerWorkspaceController({
         historyCached &&
         totalCached &&
         !hasPendingHistoryJobRestore(resolvedJobIds) &&
-        !items.some((item) => item.job.recommendation_pending) &&
         historyMutationLeaseRef.current === null
       ) {
         markHistorySessionSynced();
@@ -2574,14 +2281,6 @@ export function useAnalyzerWorkspaceController({
       : incoming;
   }
 
-  function applyRecommendedJob(recommended: JobRecord) {
-    const reconciled = preserveNewerScreenshotMetadata(recommended);
-    replaceJob(reconciled);
-    if (reconciled.approved_state) {
-      setApprovedStateKey(approvalKey(reconciled.approved_state));
-    }
-  }
-
   async function uploadSelectedFiles(
     administratorToken: string,
     expectedUploads: ProjectionMutationLease["expectedUploads"],
@@ -2728,7 +2427,6 @@ export function useAnalyzerWorkspaceController({
     const expectedUploads = files.map(() => ({
       requestId: createMutationRequestId(),
       target: "parsed" as const,
-      recommendationRequestId: null,
     }));
     installMutationLease(
       "processing",
@@ -2799,11 +2497,7 @@ export function useAnalyzerWorkspaceController({
         ),
       );
       const uploadRequestId = createMutationRequestId();
-      expectedUploadIndex = trackExpectedUpload(
-        uploadRequestId,
-        "parsed",
-        null,
-      );
+      expectedUploadIndex = trackExpectedUpload(uploadRequestId, "parsed");
       const created = await captureAndParseScreen(
         captureFile,
         uploadRequestId,
@@ -2839,11 +2533,9 @@ export function useAnalyzerWorkspaceController({
           expectedUploadIndex,
           confirmedJob === null
             ? "failed"
-            : confirmedJob.recommendation !== null
-              ? "recommended"
-              : confirmedJob.approved_state !== null
-                ? "approved"
-                : "parsed",
+            : confirmedJob.approved_state !== null
+              ? "approved"
+              : "parsed",
         );
       }
       if (processingMutationLeaseRef.current !== null) {
@@ -2908,408 +2600,6 @@ export function useAnalyzerWorkspaceController({
     }
   }
 
-  async function onRecommend() {
-    if (!job || !canRecommend) {
-      return;
-    }
-    if (mutationRecoveryPending([persistedJobMutationScope(job)])) {
-      return;
-    }
-    const changesProcessingMembership = isPristineBenchmarkImport(job);
-    const recommendationRequestId = createMutationRequestId();
-    let decisionExpectation: JobMutationExpectation | null = null;
-    if (trainingAction) {
-      const parsedSizing = parseTrainingSizing(trainingAction, trainingSizing);
-      if (parsedSizing.error) {
-        setError(parsedSizing.error);
-        return;
-      }
-      const decisionChanged =
-        !job.training_decision ||
-        job.training_decision.action !== trainingAction ||
-        job.training_decision.sizing !== parsedSizing.sizing ||
-        (job.training_decision.certainty ?? null) !==
-          (trainingCertainty || null);
-      if (decisionChanged) {
-        decisionExpectation = {
-          kind: "training-decision",
-          action: trainingAction,
-          sizing: parsedSizing.sizing,
-          certainty: trainingCertainty || null,
-        };
-      }
-    }
-    const mutationScope = beginPersistedJobMutation(job, decisionExpectation);
-    const recommendationController = new AbortController();
-    activeRecommendationRequestsRef.current.set(job.id, {
-      mutationScope,
-      controller: recommendationController,
-      ownsMutationLease: true,
-    });
-    let recommendationStarted = false;
-    let restoreAfterMutation = changesProcessingMembership;
-    setBusy(true);
-    setError(null);
-    try {
-      if (decisionExpectation?.kind === "training-decision") {
-        const { job: decided } = await recordTrainingDecisionCommand(
-          queryClient,
-          {
-            jobId: job.id,
-            action: decisionExpectation.action,
-            sizing: decisionExpectation.sizing,
-            certainty: decisionExpectation.certainty,
-          },
-        );
-        if (
-          recommendationController.signal.aborted ||
-          !jobsRef.current.some((candidate) => candidate.id === job.id)
-        ) {
-          return;
-        }
-        replaceJob(preserveNewerScreenshotMetadata(decided));
-      }
-      if (
-        !armPersistedRecommendationLease(
-          mutationScope,
-          job.id,
-          recommendationRequestId,
-        )
-      ) {
-        return;
-      }
-      recommendationStarted = true;
-      const { job: recommended } = await requestRecommendationCommand(
-        queryClient,
-        {
-          jobId: job.id,
-          requestId: recommendationRequestId,
-          signal: recommendationController.signal,
-        },
-      );
-      if (jobsRef.current.some((candidate) => candidate.id === job.id)) {
-        applyRecommendedJob(recommended);
-      }
-    } catch (recommendError) {
-      const jobStillPresent = jobsRef.current.some(
-        (candidate) => candidate.id === job.id,
-      );
-      if (jobStillPresent) {
-        if (
-          recommendationStarted
-            ? recommendationAttemptMayHavePersistedSideEffect(recommendError)
-            : mutationFailureMayHavePersistedSideEffect(recommendError)
-        ) {
-          markPersistedJobMutationUncertain(mutationScope, job.id);
-        }
-        restoreAfterMutation = restoreAfterMutation || recommendationStarted;
-        setError(messageFromError(recommendError, "Recommendation failed"));
-      }
-    } finally {
-      if (
-        activeRecommendationRequestsRef.current.get(job.id)?.controller ===
-        recommendationController
-      ) {
-        activeRecommendationRequestsRef.current.delete(job.id);
-      }
-      endPersistedJobMutation(mutationScope, restoreAfterMutation);
-      setBusy(false);
-    }
-  }
-
-  async function onSaveTrainingDecision() {
-    if (
-      !job ||
-      !currentStateApproved ||
-      activeRecommendation ||
-      !trainingAction
-    ) {
-      return;
-    }
-    const parsedSizing = parseTrainingSizing(trainingAction, trainingSizing);
-    if (parsedSizing.error) {
-      setError(parsedSizing.error);
-      return;
-    }
-    if (mutationRecoveryPending([persistedJobMutationScope(job)])) {
-      return;
-    }
-
-    const changesProcessingMembership = isPristineBenchmarkImport(job);
-    const mutationScope = beginPersistedJobMutation(job, {
-      kind: "training-decision",
-      action: trainingAction,
-      sizing: parsedSizing.sizing,
-      certainty: trainingCertainty || null,
-    });
-    let restoreAfterMutation = changesProcessingMembership;
-    setBusy(true);
-    setError(null);
-    try {
-      const { job: decided } = await recordTrainingDecisionCommand(
-        queryClient,
-        {
-          jobId: job.id,
-          action: trainingAction,
-          sizing: parsedSizing.sizing,
-          certainty: trainingCertainty || null,
-        },
-      );
-      replaceJob(decided);
-      toast.success("Training answer locked");
-    } catch (decisionError) {
-      if (mutationFailureMayHavePersistedSideEffect(decisionError)) {
-        markPersistedJobMutationUncertain(mutationScope, job.id);
-      }
-      restoreAfterMutation = true;
-      setError(
-        messageFromError(decisionError, "Could not save your training answer"),
-      );
-    } finally {
-      endPersistedJobMutation(mutationScope, restoreAfterMutation);
-      setBusy(false);
-    }
-  }
-
-  async function onCompleteTrainingReview() {
-    if (
-      !job ||
-      !activeTrainingDecision ||
-      !activeRecommendation ||
-      decisionComparison?.tone === "match"
-    ) {
-      return;
-    }
-    if (mutationRecoveryPending([persistedJobMutationScope(job)])) {
-      return;
-    }
-
-    const continueReviewQueue = trainingReviewQueueJobId === job.id;
-    const reviewNote = trainingReviewNote.trim() || null;
-    const mutationScope = beginPersistedJobMutation(job, {
-      kind: "training-review",
-      reviewed: true,
-      note: reviewNote,
-    });
-    let restoreAfterMutation = false;
-    setBusy(true);
-    setError(null);
-    try {
-      const { job: reviewedJob } = await completeTrainingReviewCommand(
-        queryClient,
-        { jobId: job.id, note: reviewNote },
-      );
-      replaceJob(reviewedJob);
-      if (!continueReviewQueue) {
-        toast.success("Training review completed");
-        return;
-      }
-
-      try {
-        const progress = await fetchTrainingProgressQuery(queryClient, {
-          lessonOrder: trainingLessonOrder,
-          lessonQuery: trainingLessonQuery,
-          lessonStreet: trainingLessonStreet,
-          reviewCertainty: trainingReviewCertainty,
-          reviewDifference: trainingReviewDifference,
-          reviewOrder: trainingReviewOrder,
-          reviewPositionFilter: trainingReviewPosition,
-          reviewStreet: trainingReviewStreet,
-        });
-        setTrainingProgress(progress);
-        const nextHand = progress.review_queue[0] ?? null;
-        if (!nextHand) {
-          setTrainingReviewQueueJobId(null);
-          setTrainingProgressView("review");
-          setTrainingDialogOpen(true);
-          navigation.openTraining();
-          toast.success("Review queue completed");
-          return;
-        }
-
-        const nextJob = await fetchJobQuery(queryClient, nextHand.job_id);
-        upsertAndActivateJob(nextJob, "replace");
-        setTrainingReviewQueueJobId(nextJob.id);
-        toast.success("Training review completed. Next hand ready");
-      } catch (continueError) {
-        setTrainingReviewQueueJobId(null);
-        setError(
-          messageFromError(
-            continueError,
-            "Review completed, but the next training hand could not be loaded",
-          ),
-        );
-      }
-    } catch (reviewError) {
-      if (mutationFailureMayHavePersistedSideEffect(reviewError)) {
-        markPersistedJobMutationUncertain(mutationScope, job.id);
-      }
-      restoreAfterMutation = true;
-      setError(
-        messageFromError(reviewError, "Could not complete training review"),
-      );
-    } finally {
-      endPersistedJobMutation(mutationScope, restoreAfterMutation);
-      setBusy(false);
-    }
-  }
-
-  async function onReopenTrainingReview() {
-    if (
-      !job ||
-      !activeTrainingDecision ||
-      !activeRecommendation ||
-      decisionComparison?.tone === "match" ||
-      !job.training_reviewed_at
-    ) {
-      return;
-    }
-    if (mutationRecoveryPending([persistedJobMutationScope(job)])) {
-      return;
-    }
-
-    const mutationScope = beginPersistedJobMutation(job, {
-      kind: "training-review",
-      reviewed: false,
-      note: null,
-    });
-    let restoreAfterMutation = false;
-    setBusy(true);
-    setError(null);
-    try {
-      const { job: reopenedJob } = await reopenTrainingReviewCommand(
-        queryClient,
-        { jobId: job.id },
-      );
-      replaceJob(reopenedJob);
-      toast.success("Training review reopened");
-    } catch (reviewError) {
-      if (mutationFailureMayHavePersistedSideEffect(reviewError)) {
-        markPersistedJobMutationUncertain(mutationScope, job.id);
-      }
-      restoreAfterMutation = true;
-      setError(
-        messageFromError(reviewError, "Could not reopen training review"),
-      );
-    } finally {
-      endPersistedJobMutation(mutationScope, restoreAfterMutation);
-      setBusy(false);
-    }
-  }
-
-  async function onUpdateTrainingReviewNote() {
-    if (
-      !job ||
-      !activeTrainingDecision ||
-      !activeRecommendation ||
-      decisionComparison?.tone === "match" ||
-      !job.training_reviewed_at
-    ) {
-      return;
-    }
-    if (mutationRecoveryPending([persistedJobMutationScope(job)])) {
-      return;
-    }
-
-    const note = trainingReviewNote.trim() || null;
-    const mutationScope = beginPersistedJobMutation(job, {
-      kind: "training-review",
-      reviewed: true,
-      note,
-    });
-    let restoreAfterMutation = false;
-    setBusy(true);
-    setError(null);
-    try {
-      const { job: updatedJob } = await completeTrainingReviewCommand(
-        queryClient,
-        { jobId: job.id, note },
-      );
-      replaceJob(updatedJob);
-      setTrainingReviewNoteEditing(false);
-      toast.success(note ? "Lesson note updated" : "Lesson note removed");
-    } catch (reviewError) {
-      if (mutationFailureMayHavePersistedSideEffect(reviewError)) {
-        markPersistedJobMutationUncertain(mutationScope, job.id);
-      }
-      restoreAfterMutation = true;
-      setError(messageFromError(reviewError, "Could not update lesson note"));
-    } finally {
-      endPersistedJobMutation(mutationScope, restoreAfterMutation);
-      setBusy(false);
-    }
-  }
-
-  async function reopenTrainingReviewFromProgress(jobId: string) {
-    let persistedJob =
-      jobsRef.current.find((candidate) => candidate.id === jobId) ??
-      history.find((item) => item.id === jobId)?.job ??
-      historySearchResults?.find((item) => item.id === jobId)?.job ??
-      null;
-    let mutationScope: PersistedJobMutationScope | null = null;
-    let reviewPersisted = false;
-    let restoreAfterMutation = false;
-    setTrainingReviewJobId(jobId);
-    setError(null);
-    try {
-      persistedJob ??= await fetchJobQuery(queryClient, jobId);
-      if (mutationRecoveryPending([persistedJobMutationScope(persistedJob)])) {
-        return;
-      }
-      mutationScope = beginPersistedJobMutation(persistedJob, {
-        kind: "training-review",
-        reviewed: false,
-        note: null,
-      });
-      const { job: reopenedJob } = await reopenTrainingReviewCommand(
-        queryClient,
-        { jobId },
-      );
-      reviewPersisted = true;
-      updateJobs((current) =>
-        current.map((candidate) =>
-          candidate.id === reopenedJob.id ? reopenedJob : candidate,
-        ),
-      );
-      updateHistoryJob(reopenedJob);
-      setTrainingProgress(
-        await fetchTrainingProgressQuery(queryClient, {
-          certaintyFilter: trainingCertaintyFilter,
-          lessonOrder: trainingLessonOrder,
-          lessonQuery: trainingLessonQuery,
-          lessonStreet: trainingLessonStreet,
-          positionFilter: trainingPositionFilter,
-          reviewCertainty: trainingReviewCertainty,
-          reviewDifference: trainingReviewDifference,
-          reviewOrder: trainingReviewOrder,
-          reviewPositionFilter: trainingReviewPosition,
-          reviewStreet: trainingReviewStreet,
-          solverFilter: trainingSolverFilter,
-          streetFilter: trainingStreetFilter,
-        }),
-      );
-      toast.success("Training review reopened");
-    } catch (reviewError) {
-      if (mutationScope !== null) {
-        if (
-          !reviewPersisted &&
-          mutationFailureMayHavePersistedSideEffect(reviewError)
-        ) {
-          markPersistedJobMutationUncertain(mutationScope, jobId);
-        }
-        restoreAfterMutation = !reviewPersisted;
-      }
-      setError(
-        messageFromError(reviewError, "Could not reopen training review"),
-      );
-    } finally {
-      if (mutationScope !== null) {
-        endPersistedJobMutation(mutationScope, restoreAfterMutation);
-      }
-      setTrainingReviewJobId(null);
-    }
-  }
-
   /** Locks the tools on an administrative denial; false for other failures. */
   function reportAdministrativeDenial(failure: unknown): boolean {
     const denial =
@@ -3343,7 +2633,6 @@ export function useAnalyzerWorkspaceController({
         file: backupFile,
       });
       resetBenchmark();
-      setTrainingProgress(null);
       clearHistorySearch();
       markProcessingQueueSessionUnsynced();
       scheduleProcessingQueueRestore();
@@ -3667,12 +2956,7 @@ export function useAnalyzerWorkspaceController({
       return;
     }
     const mutationScope = persistedJobMutationScope(managedJob);
-    const savingAlongsideRecommendation =
-      mutationComposesWithActiveRecommendation(mutationScope);
-    if (
-      !savingAlongsideRecommendation &&
-      mutationRecoveryPending([mutationScope])
-    ) {
+    if (mutationRecoveryPending([mutationScope])) {
       return;
     }
 
@@ -3691,15 +2975,7 @@ export function useAnalyzerWorkspaceController({
       notes,
       tags,
     };
-    if (savingAlongsideRecommendation) {
-      if (mutationScope === "processing") {
-        beginProcessingMembershipMutation();
-      } else {
-        beginHistoryMutation();
-      }
-    } else {
-      beginPersistedJobMutation(managedJob, expectation);
-    }
+    beginPersistedJobMutation(managedJob, expectation);
     let restoreAfterMutation = false;
     let deletedRemotely = false;
     setScreenshotMetadataSaving(true);
@@ -3726,13 +3002,11 @@ export function useAnalyzerWorkspaceController({
         );
       }
       updateHistoryJob(updated);
-      if (!savingAlongsideRecommendation) {
-        settlePersistedMutationLease(
-          mutationScope,
-          [updated],
-          mutationScope === "processing",
-        );
-      }
+      settlePersistedMutationLease(
+        mutationScope,
+        [updated],
+        mutationScope === "processing",
+      );
       if (movedToHistory) {
         void requestHistoryRestore(null, true);
       }
@@ -3756,15 +3030,7 @@ export function useAnalyzerWorkspaceController({
         );
       }
     } finally {
-      if (savingAlongsideRecommendation) {
-        if (mutationScope === "processing") {
-          endProcessingMembershipMutation(restoreAfterMutation);
-        } else {
-          endHistoryMutation(restoreAfterMutation);
-        }
-      } else {
-        endPersistedJobMutation(mutationScope, deletedRemotely);
-      }
+      endPersistedJobMutation(mutationScope, deletedRemotely);
       setScreenshotMetadataSaving(false);
     }
   }
@@ -3820,15 +3086,6 @@ export function useAnalyzerWorkspaceController({
     deletedJob: JobRecord,
     mutationScope: PersistedJobMutationScope,
   ) {
-    const activeRecommendation = activeRecommendationRequestsRef.current.get(
-      deletedJob.id,
-    );
-    if (
-      activeRecommendation?.ownsMutationLease &&
-      activeRecommendation.mutationScope === mutationScope
-    ) {
-      clearOwnedMutationLease(mutationScope);
-    }
     if (mutationScope === "processing") {
       processingRemovalCandidateIdsRef.current.delete(deletedJob.id);
     }
@@ -3846,9 +3103,6 @@ export function useAnalyzerWorkspaceController({
     } else {
       markProcessingQueueSessionUnsynced();
       scheduleProcessingQueueRestore();
-    }
-    if (activeRecommendation?.mutationScope === mutationScope) {
-      activeRecommendation.controller.abort();
     }
   }
 
@@ -3876,12 +3130,7 @@ export function useAnalyzerWorkspaceController({
     }
 
     const mutationScope = persistedJobMutationScope(managedJob);
-    const deletingAlongsideRecommendation =
-      mutationComposesWithActiveRecommendation(mutationScope);
-    if (
-      !deletingAlongsideRecommendation &&
-      mutationRecoveryPending([mutationScope])
-    ) {
+    if (mutationRecoveryPending([mutationScope])) {
       return;
     }
     if (mutationScope === "processing") {
@@ -4027,10 +3276,6 @@ export function useAnalyzerWorkspaceController({
       },
       onOpenHelp: () => setHelpDialogOpen(true),
       onOpenInfo: openInfoDialog,
-      onOpenTraining: () => {
-        openTrainingDialog();
-        navigation.openTraining();
-      },
       queueCount,
     },
     administrativeBanner: {
@@ -4102,7 +3347,6 @@ export function useAnalyzerWorkspaceController({
       panel: {
         busy,
         canApprove,
-        canRecommend,
         editor: {
           completedPostflopActionCounts,
           completedPostflopActionsAtLimit,
@@ -4123,53 +3367,8 @@ export function useAnalyzerWorkspaceController({
         },
         job,
         onApprove,
-        onRecommend,
         onResetToParser: resetToParser,
       },
-      recommendation:
-        job && activeRecommendation
-          ? {
-              busy,
-              decision: activeTrainingDecision,
-              decisionComparison,
-              evidence: decisionEvidence,
-              job,
-              note: trainingReviewNote,
-              noteEditing: trainingReviewNoteEditing,
-              onCancelNoteEdit: cancelTrainingReviewNoteEdit,
-              onCompleteReview: onCompleteTrainingReview,
-              onNoteChange: setTrainingReviewNote,
-              onReopenReview: onReopenTrainingReview,
-              onSaveNote: onUpdateTrainingReviewNote,
-              onStartNoteEdit: startTrainingReviewNoteEdit,
-              recommendation: activeRecommendation,
-              reviewQueueJobId: trainingReviewQueueJobId,
-            }
-          : null,
-      trainingDecision:
-        currentStateApproved &&
-        !activeRecommendation &&
-        !(job && isAdministrativeTestJob(job))
-          ? {
-              action: trainingAction,
-              busy,
-              certainty: trainingCertainty,
-              decision: activeTrainingDecision,
-              onActionChange: (action: typeof trainingAction) => {
-                setTrainingAction(action);
-                if (action !== "bet" && action !== "raise") {
-                  setTrainingSizing("");
-                }
-              },
-              onCertaintyChange: (certainty: typeof trainingCertainty) =>
-                setTrainingCertainty(
-                  trainingCertainty === certainty ? "" : certainty,
-                ),
-              onSave: onSaveTrainingDecision,
-              onSizingChange: setTrainingSizing,
-              sizing: trainingSizing,
-            }
-          : null,
     },
     dialogs: {
       queueProcessing: queueProgress
@@ -4214,9 +3413,6 @@ export function useAnalyzerWorkspaceController({
             onParserChange: updateParserProvider,
             onParserLayoutChange: (value: string) =>
               updatePipelineSelection("parser_layout_profile", value),
-            onRecommendationChange: updateRecommendationProvider,
-            onRecommendationEngineChange: (value: string) =>
-              updatePipelineSelection("recommendation_engine", value),
             selection: pipelineSelection,
           }
         : null,
@@ -4234,54 +3430,6 @@ export function useAnalyzerWorkspaceController({
               void onApplicationBackupRestore(file),
             providers: activeInfoProviders,
             systemInfoLoading,
-          }
-        : null,
-      training: trainingDialogOpen
-        ? {
-            actionDifferenceFocus,
-            busy,
-            certaintyFilter: trainingCertaintyFilter,
-            certaintyFocus,
-            lessonOrder: trainingLessonOrder,
-            lessonQuery: trainingLessonQuery,
-            lessonSearch: trainingLessonSearch,
-            lessonStreet: trainingLessonStreet,
-            lessonsExportDisabled: trainingLessonsExportDisabled,
-            nextReviewHand,
-            onCertaintyFilterChange: updateTrainingCertaintyFilter,
-            onClose: () => {
-              setTrainingDialogOpen(false);
-              navigation.closeSurface();
-            },
-            onFocusActionDifference: focusTrainingActionDifference,
-            onFocusCertainty: focusTrainingReviewCertainty,
-            onFocusPosition: focusTrainingReviewPosition,
-            onFocusStreet: focusTrainingReviewStreet,
-            onLessonFiltersChange: updateTrainingLessonFilters,
-            onLessonSearchChange: setTrainingLessonSearch,
-            onOpenHand: reviewTrainingHand,
-            onPositionFilterChange: updateTrainingPositionFilter,
-            onReopenHand: reopenTrainingReviewFromProgress,
-            onReviewQueueChange: updateTrainingReviewQueue,
-            onSolverFilterChange: updateTrainingSolverFilter,
-            onStreetFilterChange: updateTrainingStreetFilter,
-            onViewChange: selectTrainingProgressView,
-            positionFilter: trainingPositionFilter,
-            positionFocus,
-            progress: trainingProgress,
-            progressLoading: trainingProgressLoading,
-            reviewCertainty: trainingReviewCertainty,
-            reviewDifference: trainingReviewDifference,
-            reviewJobId: trainingReviewJobId,
-            reviewOrder: trainingReviewOrder,
-            reviewPosition: trainingReviewPosition,
-            reviewQueueStatus,
-            reviewStreet: trainingReviewStreet,
-            solverFilter: trainingSolverFilter,
-            streetFilter: trainingStreetFilter,
-            streetFocus: trainingFocus,
-            view: trainingProgressView,
-            visibleHands: visibleTrainingHands,
           }
         : null,
       benchmark: benchmarkDialogOpen

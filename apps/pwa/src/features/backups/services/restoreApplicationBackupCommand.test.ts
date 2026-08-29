@@ -5,7 +5,6 @@ import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQu
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import { systemQueryKeys } from "../../../domains/system/api/systemQueries";
-import { trainingQueryKeys } from "../../../domains/training/api/trainingQueries";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import { restoreApplicationBackupCommand } from "./restoreApplicationBackupCommand";
 
@@ -25,7 +24,6 @@ function seedWorkspaceCaches() {
   const affected = [
     jobQueryKeys.processingPage(0),
     historyQueryKeys.page(),
-    trainingQueryKeys.progress(),
     benchmarkQueryKeys.overview(),
     benchmarkQueryKeys.report("report-1"),
   ] as const;
@@ -56,7 +54,6 @@ describe("restore application backup command", () => {
         removed: [
           jobQueryKeys.all,
           historyQueryKeys.all,
-          trainingQueryKeys.all,
           benchmarkQueryKeys.all,
         ],
       },

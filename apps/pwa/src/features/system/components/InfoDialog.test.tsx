@@ -34,7 +34,6 @@ function dialogProps(
       recognition: "External vision model",
       recognitionFallbackFrom: "OCR + computer vision",
       recognitionRoute: "Automatic recognition",
-      recommendation: "Postflop solver",
     },
     systemInfoLoading: false,
     ...overrides,
@@ -57,7 +56,14 @@ describe("InfoDialog", () => {
         "via Automatic recognition · fallback from OCR + computer vision",
       ),
     ).toBeInTheDocument();
-    expect(within(dialog).getByText("Postflop solver")).toBeInTheDocument();
+    expect(
+      within(dialog).queryByText("Recommendation"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(dialog).getByText(
+        "Back up screenshots, approved ground truth, and benchmark reports in one portable ZIP.",
+      ),
+    ).toBeInTheDocument();
     expect(
       within(dialog).getByRole("link", {
         name: "Download application backup",

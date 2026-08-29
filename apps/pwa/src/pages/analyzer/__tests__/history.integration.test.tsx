@@ -12,8 +12,6 @@ import {
   fetchMock,
   jobRecord,
   jsonResponse,
-  recommendation,
-  recommendedJob,
 } from "../../../test/analyzerHarness";
 
 describe("Analyzer history", () => {
@@ -30,7 +28,7 @@ describe("Analyzer history", () => {
     delete (savedState as Partial<CanonicalState>).hero_stack;
     delete (savedState as Partial<CanonicalState>).facing_action;
     const savedJob: JobRecord = {
-      ...recommendedJob(savedState),
+      ...approvedJob(savedState),
       id: "history-job",
       original_filename: "history.png",
       image_filename: "history.png",
@@ -56,16 +54,13 @@ describe("Analyzer history", () => {
     expect(screen.getByDisplayValue("3.5")).toBeInTheDocument();
     expect(screen.getByLabelText(/Hero stack/)).toHaveValue("");
     expect(screen.getByLabelText(/Facing action/)).toHaveValue("");
-    expect(screen.getByLabelText("Recommendation")).toBeInTheDocument();
-    expect(
-      screen.queryByLabelText("Decision evidence"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Recommendation")).not.toBeInTheDocument();
   });
 
   it("updates persisted history immediately after a reopened hand is re-approved", async () => {
     const archivedAt = "2026-07-10T00:02:00Z";
     const savedJob: JobRecord = {
-      ...recommendedJob(),
+      ...jobRecord(),
       archived_at: archivedAt,
     };
     const reapprovedJob: JobRecord = {
@@ -93,7 +88,7 @@ describe("Analyzer history", () => {
         screen.getByRole("button", {
           name: "Reopen history item 1",
         }),
-      ).getByText("raise"),
+      ).getByText("parsed"),
     ).toBeInTheDocument();
     await user.click(
       screen.getByRole("button", {
@@ -112,7 +107,7 @@ describe("Analyzer history", () => {
       ).toBeInTheDocument(),
     );
     expect(
-      within(updatedHistoryItem).queryByText("raise"),
+      within(updatedHistoryItem).queryByText("parsed"),
     ).not.toBeInTheDocument();
     expect(
       JSON.parse(
@@ -120,7 +115,6 @@ describe("Analyzer history", () => {
       )[0].job,
     ).toMatchObject({
       status: "approved",
-      recommendation: null,
       updated_at: "2026-07-10T00:03:00Z",
     });
   });
@@ -128,7 +122,7 @@ describe("Analyzer history", () => {
   it("keeps a newer reopened hand when an older history refresh finishes", async () => {
     const archivedAt = "2026-07-10T00:02:00Z";
     const staleJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       archived_at: archivedAt,
       updated_at: "2026-07-10T00:01:00Z",
     };
@@ -199,7 +193,6 @@ describe("Analyzer history", () => {
       )[0].job,
     ).toMatchObject({
       status: "approved",
-      recommendation: null,
       updated_at: "2026-07-10T00:03:00Z",
     });
   });
@@ -208,7 +201,7 @@ describe("Analyzer history", () => {
     window.localStorage.removeItem("poker-training-history-v1");
     window.sessionStorage.removeItem("poker-training-history-synced");
     const savedJob: JobRecord = {
-      ...recommendedJob(
+      ...approvedJob(
         canonicalState({
           hero_cards: [
             { rank: "Q", suit: "clubs" },
@@ -253,7 +246,7 @@ describe("Analyzer history", () => {
     const savedJobs = Array.from(
       { length: 24 },
       (_, index): JobRecord => ({
-        ...recommendedJob(),
+        ...approvedJob(),
         id: `server-history-${index}`,
         original_filename: `server-history-${index}.png`,
         archived_at: `2026-07-10T00:${String(index).padStart(2, "0")}:00Z`,
@@ -289,7 +282,7 @@ describe("Analyzer history", () => {
     const savedJobs = Array.from(
       { length: 31 },
       (_, index): JobRecord => ({
-        ...recommendedJob(),
+        ...approvedJob(),
         id: `paged-history-${index}`,
         original_filename: `paged-history-${index}.png`,
         archived_at: `2026-07-${String(31 - index).padStart(2, "0")}T00:00:00Z`,
@@ -342,12 +335,12 @@ describe("Analyzer history", () => {
   it("searches and pages archived hands without replacing the newest-page cache", async () => {
     const archivedAt = "2026-07-10T00:02:00Z";
     const cachedJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "cached-history-job",
       archived_at: archivedAt,
     };
     const firstMatch: JobRecord = {
-      ...recommendedJob(
+      ...approvedJob(
         canonicalState({
           hero_cards: [
             { rank: "Q", suit: "clubs" },
@@ -361,7 +354,7 @@ describe("Analyzer history", () => {
       archived_at: "2026-07-09T00:00:00Z",
     };
     const secondMatch: JobRecord = {
-      ...recommendedJob(
+      ...approvedJob(
         canonicalState({
           hero_cards: [
             { rank: "7", suit: "diamonds" },
@@ -462,87 +455,9 @@ describe("Analyzer history", () => {
     expect(within(historyPanel).queryByText("Q♣")).not.toBeInTheDocument();
   });
 
-  it("polls a pending archived recommendation returned only by history search", async () => {
-    const cachedJob: JobRecord = {
-      ...recommendedJob(),
-      id: "cached-search-anchor",
-      archived_at: "2026-07-10T00:00:00Z",
-    };
-    const pendingJob: JobRecord = {
-      ...approvedJob(),
-      id: "search-only-pending-job",
-      original_filename: "search-only-pending.png",
-      recommendation_pending: true,
-      archived_at: "2026-06-01T00:00:00Z",
-      updated_at: "2026-06-01T00:01:00Z",
-    };
-    const completedJob: JobRecord = {
-      ...pendingJob,
-      status: "recommended",
-      recommendation_pending: false,
-      recommendation,
-      updated_at: "2026-06-01T00:02:00Z",
-    };
-    window.localStorage.setItem(
-      "poker-training-history-v1",
-      JSON.stringify([
-        {
-          id: cachedJob.id,
-          job: cachedJob,
-          savedAt: cachedJob.archived_at,
-        },
-      ]),
-    );
-    window.localStorage.setItem("poker-training-history-total-v1", "1");
-    fetchMock()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          total: 1,
-          jobs: [pendingJob],
-          snapshot_version: "pending-search-result",
-        }),
-      )
-      .mockResolvedValueOnce(jsonResponse(completedJob));
-    render(<App />);
-    const user = userEvent.setup();
-    const historyPanel = screen.getByLabelText("Session history");
-
-    await user.click(
-      within(historyPanel).getByRole("button", {
-        name: "Search saved history",
-      }),
-    );
-    await user.type(
-      within(historyPanel).getByLabelText("History search query"),
-      "pending",
-    );
-    await user.click(
-      within(historyPanel).getByRole("button", {
-        name: "Run history search",
-      }),
-    );
-    await user.click(
-      await screen.findByRole("button", {
-        name: "Reopen history item 1",
-      }),
-    );
-
-    expect(
-      screen.getByRole("button", {
-        name: "Request recommendation",
-      }),
-    ).toBeDisabled();
-    expect(await screen.findByLabelText("Recommendation")).toBeInTheDocument();
-    expect(screen.getByText(recommendation.explanation)).toBeInTheDocument();
-    expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/history?query=pending",
-      `http://localhost:8000/api/jobs/${pendingJob.id}`,
-    ]);
-  });
-
   it("restores a lost archived write response by ID outside the newest history page", async () => {
     const cachedJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "newest-history-anchor",
       archived_at: "2026-07-10T00:00:00Z",
     };
@@ -662,7 +577,7 @@ describe("Analyzer history", () => {
       updated_at: "2026-06-01T00:02:00Z",
     };
     const staleSibling: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "stale-history-sibling",
       original_filename: "stale-history-sibling.png",
       archived_at: "2026-07-10T00:00:00Z",
@@ -784,7 +699,7 @@ describe("Analyzer history", () => {
   it("revalidates the active history search after an archived hand changes", async () => {
     const archivedAt = "2026-07-10T00:02:00Z";
     const savedJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       archived_at: archivedAt,
     };
     const reapprovedJob: JobRecord = {
@@ -869,7 +784,7 @@ describe("Analyzer history", () => {
     const savedJobs = Array.from(
       { length: 25 },
       (_, index): JobRecord => ({
-        ...recommendedJob(),
+        ...approvedJob(),
         id: `searched-history-${index}`,
         original_filename: `searched-history-${index}.png`,
         archived_at: `2026-07-${String(25 - index).padStart(2, "0")}T00:00:00Z`,
@@ -958,14 +873,14 @@ describe("Analyzer history", () => {
     const savedJobs = Array.from(
       { length: 50 },
       (_, index): JobRecord => ({
-        ...recommendedJob(),
+        ...approvedJob(),
         id: `changing-search-history-${index}`,
         original_filename: `changing-search-history-${index}.png`,
         archived_at: `2026-07-25T00:${String(49 - index).padStart(2, "0")}:00Z`,
       }),
     );
     const newJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "new-search-history-job",
       original_filename: "new-search-history-job.png",
       archived_at: "2026-07-26T00:00:00Z",
@@ -1057,14 +972,14 @@ describe("Analyzer history", () => {
     const savedJobs = Array.from(
       { length: 50 },
       (_, index): JobRecord => ({
-        ...recommendedJob(),
+        ...approvedJob(),
         id: `stable-search-membership-${index}`,
         original_filename: `stable-search-membership-${index}.png`,
         archived_at: `2026-07-25T00:${String(49 - index).padStart(2, "0")}:00Z`,
       }),
     );
     const newMatch: JobRecord = {
-      ...recommendedJob(
+      ...approvedJob(
         canonicalState({
           hero_cards: [
             { rank: "Q", suit: "clubs" },
@@ -1151,7 +1066,7 @@ describe("Analyzer history", () => {
     const savedJobs = Array.from(
       { length: 25 },
       (_, index): JobRecord => ({
-        ...recommendedJob(),
+        ...approvedJob(),
         id: `removed-search-history-${index}`,
         original_filename: `removed-search-history-${index}.png`,
         archived_at: `2026-07-${String(25 - index).padStart(2, "0")}T00:00:00Z`,
@@ -1216,14 +1131,14 @@ describe("Analyzer history", () => {
     const savedJobs = Array.from(
       { length: 31 },
       (_, index): JobRecord => ({
-        ...recommendedJob(),
+        ...approvedJob(),
         id: `stable-history-${index}`,
         original_filename: `stable-history-${index}.png`,
         archived_at: `2026-07-${String(31 - index).padStart(2, "0")}T00:00:00Z`,
       }),
     );
     const newJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "new-history-job",
       original_filename: "new-history-job.png",
       archived_at: "2026-08-01T00:00:00Z",
@@ -1307,7 +1222,7 @@ describe("Analyzer history", () => {
     window.localStorage.removeItem("poker-training-history-v1");
     window.sessionStorage.removeItem("poker-training-history-synced");
     const savedJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "quota-history-job",
       original_filename: "quota-history.png",
       archived_at: "2026-07-10T00:05:00Z",
@@ -1365,7 +1280,7 @@ describe("Analyzer history", () => {
       window.localStorage.setItem("poker-training-history-total-v1", "1");
       window.sessionStorage.setItem("poker-training-history-synced", "true");
       const savedJob: JobRecord = {
-        ...recommendedJob(),
+        ...approvedJob(),
         id: "recovered-history-job",
         original_filename: "recovered-history.png",
         archived_at: "2026-07-10T00:06:00Z",
@@ -1393,7 +1308,7 @@ describe("Analyzer history", () => {
 
   it("refreshes saved history from the backend", async () => {
     const savedJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "refreshed-history-job",
       original_filename: "refreshed.png",
       archived_at: "2026-07-10T00:03:00Z",
@@ -1425,7 +1340,7 @@ describe("Analyzer history", () => {
   it("migrates legacy local history into persisted history", async () => {
     const jobId = "a".repeat(32);
     const legacyJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: jobId,
       original_filename: "legacy.png",
       archived_at: null,
@@ -1508,7 +1423,7 @@ describe("Analyzer history", () => {
   it("releases legacy archive leases after deterministic migration rejection", async () => {
     const jobId = "b".repeat(32);
     const legacyJob: JobRecord = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: jobId,
       original_filename: "legacy-conflict.png",
       archived_at: null,
@@ -1528,8 +1443,7 @@ describe("Analyzer history", () => {
     fetchMock().mockResolvedValueOnce(
       jsonResponse(
         {
-          detail:
-            "Only successful approved or recommended jobs can be moved to history",
+          detail: "Only successful approved jobs can be moved to history",
         },
         409,
       ),

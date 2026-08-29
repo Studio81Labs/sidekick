@@ -5,7 +5,6 @@ const JOB_STATUS_TONES: Record<JobRecord["status"], StatusBadgeTone> = {
   created: "neutral",
   parsed: "neutral",
   approved: "accent",
-  recommended: "accent",
   error: "attention",
 };
 

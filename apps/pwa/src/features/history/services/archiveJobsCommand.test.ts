@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "../../../app/providers/queryClient";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
-import { recommendedJob } from "../../../test/analyzerHarness";
+import { approvedJob } from "../../../test/analyzerHarness";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import { archiveJobsCommand } from "./archiveJobsCommand";
 
@@ -13,7 +13,7 @@ describe("archive jobs command", () => {
   it("returns explicit detail and projection cache outcomes", async () => {
     const queryClient = createQueryClient();
     const job = {
-      ...recommendedJob(),
+      ...approvedJob(),
       id: "d".repeat(32),
       archived_at: "2026-08-25T00:00:00Z",
     };
@@ -64,7 +64,7 @@ describe("archive jobs command", () => {
 
   it("leaves cache untouched when archive transport fails", async () => {
     const queryClient = createQueryClient();
-    const job = recommendedJob();
+    const job = approvedJob();
     const detailKey = jobQueryKeys.detail(job.id);
     queryClient.setQueryData(detailKey, job);
     vi.stubGlobal(

@@ -15,7 +15,6 @@ const PROCESSING_QUEUE_SNAPSHOT_RETRY_LIMIT = 3;
 export { fetchBenchmarkImportReceiptQuery } from "../../../domains/benchmarks/api/benchmarksQueries";
 export { fetchHistoryPageQuery };
 export { fetchJobQuery } from "../../../domains/jobs/api/jobsQueries";
-export { fetchTrainingProgressQuery } from "../../../domains/training/api/trainingQueries";
 
 export async function getHistorySearchExtent(
   queryClient: QueryClient,

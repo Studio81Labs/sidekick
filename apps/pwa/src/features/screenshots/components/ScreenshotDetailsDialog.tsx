@@ -9,7 +9,6 @@ import {
   TextAreaControl,
   TextInput,
 } from "../../../shared/components/FormControls";
-import { JobInputContextBadge } from "../../../shared/components/JobInputContextBadge";
 import { JobStatusBadge } from "../../../shared/components/JobStatusBadge";
 import {
   MAX_SCREENSHOT_NOTES_LENGTH,
@@ -92,7 +91,6 @@ export function ScreenshotDetailsDialog({
             </small>
           </span>
           <span className="screenshot-file-status">
-            <JobInputContextBadge job={job} />
             <JobStatusBadge status={job.status} />
           </span>
         </div>

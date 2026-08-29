@@ -13,7 +13,9 @@ describe("AdministrativeTestBanner", () => {
 
     expect(
       screen.getByRole("note", { name: "Administrative OCR test mode" }),
-    ).toHaveTextContent("never request recommendations or enter training");
+    ).toHaveTextContent(
+      "Uploads and captures produce administrative OCR test data, not player analysis.",
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "Lock administrator tools" }),
     );

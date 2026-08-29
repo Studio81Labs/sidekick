@@ -24,7 +24,7 @@ export function newerHistoryItem(
   current: HistoryItem,
   incoming: HistoryItem,
 ): HistoryItem {
-  return newerHistoryJob(current.job, incoming.job) === current.job
+  return newerJob(current.job, incoming.job) === current.job
     ? current
     : incoming;
 }
@@ -46,16 +46,6 @@ export function preserveUploadRequestId(
   return incoming.upload_request_id || !current?.upload_request_id
     ? incoming
     : { ...incoming, upload_request_id: current.upload_request_id };
-}
-
-export function newerHistoryJob(
-  current: JobRecord,
-  incoming: JobRecord,
-): JobRecord {
-  if (current.recommendation_pending && !incoming.recommendation_pending) {
-    return incoming;
-  }
-  return newerJob(current, incoming);
 }
 
 export function localUploadMatchDistance(

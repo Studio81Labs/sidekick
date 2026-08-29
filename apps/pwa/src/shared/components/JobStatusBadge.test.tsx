@@ -11,7 +11,6 @@ describe("JobStatusBadge", () => {
     ["created", "status-badge-neutral"],
     ["parsed", "status-badge-neutral"],
     ["approved", "status-badge-accent"],
-    ["recommended", "status-badge-accent"],
     ["error", "status-badge-attention"],
   ] satisfies Array<[JobRecord["status"], string]>)(
     "maps %s jobs to the expected tone",

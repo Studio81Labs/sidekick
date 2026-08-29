@@ -33,8 +33,6 @@ describe("upload screenshot command", () => {
       pipeline: {
         parser_provider: "ocr_cv",
         parser_layout_profile: "fortuna_nations",
-        recommendation_provider: "local_solver",
-        recommendation_engine: "postflop_solver",
       },
     });
 

@@ -1,6 +1,3 @@
-import type { RecommendationAction } from "../../../shared/types/recommendations";
-import type { TrainingCertainty } from "../../../shared/types/training";
-
 export type PersistedJobMutationScope = "processing" | "history";
 
 export type MutationLeaseBase = {
@@ -12,17 +9,6 @@ export type JobMutationExpectation =
   | {
       kind: "approval";
       approvedStateKey: string;
-    }
-  | {
-      kind: "training-decision";
-      action: RecommendationAction;
-      sizing: number | null;
-      certainty: TrainingCertainty | null;
-    }
-  | {
-      kind: "training-review";
-      reviewed: boolean;
-      note: string | null;
     }
   | {
       kind: "benchmark-inclusion";
@@ -40,15 +26,10 @@ export type JobMutationLease = MutationLeaseBase & {
   jobId: string;
   baselineUpdatedAt: string;
   expectsRemoval: boolean;
-  expectedRecommendationRequestId: string | null;
   expectedMutation: JobMutationExpectation | null;
 };
 
-export type ProjectionMutationTarget =
-  | "failed"
-  | "parsed"
-  | "approved"
-  | "recommended";
+export type ProjectionMutationTarget = "failed" | "parsed" | "approved";
 
 export type ProjectionMutationLease = MutationLeaseBase & {
   kind: "projection";
@@ -59,7 +40,6 @@ export type ProjectionMutationLease = MutationLeaseBase & {
   expectedUploads: Array<{
     requestId: string;
     target: ProjectionMutationTarget;
-    recommendationRequestId: string | null;
   }>;
 };
 

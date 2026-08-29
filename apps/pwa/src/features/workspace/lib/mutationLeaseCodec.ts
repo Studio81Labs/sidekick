@@ -24,25 +24,11 @@ function applyLegacyDefaults(
   if (parsed.kind === "job" && parsed.expectsRemoval === undefined) {
     parsed.expectsRemoval = false;
   }
-  if (
-    parsed.kind === "job" &&
-    parsed.expectedRecommendationRequestId === undefined
-  ) {
-    parsed.expectedRecommendationRequestId = null;
-  }
   if (parsed.kind === "job" && parsed.expectedMutation === undefined) {
     parsed.expectedMutation = null;
   }
   if (parsed.kind === "archive" && parsed.confirmationJobIds === undefined) {
     parsed.confirmationJobIds = scope === "processing" ? parsed.jobIds : [];
-  }
-  if (parsed.kind === "projection" && Array.isArray(parsed.expectedUploads)) {
-    for (const expectedUpload of parsed.expectedUploads) {
-      const upload = recordValue(expectedUpload);
-      if (upload && upload.recommendationRequestId === undefined) {
-        upload.recommendationRequestId = null;
-      }
-    }
   }
   if (
     parsed.kind === "projection" &&
@@ -63,8 +49,6 @@ function validJobLease(parsed: Record<string, unknown>): boolean {
     typeof parsed.jobId === "string" &&
     typeof parsed.baselineUpdatedAt === "string" &&
     typeof parsed.expectsRemoval === "boolean" &&
-    (parsed.expectedRecommendationRequestId === null ||
-      typeof parsed.expectedRecommendationRequestId === "string") &&
     (parsed.expectedMutation === null ||
       isJobMutationExpectation(parsed.expectedMutation))
   );
@@ -93,11 +77,7 @@ function validProjectionLease(parsed: Record<string, unknown>): boolean {
     return (
       upload !== null &&
       typeof upload.requestId === "string" &&
-      (upload.recommendationRequestId === null ||
-        typeof upload.recommendationRequestId === "string") &&
-      ["failed", "parsed", "approved", "recommended"].includes(
-        String(upload.target),
-      )
+      ["failed", "parsed", "approved"].includes(String(upload.target))
     );
   });
 }

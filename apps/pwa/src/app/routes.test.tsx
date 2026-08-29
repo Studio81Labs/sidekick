@@ -41,7 +41,6 @@ describe("AppRoutes", () => {
 
   it.each([
     ["job", "/analyzer/jobs/job-123"],
-    ["training", "/analyzer/training"],
     ["benchmarks", "/analyzer/benchmarks"],
   ])("renders the durable %s surface", (surface, path) => {
     renderRoute(path);

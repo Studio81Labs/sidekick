@@ -46,7 +46,6 @@ describe("mutation lease expectations", () => {
         {
           requestId: "upload-1",
           target: "approved",
-          recommendationRequestId: null,
         },
       ],
     };
