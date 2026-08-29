@@ -79,7 +79,7 @@ def create_jobs_router(runtime: JobQueryService) -> APIRouter:
 
 
 def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
-    """Build the multipart processing-job upload router."""
+    """Build the multipart processing-job upload router (administrative OCR test surface)."""
 
     router = APIRouter()
 
@@ -121,7 +121,25 @@ def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
             max_length=64,
             pattern=r"^[a-z0-9_]+$",
         ),
+        authorization: str | None = Header(
+            default=None,
+            alias="Authorization",
+            include_in_schema=False,
+        ),
     ) -> JobRecord:
+        decision = runtime.authorize_administrator(authorization)
+        if decision == "disabled":
+            raise HTTPException(
+                status_code=403,
+                detail="Administrative OCR test mode is disabled",
+            )
+        if decision == "unauthorized":
+            raise HTTPException(
+                status_code=401,
+                detail="Administrative OCR test authorization is required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
         pipeline_request = JobUploadPipelineRequest(
             parser_provider=parser_provider,
             parser_layout_profile=parser_layout_profile,

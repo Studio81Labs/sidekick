@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from app.bootstrap import create_app
 from app.config import Settings
 from app.storage.file_job_store import FileJobStore
+from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
 
 
 VALID_PNG = base64.b64decode(
@@ -77,6 +78,7 @@ def create_approved_job(
     upload = client.post(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
     assert upload.status_code == 201
     job = upload.json()
@@ -103,6 +105,8 @@ def test_local_solver_subprocess_completes_api_recommendation(
         parser_provider="mock",
         recommendation_provider="local_solver",
         local_solver_engine="local_ev",
+        admin_ocr_test_enabled=True,
+        admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
     )
 
     with TestClient(create_app(settings)) as client:
@@ -132,6 +136,8 @@ def test_external_solver_http_service_completes_api_recommendation(
         recommendation_provider="external_solver",
         external_provider_url=service_url,
         external_request_timeout_seconds=5,
+        admin_ocr_test_enabled=True,
+        admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
     )
 
     with TestClient(create_app(settings)) as client:

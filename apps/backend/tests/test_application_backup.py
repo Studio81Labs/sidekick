@@ -20,6 +20,7 @@ from app.bootstrap import create_app
 from app.config import Settings
 from app.storage.file_benchmark_store import FileBenchmarkStore
 from app.storage.file_job_store import FileJobStore
+from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
 
 
 VALID_PNG = base64.b64decode(
@@ -54,6 +55,8 @@ def make_client(data_dir: Path, **overrides: object) -> TestClient:
         "data_dir": data_dir,
         "parser_provider": "mock",
         "recommendation_provider": "mock",
+        "admin_ocr_test_enabled": True,
+        "admin_ocr_test_token": ADMIN_OCR_TEST_TOKEN,
     }
     values.update(overrides)
     return TestClient(create_app(Settings(**values)))
@@ -64,6 +67,7 @@ def create_reviewed_job(client: TestClient) -> dict[str, object]:
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         data={"upload_request_id": "backup-upload-1"},
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
     assert upload.status_code == 201
     job_id = upload.json()["id"]
@@ -387,6 +391,8 @@ def test_upload_waiting_for_backup_does_not_block_unrelated_requests(
             data_dir=tmp_path,
             parser_provider="mock",
             recommendation_provider="mock",
+            admin_ocr_test_enabled=True,
+            admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
         )
     )
 
@@ -402,6 +408,7 @@ def test_upload_waiting_for_backup_does_not_block_unrelated_requests(
                 client.post(
                     "/api/jobs",
                     files={"file": ("table.png", VALID_PNG, "image/png")},
+                    headers=ADMIN_OCR_TEST_HEADERS,
                 )
             )
             try:
@@ -445,6 +452,8 @@ def test_slow_backup_download_does_not_block_mutations(
             data_dir=tmp_path,
             parser_provider="mock",
             recommendation_provider="mock",
+            admin_ocr_test_enabled=True,
+            admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
         )
     )
 
@@ -461,6 +470,7 @@ def test_slow_backup_download_does_not_block_mutations(
                     client.post(
                         "/api/jobs",
                         files={"file": ("table.png", VALID_PNG, "image/png")},
+                        headers=ADMIN_OCR_TEST_HEADERS,
                     ),
                     timeout=2,
                 )
@@ -953,6 +963,7 @@ def test_restore_rejects_conflicting_existing_job_without_partial_import(
     first_upload = source.post(
         "/api/jobs",
         files={"file": ("first.png", VALID_PNG, "image/png")},
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
     assert first_upload.status_code == 201
     first_job_id = first_upload.json()["id"]
@@ -1014,6 +1025,7 @@ def test_backup_size_limits_apply_to_export_and_restore(
     upload = source.post(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
     assert upload.status_code == 201
 
@@ -1042,6 +1054,7 @@ def test_export_rejects_active_jobs_and_images_over_the_current_limit(
     upload = active.post(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
     assert upload.status_code == 201
     active_store = FileJobStore(active_dir)

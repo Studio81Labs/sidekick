@@ -12,6 +12,7 @@ from app.providers.base import ProviderError
 from app.providers.mock import MockRecommendationProvider
 from app.storage.file_job_store import FileJobStore
 from api_test_support import (
+    ADMIN_OCR_TEST_TOKEN,
     APPROVED_STATE,
     approve_job,
     make_client,
@@ -112,6 +113,8 @@ def test_recommendation_does_not_require_a_persisted_provider_to_remain_enabled(
         parser_provider="mock",
         recommendation_provider="mock",
         recommendation_enabled_providers=["rule_based"],
+        admin_ocr_test_enabled=True,
+        admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
     )
     client = TestClient(create_app(settings))
     upload = upload_job_with_pipeline(

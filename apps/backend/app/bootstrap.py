@@ -48,6 +48,7 @@ from app.api.dependencies import (
     JobUploadParserProviderError,
     JobUploadUnexpectedParserError,
 )
+from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
 from app.application.backups import ApplicationBackupExport, BackupService
 from app.application.benchmarks import (
     BenchmarkDatasetExport,
@@ -1369,10 +1370,19 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
     jobs_recommendation_runtime = JobRecommendationService(
         recommend=recommend_processing_job,
     )
+    admin_ocr_test_policy = (
+        AdminOcrTestAccessPolicy.for_token(
+            active_settings.admin_ocr_test_token.get_secret_value()
+        )
+        if active_settings.admin_ocr_test_enabled
+        and active_settings.admin_ocr_test_token is not None
+        else AdminOcrTestAccessPolicy.disabled()
+    )
     jobs_upload_runtime = JobUploadService(
         max_upload_bytes=active_settings.max_upload_bytes,
         resolve_pipeline=resolve_upload_pipeline,
         process_upload=process_uploaded_image,
+        authorize_administrator=admin_ocr_test_policy.authorize,
     )
     app.include_router(create_health_router(api_runtime))
     app.include_router(create_pipeline_router(api_runtime))

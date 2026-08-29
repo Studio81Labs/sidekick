@@ -16,6 +16,7 @@ from app.rate_limiting import (
     request_rate_limit_identity,
 )
 from app.storage.file_benchmark_store import FileBenchmarkStore
+from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
 
 
 VALID_PNG = base64.b64decode(
@@ -31,6 +32,8 @@ def make_client(tmp_path: Path, **overrides: object) -> TestClient:
         "parser_provider": "mock",
         "recommendation_provider": "mock",
         "api_rate_limit_uploads_per_minute": 1,
+        "admin_ocr_test_enabled": True,
+        "admin_ocr_test_token": ADMIN_OCR_TEST_TOKEN,
     }
     values.update(overrides)
     return TestClient(create_app(Settings(**values)))
@@ -40,7 +43,7 @@ def upload(client: TestClient, *, headers: dict[str, str] | None = None):
     return client.post(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
-        headers=headers,
+        headers={**ADMIN_OCR_TEST_HEADERS, **(headers or {})},
     )
 
 
@@ -246,7 +249,7 @@ def test_upload_rate_limit_returns_retry_metadata_and_cors_headers(
     rejected = client.post(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
-        headers={"Origin": "http://localhost:5173"},
+        headers={**ADMIN_OCR_TEST_HEADERS, "Origin": "http://localhost:5173"},
     )
 
     assert first.status_code == 201

@@ -5,6 +5,7 @@ from app.api.dependencies import (
 )
 from app.api.dependencies import JobUploadRequest as CompatibilityJobUploadRequest
 from app.api.dependencies import HistoryRuntime, JobsUploadRuntime
+from app.application.admin_ocr_test import AdminOcrTestAccessDecision
 from app.application.jobs import (
     JobHistoryService,
     JobImage,
@@ -164,12 +165,25 @@ def test_job_upload_service_dispatches_selection_and_processing() -> None:
         calls.append(("process", request))
         return job
 
-    service = JobUploadService(1024, resolve_pipeline, process_upload)
+    def authorize_administrator(
+        authorization_header: str | None,
+    ) -> AdminOcrTestAccessDecision:
+        calls.append(("authorize", authorization_header))
+        return "authorized"
+
+    service = JobUploadService(
+        1024,
+        resolve_pipeline,
+        process_upload,
+        authorize_administrator,
+    )
 
     assert service.max_upload_bytes == 1024
+    assert service.authorize_administrator("Bearer administrator") == "authorized"
     assert service.resolve_pipeline(pipeline_request) is selection
     assert service.process_upload(upload_request) is job
     assert calls == [
+        ("authorize", "Bearer administrator"),
         ("resolve", pipeline_request),
         ("process", upload_request),
     ]

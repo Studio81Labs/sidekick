@@ -17,6 +17,9 @@ VALID_PNG = (
     )
 )
 
+ADMIN_OCR_TEST_TOKEN = "test-administrative-ocr-token-0123456789abcdef"
+ADMIN_OCR_TEST_HEADERS = {"Authorization": f"Bearer {ADMIN_OCR_TEST_TOKEN}"}
+
 APPROVED_STATE = {
     "hero_cards": [{"rank": "A", "suit": "hearts"}, {"rank": "K", "suit": "diamonds"}],
     "board_cards": [
@@ -42,6 +45,8 @@ def make_client(tmp_path: Path, **settings_overrides: object) -> TestClient:
         "data_dir": tmp_path,
         "parser_provider": "mock",
         "recommendation_provider": "mock",
+        "admin_ocr_test_enabled": True,
+        "admin_ocr_test_token": ADMIN_OCR_TEST_TOKEN,
     }
     settings_values.update(settings_overrides)
     app = create_app(Settings(**settings_values))
@@ -64,6 +69,7 @@ def upload_job(
         "/api/jobs",
         files={"file": (filename, content, content_type)},
         data=data,
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
 
 
@@ -86,6 +92,7 @@ def upload_job_with_pipeline(
         "/api/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         data=data,
+        headers=ADMIN_OCR_TEST_HEADERS,
     )
 
 

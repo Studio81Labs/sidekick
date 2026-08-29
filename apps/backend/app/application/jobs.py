@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from app.application.admin_ocr_test import AdminOcrTestAccessDecision
 from app.domain.pipeline import PipelineSelection
 from app.domain.hands import (
     ArchiveJobsRequest,
@@ -26,6 +27,7 @@ RecordTrainingDecision = Callable[[str, TrainingDecisionRequest], JobRecord]
 RecommendJob = Callable[[str, str | None], JobRecord]
 ResolveUploadPipeline = Callable[["JobUploadPipelineRequest"], PipelineSelection]
 ProcessUpload = Callable[["JobUploadRequest"], JobRecord]
+AuthorizeAdministrator = Callable[[str | None], AdminOcrTestAccessDecision]
 ListJobHistory = Callable[[int, int, str | None], JobHistory]
 ArchiveJobs = Callable[[ArchiveJobsRequest, int], JobHistory]
 
@@ -132,17 +134,25 @@ class JobRecommendationService:
 
 
 class JobUploadService:
-    """Dispatch upload pipeline selection and processing through the application."""
+    """Dispatch upload authorization, pipeline selection, and processing."""
 
     def __init__(
         self,
         max_upload_bytes: int,
         resolve_pipeline: ResolveUploadPipeline,
         process_upload: ProcessUpload,
+        authorize_administrator: AuthorizeAdministrator,
     ) -> None:
         self.max_upload_bytes = max_upload_bytes
         self._resolve_pipeline = resolve_pipeline
         self._process_upload = process_upload
+        self._authorize_administrator = authorize_administrator
+
+    def authorize_administrator(
+        self,
+        authorization_header: str | None,
+    ) -> AdminOcrTestAccessDecision:
+        return self._authorize_administrator(authorization_header)
 
     def resolve_pipeline(
         self,
