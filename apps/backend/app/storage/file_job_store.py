@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from app.domain.poker import CanonicalState
-from app.domain.hands import JobRecord
+from app.domain.hands import JobInputContext, JobRecord
 from app.storage.persistence import (
     JOB_ID_PATTERN,
     _fsync_directory,
@@ -33,6 +33,8 @@ class FileJobStore:
         recommendation_engine: str | None = None,
         job_id: str | None = None,
         upload_request_id: str | None = None,
+        *,
+        input_context: JobInputContext,
     ) -> JobRecord:
         image_suffix = Path(original_filename).suffix or ".png"
         job_values = {
@@ -43,6 +45,7 @@ class FileJobStore:
             "recommendation_provider": recommendation_provider,
             "recommendation_engine": recommendation_engine,
             "upload_request_id": upload_request_id,
+            "input_context": input_context,
         }
         if job_id is not None:
             job_values["id"] = job_id
@@ -65,11 +68,13 @@ class FileJobStore:
         recommendation_engine: str | None = None,
         approved_state: CanonicalState,
         import_request_id: str,
+        input_context: JobInputContext,
     ) -> JobRecord:
         image_suffix = Path(original_filename).suffix or ".png"
         job = JobRecord(
             id=job_id,
             status="approved",
+            input_context=input_context,
             original_filename=original_filename,
             image_filename=f"original{image_suffix}",
             parser_provider=parser_provider,

@@ -458,6 +458,7 @@ def test_store_persists_jobs_and_rejects_invalid_job_ids(tmp_path: Path) -> None
         image_bytes=VALID_PNG,
         parser_provider="mock",
         recommendation_provider="mock",
+        input_context="legacy_player",
     )
 
     reloaded = FileJobStore(tmp_path).get(job.id)

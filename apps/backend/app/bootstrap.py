@@ -726,6 +726,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 recommendation_provider=selection.recommendation_provider,
                 recommendation_engine=selection.recommendation_engine,
                 upload_request_id=request.upload_request_id,
+                input_context="administrative_test",
             )
         with job_lock_for(job.id):
             try:

@@ -1061,6 +1061,7 @@ def test_export_rejects_active_jobs_and_images_over_the_current_limit(
         image_bytes=VALID_PNG,
         parser_provider="mock",
         recommendation_provider="mock",
+        input_context="legacy_player",
     )
     oversized_job.status = "error"
     oversized_job.error = "Stored under an earlier upload limit"

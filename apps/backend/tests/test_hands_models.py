@@ -99,3 +99,29 @@ def test_job_history_and_queue_contracts_round_trip() -> None:
     assert reloaded_queue == queue
     assert reloaded_history.total == 1
     assert reloaded_queue.total == 1
+
+
+def test_job_record_defaults_missing_input_context_to_legacy_player() -> None:
+    job = JobRecord.model_validate(
+        {
+            "original_filename": "table.png",
+            "image_filename": "original.png",
+            "parser_provider": "mock",
+            "recommendation_provider": "mock",
+        }
+    )
+
+    assert job.input_context == "legacy_player"
+
+
+def test_job_record_rejects_unknown_input_context() -> None:
+    with pytest.raises(ValidationError):
+        JobRecord.model_validate(
+            {
+                "original_filename": "table.png",
+                "image_filename": "original.png",
+                "parser_provider": "mock",
+                "recommendation_provider": "mock",
+                "input_context": "player",
+            }
+        )

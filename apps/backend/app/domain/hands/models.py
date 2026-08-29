@@ -11,6 +11,7 @@ from app.domain.recommendations import RecommendationResult
 from app.domain.training import TrainingDecision
 
 JobStatus = Literal["created", "parsed", "approved", "recommended", "error"]
+JobInputContext = Literal["legacy_player", "administrative_test"]
 
 
 class ScreenshotMetadataRequest(BaseModel):
@@ -52,6 +53,7 @@ class JobRecord(BaseModel):
 
     id: str = Field(default_factory=lambda: uuid4().hex)
     status: JobStatus = "created"
+    input_context: JobInputContext = "legacy_player"
     upload_request_id: str | None = Field(
         default=None,
         min_length=1,

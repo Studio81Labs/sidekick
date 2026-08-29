@@ -24,6 +24,7 @@ def test_app_startup_recovers_interrupted_parser_job(tmp_path: Path) -> None:
         image_bytes=VALID_PNG,
         parser_provider="mock",
         recommendation_provider="mock",
+        input_context="administrative_test",
     )
 
     restarted_client = make_client(tmp_path)
