@@ -37,11 +37,7 @@ from app.api.dependencies import (
     BenchmarkDatasetInputError,
     BenchmarkInputError,
     BenchmarkTransportNotFoundError,
-    JobInputContextError,
     JobMutationConflictError,
-    JobRecommendationConfigurationError,
-    JobRecommendationInputError,
-    JobRecommendationProviderError,
     JobTransportNotFoundError,
     JobUploadConflictError,
     JobUploadInputError,
@@ -64,13 +60,11 @@ from app.application.jobs import (
     JobImage,
     JobMutationService,
     JobQueryService,
-    JobRecommendationService,
     JobUploadPipelineRequest,
     JobUploadRequest,
     JobUploadService,
 )
 from app.application.mcp_admin import McpAdminService
-from app.application.training import TrainingProgressQuery, TrainingService
 from app.application.system import SystemQueryService
 from app.api.dependencies import PipelineCapabilitiesUnavailableError
 from app.api.routers.admin_ocr_test import create_admin_ocr_test_router
@@ -80,13 +74,11 @@ from app.api.routers.health import create_health_router
 from app.api.routers.history import create_history_router
 from app.api.routers.jobs import (
     create_job_mutations_router,
-    create_job_recommendation_router,
     create_job_upload_router,
     create_jobs_router,
 )
 from app.api.routers.mcp_admin import create_mcp_admin_router
 from app.api.routers.pipeline import create_pipeline_router
-from app.api.routers.training import create_training_router
 from app.application_backup import (
     ApplicationBackupError,
     MAX_BACKUP_EXPANSION_RATIO,
@@ -124,18 +116,10 @@ from app.dataset_import import (
     parse_parser_dataset_archive,
 )
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
-from app.domain.poker import CanonicalState, Street
-from app.domain.recommendations import RecommendationRequest
+from app.domain.poker import CanonicalState
 from app.domain.hands import ArchiveJobsRequest, JobHistory, JobQueue, JobRecord, ScreenshotMetadataRequest
 from app.domain.health import HealthResponse
 from app.domain.backups import ApplicationBackupRestoreResult
-from app.domain.training import (
-    TrainingDecision,
-    TrainingDecisionRequest,
-    TrainingProgress,
-    TrainingReviewOrder,
-    TrainingReviewRequest,
-)
 from app.domain.benchmarks import (
     BenchmarkDatasetImportResult,
     BenchmarkOverview,
@@ -163,13 +147,6 @@ from app.pipeline import (
     resolve_pipeline_selection,
     settings_for_selection,
 )
-from app.providers.base import (
-    ProviderConfigurationError,
-    ProviderError,
-    ProviderInputError,
-    missing_required_fields,
-)
-from app.providers.registry import build_provider
 from app.rate_limiting import (
     ApiRateLimiter,
     rate_limit_category,
@@ -180,11 +157,6 @@ from app.storage.persistence import (
     BenchmarkImportNotFoundError,
     BenchmarkNotFoundError,
     JobNotFoundError,
-)
-from app.domain.training.aggregation import (
-    build_training_lessons_markdown,
-    summarize_training,
-    training_outcome,
 )
 from app.workspace import DEFAULT_JOB_LOCK_STRIPES, WorkspaceCoordinator
 
@@ -589,9 +561,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
     rate_limiter = ApiRateLimiter(
         {
             "uploads": active_settings.api_rate_limit_uploads_per_minute,
-            "recommendations": (
-                active_settings.api_rate_limit_recommendations_per_minute
-            ),
             "benchmarks": active_settings.api_rate_limit_benchmarks_per_minute,
             "data_transfers": (
                 active_settings.api_rate_limit_data_transfers_per_minute
@@ -632,25 +601,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 detail=str(exc),
             ) from exc
 
-    def current_recommendation_target(
-        job_id: str,
-        expected_state: CanonicalState,
-        expected_request_id: str | None,
-    ) -> JobRecord:
-        try:
-            current = store.get(job_id)
-        except JobNotFoundError as exc:
-            raise JobTransportNotFoundError("Job not found") from exc
-        if current.approved_state != expected_state:
-            raise JobMutationConflictError(
-                "Approved state changed while the recommendation was running"
-            )
-        if current.recommendation_request_id != expected_request_id:
-            raise JobMutationConflictError(
-                "A newer recommendation request replaced this attempt"
-            )
-        return current
-
     def execute_pending_benchmark_import(
         request_id: str,
         dataset: ParsedParserDataset | None = None,
@@ -676,10 +626,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
             result = import_parser_dataset(
                 dataset,
                 store,
-                recommendation_provider=active_settings.recommendation_provider,
-                recommendation_engine=configured_recommendation_engine(
-                    active_settings
-                ),
                 default_layout_profile=active_settings.parser_layout_profile,
                 max_archive_bytes=active_settings.max_dataset_upload_bytes,
                 import_request_id=request_id,
@@ -712,8 +658,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 active_settings,
                 parser_provider=request.parser_provider,
                 parser_layout_profile=request.parser_layout_profile,
-                recommendation_provider=request.recommendation_provider,
-                recommendation_engine=request.recommendation_engine,
             )
         except PipelineSelectionError as exc:
             raise JobUploadInputError(str(exc)) from exc
@@ -729,10 +673,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 image_bytes=image_bytes,
                 parser_provider=selection.parser_provider,
                 parser_layout_profile=selection.parser_layout_profile,
-                recommendation_provider=selection.recommendation_provider,
-                recommendation_engine=selection.recommendation_engine,
                 upload_request_id=request.upload_request_id,
-                input_context="administrative_test",
             )
         with job_lock_for(job.id):
             try:
@@ -810,15 +751,9 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
             )
             with workspace.hold_backup_transaction():
                 ensure_benchmark_corpus_ready()
-                if any(
-                    job.status == "created" or job.recommendation_pending
-                    for job in store.list()
-                ):
+                if any(job.status == "created" for job in store.list()):
                     raise ApplicationBackupTransportError(
-                        (
-                            "Wait for active parsing and recommendations "
-                            "before restoring a backup"
-                        ),
+                        "Wait for active parsing before restoring a backup",
                         409,
                     )
                 return restore_application_backup(
@@ -960,10 +895,7 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
             if any(not is_history_ready(job) for job in jobs):
                 raise HTTPException(
                     status_code=409,
-                    detail=(
-                        "Only successful approved or recommended jobs "
-                        "can be moved to history"
-                    ),
+                    detail="Only successful approved jobs can be moved to history",
                 )
 
             with history_lock:
@@ -1016,97 +948,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
     async def revoke_mcp_principal(principal_id: str) -> McpPrincipalSummary:
         store_for_mcp = require_mcp_principal_store(mcp_principal_store)
         return await run_in_threadpool(store_for_mcp.revoke, principal_id)
-
-    def training_job(job_id: str) -> JobRecord:
-        try:
-            return store.get(job_id)
-        except JobNotFoundError as exc:
-            raise KeyError("Job not found") from exc
-
-    def require_learning_eligible(job: JobRecord, transition: str) -> None:
-        if job.input_context == "administrative_test":
-            raise JobInputContextError(
-                f"Administrative OCR test inputs cannot {transition}"
-            )
-
-    def learning_eligible_jobs() -> list[JobRecord]:
-        return [job for job in store.list() if job.input_context != "administrative_test"]
-
-    def complete_training_review(
-        job_id: str,
-        review: TrainingReviewRequest | None,
-    ) -> JobRecord:
-        with job_lock_for(job_id):
-            job = training_job(job_id)
-            require_learning_eligible(job, "enter training review")
-            if job.training_decision is None or job.recommendation is None:
-                raise ValueError(
-                    "A completed decision comparison is required before review"
-                )
-            if training_outcome(job) in {"match", "mixed"}:
-                raise ValueError("Exact matches do not need review")
-            changed = False
-            if job.training_reviewed_at is None:
-                job.training_reviewed_at = datetime.now(timezone.utc)
-                changed = True
-            if review is not None and job.training_review_note != review.note:
-                job.training_review_note = review.note
-                changed = True
-            if changed:
-                return save_job(job)
-            return job
-
-    def reopen_training_review(job_id: str) -> JobRecord:
-        with job_lock_for(job_id):
-            job = training_job(job_id)
-            require_learning_eligible(job, "enter training review")
-            if job.training_decision is None or job.recommendation is None:
-                raise ValueError(
-                    "A completed decision comparison is required before reopening review"
-                )
-            if training_outcome(job) in {"match", "mixed"}:
-                raise ValueError("Exact matches do not need review")
-            if job.training_reviewed_at is not None:
-                job.training_reviewed_at = None
-                return save_job(job)
-            return job
-
-    def get_training_progress(query: TrainingProgressQuery) -> TrainingProgress:
-        return summarize_training(
-            learning_eligible_jobs(),
-            review_order=query.review_order,
-            review_street=query.review_street,
-            review_certainty=query.review_certainty,
-            review_position=query.review_position,
-            review_unpositioned=query.review_unpositioned,
-            review_action_difference=query.review_action_difference,
-            lesson_street=query.lesson_street,
-            lesson_query=query.lesson_query,
-            lesson_order=query.lesson_order,
-            solver_fallback_key=query.solver_fallback_key,
-            solver_route_key=query.solver_route_key,
-            solver_unattributed=query.solver_unattributed,
-            recent_street=query.recent_street,
-            recent_position=query.recent_position,
-            recent_unpositioned=query.recent_unpositioned,
-            recent_certainty=query.recent_certainty,
-        )
-
-    def export_training_lessons(
-        lesson_order: TrainingReviewOrder,
-        lesson_street: Street | None,
-        lesson_query: str | None,
-    ) -> tuple[str, str]:
-        document, lesson_count = build_training_lessons_markdown(
-            learning_eligible_jobs(),
-            lesson_street=lesson_street,
-            lesson_query=lesson_query,
-            lesson_order=lesson_order,
-        )
-        if lesson_count == 0:
-            raise ValueError("No saved lesson notes match the selected filters")
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        return document, f"poker-hero-lessons-{timestamp}.md"
 
     def list_processing_jobs(limit: int, offset: int) -> JobQueue:
         with history_lock:
@@ -1166,192 +1007,11 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 job = store.get(job_id)
             except JobNotFoundError as exc:
                 raise JobTransportNotFoundError("Job not found") from exc
-            if job.recommendation_pending:
-                raise JobMutationConflictError("Recommendation is already running")
             state.user_approved = True
             job.approved_state = state
-            job.training_decision = None
-            job.recommendation = None
-            job.training_reviewed_at = None
-            job.training_review_note = None
             job.status = "approved"
             job.error = None
             return save_job(job)
-
-    def record_processing_training_decision(
-        job_id: str,
-        decision: TrainingDecisionRequest,
-    ) -> JobRecord:
-        with job_lock_for(job_id):
-            try:
-                job = store.get(job_id)
-            except JobNotFoundError as exc:
-                raise JobTransportNotFoundError("Job not found") from exc
-            require_learning_eligible(job, "record training decisions")
-            if job.approved_state is None or not job.approved_state.user_approved:
-                raise JobMutationConflictError(
-                    "Approve corrected state before recording your decision"
-                )
-            if job.recommendation is not None:
-                raise JobMutationConflictError(
-                    "Your decision must be recorded before revealing the recommendation"
-                )
-
-            job.training_decision = TrainingDecision(
-                action=decision.action,
-                sizing=decision.sizing,
-                certainty=decision.certainty,
-            )
-            job.training_reviewed_at = None
-            job.training_review_note = None
-            job.status = "approved"
-            job.error = None
-            return save_job(job)
-
-    def recommend_processing_job(
-        job_id: str,
-        recommendation_request_id: str | None,
-    ) -> JobRecord:
-        with job_lock_for(job_id):
-            try:
-                job = store.get(job_id)
-            except JobNotFoundError as exc:
-                raise JobTransportNotFoundError("Job not found") from exc
-            require_learning_eligible(job, "request recommendations")
-            if job.approved_state is None or not job.approved_state.user_approved:
-                raise JobMutationConflictError(
-                    "Approve corrected state before requesting recommendation"
-                )
-            if job.recommendation_pending:
-                raise JobMutationConflictError("Recommendation is already running")
-            approved_state = job.approved_state.model_copy(deep=True)
-            job.recommendation_pending = True
-            job.recommendation_request_id = recommendation_request_id
-            job.error = None
-            save_job(job)
-
-        try:
-            selection = resolve_pipeline_selection(
-                active_settings,
-                parser_provider=job.parser_provider,
-                parser_layout_profile=(
-                    job.parser_layout_profile
-                    or active_settings.parser_layout_profile
-                ),
-                recommendation_provider=job.recommendation_provider,
-                recommendation_engine=job.recommendation_engine,
-                validate_parser=False,
-                enforce_recommendation_allowlist=False,
-            )
-            provider = build_provider(settings_for_selection(active_settings, selection))
-            missing = missing_required_fields(
-                approved_state,
-                provider.required_fields_for(approved_state),
-            )
-        except (PipelineSelectionError, ProviderConfigurationError) as exc:
-            with job_lock_for(job_id):
-                current = current_recommendation_target(
-                    job_id,
-                    approved_state,
-                    recommendation_request_id,
-                )
-                current.recommendation_pending = False
-                current.status = "error"
-                current.error = str(exc)
-                save_job(current)
-            raise JobRecommendationConfigurationError(str(exc)) from exc
-        except Exception as exc:
-            with job_lock_for(job_id):
-                current = current_recommendation_target(
-                    job_id,
-                    approved_state,
-                    recommendation_request_id,
-                )
-                current.recommendation_pending = False
-                current.status = "error"
-                current.error = f"Unexpected provider error: {exc}"
-                save_job(current)
-            raise
-
-        if missing:
-            with job_lock_for(job_id):
-                current = current_recommendation_target(
-                    job_id,
-                    approved_state,
-                    recommendation_request_id,
-                )
-                current.recommendation_pending = False
-                current.status = "approved"
-                current.error = None
-                save_job(current)
-            raise JobRecommendationInputError({"missing_fields": missing})
-
-        try:
-            result = provider.recommend(
-                RecommendationRequest(state=approved_state, provider=provider.name)
-            )
-        except ProviderInputError as exc:
-            with job_lock_for(job_id):
-                current = current_recommendation_target(
-                    job_id,
-                    approved_state,
-                    recommendation_request_id,
-                )
-                current.recommendation_pending = False
-                current.status = "approved"
-                current.error = None
-                save_job(current)
-            raise JobRecommendationInputError(str(exc)) from exc
-        except ProviderConfigurationError as exc:
-            with job_lock_for(job_id):
-                current = current_recommendation_target(
-                    job_id,
-                    approved_state,
-                    recommendation_request_id,
-                )
-                current.recommendation_pending = False
-                current.status = "error"
-                current.error = str(exc)
-                save_job(current)
-            raise JobRecommendationConfigurationError(str(exc)) from exc
-        except ProviderError as exc:
-            with job_lock_for(job_id):
-                current = current_recommendation_target(
-                    job_id,
-                    approved_state,
-                    recommendation_request_id,
-                )
-                current.recommendation_pending = False
-                current.status = "error"
-                current.error = str(exc)
-                save_job(current)
-            raise JobRecommendationProviderError(str(exc)) from exc
-        except Exception as exc:
-            with job_lock_for(job_id):
-                current = current_recommendation_target(
-                    job_id,
-                    approved_state,
-                    recommendation_request_id,
-                )
-                current.recommendation_pending = False
-                current.status = "error"
-                current.error = f"Unexpected provider error: {exc}"
-                save_job(current)
-            raise
-
-        with job_lock_for(job_id):
-            current = current_recommendation_target(
-                job_id,
-                approved_state,
-                recommendation_request_id,
-            )
-            current.recommendation = result
-            current.recommendation_pending = False
-            current.training_reviewed_at = None
-            current.training_review_note = None
-            current.status = "recommended"
-            current.error = None
-            return save_job(current)
 
     api_runtime = SystemQueryService(
         get_health=get_health,
@@ -1368,12 +1028,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         rotate_principal=rotate_mcp_principal,
         revoke_principal=revoke_mcp_principal,
     )
-    training_runtime = TrainingService(
-        complete_review=complete_training_review,
-        reopen_review=reopen_training_review,
-        get_progress=get_training_progress,
-        export_lessons=export_training_lessons,
-    )
     jobs_read_runtime = JobQueryService(
         list_jobs=list_processing_jobs,
         get_job=get_processing_job,
@@ -1383,10 +1037,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         update_metadata=update_processing_job_metadata,
         delete_job=delete_processing_job,
         approve_job=approve_processing_job,
-        record_training_decision=record_processing_training_decision,
-    )
-    jobs_recommendation_runtime = JobRecommendationService(
-        recommend=recommend_processing_job,
     )
     admin_ocr_test_policy = (
         AdminOcrTestAccessPolicy.for_token(
@@ -1410,13 +1060,11 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
     app.include_router(create_pipeline_router(api_runtime))
     app.include_router(create_admin_ocr_test_router(admin_ocr_test_runtime))
     app.include_router(create_mcp_admin_router(mcp_admin_runtime))
-    app.include_router(create_training_router(training_runtime))
 
     app.include_router(create_history_router(history_runtime))
     app.include_router(create_jobs_router(jobs_read_runtime))
     app.include_router(create_job_upload_router(jobs_upload_runtime))
     app.include_router(create_job_mutations_router(jobs_mutation_runtime))
-    app.include_router(create_job_recommendation_router(jobs_recommendation_runtime))
 
     def set_benchmark_inclusion(
         job_id: str,
@@ -1480,7 +1128,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                     active_settings,
                     parser_provider=parser_provider,
                     parser_layout_profile=parser_layout_profile,
-                    validate_recommendation=False,
                     validate_availability=False,
                 )
             except PipelineSelectionError as exc:
@@ -1599,7 +1246,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                         active_settings,
                         parser_provider=parser_provider,
                         parser_layout_profile=parser_layout_profile,
-                        validate_recommendation=False,
                         validate_availability=False,
                     )
                     export_settings = settings_for_selection(
@@ -1699,10 +1345,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 return import_parser_dataset(
                     dataset,
                     store,
-                    recommendation_provider=active_settings.recommendation_provider,
-                    recommendation_engine=configured_recommendation_engine(
-                        active_settings
-                    ),
                     default_layout_profile=(
                         active_settings.parser_layout_profile
                     ),
@@ -1749,7 +1391,6 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                         parser_layout_profile=(
                             benchmark_request.parser_layout_profile
                         ),
-                        validate_recommendation=False,
                     )
                     benchmark_settings = settings_for_selection(
                         active_settings,
@@ -1858,11 +1499,9 @@ def is_history_ready(job: JobRecord) -> bool:
         return True
     return (
         job.status != "error"
-        and not job.recommendation_pending
         and (
-            job.status in {"approved", "recommended"}
+            job.status == "approved"
             or job.approved_state is not None
-            or job.recommendation is not None
         )
     )
 
@@ -1871,14 +1510,8 @@ def is_pristine_benchmark_import(job: JobRecord) -> bool:
     return (
         job.benchmark_included
         and job.status == "approved"
-        and not job.recommendation_pending
         and job.parser_result is None
         and job.approved_state is not None
-        and job.training_decision is None
-        and job.recommendation is None
-        and job.recommendation_request_id is None
-        and job.training_reviewed_at is None
-        and job.training_review_note is None
         and job.error is None
     )
 
@@ -2055,7 +1688,6 @@ def history_search_text(job: JobRecord) -> str:
         *job.tags,
         job.status,
         job.parser_provider,
-        job.recommendation_provider,
     ]
     if state is not None:
         values.extend(
@@ -2074,22 +1706,6 @@ def history_search_text(job: JobRecord) -> str:
             values.extend([card.code, card.rank, card.suit])
             if card.rank == "T":
                 values.append(f"10{card.code[1:]}")
-    if job.training_decision is not None:
-        values.extend([
-            job.training_decision.action,
-            job.training_decision.certainty or "",
-        ])
-        if job.training_decision.sizing is not None:
-            values.append(str(job.training_decision.sizing))
-    if job.recommendation is not None:
-        values.extend([
-            job.recommendation.action,
-            job.recommendation.explanation,
-        ])
-        if job.recommendation.sizing is not None:
-            values.append(str(job.recommendation.sizing))
-    if job.training_review_note:
-        values.append(job.training_review_note)
     return normalize_history_query(" ".join(values))
 
 

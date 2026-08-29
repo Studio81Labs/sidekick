@@ -148,8 +148,6 @@ def parse_parser_dataset_archive(
 def import_parser_dataset(
     dataset: ParsedParserDataset,
     store: FileJobStore,
-    recommendation_provider: str,
-    recommendation_engine: str | None,
     default_layout_profile: str,
     max_archive_bytes: int,
     import_request_id: str | None = None,
@@ -271,10 +269,7 @@ def import_parser_dataset(
                     image_bytes=case.image_bytes,
                     parser_provider=dataset.parser_provider,
                     parser_layout_profile=dataset.layout_profile,
-                    recommendation_provider=recommendation_provider,
-                    recommendation_engine=recommendation_engine,
                     job_id=case.job_id,
-                    input_context="administrative_test",
                 )
                 job.approved_state = case.approved_state
                 job.benchmark_included = True
@@ -287,11 +282,8 @@ def import_parser_dataset(
                     image_bytes=case.image_bytes,
                     parser_provider=dataset.parser_provider,
                     parser_layout_profile=dataset.layout_profile,
-                    recommendation_provider=recommendation_provider,
-                    recommendation_engine=recommendation_engine,
                     approved_state=case.approved_state,
                     import_request_id=import_request_id,
-                    input_context="administrative_test",
                 )
         except FileExistsError as exc:
             raise DatasetImportConflictError(

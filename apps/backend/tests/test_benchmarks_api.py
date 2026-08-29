@@ -239,10 +239,6 @@ def test_benchmark_dataset_import_round_trips_and_reuses_existing_cases(
     assert imported_job.benchmark_included is True
     assert imported_job.status == "approved"
     assert imported_job.parser_result is None
-    assert imported_job.recommendation is None
-    assert imported_job.recommendation_provider == "local_solver"
-    assert imported_job.recommendation_engine == "local_ev"
-    assert imported_job.training_decision is None
     assert FileJobStore(target_dir).image_path(imported_job).read_bytes() == VALID_PNG
 
 
@@ -363,8 +359,6 @@ def test_benchmark_dataset_import_persists_request_receipt_for_recovery(
     assert repeated.status_code == 200
     assert repeated.json() == imported.json()
     imported_job = FileJobStore(target_dir).get(source_job_id)
-    assert imported_job.recommendation_provider == "local_solver"
-    assert imported_job.recommendation_engine == "local_ev"
     assert missing.status_code == 404
     assert missing.json()["detail"] == "Benchmark dataset import not found"
 
@@ -1366,7 +1360,6 @@ def test_benchmark_runs_and_exports_layout_corpora_independently(
         client,
         parser_provider="mock",
         parser_layout_profile="pokerstars",
-        recommendation_provider="mock",
     ).json()["id"]
     for job_id in (generic_id, pokerstars_id):
         approve_job(client, job_id)

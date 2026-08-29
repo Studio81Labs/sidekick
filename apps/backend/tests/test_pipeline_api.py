@@ -46,7 +46,6 @@ def test_pipeline_endpoint_reports_runtime_choices(tmp_path: Path) -> None:
         tmp_path,
         parser_layout_profile="generic",
         parser_enabled_layout_profiles=["fortuna_nations"],
-        recommendation_enabled_providers=["rule_based"],
     )
 
     response = client.get("/api/pipeline")
@@ -56,8 +55,6 @@ def test_pipeline_endpoint_reports_runtime_choices(tmp_path: Path) -> None:
     assert payload["defaults"] == {
         "parser_provider": "mock",
         "parser_layout_profile": "generic",
-        "recommendation_provider": "mock",
-        "recommendation_engine": None,
     }
     assert [option["id"] for option in payload["parser_layout_profiles"]] == [
         "generic",
@@ -66,34 +63,6 @@ def test_pipeline_endpoint_reports_runtime_choices(tmp_path: Path) -> None:
     assert payload["parser_layout_compatibility"] == {
         "mock": ["generic", "fortuna_nations"],
     }
-    assert [option["id"] for option in payload["recommendation_providers"]] == [
-        "mock",
-        "rule_based",
-    ]
-
-
-def test_pipeline_endpoint_tolerates_unknown_inactive_local_engine(
-    tmp_path: Path,
-) -> None:
-    client = make_client(
-        tmp_path,
-        recommendation_provider="rule_based",
-        local_solver_engine="missing",
-    )
-
-    response = client.get("/api/pipeline")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["defaults"]["recommendation_engine"] is None
-    assert payload["recommendation_engines"] == [
-        {
-            "id": "missing",
-            "label": "Missing",
-            "available": True,
-            "unavailable_reason": None,
-        }
-    ]
 
 
 def test_pipeline_endpoint_reports_fallbacks_for_unavailable_defaults(
@@ -103,8 +72,6 @@ def test_pipeline_endpoint_reports_fallbacks_for_unavailable_defaults(
         tmp_path,
         parser_provider="llm_vision",
         parser_enabled_providers=["mock"],
-        recommendation_provider="external_solver",
-        recommendation_enabled_providers=["rule_based"],
     )
 
     response = client.get("/api/pipeline")
@@ -119,36 +86,28 @@ def test_pipeline_endpoint_reports_fallbacks_for_unavailable_defaults(
     }
     assert payload["parser_providers"][1]["id"] == "mock"
     assert payload["parser_providers"][1]["available"] is True
-    assert payload["recommendation_providers"][0] == {
-        "id": "external_solver",
-        "label": "External solver",
-        "available": False,
-        "unavailable_reason": "External solver URL is not configured",
-    }
-    assert payload["recommendation_providers"][1]["id"] == "rule_based"
-    assert payload["recommendation_providers"][1]["available"] is True
+    assert "recommendation_providers" not in payload
+    assert "recommendation_engines" not in payload
 
 
 def test_upload_persists_explicit_pipeline_selection(tmp_path: Path) -> None:
     client = make_client(
         tmp_path,
         parser_enabled_layout_profiles=["pokerstars"],
-        recommendation_enabled_providers=["rule_based"],
     )
 
     response = upload_job_with_pipeline(
         client,
         parser_provider="mock",
         parser_layout_profile="pokerstars",
-        recommendation_provider="rule_based",
     )
 
     assert response.status_code == 201
     payload = response.json()
     assert payload["parser_provider"] == "mock"
     assert payload["parser_layout_profile"] == "pokerstars"
-    assert payload["recommendation_provider"] == "rule_based"
-    assert payload["recommendation_engine"] is None
+    assert "recommendation_provider" not in payload
+    assert "recommendation_engine" not in payload
 
 
 def test_upload_rejects_pipeline_plugin_not_enabled_by_deployment(
@@ -160,7 +119,6 @@ def test_upload_rejects_pipeline_plugin_not_enabled_by_deployment(
         client,
         parser_provider="ocr_cv",
         parser_layout_profile="generic",
-        recommendation_provider="mock",
     )
 
     assert response.status_code == 400
@@ -183,7 +141,6 @@ def test_upload_rejects_layout_not_supported_by_selected_parser(
         client,
         parser_provider="ocr_cv",
         parser_layout_profile="pokerstars",
-        recommendation_provider="mock",
     )
 
     assert response.status_code == 400

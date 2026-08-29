@@ -7,11 +7,8 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.domain.poker import CanonicalState, ParserResult
-from app.domain.recommendations import RecommendationResult
-from app.domain.training import TrainingDecision
 
-JobStatus = Literal["created", "parsed", "approved", "recommended", "error"]
-JobInputContext = Literal["legacy_player", "administrative_test"]
+JobStatus = Literal["created", "parsed", "approved", "error"]
 
 
 class ScreenshotMetadataRequest(BaseModel):
@@ -53,7 +50,6 @@ class JobRecord(BaseModel):
 
     id: str = Field(default_factory=lambda: uuid4().hex)
     status: JobStatus = "created"
-    input_context: JobInputContext = "legacy_player"
     upload_request_id: str | None = Field(
         default=None,
         min_length=1,
@@ -67,28 +63,15 @@ class JobRecord(BaseModel):
     image_filename: str
     parser_provider: str
     parser_layout_profile: str | None = None
-    recommendation_provider: str
-    recommendation_engine: str | None = None
     parser_result: ParserResult | None = None
     parser_auto_approval_eligible: bool | None = None
     approved_state: CanonicalState | None = None
-    training_decision: TrainingDecision | None = None
-    recommendation: RecommendationResult | None = None
-    recommendation_pending: bool = False
-    recommendation_request_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=128,
-        pattern=r"^[A-Za-z0-9._:-]+$",
-    )
     benchmark_import_request_id: str | None = Field(
         default=None,
         min_length=1,
         max_length=128,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9._:-]*$",
     )
-    training_reviewed_at: datetime | None = None
-    training_review_note: str | None = None
     benchmark_included: bool = False
     archived_at: datetime | None = None
     error: str | None = None

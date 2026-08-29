@@ -1,4 +1,3 @@
-import base64
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -7,22 +6,11 @@ from threading import Thread
 from typing import Any
 
 import pytest
-from fastapi.testclient import TestClient
 
-from app.bootstrap import create_app
 from app.config import Settings
-from app.storage.file_job_store import FileJobStore
-from api_test_support import (
-    ADMIN_OCR_TEST_HEADERS,
-    ADMIN_OCR_TEST_TOKEN,
-    mark_legacy_player,
-)
-
-
-VALID_PNG = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ"
-    "AAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
-)
+from app.domain.poker import CanonicalState, Card
+from app.domain.recommendations import RecommendationRequest
+from app.providers.registry import build_provider
 
 
 @pytest.fixture
@@ -74,86 +62,44 @@ def external_solver_service() -> Iterator[tuple[str, list[dict[str, Any]]]]:
         thread.join(timeout=5)
 
 
-def create_approved_job(
-    client: TestClient,
-    data_dir: Path,
-    *,
-    opponents_at_current_bet: int | None = None,
-) -> str:
-    upload = client.post(
-        "/api/jobs",
-        files={"file": ("table.png", VALID_PNG, "image/png")},
-        headers=ADMIN_OCR_TEST_HEADERS,
-    )
-    assert upload.status_code == 201
-    job = upload.json()
-    mark_legacy_player(data_dir, job["id"])
-    approved_state = {
-        **job["parser_result"]["state"],
-        "user_approved": True,
-    }
-    if opponents_at_current_bet is not None:
-        approved_state["opponents_at_current_bet"] = opponents_at_current_bet
-
-    approve = client.post(
-        f"/api/jobs/{job['id']}/approve",
-        json=approved_state,
-    )
-    assert approve.status_code == 200
-    return job["id"]
-
-
-def test_local_solver_subprocess_completes_api_recommendation(
-    tmp_path: Path,
-) -> None:
-    settings = Settings(
-        data_dir=tmp_path,
-        parser_provider="mock",
-        recommendation_provider="local_solver",
-        local_solver_engine="local_ev",
-        admin_ocr_test_enabled=True,
-        admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
+def approved_state() -> CanonicalState:
+    return CanonicalState(
+        hero_cards=[Card.from_code("Ah"), Card.from_code("Kd")],
+        board_cards=[Card.from_code("Qs"), Card.from_code("Jc"), Card.from_code("2h")],
+        pot_size=12.5,
+        current_bet=2.5,
+        hero_stack=97.5,
+        effective_stack=96.0,
+        players_in_hand=3,
+        opponents_at_current_bet=1,
+        hero_position="button",
+        street="flop",
+        facing_action="bet",
+        action_context="Cutoff bet 2.5 into 12.5",
+        user_approved=True,
     )
 
-    with TestClient(create_app(settings)) as client:
-        job_id = create_approved_job(client, tmp_path, opponents_at_current_bet=1)
-        response = client.post(f"/api/jobs/{job_id}/recommend")
 
-    assert response.status_code == 200
-    recommendation = response.json()["recommendation"]
-    assert recommendation["raw"]["provider"] == "local_solver"
-    assert recommendation["raw"]["engine"] == "local_ev_solver_v1"
-    assert recommendation["raw"]["candidates"]
-
-    persisted = FileJobStore(tmp_path).get(job_id)
-    assert persisted.status == "recommended"
-    assert persisted.recommendation is not None
-    assert persisted.recommendation.raw["engine"] == "local_ev_solver_v1"
-
-
-def test_external_solver_http_service_completes_api_recommendation(
+def test_external_solver_http_service_completes_a_recommendation(
     tmp_path: Path,
     external_solver_service: tuple[str, list[dict[str, Any]]],
 ) -> None:
     service_url, requests = external_solver_service
-    settings = Settings(
-        data_dir=tmp_path,
-        parser_provider="mock",
-        recommendation_provider="external_solver",
-        external_provider_url=service_url,
-        external_request_timeout_seconds=5,
-        admin_ocr_test_enabled=True,
-        admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
+    provider = build_provider(
+        Settings(
+            data_dir=tmp_path,
+            recommendation_provider="external_solver",
+            external_provider_url=service_url,
+            external_request_timeout_seconds=5,
+        )
     )
 
-    with TestClient(create_app(settings)) as client:
-        job_id = create_approved_job(client, tmp_path)
-        response = client.post(f"/api/jobs/{job_id}/recommend")
+    result = provider.recommend(
+        RecommendationRequest(state=approved_state(), provider=provider.name)
+    )
 
-    assert response.status_code == 200
-    recommendation = response.json()["recommendation"]
-    assert recommendation["action"] == "call"
-    assert recommendation["raw"] == {
+    assert result.action == "call"
+    assert result.raw == {
         "provider": "external_solver",
         "engine": "loopback_contract_v1",
     }
@@ -167,8 +113,3 @@ def test_external_solver_http_service_completes_api_recommendation(
         {"rank": "A", "suit": "hearts"},
         {"rank": "K", "suit": "diamonds"},
     ]
-
-    persisted = FileJobStore(tmp_path).get(job_id)
-    assert persisted.status == "recommended"
-    assert persisted.recommendation is not None
-    assert persisted.recommendation.raw["engine"] == "loopback_contract_v1"

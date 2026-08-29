@@ -150,7 +150,6 @@ class Settings(BaseSettings):
     max_backup_upload_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
     api_rate_limit_enabled: bool = Field(default=True)
     api_rate_limit_uploads_per_minute: int = Field(default=120, gt=0, le=10_000)
-    api_rate_limit_recommendations_per_minute: int = Field(default=120, gt=0, le=10_000)
     api_rate_limit_benchmarks_per_minute: int = Field(default=6, gt=0, le=10_000)
     api_rate_limit_data_transfers_per_minute: int = Field(default=6, gt=0, le=10_000)
     cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:5173"])

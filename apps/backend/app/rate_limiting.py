@@ -14,18 +14,16 @@ from starlette.requests import Request
 
 RateLimitCategory = Literal[
     "uploads",
-    "recommendations",
     "benchmarks",
     "data_transfers",
 ]
 RATE_LIMIT_CATEGORIES: frozenset[RateLimitCategory] = frozenset(
-    {"uploads", "recommendations", "benchmarks", "data_transfers"}
+    {"uploads", "benchmarks", "data_transfers"}
 )
 
 RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_MAX_BUCKETS = 4096
 CONNECTING_IP_HEADER = "CF-Connecting-IP"
-_RECOMMENDATION_PATH = re.compile(r"^/api/jobs/[^/]+/recommend$")
 _BENCHMARK_IMPORT_RECOVERY_PATH = re.compile(
     r"^/api/benchmarks/imports/[^/]+$"
 )
@@ -144,8 +142,6 @@ def rate_limit_category(method: str, path: str) -> RateLimitCategory | None:
     if normalized_method == "GET" and path == "/api/admin/ocr-test/session":
         # Credential probing shares the upload budget it guards.
         return "uploads"
-    if normalized_method == "POST" and _RECOMMENDATION_PATH.fullmatch(path):
-        return "recommendations"
     if normalized_method == "POST" and path == "/api/benchmarks/run":
         return "benchmarks"
     if (

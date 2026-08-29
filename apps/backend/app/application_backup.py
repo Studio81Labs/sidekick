@@ -154,9 +154,9 @@ def build_application_backup_archive(
         benchmark_reports,
         key=lambda report: (report.created_at, report.id),
     )
-    if any(job.status == "created" or job.recommendation_pending for job in sorted_jobs):
+    if any(job.status == "created" for job in sorted_jobs):
         raise ApplicationBackupExportError(
-            "Wait for active parsing and recommendations before creating a backup"
+            "Wait for active parsing before creating a backup"
         )
 
     archive_file = SpooledTemporaryFile(
@@ -499,7 +499,7 @@ def _read_backup_job(
         raise ApplicationBackupError(
             f"Application backup job ID does not match {entry.job_id}"
         )
-    if job.status == "created" or job.recommendation_pending:
+    if job.status == "created":
         raise ApplicationBackupError(
             f"Application backup job {entry.job_id} contains an active operation"
         )
@@ -721,12 +721,7 @@ def _validate_job_timestamps(job: JobRecord) -> None:
     timestamps = (
         ("created_at", job.created_at),
         ("updated_at", job.updated_at),
-        ("training_reviewed_at", job.training_reviewed_at),
         ("archived_at", job.archived_at),
-        (
-            "training_decision.recorded_at",
-            job.training_decision.recorded_at if job.training_decision else None,
-        ),
     )
     for field_name, value in timestamps:
         if value is not None:

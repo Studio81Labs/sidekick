@@ -1,5 +1,3 @@
-import json
-
 import pytest
 from pydantic import ValidationError
 
@@ -40,7 +38,6 @@ def test_job_record_json_round_trip_and_snapshot_fields() -> None:
         original_filename="hero-turn.png",
         image_filename="original.png",
         parser_provider="ocr_cv",
-        recommendation_provider="rule_based",
         title="   Turn decision  ",
         notes="  Check river sizing.   ",
         tags=["river", "  river", "button"],
@@ -54,39 +51,11 @@ def test_job_record_json_round_trip_and_snapshot_fields() -> None:
     assert persisted.tags == ["river", "button"]
 
 
-def test_job_record_json_round_trip_rejects_legacy_sizing_values_only_after_normalization() -> None:
-    legacy_payload = {
-        "original_filename": "legacy.png",
-        "image_filename": "original.png",
-        "parser_provider": "ocr_cv",
-        "recommendation_provider": "rule_based",
-        "recommendation": {
-            "action": "call",
-            "sizing": 2.5,
-            "confidence": 0.82,
-            "explanation": "legacy check action",
-        },
-        "training_decision": {
-            "action": "raise",
-            "sizing": 0,
-            "certainty": "medium",
-        },
-    }
-
-    legacy_job = load_persisted_job_record(json.dumps(legacy_payload))
-
-    assert legacy_job.recommendation is not None
-    assert legacy_job.recommendation.sizing is None
-    assert legacy_job.training_decision is not None
-    assert legacy_job.training_decision.sizing is None
-
-
 def test_job_history_and_queue_contracts_round_trip() -> None:
     job = JobRecord(
         original_filename="history-turn.png",
         image_filename="history.png",
         parser_provider="mock",
-        recommendation_provider="rule_based",
     )
 
     history = JobHistory(total=1, jobs=[job], snapshot_version="history-v1")
@@ -101,27 +70,13 @@ def test_job_history_and_queue_contracts_round_trip() -> None:
     assert reloaded_queue.total == 1
 
 
-def test_job_record_defaults_missing_input_context_to_legacy_player() -> None:
-    job = JobRecord.model_validate(
-        {
-            "original_filename": "table.png",
-            "image_filename": "original.png",
-            "parser_provider": "mock",
-            "recommendation_provider": "mock",
-        }
-    )
-
-    assert job.input_context == "legacy_player"
-
-
-def test_job_record_rejects_unknown_input_context() -> None:
+def test_job_record_rejects_recommended_status() -> None:
     with pytest.raises(ValidationError):
         JobRecord.model_validate(
             {
                 "original_filename": "table.png",
                 "image_filename": "original.png",
                 "parser_provider": "mock",
-                "recommendation_provider": "mock",
-                "input_context": "player",
+                "status": "recommended",
             }
         )

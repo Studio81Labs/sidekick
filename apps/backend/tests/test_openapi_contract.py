@@ -6,7 +6,6 @@ from app.config import Settings
 
 EXPECTED_OPERATION_IDS = {
     ("DELETE", "/api/jobs/{job_id}"): "job_delete",
-    ("DELETE", "/api/jobs/{job_id}/training-review"): "job_training_review_reopen",
     ("DELETE", "/api/mcp/principals/{principal_id}"): "mcp_principal_revoke",
     ("GET", "/api/admin/ocr-test/session"): "admin_ocr_test_session_get",
     ("GET", "/api/backups/export"): "backups_export",
@@ -22,21 +21,16 @@ EXPECTED_OPERATION_IDS = {
     ("GET", "/api/mcp/config"): "mcp_config_get",
     ("GET", "/api/mcp/principals"): "mcp_principals_list",
     ("GET", "/api/pipeline"): "pipeline_get",
-    ("GET", "/api/training/lessons/export"): "training_lessons_export",
-    ("GET", "/api/training/progress"): "training_progress_get",
     ("POST", "/api/backups/restore"): "backups_restore",
     ("POST", "/api/benchmarks/import"): "benchmarks_import",
     ("POST", "/api/benchmarks/run"): "benchmarks_run",
     ("POST", "/api/jobs"): "jobs_create",
     ("POST", "/api/jobs/{job_id}/approve"): "job_approve",
-    ("POST", "/api/jobs/{job_id}/recommend"): "job_recommend",
     ("POST", "/api/mcp/principals"): "mcp_principals_create",
     ("POST", "/api/mcp/principals/{principal_id}/rotate"): "mcp_principal_rotate",
     ("PUT", "/api/history"): "history_archive",
     ("PUT", "/api/jobs/{job_id}/benchmark"): "job_benchmark_update",
-    ("PUT", "/api/jobs/{job_id}/decision"): "job_decision_record",
     ("PUT", "/api/jobs/{job_id}/metadata"): "job_metadata_update",
-    ("PUT", "/api/jobs/{job_id}/training-review"): "job_training_review_complete",
 }
 
 
@@ -94,9 +88,6 @@ def test_binary_and_markdown_response_contracts_are_explicit(tmp_path: Path) -> 
         ("/api/jobs/{job_id}/image", "image/webp"): binary_schema,
         ("/api/backups/export", "application/zip"): binary_schema,
         ("/api/benchmarks/export", "application/zip"): binary_schema,
-        ("/api/training/lessons/export", "text/markdown"): {
-            "schema": {"type": "string"}
-        },
     }
 
     actual_content = {
@@ -107,7 +98,6 @@ def test_binary_and_markdown_response_contracts_are_explicit(tmp_path: Path) -> 
                 "/api/jobs/{job_id}/image",
                 "/api/backups/export",
                 "/api/benchmarks/export",
-                "/api/training/lessons/export",
             )
             for content_type, schema in document["paths"][path]["get"]["responses"][
                 "200"

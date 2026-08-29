@@ -43,7 +43,6 @@ def job_record() -> JobRecord:
         original_filename="table.png",
         image_filename="table.png",
         parser_provider="ocr_cv",
-        recommendation_provider="local_solver",
     )
 
 
@@ -316,14 +315,10 @@ def test_benchmark_import_runs_application_work_outside_event_loop() -> None:
             defaults=PipelineSelection(
                 parser_provider="ocr_cv",
                 parser_layout_profile="fortuna",
-                recommendation_provider="local_solver",
-                recommendation_engine="local_solver",
             ),
             parser_providers=[],
             parser_layout_profiles=[],
             parser_layout_compatibility={},
-            recommendation_providers=[],
-            recommendation_engines=[],
         ),
     )))
 

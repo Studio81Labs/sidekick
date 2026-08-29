@@ -3,7 +3,6 @@ from threading import Event, Lock as ThreadLock, Thread
 
 import pytest
 
-from app.providers.base import ProviderError, ProviderInputError
 from app.storage.file_benchmark_store import FileBenchmarkStore
 from app.storage.file_job_store import FileJobStore
 from app.storage.persistence import JobNotFoundError
@@ -13,7 +12,6 @@ from api_test_support import (
     approve_job,
     load_only_job,
     make_client,
-    mark_legacy_player,
     upload_job,
 )
 
@@ -26,6 +24,7 @@ def test_upload_persists_client_request_identity(tmp_path: Path) -> None:
 
     assert response.status_code == 201
     assert response.json()["upload_request_id"] == request_id
+    assert "recommendation_provider" not in response.json()
     assert load_only_job(tmp_path).upload_request_id == request_id
 
 
@@ -71,89 +70,36 @@ def test_processing_queue_pages_unarchived_jobs_in_stable_order(
     assert client.get("/api/jobs?offset=-1").status_code == 422
 
 
-def test_processing_queue_keeps_mutated_benchmark_imports(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class FailingProvider:
-        name = "failing"
-        required_fields = ["hero_cards", "street"]
-
-        def required_fields_for(self, state: object):
-            return self.required_fields
-
-        def recommend(self, request: object):
-            raise ProviderError("provider exploded")
-
+def test_processing_queue_keeps_mutated_benchmark_imports(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     pristine_id = upload_job(client, filename="pristine-import.png").json()["id"]
-    decision_id = upload_job(client, filename="decision-import.png").json()["id"]
+    reparsed_id = upload_job(client, filename="reparsed-import.png").json()["id"]
     failed_id = upload_job(client, filename="failed-import.png").json()["id"]
     store = FileJobStore(tmp_path)
-    for job_id in (pristine_id, decision_id, failed_id):
-        mark_legacy_player(tmp_path, job_id)
+    parser_result = store.get(reparsed_id).parser_result
+    for job_id in (pristine_id, reparsed_id, failed_id):
         approve_job(client, job_id)
         imported_job = store.get(job_id)
         imported_job.parser_result = None
         imported_job.benchmark_included = True
         store.save(imported_job)
 
-    decision = client.put(
-        f"/api/jobs/{decision_id}/decision",
-        json={"action": "call", "sizing": None, "certainty": "medium"},
-    )
-    monkeypatch.setattr("app.bootstrap.build_provider", lambda settings: FailingProvider())
-    failed_recommendation = client.post(f"/api/jobs/{failed_id}/recommend")
+    reparsed_job = store.get(reparsed_id)
+    reparsed_job.parser_result = parser_result
+    store.save(reparsed_job)
+    failed_job = store.get(failed_id)
+    failed_job.status = "error"
+    failed_job.error = "parser exploded"
+    store.save(failed_job)
+
     queue = client.get("/api/jobs")
 
-    assert decision.status_code == 200
-    assert failed_recommendation.status_code == 502
     assert queue.status_code == 200
     assert queue.json()["total"] == 2
-    assert [job["id"] for job in queue.json()["jobs"]] == [decision_id, failed_id]
-    assert queue.json()["jobs"][0]["training_decision"]["action"] == "call"
+    assert [job["id"] for job in queue.json()["jobs"]] == [reparsed_id, failed_id]
+    assert queue.json()["jobs"][0]["parser_result"] is not None
     assert queue.json()["jobs"][1]["status"] == "error"
-    assert queue.json()["jobs"][1]["error"] == "provider exploded"
-
-
-def test_processing_queue_keeps_correctable_benchmark_attempts(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class CorrectableProvider:
-        name = "correctable"
-        required_fields = ["hero_cards", "street"]
-
-        def required_fields_for(self, state: object):
-            return self.required_fields
-
-        def recommend(self, request: object):
-            raise ProviderInputError("Add the missing table context")
-
-    client = make_client(tmp_path)
-    job_id = upload_job(client, filename="correctable-import.png").json()["id"]
-    mark_legacy_player(tmp_path, job_id)
-    approve_job(client, job_id)
-    store = FileJobStore(tmp_path)
-    imported_job = store.get(job_id)
-    imported_job.parser_result = None
-    imported_job.benchmark_included = True
-    store.save(imported_job)
-    monkeypatch.setattr("app.bootstrap.build_provider", lambda settings: CorrectableProvider())
-
-    recommendation = client.post(
-        f"/api/jobs/{job_id}/recommend",
-        headers={"X-Recommendation-Request-ID": "correctable-attempt"},
-    )
-    queue = client.get("/api/jobs")
-
-    assert recommendation.status_code == 422
-    assert queue.status_code == 200
-    assert queue.json()["total"] == 1
-    assert queue.json()["jobs"][0]["id"] == job_id
-    assert queue.json()["jobs"][0]["recommendation_request_id"] == (
-        "correctable-attempt"
-    )
+    assert queue.json()["jobs"][1]["error"] == "parser exploded"
 
 
 def test_job_metadata_is_normalized_persisted_and_searchable(
@@ -284,26 +230,10 @@ def test_approval_rejects_coerced_numeric_state(
     assert job.approved_state is None
 
 
-def test_reapproval_clears_previous_recommendation(tmp_path: Path) -> None:
+def test_reapproval_replaces_the_previous_approved_state(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     job_id = upload_job(client).json()["id"]
-    mark_legacy_player(tmp_path, job_id)
     approve_job(client, job_id)
-    client.put(
-        f"/api/jobs/{job_id}/decision",
-        json={"action": "raise", "sizing": 7.5},
-    )
-    client.post(f"/api/jobs/{job_id}/recommend")
-    review = client.put(
-        f"/api/jobs/{job_id}/training-review",
-        json={"note": "Review the call price before choosing a raise."},
-    )
-
-    assert review.status_code == 200
-    assert review.json()["training_reviewed_at"]
-    assert review.json()["training_review_note"] == (
-        "Review the call price before choosing a raise."
-    )
 
     corrected_state = {**APPROVED_STATE, "pot_size": 18.0}
     response = approve_job(client, job_id, corrected_state)
@@ -312,11 +242,8 @@ def test_reapproval_clears_previous_recommendation(tmp_path: Path) -> None:
     job = response.json()
     assert job["status"] == "approved"
     assert job["approved_state"]["pot_size"] == 18.0
-    assert job["training_decision"] is None
-    assert job["recommendation"] is None
-    assert job["training_reviewed_at"] is None
-    assert job["training_review_note"] is None
-    assert FileJobStore(tmp_path).get(job_id).recommendation is None
+    assert job["error"] is None
+    assert FileJobStore(tmp_path).get(job_id).approved_state.pot_size == 18.0
 
 
 def test_job_image_endpoint_returns_upload(tmp_path: Path) -> None:
@@ -461,8 +388,6 @@ def test_store_persists_jobs_and_rejects_invalid_job_ids(tmp_path: Path) -> None
         original_filename="table.png",
         image_bytes=VALID_PNG,
         parser_provider="mock",
-        recommendation_provider="mock",
-        input_context="legacy_player",
     )
 
     reloaded = FileJobStore(tmp_path).get(job.id)
@@ -502,11 +427,6 @@ def test_missing_job_mutations_do_not_allocate_per_job_locks(
         job_id = f"{index:032x}"
         responses = (
             client.post(f"/api/jobs/{job_id}/approve", json=APPROVED_STATE),
-            client.put(
-                f"/api/jobs/{job_id}/decision",
-                json={"action": "call", "sizing": None},
-            ),
-            client.post(f"/api/jobs/{job_id}/recommend"),
             client.put(f"/api/jobs/{job_id}/benchmark", json={"included": False}),
         )
         assert all(response.status_code == 404 for response in responses)
