@@ -162,7 +162,8 @@ Screenshot upload now uses a capture-owned command over the generated jobs
 adapter. It preserves the caller upload request ID, selected pipeline, and abort
 signal, seeds confirmed job detail, and invalidates processing only. Analyzer
 composition continues to own per-file queue progress, independent failures,
-projection leases, capture sources, and optional post-upload automation.
+projection leases, and capture sources while the administrator OCR test tools
+are unlocked.
 
 The player workspace is import-first: the control rail shows an import-first
 notice instead of capture controls. An operator can unlock the administrative
@@ -642,15 +643,15 @@ recorded in
 
 ### PWA
 
-`apps/pwa` owns screenshot upload and capture, queue navigation, review and
-correction, automation controls, pre-reveal training decisions, recommendations,
+`apps/pwa` owns administrator-only screenshot upload and capture, queue
+navigation, review and correction, pre-reveal training decisions, recommendations,
 decision-evidence presentation, aggregate training progress, and history. It
 is organized into application, page, feature, and shared layers. `src/app`
 contains the browser-router shell, route registry, top-level error monitoring,
 and other application-wide concerns. `src/pages/analyzer/AnalyzerPage.tsx` is a
 route-scoped provider wrapper. `useAnalyzerWorkspaceController.ts` retains the
 queue/history mutation protocol because those transactions span capture,
-automation, review, benchmark labels, and recovery, while
+review, benchmark labels, and recovery, while
 `AnalyzerWorkspaceComposition.tsx` owns only the grouped feature render tree.
 The controller invokes Query-aware commands and consumes an injected workflow
 projection interface; it neither owns raw HTTP transport nor imports concrete
@@ -741,7 +742,7 @@ Cross-feature error formatting, abort classification, uncertain-write
 classification, and stable toast IDs live in `src/shared/lib/errors.ts`.
 Feature hooks import those primitives downward instead of depending on the
 workspace feature; workspace workflow helpers retain only workspace-specific
-automation and job-state behavior.
+job-state behavior.
 
 Preflop position labels, aliases, and normalization live in
 `domains/poker/model/preflopPosition.ts`. Hand-review and benchmark features
@@ -775,7 +776,8 @@ authentication pages should enter through `src/app/routes.tsx` and a dedicated
 directory under `src/pages`.
 
 The review workspace is split into hand-state editing, training-decision, and
-recommendation panels. Capture, automation, parser/recommendation selection,
+recommendation panels. Capture, administrator access, parser/recommendation
+selection,
 training progress, benchmarks, screenshot details, and system information each
 have a dedicated state hook or controller. Dialogs and panels receive explicit
 values and commands from those boundaries, which keeps them independently
@@ -1089,20 +1091,21 @@ benchmark matcher.
 1. A capture or upload creates an independent job.
 2. The configured parser returns detected state, confidence, warnings, and raw
    metadata. Field confidence values must be finite JSON numbers between zero
-   and one; boolean and string coercion is rejected before automation evaluates
-   them. The backend records whether the result met the deployment's configured
-   auto-approval thresholds so browser automation can require that decision
-   without duplicating policy. Detected pot, bet, and stack values must be finite
+   and one; boolean and string coercion is rejected before approval evaluates
+   them. The backend still records whether the result met the deployment's
+   configured auto-approval thresholds as reviewable evidence; no browser
+   automation consumes it any more. Detected pot, bet, and stack values must be
+   finite
    non-negative JSON numbers, detected preflop open size must be positive, and
    player count must be a positive JSON integer. Boolean and string coercion is
    rejected.
-3. The user or automation approves a canonical state when requirements are met.
-   Approved numeric table state follows the same finite-number and integer
-   contract as detected state; rejected input leaves the parsed job unchanged.
-   Deployment auto-approval always leaves warning-bearing parser results for
-   browser review. Control-panel automation may pass those warnings only when
-   the user explicitly enables its warning policy and confidence eligibility
-   still passes.
+3. The user approves a canonical state when requirements are met; deployment
+   auto-approval may approve a confidence-eligible, warning-free parse. Approved
+   numeric table state follows the same finite-number and integer contract as
+   detected state; rejected input leaves the parsed job unchanged. Deployment
+   auto-approval always leaves warning-bearing parser results for browser
+   review; control-panel automation no longer exists, so every other approval
+   is an explicit user action.
 4. The user may lock an action, optional sizing, and optional self-rated
    certainty before revealing provider output.
 5. The configured provider returns an educational action, sizing, confidence,
@@ -1223,8 +1226,9 @@ candidate and reports non-negative per-hand and average EV loss. Missing,
 implicit, or malformed action/sizing/EV metadata leaves the hand ungraded for EV
 without changing its action-policy outcome. A grade also requires the provider's
 recommended line and at least one distinct valid alternative, preventing a
-partial candidate payload from claiming zero loss. Hands processed only by
-automation are excluded because they have no player answer to evaluate. A
+partial candidate payload from claiming zero loss. Hands approved only by
+deployment auto-approval are excluded because they have no player answer to
+evaluate. A
 separate bounded queue returns unsupported actions and sizing differences so the
 PWA can review them without hiding older differences behind supported
 lines. It defaults to newest-first order. An explicit EV-loss order ranks
@@ -1285,8 +1289,10 @@ only and leaves other queue items free to continue.
 ## Persistence
 
 The backend stores jobs, images, and benchmark reports under `POKER_DATA_DIR`.
-The PWA retains automation preferences in versioned browser-local storage;
-invalid or unavailable storage falls back to the established application defaults.
+The PWA retains no automation preferences (control-panel automation was removed
+with the import-first boundary); browser-local storage holds only the queue,
+history, and recovery projections described below, and invalid or unavailable
+storage falls back to the established application defaults.
 Unarchived upload and capture jobs are exposed through a stable oldest-first,
 offset-paged processing projection with a snapshot hash. The PWA caches at
 most 100 of those records for immediate reload display, retains the complete
@@ -1310,7 +1316,8 @@ projection, the PWA revalidates it by ID before settling or removing it
 from the workspace. Legacy single-job leases without operation-specific
 evidence remain conservative until their bounded expiry.
 Upload and capture leases carry the baseline queue plus client-generated upload
-and solver request IDs and the last required automation stage for each file.
+and solver request IDs; every upload now targets the parsed stage for each
+file.
 The upload ID is sent with the multipart request and both
 identities are persisted on the backend job, allowing a replacement document to
 distinguish a completed correctable solver attempt from work that never began.

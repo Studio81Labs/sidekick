@@ -91,9 +91,9 @@ The main provider switches are:
   vision may use deployment-defined IDs such as `pokerstars`
 - `POKER_PARSER_ENABLED_PROVIDERS` and
   `POKER_PARSER_ENABLED_LAYOUT_PROFILES`: JSON lists of additional installed
-  parsers and layout IDs an administrator may select for each OCR test upload or live capture;
-  the deployment defaults are always enabled and the UI shows only compatible
-  parser/layout combinations
+  parsers and layout IDs an administrator may select for each OCR test
+  upload or live capture; the deployment defaults are always enabled and the UI
+  shows only compatible parser/layout combinations
 - `POKER_RECOMMENDATION_PROVIDER`: `rule_based`, `mock`, `local_solver`, `external_solver`, or `llm_advice`
 - `POKER_RECOMMENDATION_ENABLED_PROVIDERS`: JSON list of additional installed
   recommendation plugins exposed for per-screenshot selection
