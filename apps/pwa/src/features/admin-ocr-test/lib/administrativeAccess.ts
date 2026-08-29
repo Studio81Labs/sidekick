@@ -1,5 +1,3 @@
-export const ADMINISTRATIVE_TEST_LABEL = "Administrative OCR test";
-
 export type AdministrativeAccessDenial = "disabled" | "unauthorized";
 
 export function normalizeAdministratorToken(value: string): string {

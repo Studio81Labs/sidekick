@@ -21,7 +21,7 @@ def test_history_persists_only_explicitly_archived_ready_jobs(tmp_path: Path) ->
     mark_legacy_player(tmp_path, second_id)
     approve_job(client, first_id)
     approve_job(client, second_id)
-    client.post(f"/api/jobs/{second_id}/recommend")
+    assert client.post(f"/api/jobs/{second_id}/recommend").status_code == 200
 
     empty_history = client.get("/api/history")
     rejected = client.put("/api/history", json={"job_ids": [parsed_id]})
@@ -285,7 +285,7 @@ def test_history_searches_archived_poker_context_before_paging(
     }
     approve_job(client, matching_id, matching_state)
     approve_job(client, other_id)
-    client.post(f"/api/jobs/{matching_id}/recommend")
+    assert client.post(f"/api/jobs/{matching_id}/recommend").status_code == 200
     client.post(f"/api/jobs/{other_id}/recommend")
     client.put(
         "/api/history",

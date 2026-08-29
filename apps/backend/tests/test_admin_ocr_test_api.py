@@ -164,6 +164,10 @@ def test_administrative_test_job_cannot_enter_training_review(tmp_path: Path) ->
     assert complete.json()["detail"] == (
         "Administrative OCR test inputs cannot enter training review"
     )
+    assert reopen.json()["detail"] == (
+        "Administrative OCR test inputs cannot enter training review"
+    )
+    assert FileJobStore(tmp_path).get(job_id).training_reviewed_at is None
 
 
 def test_legacy_player_jobs_keep_recommendation_and_training_paths(tmp_path: Path) -> None:

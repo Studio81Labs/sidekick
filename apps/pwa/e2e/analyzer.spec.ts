@@ -4945,9 +4945,7 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   await expect(failedQueueItem).toContainText(
     "Vision parser request failed with status 503",
   );
-  await expect(matchingQueueItems.filter({ hasText: "parsed" })).toContainText(
-    "parsed",
-  );
+  await expect(matchingQueueItems.filter({ hasText: "parsed" })).toHaveCount(1);
 
   await markLegacyJobs(page, [recoveredJob.id]);
   await forceQueueRevalidation(page);
