@@ -2279,13 +2279,22 @@ class ImportedHandLifecycle(ImportedHandModel):
 
 
 class SeatDecisionState(ImportedHandModel):
-    """A dealt-in player's chip position immediately before a hero action."""
+    """A dealt-in player's chip position immediately before a hero action.
+
+    ``street_commitment`` and ``live_commitment`` differ by exactly the dead
+    chips this player has posted on the street -- antes, which pay the pot but
+    do not answer a wager. Only ``live_commitment`` is comparable to
+    ``HeroActionContext.current_wager``: a call costs
+    ``current_wager - live_commitment``, and subtracting the ante-inclusive
+    ``street_commitment`` instead understates it by the posted ante.
+    """
 
     player_id: Identifier
     position: StructuralPosition
     starting_stack: NonNegativeDecimal
     stack_before_action: NonNegativeDecimal
     street_commitment: NonNegativeDecimal
+    live_commitment: NonNegativeDecimal
     hand_commitment: NonNegativeDecimal
     status: SeatDecisionStatus
 
@@ -4080,6 +4089,9 @@ def _hero_decision_contexts_for_extraction(
 
     assert state.hero_player_id is not None
     positions = _known_structural_positions(state.seats, state.button_seat)
+    # Unreachable through the aggregate property: its gate already rejects a
+    # state whose `_known_action_orders` -- derived from these positions -- is
+    # unresolved. Retained so the function stands on its own.
     if positions is None:
         return []
     ring = sorted(
@@ -4168,6 +4180,7 @@ def _hero_decision_contexts_for_extraction(
                         positions=positions,
                         committed_hand_commitments=committed_hand_commitments,
                         street_commitments=street_commitments,
+                        live_commitments=live_commitments,
                         actor_street_commitment=effective_prior_commitment,
                         committed_pot_before_street=committed_pot_before_street,
                         current_wager=current_wager,
@@ -4288,13 +4301,20 @@ def _hero_decision_context(
     positions: dict[int, StructuralPosition],
     committed_hand_commitments: dict[str, Decimal],
     street_commitments: dict[str, Decimal | None],
+    live_commitments: dict[str, Decimal | None],
     actor_street_commitment: Decimal,
     committed_pot_before_street: Decimal,
     current_wager: Decimal,
     folded_players: set[str],
     all_in_players: set[str],
 ) -> HeroActionContext:
-    """Snapshot the chip state the extraction walk holds at one hero action."""
+    """Snapshot the chip state the extraction walk holds at one hero action.
+
+    ``current_wager`` is tracked from ``live_commitments``, so the call amount
+    is measured against the hero's live commitment -- the same quantity the
+    walk's own call arithmetic uses. Measuring it against the ante-inclusive
+    ``street_commitments`` would understate it by the hero's posted ante.
+    """
 
     resolved_street_commitments: dict[str, Decimal] = {}
     for player_id, commitment in street_commitments.items():
@@ -4309,6 +4329,8 @@ def _hero_decision_context(
     for seat in ring:
         assert seat.starting_stack is not None
         street_commitment = resolved_street_commitments[seat.player_id]
+        live_commitment = live_commitments[seat.player_id]
+        assert live_commitment is not None
         hand_commitment = (
             committed_hand_commitments[seat.player_id] + street_commitment
         )
@@ -4319,6 +4341,7 @@ def _hero_decision_context(
                 starting_stack=seat.starting_stack,
                 stack_before_action=seat.starting_stack - hand_commitment,
                 street_commitment=street_commitment,
+                live_commitment=live_commitment,
                 hand_commitment=hand_commitment,
                 status=(
                     "folded"
@@ -4339,7 +4362,7 @@ def _hero_decision_context(
         pot_before_action=committed_pot_before_street
         + sum(resolved_street_commitments.values(), Decimal(0)),
         current_wager=current_wager,
-        amount_to_call=max(Decimal(0), current_wager - actor_street_commitment),
+        amount_to_call=max(Decimal(0), current_wager - hero.live_commitment),
         hero_stack_before_action=hero.stack_before_action,
         seats=seats,
     )

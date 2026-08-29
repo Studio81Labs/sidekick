@@ -17041,6 +17041,69 @@ def withdrawn_decision_record() -> ImportedHandRecord:
     )
 
 
+def ante_decision_record() -> ImportedHandRecord:
+    """Build a per-player ante hand where the hero posts the small blind.
+
+    The ante is dead money: it raises the hero's street commitment without
+    answering the big blind, so the hero's street and live commitments diverge
+    by exactly the posted ante.
+    """
+
+    payload = extraction_ready_state_payload()
+    payload["game"]["blinds"]["ante"] = Decimal("0.25")
+    payload["game"]["blinds"]["ante_mode"] = "per_player"
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("2.5")}}
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_ante",
+                    amount=Decimal("0.25"),
+                    total=Decimal("0.25"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_ante",
+                    amount=Decimal("0.25"),
+                    total=Decimal("0.25"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.75"),
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1.25"),
+                ),
+                wager_action(
+                    4,
+                    "hero",
+                    "call",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1.25"),
+                ),
+                automatic_action(5, "villain", total=Decimal("1.25")),
+            ],
+        },
+        {
+            "street": "flop",
+            "actions": [automatic_action(0, "villain", "fold")],
+        },
+    ]
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
 def test_hero_decision_context_exposes_exact_preflop_chip_state() -> None:
     state = ImportedHandState.model_validate(extraction_ready_state_payload())
     record = extraction_record_for_state(state)
@@ -17069,6 +17132,10 @@ def test_hero_decision_context_exposes_exact_preflop_chip_state() -> None:
         Decimal("100"),
     ]
     assert [seat.street_commitment for seat in context.seats] == [
+        Decimal("0.5"),
+        Decimal("1"),
+    ]
+    assert [seat.live_commitment for seat in context.seats] == [
         Decimal("0.5"),
         Decimal("1"),
     ]
@@ -17166,24 +17233,73 @@ def test_hero_decision_context_reports_folded_and_all_in_opponents() -> None:
     assert flop.hero_stack_before_action == Decimal("99")
 
 
+def test_hero_decision_context_measures_the_call_against_live_commitments() -> None:
+    record = ante_decision_record()
+
+    contexts = record.active_hero_decision_contexts
+
+    assert len(contexts) == 1
+    context = contexts[0]
+    assert (context.street, context.action_sequence) == ("preflop", 4)
+    assert context.current_wager == Decimal("1")
+    # A posted ante pays the pot without answering the big blind, so the hero
+    # still owes the full blind gap; the imported action agrees.
+    assert context.amount_to_call == Decimal("0.5")
+    assert context.amount_to_call == context.action.amount
+    assert context.pot_before_action == Decimal("2")
+    assert context.hero_stack_before_action == Decimal("99.25")
+
+    seats = {seat.player_id: seat for seat in context.seats}
+    assert seats["hero"].street_commitment == Decimal("0.75")
+    assert seats["hero"].live_commitment == Decimal("0.5")
+    assert seats["hero"].hand_commitment == Decimal("0.75")
+    assert seats["hero"].stack_before_action == Decimal("99.25")
+    assert seats["villain"].street_commitment == Decimal("1.25")
+    assert seats["villain"].live_commitment == Decimal("1")
+    assert seats["villain"].hand_commitment == Decimal("1.25")
+    assert seats["villain"].stack_before_action == Decimal("98.75")
+    assert [
+        seat.street_commitment - seat.live_commitment for seat in context.seats
+    ] == [Decimal("0.25"), Decimal("0.25")]
+
+
 def test_hero_decision_context_actions_match_the_extracted_hero_actions() -> None:
-    records = [
-        extraction_record_for_state(
-            ImportedHandState.model_validate(extraction_ready_state_payload())
+    fixtures: list[tuple[ImportedHandRecord, list[tuple[str, int]]]] = [
+        (
+            extraction_record_for_state(
+                ImportedHandState.model_validate(extraction_ready_state_payload())
+            ),
+            [("preflop", 2)],
         ),
-        uncalled_return_decision_record(),
-        multi_street_decision_record(),
-        contested_decision_record(),
-        withdrawn_decision_record(),
+        (ante_decision_record(), [("preflop", 4)]),
+        (uncalled_return_decision_record(), [("preflop", 2), ("flop", 1)]),
+        (
+            multi_street_decision_record(),
+            [("preflop", 2), ("flop", 1), ("turn", 1), ("river", 1)],
+        ),
+        (contested_decision_record(), [("preflop", 2), ("flop", 1)]),
+        (withdrawn_decision_record(), []),
     ]
 
-    for record in records:
+    for record, expected in fixtures:
+        state = record.active_state_for_extraction
+        expected_actions = []
+        for street_name, sequence in expected:
+            assert state is not None
+            street = next(
+                item for item in state.streets if item.street == street_name
+            )
+            expected_actions.append(street.actions[sequence])
+        contexts = record.active_hero_decision_contexts
+
         assert [
-            context.action for context in record.active_hero_decision_contexts
-        ] == record.active_hero_actions_for_extraction
+            (context.street, context.action_sequence) for context in contexts
+        ] == expected
+        assert [context.action for context in contexts] == expected_actions
+        assert record.active_hero_actions_for_extraction == expected_actions
     assert [
-        len(record.active_hero_actions_for_extraction) for record in records
-    ] == [1, 2, 4, 2, 0]
+        len(record.active_hero_actions_for_extraction) for record, _ in fixtures
+    ] == [1, 1, 2, 4, 2, 0]
 
 
 def test_hero_decision_context_is_empty_for_a_withdrawn_record() -> None:
