@@ -96,12 +96,7 @@ The main provider switches are:
   upload or live capture; the deployment defaults are always enabled and the UI
   shows only compatible parser/layout combinations
 - `POKER_RECOMMENDATION_PROVIDER`: `rule_based`, `mock`, `local_solver`, `external_solver`, or `llm_advice`
-- `POKER_RECOMMENDATION_ENABLED_PROVIDERS`: JSON list of additional installed
-  recommendation plugins available to the configured provider and the offline
-  recommendation benchmark
 - `POKER_LOCAL_SOLVER_ENGINE`: `postflop_solver` (default) or `local_ev`
-- `POKER_LOCAL_SOLVER_ENABLED_ENGINES`: JSON list of additional local solver
-  engines exposed when `local_solver` is selected
 - `POKER_POSTFLOP_SOLVER_RANGE_MODE`: derive ranges from a complete supported
   heads-up preflop history with `contextual` (default), or always use the
   configured OOP/IP ranges with `configured`

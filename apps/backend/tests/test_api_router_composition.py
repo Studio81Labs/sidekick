@@ -6,7 +6,6 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
-import pytest
 
 from app.api.dependencies import (
     ApiRuntime,

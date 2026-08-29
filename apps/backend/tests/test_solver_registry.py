@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from app.config import KNOWN_LOCAL_SOLVER_ENGINES, Settings
+from app.config import Settings
 from app.providers.base import ProviderConfigurationError
 from app.solvers.registry import (
     DEPLOYMENT_SELECTABLE_LOCAL_SOLVER_ENGINE_IDS,
@@ -17,10 +17,9 @@ from app.solvers.registry import (
 )
 
 
-def test_local_solver_engine_catalog_matches_configuration_allowlist() -> None:
-    assert (
-        DEPLOYMENT_SELECTABLE_LOCAL_SOLVER_ENGINE_IDS
-        == KNOWN_LOCAL_SOLVER_ENGINES
+def test_local_solver_engine_catalog_exposes_every_installed_engine() -> None:
+    assert DEPLOYMENT_SELECTABLE_LOCAL_SOLVER_ENGINE_IDS == frozenset(
+        {"local_ev", "postflop_solver"}
     )
     assert list(LOCAL_SOLVER_ENGINE_PLUGINS) == [
         "local_ev",

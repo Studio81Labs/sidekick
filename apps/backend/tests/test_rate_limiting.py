@@ -181,7 +181,7 @@ def test_limiter_requires_a_complete_positive_policy() -> None:
         ApiRateLimiter(
             {
                 "uploads": 0,
-                    "benchmarks": 1,
+                "benchmarks": 1,
                 "data_transfers": 1,
             }
         )
@@ -189,7 +189,7 @@ def test_limiter_requires_a_complete_positive_policy() -> None:
         ApiRateLimiter(
             {
                 "uploads": 1,
-                    "benchmarks": 1,
+                "benchmarks": 1,
                 "data_transfers": 1,
             },
             max_buckets=0,

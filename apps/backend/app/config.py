@@ -16,10 +16,6 @@ PIPELINE_ID_PATTERN = re.compile(r"^[a-z0-9_]+$")
 
 KNOWN_PARSER_PROVIDERS = frozenset({"mock", "llm_vision", "ocr_cv", "auto"})
 OCR_CV_LAYOUT_PROFILES = OCR_CV_LAYOUT_PROFILE_IDS
-KNOWN_RECOMMENDATION_PROVIDERS = frozenset(
-    {"rule_based", "mock", "local_solver", "external_solver", "llm_advice"}
-)
-KNOWN_LOCAL_SOLVER_ENGINES = frozenset({"local_ev", "postflop_solver"})
 
 DEFAULT_POSTFLOP_OOP_RANGE = "66+,A8s+,A5s-A4s,AJo+,K9s+,KQo,QTs+,JTs,96s+,85s+,75s+,65s,54s"
 DEFAULT_POSTFLOP_IP_RANGE = (
@@ -115,10 +111,6 @@ class Settings(BaseSettings):
         }
     )
     recommendation_provider: str = Field(default="rule_based")
-    recommendation_enabled_providers: list[str] = Field(
-        default_factory=list,
-        max_length=16,
-    )
     external_parser_url: str | None = Field(default=None)
     external_parser_bearer_token: SecretStr | None = Field(default=None)
     external_provider_url: str | None = Field(default=None)
@@ -128,10 +120,6 @@ class Settings(BaseSettings):
     external_request_timeout_seconds: float = Field(default=60.0, gt=0)
     local_solver_command: str | None = Field(default=None)
     local_solver_engine: str = Field(default="postflop_solver")
-    local_solver_enabled_engines: list[str] = Field(
-        default_factory=list,
-        max_length=16,
-    )
     local_solver_timeout_seconds: float = Field(default=120.0, gt=0)
     postflop_solver_command: str = Field(default="poker-postflop-solver")
     postflop_solver_fallback_enabled: bool = Field(default=True)
@@ -189,8 +177,6 @@ class Settings(BaseSettings):
     @field_validator(
         "parser_enabled_providers",
         "parser_enabled_layout_profiles",
-        "recommendation_enabled_providers",
-        "local_solver_enabled_engines",
     )
     @classmethod
     def validate_enabled_pipeline_values(
@@ -198,11 +184,11 @@ class Settings(BaseSettings):
         value: list[str],
         info: ValidationInfo,
     ) -> list[str]:
-        known_values = {
-            "parser_enabled_providers": KNOWN_PARSER_PROVIDERS,
-            "recommendation_enabled_providers": KNOWN_RECOMMENDATION_PROVIDERS,
-            "local_solver_enabled_engines": KNOWN_LOCAL_SOLVER_ENGINES,
-        }.get(info.field_name)
+        known_values = (
+            KNOWN_PARSER_PROVIDERS
+            if info.field_name == "parser_enabled_providers"
+            else None
+        )
         normalized: list[str] = []
         for item in value:
             candidate = item.strip().lower()

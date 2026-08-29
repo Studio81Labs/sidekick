@@ -482,9 +482,11 @@ def build_mcp_server(
     server = FastMCP(
         name=f"Poker Hero {settings.environment}",
         instructions=(
-            "Use this server only for post-hand Texas Hold'em training and review. "
+            "Use this server only to inspect the administrator OCR test queue, "
+            "search approved hand history, read parser benchmark summaries, and "
+            "approve reviewed hand state. "
             f"Every tool is permanently bound to {settings.environment}. "
-            "Never describe recommendations as guaranteed optimal play."
+            "Parser output is never ground truth until a reviewer approves it."
         ),
         json_response=True,
         stateless_http=require_auth,

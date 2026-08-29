@@ -66,11 +66,10 @@ construction and pipeline capabilities consume the same descriptor, while the
 configuration allowlist remains a separately validated deployment boundary.
 Recommendation providers follow the same catalog contract for their factory,
 label, and readiness check. Local solver engines remain a nested selection of
-the `local_solver` provider and retain their independent deployment allowlist.
-Each local engine descriptor owns its subprocess command factory, label,
-execution mode, and whether it is exposed by
-`POKER_LOCAL_SOLVER_ENABLED_ENGINES`. The custom command is a deployment-fixed
-engine descriptor rather than an allowlisted entry.
+the `local_solver` provider, chosen by `POKER_LOCAL_SOLVER_ENGINE` alone. Each
+local engine descriptor owns its subprocess command factory, label, and
+execution mode. The custom command is a deployment-fixed engine descriptor
+rather than a selectable entry.
 Layout profile IDs are deployment-defined data. The capability response includes
 a parser/layout compatibility matrix: multi-layout external vision can accept
 custom profiles such as `pokerstars`, while fixed-region OCR is selectable only

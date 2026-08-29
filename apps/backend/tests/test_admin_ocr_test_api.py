@@ -54,7 +54,7 @@ def test_upload_requires_a_valid_administrator_bearer(tmp_path: Path) -> None:
     assert not (tmp_path / "jobs").exists() or not any((tmp_path / "jobs").iterdir())
 
 
-def test_authorized_upload_creates_an_administrative_test_job(tmp_path: Path) -> None:
+def test_authorized_upload_persists_a_parsed_ocr_test_job(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
     response = _post_upload(client, ADMIN_OCR_TEST_HEADERS)
@@ -62,7 +62,14 @@ def test_authorized_upload_creates_an_administrative_test_job(tmp_path: Path) ->
     assert response.status_code == 201
     job = response.json()
     assert job["status"] == "parsed"
-    assert client.get(f"/api/jobs/{job['id']}").json()["id"] == job["id"]
+    assert job["original_filename"] == "table.png"
+    assert job["parser_provider"] == "mock"
+
+    persisted = FileJobStore(tmp_path).get(job["id"])
+    assert persisted.status == "parsed"
+    assert persisted.original_filename == "table.png"
+    assert persisted.parser_provider == "mock"
+    assert persisted.parser_result is not None
 
 
 def test_disabled_deployment_ignores_configured_token(tmp_path: Path) -> None:

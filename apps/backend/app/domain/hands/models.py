@@ -1,7 +1,7 @@
 """Post-upload hand and queue lifecycle contracts."""
 
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
