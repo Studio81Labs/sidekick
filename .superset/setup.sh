@@ -132,18 +132,18 @@ if command -v cargo >/dev/null 2>&1; then
     cp -f "$target_dir/release/$SOLVER_BIN_NAME" "$SOLVER_BIN"
   fi
   [ -x "$SOLVER_BIN" ] || fail "solver build did not produce $SOLVER_BIN"
-  # Record which sources the binary came from, so a later run without cargo
-  # can tell whether it is still valid. The stamp is written after the binary
-  # on purpose: a binary rebuilt later (newer than the stamp) invalidates it.
+  # Record which sources the binary came from and the binary's fingerprint,
+  # so run.sh and a later run without cargo can tell whether the binary is
+  # still the one built from exactly these sources.
   if [ "$solver_clean" = yes ]; then
-    printf '%s\n' "$solver_tree" > "$SOLVER_STAMP"
+    { printf '%s\n' "$solver_tree"; file_sha256 "$VENV_PY" "$SOLVER_BIN"; } > "$SOLVER_STAMP"
   else
     rm -f "$SOLVER_STAMP"
   fi
 else
   if [ -x "$SOLVER_BIN" ]; then
-    if [ "$solver_clean" = yes ] && [ "$(cat "$SOLVER_STAMP" 2>/dev/null)" = "$solver_tree" ] \
-      && [ -z "$(find "$SOLVER_BIN" -newer "$SOLVER_STAMP" 2>/dev/null)" ]; then
+    if [ "$solver_clean" = yes ] && [ "$(sed -n 1p "$SOLVER_STAMP" 2>/dev/null)" = "$solver_tree" ] \
+      && [ "$(sed -n 2p "$SOLVER_STAMP" 2>/dev/null)" = "$(file_sha256 "$VENV_PY" "$SOLVER_BIN")" ]; then
       warn "cargo not found; keeping the solver binary previously built from these exact sources."
     else
       rm -f "$SOLVER_BIN" "$SOLVER_STAMP"

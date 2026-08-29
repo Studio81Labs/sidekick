@@ -123,3 +123,8 @@ except Exception as exc:  # validation error, import error, ...
 PY
   )
 }
+
+# file_sha256 <python> <path>: hex SHA-256 of a file, via the given interpreter.
+file_sha256() {
+  "$1" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$2" 2>/dev/null
+}

@@ -31,69 +31,105 @@ cwd_of() {
 }
 
 # Exact argument boundaries matter: a process is matched only when a whole
-# argument is a worktree script path, never when an argument merely mentions
-# it. Linux exposes argv NUL-separated in /proc; macOS exposes it through
-# sysctl(KERN_PROCARGS2), read here with a few lines of Python (the backend
-# venv's interpreter, else python3). Only when neither is available does the
-# space-joined `ps` output serve as a last resort.
-ARGV_PYTHON="$ROOT_DIR/apps/backend/.venv/bin/python"
-[ -x "$ARGV_PYTHON" ] || ARGV_PYTHON=$(command -v python3 2>/dev/null || true)
+# argument is a worktree script path, never when an argument merely contains
+# it (after a space, a newline, ...). The exact argv is read and classified
+# in one Python helper — NUL-separated /proc/<pid>/cmdline on Linux,
+# sysctl(KERN_PROCARGS2) on macOS — using the backend venv's interpreter,
+# else python3. Only when no Python exists at all does the space-joined `ps`
+# output serve as a last resort.
+CLASSIFY_PYTHON="$ROOT_DIR/apps/backend/.venv/bin/python"
+[ -x "$CLASSIFY_PYTHON" ] || CLASSIFY_PYTHON=$(command -v python3 2>/dev/null || true)
 
-# macos_argv <pid>: prints argv, one element per line; fails if unavailable.
-macos_argv() {
-  [ -n "$ARGV_PYTHON" ] || return 1
-  "$ARGV_PYTHON" - "$1" <<'PY'
-import ctypes, ctypes.util, struct, sys
-pid = int(sys.argv[1])
-libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
-mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
-size = ctypes.c_size_t(0)
-if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
-    sys.exit(1)
-buf = ctypes.create_string_buffer(size.value)
-if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
-    sys.exit(1)
-raw = buf.raw[: size.value]
-argc = struct.unpack("=i", raw[:4])[0]
-rest = raw[4:]
-rest = rest[rest.find(b"\0"):].lstrip(b"\0")  # skip the executable path
-args = rest.split(b"\0")[:argc]
-sys.stdout.write("\n".join(a.decode("utf-8", "replace") for a in args) + "\n")
+# classify_pid <pid>: prints "path" (an executable or node script living in
+# this worktree), "cwd" (python running uvicorn or one of its multiprocessing
+# workers; the working directory still has to be checked) or nothing.
+classify_pid() {
+  if [ -n "$CLASSIFY_PYTHON" ]; then
+    "$CLASSIFY_PYTHON" - "$1" "$ROOT_DIR" <<'PY'
+import ctypes, ctypes.util, re, struct, sys
+
+
+def read_argv(pid):
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as fh:
+            raw = fh.read()
+    except OSError:
+        raw = b""
+    if raw:
+        parts = raw.split(b"\0")
+        if parts and parts[-1] == b"":
+            parts.pop()
+        return parts
+    if sys.platform != "darwin":
+        return []
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 49, pid)  # CTL_KERN, KERN_PROCARGS2
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0:
+        return []
+    buf = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
+        return []
+    raw = buf.raw[: size.value]
+    argc = struct.unpack("=i", raw[:4])[0]
+    rest = raw[4:]
+    cut = rest.find(b"\0")  # the executable path comes first, NUL-padded
+    rest = rest[cut:].lstrip(b"\0") if cut >= 0 else b""
+    return rest.split(b"\0")[:argc]
+
+
+def classify(argv, root):
+    if not argv:
+        return ""
+    argv = [a.decode("utf-8", "replace") for a in argv]
+    argv0, rest = argv[0], argv[1:]
+    base = argv0.rsplit("/", 1)[-1]
+    worktree = (root + "/apps/backend/.venv/", root + "/node_modules/",
+                root + "/apps/pwa/node_modules/", root + "/solver-plugins/")
+    scripts = (root + "/node_modules/", root + "/apps/pwa/node_modules/")
+    if argv0.startswith(worktree):
+        return "path"
+    if base == "node" and any(a.startswith(scripts) for a in rest):
+        return "path"
+    if re.fullmatch(r"[Pp]ython[0-9.]*", base) and (
+        rest[:2] == ["-m", "uvicorn"]
+        or (len(rest) > 1 and rest[0] == "-c" and rest[1].startswith("from multiprocessing."))
+    ):
+        return "cwd"
+    return ""
+
+
+if sys.argv[1] == "--stdin":  # test hook: NUL-separated argv on stdin
+    print(classify(sys.stdin.buffer.read().split(b"\0"), sys.argv[2]))
+else:
+    print(classify(read_argv(int(sys.argv[1])), sys.argv[2]))
 PY
-}
-
-# argv_of <pid>: sets ARGV0 (argv[0] verbatim) and ARGV_REST (the remaining
-# arguments, one per line). Fails when the process is gone.
-argv_of() {
-  if [ -r "/proc/$1/cmdline" ]; then
-    ARGV0=$(tr '\0' '\n' < "/proc/$1/cmdline" | head -n 1)
-    ARGV_REST=$(tr '\0' '\n' < "/proc/$1/cmdline" | sed '1d')
   else
-    ARGV0=$(ps -o comm= -p "$1" 2>/dev/null) || return 1
-    if argv=$(macos_argv "$1" 2>/dev/null) && [ -n "$argv" ]; then
-      ARGV_REST=$(printf '%s\n' "$argv" | sed '1d')
-    else
-      args=$(ps -o command= -p "$1" 2>/dev/null)
-      args=${args#"$ARGV0"}
-      ARGV_REST=$(printf '%s\n' "${args# }" | tr ' ' '\n')
-    fi
+    classify_pid_ps "$1"
   fi
-  [ -n "$ARGV0" ] || return 1
 }
 
-# classify_args: reads arguments (one per line) on stdin and prints "uvicorn"
-# for `-m uvicorn ...` / multiprocessing workers, "script" when a whole
-# argument is a path under this worktree's node_modules, else nothing.
-classify_args() {
-  awk -v root="$ROOT_DIR" '
-    NR == 1 { a1 = $0 }
-    NR == 2 { a2 = $0 }
-    index($0, root "/node_modules/") == 1 || index($0, root "/apps/pwa/node_modules/") == 1 { script = 1 }
-    END {
-      if (a1 == "-m" && a2 == "uvicorn") print "uvicorn"
-      else if (a1 == "-c" && index(a2, "from multiprocessing.") == 1) print "uvicorn"
-      else if (script) print "script"
-    }'
+# classify_pid_ps <pid>: the lossy last resort without Python — `ps` joins
+# arguments with spaces, so a script path is required to start an argument
+# as far as that output can tell.
+classify_pid_ps() {
+  argv0=$(ps -o comm= -p "$1" 2>/dev/null) || return 0
+  args=$(ps -o command= -p "$1" 2>/dev/null)
+  args=${args#"$argv0"}
+  args=${args# }
+  case $argv0 in
+    "$ROOT_DIR/apps/backend/.venv/"* | "$ROOT_DIR/node_modules/"* \
+      | "$ROOT_DIR/apps/pwa/node_modules/"* | "$ROOT_DIR/solver-plugins/"*)
+      echo path ;;
+    node | */node)
+      case " $args" in
+        *" $ROOT_DIR/node_modules/"* | *" $ROOT_DIR/apps/pwa/node_modules/"*) echo path ;;
+      esac ;;
+    python | python[0-9]* | */python | */python[0-9]* | Python | */Python)
+      case $args in
+        "-m uvicorn" | "-m uvicorn "* | "-c from multiprocessing."*) echo cwd ;;
+      esac ;;
+  esac
 }
 
 # Snapshot first so the filtering below cannot match its own processes, then
@@ -104,22 +140,13 @@ candidates=$(printf '%s\n' "$snapshot" | awk -v root="$ROOT_DIR" -v self="$$" '
 
 pids=""
 for pid in $candidates; do
-  argv_of "$pid" || continue
-  kind=""
-  case $ARGV0 in
-    "$ROOT_DIR/apps/backend/.venv/"* | "$ROOT_DIR/node_modules/"* \
-      | "$ROOT_DIR/apps/pwa/node_modules/"* | "$ROOT_DIR/solver-plugins/"*)
-      kind=path ;;
-    node | */node)
-      [ "$(printf '%s\n' "$ARGV_REST" | classify_args)" = script ] && kind=path ;;
-    python | python[0-9]* | */python | */python[0-9]* | Python | */Python)
-      if [ "$(printf '%s\n' "$ARGV_REST" | classify_args)" = uvicorn ]; then
-        case "$(cwd_of "$pid")" in
-          "$ROOT_DIR" | "$ROOT_DIR"/*) kind=cwd ;;
-        esac
-      fi ;;
+  case "$(classify_pid "$pid")" in
+    path) pids="$pids $pid" ;;
+    cwd)
+      case "$(cwd_of "$pid")" in
+        "$ROOT_DIR" | "$ROOT_DIR"/*) pids="$pids $pid" ;;
+      esac ;;
   esac
-  [ -n "$kind" ] && pids="$pids $pid"
 done
 
 if [ -z "$pids" ]; then

@@ -142,22 +142,25 @@ PWA_URL="http://localhost:$PWA_PORT"
 # Solver selection. The backend is told exactly which solver to run, as an
 # absolute path rather than a PATH lookup: this worktree's binary when it is
 # current, otherwise a path that cannot exist (a child of /dev/null) so the
-# backend's fallback engine runs and the reason shows up in its responses. A
-# binary is current
-# when setup stamped it with the tree hash of a clean tree that is still
-# checked out (and the binary has not been rebuilt since the stamp), or when
-# nothing under solver-plugins/postflop (directories included, so deletions
-# count; target/ excluded) is newer than it.
+# backend's fallback engine runs and the reason shows up in its responses.
+# On a clean solver tree only a binary that setup built from exactly these
+# sources is current (the stamp records the tree hash and the binary's
+# SHA-256); on a tree with local changes a developer's own build is current
+# while nothing under solver-plugins/postflop (directories included, so
+# deletions count; target/ excluded) is newer than it.
 SOLVER_BIN="$SOLVER_BIN_DIR/poker-postflop-solver"
 SOLVER_SRC="$ROOT_DIR/solver-plugins/postflop"
 SOLVER_STAMP="$SOLVER_BIN_DIR/.poker-hero-solver-tree"
 solver_status() {
   [ -x "$SOLVER_BIN" ] || { echo missing; return; }
-  tree=$(git -C "$ROOT_DIR" rev-parse "HEAD:solver-plugins/postflop" 2>/dev/null || true)
-  if [ -n "$tree" ] && [ "$(cat "$SOLVER_STAMP" 2>/dev/null)" = "$tree" ] \
-    && [ -z "$(find "$SOLVER_BIN" -newer "$SOLVER_STAMP" 2>/dev/null)" ] \
-    && [ -z "$(git -C "$ROOT_DIR" status --porcelain -- solver-plugins/postflop)" ]; then
-    echo ok
+  if [ -z "$(git -C "$ROOT_DIR" status --porcelain -- solver-plugins/postflop)" ]; then
+    tree=$(git -C "$ROOT_DIR" rev-parse "HEAD:solver-plugins/postflop" 2>/dev/null || true)
+    if [ -n "$tree" ] && [ "$(sed -n 1p "$SOLVER_STAMP" 2>/dev/null)" = "$tree" ] \
+      && [ "$(sed -n 2p "$SOLVER_STAMP" 2>/dev/null)" = "$(file_sha256 "$VENV_PY" "$SOLVER_BIN")" ]; then
+      echo ok
+    else
+      echo unverified
+    fi
   elif [ -z "$(find "$SOLVER_SRC" -name target -prune -o -newer "$SOLVER_BIN" -print 2>/dev/null \
         | head -n 1)" ]; then
     echo ok
@@ -230,6 +233,8 @@ if [ "$SOLVER_STATUS" != ok ]; then
              printf '        (build it with ./.superset/setup.sh once Rust is installed)\n' ;;
     stale) printf '  note: postflop solver binary is older than its sources; %s\n' "$outcome"
            printf '        (rebuild with ./.superset/setup.sh, or cargo build --release in solver-plugins/postflop)\n' ;;
+    unverified) printf '  note: postflop solver binary was not built by setup from the current sources; %s\n' "$outcome"
+                printf '        (re-run ./.superset/setup.sh to rebuild and stamp it)\n' ;;
   esac
 fi
 printf 'Ctrl-C stops both.\n\n'
