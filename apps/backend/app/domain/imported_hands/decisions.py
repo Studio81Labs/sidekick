@@ -84,7 +84,21 @@ class HeroTableAction(ImportedHandModel):
 
 
 class HeroDecisionState(ImportedHandModel):
-    """Everything a grading route needs about the spot, exactly."""
+    """Everything a grading route needs about the spot, exactly.
+
+    The wager fields alone do not describe the legal action set. A consumer
+    must read both raise-legality fields before offering a raise:
+
+    ``raise_reopened`` is ``False`` when the hero may only call or fold --
+    typically after an opponent's short all-in that did not raise by a full
+    increment. Offering a raise there grades against an action the hand
+    validator itself would reject.
+
+    ``last_full_wager_increment`` is the yardstick a minimum legal raise is
+    measured against. ``None`` means the aggregate could not establish it and
+    must never be read as zero; a consumer that cannot size a raise has to
+    withhold it rather than offer one of arbitrary size.
+    """
 
     street: StreetName
     board_cards: list[Card]
@@ -100,6 +114,8 @@ class HeroDecisionState(ImportedHandModel):
     pot_before_action: NonNegativeDecimal
     current_wager: NonNegativeDecimal
     amount_to_call: NonNegativeDecimal
+    last_full_wager_increment: NonNegativeDecimal | None
+    raise_reopened: bool
     hero_stack_before_action: NonNegativeDecimal
     seats: list[SeatDecisionState]
 
@@ -407,6 +423,8 @@ def _decision_point(
             pot_before_action=context.pot_before_action,
             current_wager=context.current_wager,
             amount_to_call=context.amount_to_call,
+            last_full_wager_increment=context.last_full_wager_increment,
+            raise_reopened=context.raise_reopened,
             hero_stack_before_action=context.hero_stack_before_action,
             seats=list(context.seats),
         ),

@@ -6,6 +6,7 @@ from typing import Literal
 import pytest
 from pydantic import ValidationError
 
+from app.domain.imported_hands import decisions
 from app.domain.imported_hands import (
     DeletionReceipt,
     DeletionRequest,
@@ -29,10 +30,12 @@ from test_imported_hand_models import (
     extraction_record_for_state,
     extraction_record_for_streets,
     forced_post,
+    full_raise_decision_record,
     multi_street_decision_record,
     origin_confirmation_record,
     raw_source,
     reapproval_extraction_record,
+    short_all_in_raise_decision_record,
     state_with_reviewed_action_origin,
     user_confirmed_origin_corrections,
     wager_action,
@@ -480,6 +483,10 @@ def test_extraction_copies_the_aggregate_chip_context_without_recomputing_it(
         assert point.state.pot_before_action == context.pot_before_action
         assert point.state.current_wager == context.current_wager
         assert point.state.amount_to_call == context.amount_to_call
+        assert point.state.last_full_wager_increment == (
+            context.last_full_wager_increment
+        )
+        assert point.state.raise_reopened == context.raise_reopened
         assert point.state.hero_stack_before_action == (
             context.hero_stack_before_action
         )
@@ -513,6 +520,90 @@ def test_extraction_returns_one_decision_when_hero_folds_preflop() -> None:
     assert [excluded.action_type for excluded in extraction.excluded_actions] == [
         "post_small_blind"
     ]
+
+
+def test_extraction_closes_raising_after_a_short_all_in() -> None:
+    record = short_all_in_raise_decision_record()
+    contexts = record.active_hero_decision_contexts
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    assert [
+        (point.street, point.action_sequence)
+        for point in extraction.decision_points
+    ] == [("preflop", 2), ("preflop", 5)]
+    opening, facing_all_in = extraction.decision_points
+
+    # The hero's own raise to 3 leaves a standing increment of 2; villain's
+    # all-in to 4 adds only 1, so the hero may still only call or fold.
+    assert opening.state.raise_reopened is True
+    assert facing_all_in.state.current_wager == Decimal("4")
+    assert facing_all_in.state.amount_to_call == Decimal("1")
+    assert facing_all_in.state.last_full_wager_increment == Decimal("2")
+    assert facing_all_in.state.raise_reopened is False
+    assert [
+        (point.state.last_full_wager_increment, point.state.raise_reopened)
+        for point in extraction.decision_points
+    ] == [
+        (context.last_full_wager_increment, context.raise_reopened)
+        for context in contexts
+    ]
+
+
+def test_extraction_reopens_raising_after_a_full_raise() -> None:
+    record = full_raise_decision_record()
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    facing_raise = extraction.decision_points[1]
+    assert (facing_raise.street, facing_raise.action_sequence) == ("preflop", 5)
+
+    # Villain's raise to 5 adds exactly the standing increment of 2, so raising
+    # is legal again and the published yardstick sizes the minimum.
+    assert facing_raise.state.current_wager == Decimal("5")
+    assert facing_raise.state.amount_to_call == Decimal("2")
+    assert facing_raise.state.last_full_wager_increment == Decimal("2")
+    assert facing_raise.state.raise_reopened is True
+    assert [
+        point.state.raise_reopened for point in extraction.decision_points
+    ] == [True] * 5
+
+
+def test_extraction_publishes_an_unestablished_increment_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An increment the aggregate could not establish stays ``None``, not zero.
+
+    No fixture reaches this state through the aggregate: the walk withholds the
+    increment only for an all-in whose commitment it cannot resolve, and that
+    same unknown commitment blocks every later hero decision on the street. The
+    contexts are therefore supplied directly, which is what the field is for.
+    """
+
+    record = multi_street_decision_record()
+    unestablished = [
+        context.model_copy(update={"last_full_wager_increment": None})
+        for context in record.active_hero_decision_contexts
+    ]
+    assert len(unestablished) == 4
+    monkeypatch.setattr(
+        decisions,
+        "_hero_decision_contexts_for_extraction",
+        lambda state: unestablished,
+    )
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    assert [
+        point.state.last_full_wager_increment
+        for point in extraction.decision_points
+    ] == [None] * 4
+    assert [
+        point.state.raise_reopened for point in extraction.decision_points
+    ] == [True] * 4
 
 
 def test_extraction_marks_a_hero_all_in_decision_with_exact_chip_state() -> None:
