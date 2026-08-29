@@ -16872,3 +16872,322 @@ def test_restore_requires_merge_before_reactivating_an_inactive_record() -> None
     disposition = classify_restore(current, candidate)
 
     assert disposition.kind == "conflict_merge_required"
+
+
+def decision_context_board() -> list[dict[str, str]]:
+    return [
+        {"rank": "2", "suit": "clubs"},
+        {"rank": "7", "suit": "diamonds"},
+        {"rank": "9", "suit": "spades"},
+        {"rank": "J", "suit": "clubs"},
+        {"rank": "Q", "suit": "hearts"},
+    ]
+
+
+def multi_street_decision_record() -> ImportedHandRecord:
+    """Build a heads-up hand with one hero decision on every street."""
+
+    board = decision_context_board()
+    streets: list[dict[str, object]] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1"),
+                ),
+                wager_action(3, "villain", "check", total=Decimal("1")),
+            ],
+        }
+    ]
+    for street_name, board_card_count, bet in (
+        ("flop", 3, Decimal("2")),
+        ("turn", 4, Decimal("2")),
+        ("river", 5, Decimal("4")),
+    ):
+        streets.append(
+            {
+                "street": street_name,
+                "board_cards": board[:board_card_count],
+                "actions": [
+                    wager_action(0, "villain", "check", total=Decimal(0)),
+                    wager_action(1, "hero", "bet", amount=bet, total=bet),
+                    wager_action(2, "villain", "call", amount=bet, total=bet),
+                ],
+            }
+        )
+    return extraction_record_for_streets(
+        streets,
+        button_seat=1,
+        configured_blinds=True,
+        stated_gross=Decimal("18"),
+    )
+
+
+def contested_decision_record() -> ImportedHandRecord:
+    """Build a hand where one opponent folds and another is already all-in."""
+
+    board = decision_context_board()
+    payload = extraction_ready_state_payload()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "villain-2",
+            "starting_stack": Decimal("5"),
+            "participation": "dealt_in",
+        }
+    )
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(3, "villain", "fold", total=Decimal("0.5")),
+                wager_action(4, "villain-2", "check", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "board_cards": board[:3],
+            "actions": [
+                wager_action(
+                    0,
+                    "villain-2",
+                    "bet",
+                    amount=Decimal("4"),
+                    total=Decimal("4"),
+                    all_in=True,
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=Decimal("4"),
+                    total=Decimal("4"),
+                ),
+            ],
+        },
+        {"street": "turn", "board_cards": board[:4], "actions": []},
+        {"street": "river", "board_cards": board, "actions": []},
+    ]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("10.5")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def uncalled_return_decision_record() -> ImportedHandRecord:
+    """Build a hand whose winning hero bet is returned uncalled."""
+
+    payload = extraction_ready_state_payload()
+    payload["streets"][1]["board_cards"] = decision_context_board()[:3]
+    payload["streets"][1]["actions"] = [
+        automatic_action(0, "villain"),
+        wager_action(1, "hero", "bet", amount=Decimal("2"), total=Decimal("2")),
+        automatic_action(2, "villain", "fold"),
+        forced_post(3, "uncalled_return", amount=Decimal("2"), total=Decimal(0)),
+    ]
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def withdrawn_decision_record() -> ImportedHandRecord:
+    """Build an extraction-ready record the lifecycle has since withdrawn."""
+
+    record = extraction_record_for_state(
+        ImportedHandState.model_validate(extraction_ready_state_payload())
+    )
+    return record.model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(status="withdrawn", changed_at=NOW)
+        }
+    )
+
+
+def test_hero_decision_context_exposes_exact_preflop_chip_state() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    record = extraction_record_for_state(state)
+
+    contexts = record.active_hero_decision_contexts
+
+    assert len(contexts) == 1
+    context = contexts[0]
+    assert context.street == "preflop"
+    assert context.action_sequence == 2
+    assert context.action == state.streets[0].actions[2]
+    assert context.board_cards == []
+    assert context.committed_pot_before_street == Decimal(0)
+    assert context.pot_before_action == Decimal("1.5")
+    assert context.current_wager == Decimal("1")
+    assert context.amount_to_call == Decimal("0.5")
+    assert context.hero_stack_before_action == Decimal("99.5")
+    assert [seat.player_id for seat in context.seats] == ["hero", "villain"]
+    assert [seat.position.display_label for seat in context.seats] == [
+        "BTN/SB",
+        "BB",
+    ]
+    assert [seat.status for seat in context.seats] == ["live", "live"]
+    assert [seat.starting_stack for seat in context.seats] == [
+        Decimal("100"),
+        Decimal("100"),
+    ]
+    assert [seat.street_commitment for seat in context.seats] == [
+        Decimal("0.5"),
+        Decimal("1"),
+    ]
+    assert [seat.hand_commitment for seat in context.seats] == [
+        Decimal("0.5"),
+        Decimal("1"),
+    ]
+    assert [seat.stack_before_action for seat in context.seats] == [
+        Decimal("99.5"),
+        Decimal("99"),
+    ]
+
+
+def test_hero_decision_context_follows_street_then_sequence_order() -> None:
+    record = multi_street_decision_record()
+    state = record.active_state_for_extraction
+
+    contexts = record.active_hero_decision_contexts
+
+    assert state is not None
+    assert [(context.street, context.action_sequence) for context in contexts] == [
+        ("preflop", 2),
+        ("flop", 1),
+        ("turn", 1),
+        ("river", 1),
+    ]
+    assert [len(context.board_cards) for context in contexts] == [0, 3, 4, 5]
+    assert [context.board_cards for context in contexts] == [
+        street.board_cards for street in state.streets
+    ]
+    assert [context.committed_pot_before_street for context in contexts] == [
+        Decimal(0),
+        Decimal("2"),
+        Decimal("6"),
+        Decimal("10"),
+    ]
+    assert [context.pot_before_action for context in contexts] == [
+        Decimal("1.5"),
+        Decimal("2"),
+        Decimal("6"),
+        Decimal("10"),
+    ]
+    assert [context.current_wager for context in contexts] == [
+        Decimal("1"),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+    ]
+    assert [context.amount_to_call for context in contexts] == [
+        Decimal("0.5"),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+    ]
+    assert [context.hero_stack_before_action for context in contexts] == [
+        Decimal("99.5"),
+        Decimal("99"),
+        Decimal("97"),
+        Decimal("95"),
+    ]
+
+
+def test_hero_decision_context_reports_folded_and_all_in_opponents() -> None:
+    record = contested_decision_record()
+
+    contexts = record.active_hero_decision_contexts
+
+    assert [(context.street, context.action_sequence) for context in contexts] == [
+        ("preflop", 2),
+        ("flop", 1),
+    ]
+    assert [seat.player_id for seat in contexts[0].seats] == [
+        "hero",
+        "villain",
+        "villain-2",
+    ]
+    assert [seat.status for seat in contexts[0].seats] == ["live", "live", "live"]
+
+    flop = contexts[1]
+    seats = {seat.player_id: seat for seat in flop.seats}
+    assert seats["villain"].status == "folded"
+    assert seats["villain"].street_commitment == Decimal(0)
+    assert seats["villain"].hand_commitment == Decimal("0.5")
+    assert seats["villain"].stack_before_action == Decimal("99.5")
+    assert seats["villain-2"].status == "all_in"
+    assert seats["villain-2"].street_commitment == Decimal("4")
+    assert seats["villain-2"].hand_commitment == Decimal("5")
+    assert seats["villain-2"].stack_before_action == Decimal(0)
+    assert seats["hero"].status == "live"
+    assert seats["hero"].hand_commitment == Decimal("1")
+    assert flop.committed_pot_before_street == Decimal("2.5")
+    assert flop.pot_before_action == Decimal("6.5")
+    assert flop.current_wager == Decimal("4")
+    assert flop.amount_to_call == Decimal("4")
+    assert flop.hero_stack_before_action == Decimal("99")
+
+
+def test_hero_decision_context_actions_match_the_extracted_hero_actions() -> None:
+    records = [
+        extraction_record_for_state(
+            ImportedHandState.model_validate(extraction_ready_state_payload())
+        ),
+        uncalled_return_decision_record(),
+        multi_street_decision_record(),
+        contested_decision_record(),
+        withdrawn_decision_record(),
+    ]
+
+    for record in records:
+        assert [
+            context.action for context in record.active_hero_decision_contexts
+        ] == record.active_hero_actions_for_extraction
+    assert [
+        len(record.active_hero_actions_for_extraction) for record in records
+    ] == [1, 2, 4, 2, 0]
+
+
+def test_hero_decision_context_is_empty_for_a_withdrawn_record() -> None:
+    record = withdrawn_decision_record()
+
+    assert record.active_hero_decision_contexts == []
+    assert record.active_hero_actions_for_extraction == []

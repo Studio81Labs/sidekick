@@ -90,6 +90,7 @@ LifecycleStatus = Literal[
     "deletion_pending",
     "deleted",
 ]
+SeatDecisionStatus = Literal["live", "folded", "all_in"]
 
 _STREET_ORDER: dict[StreetName, int] = {
     "preflop": 0,
@@ -2274,6 +2275,33 @@ class ImportedHandLifecycle(ImportedHandModel):
         return self.status == "active" and self.active_canonical_revision is not None
 
 
+class SeatDecisionState(ImportedHandModel):
+    """A dealt-in player's chip position immediately before a hero action."""
+
+    player_id: Identifier
+    position: StructuralPosition
+    starting_stack: NonNegativeDecimal
+    stack_before_action: NonNegativeDecimal
+    street_commitment: NonNegativeDecimal
+    hand_commitment: NonNegativeDecimal
+    status: SeatDecisionStatus
+
+
+class HeroActionContext(ImportedHandModel):
+    """Exact chip state the aggregate computed for one voluntary hero action."""
+
+    street: StreetName
+    action_sequence: NonNegativeInteger
+    action: ImportedAction
+    board_cards: list[Card]
+    committed_pot_before_street: NonNegativeDecimal
+    pot_before_action: NonNegativeDecimal
+    current_wager: NonNegativeDecimal
+    amount_to_call: NonNegativeDecimal
+    hero_stack_before_action: NonNegativeDecimal
+    seats: list[SeatDecisionState]
+
+
 class ImportedHandRecord(ImportedHandModel):
     """Aggregate shape; persistence must transition it atomically."""
 
@@ -2581,8 +2609,8 @@ class ImportedHandRecord(ImportedHandModel):
         return context[0] if context is not None else None
 
     @property
-    def active_hero_actions_for_extraction(self) -> list[ImportedAction]:
-        """Return only voluntary hero actions from the active approved revision.
+    def active_hero_decision_contexts(self) -> list[HeroActionContext]:
+        """Return voluntary hero decisions with their exact chip context.
 
         Forced, client-automatic, and unresolved actions remain in the canonical
         audit stream but cannot become learning decision points. Player-selected
@@ -2636,7 +2664,13 @@ class ImportedHandRecord(ImportedHandModel):
             return []
         if _known_action_orders(state.seats, state.button_seat) is None:
             return []
-        return _hero_actions_ready_for_extraction(state)
+        return _hero_decision_contexts_for_extraction(state)
+
+    @property
+    def active_hero_actions_for_extraction(self) -> list[ImportedAction]:
+        """Return the bare hero decisions behind ``active_hero_decision_contexts``."""
+
+        return [context.action for context in self.active_hero_decision_contexts]
 
 
 class ReimportDisposition(ImportedHandModel):
@@ -4012,15 +4046,32 @@ def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:
     )
 
 
-def _hero_actions_ready_for_extraction(
+def _hero_decision_contexts_for_extraction(
     state: ImportedHandState,
-) -> list[ImportedAction]:
-    """Return hero decisions with complete cards and reconstructable chip state."""
+) -> list[HeroActionContext]:
+    """Return hero decisions with complete cards and reconstructable chip state.
+
+    The walk already resolves every chip value a decision point needs, so it
+    emits that context rather than discarding it; no caller re-derives the pot,
+    the wager, or a seat's committed chips from the action stream a second time.
+    """
 
     assert state.hero_player_id is not None
+    positions = _known_structural_positions(state.seats, state.button_seat)
+    if positions is None:
+        return []
+    ring = sorted(
+        (seat for seat in state.seats if seat.participation == "dealt_in"),
+        key=lambda seat: positions[seat.seat_number].button_distance,
+    )
     player_ids = {seat.player_id for seat in state.seats}
-    extracted: list[ImportedAction] = []
+    extracted: list[HeroActionContext] = []
     committed_pot_before_street: Decimal | None = Decimal(0)
+    committed_hand_commitments: dict[str, Decimal] = {
+        player_id: Decimal(0) for player_id in player_ids
+    }
+    folded_players: set[str] = set()
+    all_in_players: set[str] = set()
     live_player_count = sum(
         seat.participation in {"dealt_in", "unknown"} for seat in state.seats
     )
@@ -4086,7 +4137,27 @@ def _hero_actions_ready_for_extraction(
                 and exact_live_context
                 and selected_chip_action_is_resolved
             ):
-                extracted.append(action)
+                assert effective_prior_commitment is not None
+                extracted.append(
+                    _hero_decision_context(
+                        street=street,
+                        action=action,
+                        ring=ring,
+                        positions=positions,
+                        committed_hand_commitments=committed_hand_commitments,
+                        street_commitments=street_commitments,
+                        actor_street_commitment=effective_prior_commitment,
+                        committed_pot_before_street=committed_pot_before_street,
+                        current_wager=current_wager,
+                        folded_players=folded_players,
+                        all_in_players=all_in_players,
+                    )
+                )
+
+            if action.action_type == "fold":
+                folded_players.add(action.actor_id)
+            elif action.all_in:
+                all_in_players.add(action.actor_id)
 
             resolved_commitment = _known_action_total(
                 action,
@@ -4174,18 +4245,82 @@ def _hero_actions_ready_for_extraction(
         if committed_pot_before_street is not None and all(
             commitment is not None for commitment in street_commitments.values()
         ):
-            committed_pot_before_street += sum(
-                (
-                    commitment
-                    for commitment in street_commitments.values()
-                    if commitment is not None
-                ),
+            for player_id, commitment in street_commitments.items():
+                if commitment is not None:
+                    committed_hand_commitments[player_id] += commitment
+            committed_pot_before_street = sum(
+                committed_hand_commitments.values(),
                 Decimal(0),
             )
         else:
             committed_pot_before_street = None
 
     return extracted
+
+
+def _hero_decision_context(
+    *,
+    street: ImportedStreet,
+    action: ImportedAction,
+    ring: list[ImportedSeat],
+    positions: dict[int, StructuralPosition],
+    committed_hand_commitments: dict[str, Decimal],
+    street_commitments: dict[str, Decimal | None],
+    actor_street_commitment: Decimal,
+    committed_pot_before_street: Decimal,
+    current_wager: Decimal,
+    folded_players: set[str],
+    all_in_players: set[str],
+) -> HeroActionContext:
+    """Snapshot the chip state the extraction walk holds at one hero action."""
+
+    resolved_street_commitments: dict[str, Decimal] = {}
+    for player_id, commitment in street_commitments.items():
+        resolved = (
+            actor_street_commitment
+            if player_id == action.actor_id
+            else commitment
+        )
+        assert resolved is not None
+        resolved_street_commitments[player_id] = resolved
+    seats: list[SeatDecisionState] = []
+    for seat in ring:
+        assert seat.starting_stack is not None
+        street_commitment = resolved_street_commitments[seat.player_id]
+        hand_commitment = (
+            committed_hand_commitments[seat.player_id] + street_commitment
+        )
+        seats.append(
+            SeatDecisionState(
+                player_id=seat.player_id,
+                position=positions[seat.seat_number],
+                starting_stack=seat.starting_stack,
+                stack_before_action=seat.starting_stack - hand_commitment,
+                street_commitment=street_commitment,
+                hand_commitment=hand_commitment,
+                status=(
+                    "folded"
+                    if seat.player_id in folded_players
+                    else "all_in"
+                    if seat.player_id in all_in_players
+                    else "live"
+                ),
+            )
+        )
+    hero = next(seat for seat in seats if seat.player_id == action.actor_id)
+    return HeroActionContext(
+        street=street.street,
+        action_sequence=action.sequence,
+        action=action,
+        board_cards=list(street.board_cards),
+        committed_pot_before_street=committed_pot_before_street,
+        pot_before_action=committed_pot_before_street
+        + sum(resolved_street_commitments.values(), Decimal(0)),
+        current_wager=current_wager,
+        amount_to_call=max(Decimal(0), current_wager - actor_street_commitment),
+        hero_stack_before_action=hero.stack_before_action,
+        seats=seats,
+    )
 
 
 def _action_implied_prior_commitment(
