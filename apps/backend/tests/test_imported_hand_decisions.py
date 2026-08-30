@@ -1819,6 +1819,30 @@ def reversed_excluded_actions(payload: dict[str, object]) -> None:
     payload["excluded_actions"] = list(reversed(payload["excluded_actions"]))
 
 
+def forced_table_action(payload: dict[str, object]) -> None:
+    action = payload["decision_points"][0]["table_action"]
+    action["action_type"] = "post_small_blind"
+    action["origin"] = {**action["origin"], "kind": "forced_system"}
+
+
+def automatic_table_action(payload: dict[str, object]) -> None:
+    action = payload["decision_points"][0]["table_action"]
+    action["origin"] = {
+        **action["origin"],
+        "kind": "client_automatic",
+        "automatic_reason": "timeout",
+    }
+
+
+def unresolved_table_action(payload: dict[str, object]) -> None:
+    action = payload["decision_points"][0]["table_action"]
+    action["origin"] = {
+        **action["origin"],
+        "kind": "unknown",
+        "basis": "unresolved",
+    }
+
+
 def divergent_chronology(payload: dict[str, object]) -> None:
     payload["decision_points"][1]["chronology"]["hand_ordinal"] = 99
 
@@ -1846,6 +1870,18 @@ def excluded_action_shadowing_a_decision(payload: dict[str, object]) -> None:
         (
             foreign_deletion_generation,
             "deletion generation does not match the extracted hand",
+        ),
+        (
+            forced_table_action,
+            "requires a table decision, not a forced or system action",
+        ),
+        (
+            automatic_table_action,
+            "requires a player-selected table action, not a client_automatic",
+        ),
+        (
+            unresolved_table_action,
+            "requires a player-selected table action, not a unknown",
         ),
         (divergent_chronology, "must agree on the hand's source chronology"),
         (divergent_provenance, "must agree on the hand's import provenance"),
@@ -1912,3 +1948,72 @@ def test_hand_decision_extraction_binds_every_point_to_the_envelope() -> None:
         (point.street, point.action_sequence)
         for point in extraction.decision_points
     ] == [("preflop", 2), ("flop", 1), ("turn", 1), ("river", 1)]
+
+
+def test_excluded_action_rejects_a_voluntary_or_mislabelled_origin() -> None:
+    """An exclusion must not park a decision, nor borrow another's reason."""
+
+    payload = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).excluded_actions[0].model_dump(mode="python")
+
+    assert decisions.ExcludedHeroAction.model_validate(payload) is not None
+    assert (payload["origin"]["kind"], payload["reason"]) == (
+        "forced_system",
+        "forced_or_system",
+    )
+
+    voluntary = {
+        **payload,
+        "action_type": "bet",
+        "origin": {**payload["origin"], "kind": "player_selected"},
+    }
+    with pytest.raises(
+        ValidationError, match="is a decision, not an excluded action"
+    ):
+        decisions.ExcludedHeroAction.model_validate(voluntary)
+
+    mislabelled = {**payload, "reason": "client_automatic"}
+    with pytest.raises(
+        ValidationError, match="must be excluded as forced_or_system"
+    ):
+        decisions.ExcludedHeroAction.model_validate(mislabelled)
+
+
+def test_extraction_keeps_a_user_confirmed_origin_gradeable() -> None:
+    """The voluntary-action rule must not exclude a confirmed origin."""
+
+    unresolved = state_with_reviewed_action_origin(
+        kind="unknown",
+        basis="unresolved",
+    )
+    confirmed = state_with_reviewed_action_origin(
+        kind="player_selected",
+        basis="user_confirmed",
+        review_reference="review-action-0",
+    )
+    record = origin_confirmation_record(
+        unresolved,
+        confirmed,
+        user_confirmed_origin_corrections(
+            unresolved, confirmed, leaf_fields=False
+        ),
+    )
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    (point,) = extraction.decision_points
+    assert point.table_action.origin.basis == "user_confirmed"
+    # An origin the player confirmed during approval is player-selected by the
+    # time it reaches a decision, so the rule admits it rather than parking it.
+    assert point.table_action.origin.kind == "player_selected"
+    assert point.table_action.action_type == "call"
+    assert HeroDecisionPoint.model_validate(
+        point.model_dump(mode="python")
+    ) == point
+    assert not [
+        action
+        for action in extraction.excluded_actions
+        if action.origin.basis == "user_confirmed"
+    ]

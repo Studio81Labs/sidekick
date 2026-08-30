@@ -44,6 +44,7 @@ from app.domain.imported_hands.models import (
     _hero_decision_contexts_for_extraction,
     _known_action_orders,
     _STREET_ORDER,
+    _TABLE_ACTIONS,
     _terminal_hand_ready_for_extraction,
 )
 from app.domain.poker import Card
@@ -245,6 +246,20 @@ class HeroDecisionPoint(ImportedHandModel):
 
     @model_validator(mode="after")
     def validate_decision_binding(self) -> Self:
+        # Only a voluntary table decision can be graded. Forced posts,
+        # client-automatic actions, and unresolved origins are retained as
+        # excluded actions; nothing may rehydrate one of them as a decision and
+        # feed it to grading or mastery as though the player chose it.
+        if self.table_action.action_type not in _TABLE_ACTIONS:
+            raise ValueError(
+                "a decision point requires a table decision, not a forced or"
+                " system action"
+            )
+        if self.table_action.origin.kind != "player_selected":
+            raise ValueError(
+                "a decision point requires a player-selected table action, not"
+                f" a {self.table_action.origin.kind} one"
+            )
         if self.state.street != self.street:
             raise ValueError("decision state street must match the decision")
         current = self.state.action_history[-1]
@@ -264,6 +279,29 @@ class ExcludedHeroAction(ImportedHandModel):
     action_type: ActionType
     origin: ActionOrigin
     reason: HeroActionExclusion
+
+    @model_validator(mode="after")
+    def validate_exclusion(self) -> Self:
+        """Keep the exclusion honest in both directions.
+
+        A player-selected action is a decision and must not be parked here --
+        an origin the player confirmed during approval is player-selected by
+        the time it reaches extraction, so parking one would drop a decision
+        the hand is required to grade. And the reason must be the one this
+        origin actually earns, not another exclusion's.
+        """
+
+        expected = _EXCLUSION_REASONS.get(self.origin.kind)
+        if expected is None:
+            raise ValueError(
+                "a player-selected action is a decision, not an excluded action"
+            )
+        if expected != self.reason:
+            raise ValueError(
+                f"a {self.origin.kind} action must be excluded as {expected},"
+                f" not {self.reason}"
+            )
+        return self
 
 
 class HandDecisionExtraction(ImportedHandModel):
