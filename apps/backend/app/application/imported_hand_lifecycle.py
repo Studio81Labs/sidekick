@@ -115,7 +115,9 @@ class ImportedHandLifecycleService:
     ``now`` stamps an approval's ``lifecycle.changed_at``. Withdrawal and
     rejection take their instant from the caller instead, because those
     two record a decision a player made at a time the caller already
-    knows and this service does not.
+    knows and this service does not. Whichever supplies it, the instant
+    may not precede the marker it replaces -- see
+    ``_require_advancing_marker``.
 
     **Concurrency, and what a caller still owes.** Every verb is a
     read-modify-write, so two transitions racing on one record could each
@@ -378,6 +380,8 @@ class ImportedHandLifecycleService:
         compare and the swap one indivisible step. See
         ``_require_unchanged`` for what this does and does not close.
         """
+        self._require_advancing_marker(record_key, record, expected)
+
         extraction: HandDecisionExtraction | None = None
         if record.lifecycle.learning_eligible:
             extraction = self._extract(record)
@@ -390,6 +394,43 @@ class ImportedHandLifecycleService:
             if extraction is not None:
                 cascade.stage_decisions(extraction)
         return record
+
+    @staticmethod
+    def _require_advancing_marker(
+        record_key: str,
+        record: ImportedHandRecord,
+        expected: ImportedHandRecord,
+    ) -> None:
+        """Refuse a transition that moves lifecycle.changed_at backwards.
+
+        The aggregate cannot catch this. ``validate_aggregate`` checks a
+        record in isolation, and only ever compares ``changed_at`` against
+        the audit events the record itself retains -- imports, detections,
+        approvals. A delayed withdrawal whose ``at`` is later than all of
+        those but earlier than the approval marker it replaces satisfies
+        every one of those checks. This is a rule about the relationship
+        between two successive records, which is the boundary's business,
+        not the domain's.
+
+        It matters because that marker is a version stamp elsewhere.
+        ``classify_restore`` compares the two records' ``changed_at``
+        directly to decide which of a stored record and a backup candidate
+        is newer, so a regressed marker makes a genuinely newer record look
+        ``stale_record`` beside the older snapshot it replaced -- and a
+        restore would then discard a real user withdrawal as out of date.
+
+        Equal is allowed: two transitions may legitimately share an
+        instant, and only going *backwards* breaks the ordering.
+        """
+        if record.lifecycle.changed_at < expected.lifecycle.changed_at:
+            raise LifecycleCascadeError(
+                f"record {record_key} would have its lifecycle changed_at moved "
+                f"backwards, from {expected.lifecycle.changed_at.isoformat()} to "
+                f"{record.lifecycle.changed_at.isoformat()}. That marker orders "
+                "this record against its own past and against a backup "
+                "candidate during a restore, so a transition may share the "
+                "current instant but never precede it."
+            )
 
     def _require_unchanged(
         self, record_key: str, expected: ImportedHandRecord

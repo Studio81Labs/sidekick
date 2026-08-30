@@ -142,6 +142,26 @@ class CascadeCorruptionError(RuntimeError):
     """
 
 
+class PendingCascadeError(RuntimeError):
+    """A record key already has a cascade waiting to be replayed onto it.
+
+    Roll-forward recovery finishes a ready cascade by replaying its staged
+    files over the live ones. That is only correct if nothing newer was
+    written in between -- and nothing enforces that on its own. A cascade
+    whose commit raised part-way through is left in place to be retried,
+    the journal lock is then released, and without this refusal a later
+    cascade could commit cleanly over the half-applied state, only for the
+    next startup sweep to replay the older staged files on top of it and
+    silently erase the newer write.
+
+    So a key stays closed to new cascades from the moment one of its
+    cascades is left pending until recovery finishes or sets that cascade
+    aside. The remedy is a restart, not repair: recovery runs at startup
+    under an exclusive interprocess hold, which a request path must not
+    take.
+    """
+
+
 class CascadeReentryError(RuntimeError):
     """A cascade journal call was made from inside another one.
 
@@ -319,6 +339,10 @@ class CascadeJournal:
         self, *, operation: str, record_keys: Sequence[str]
     ) -> Iterator["CascadeStaging"]:
         with self._exclusive("begin"):
+            # Checked under the journal lock, so it cannot race another
+            # cascade in this process, and before _prepare so a refusal
+            # creates nothing on disk.
+            self._require_no_pending_cascade(record_keys)
             cascade_id = self._prepare(operation=operation, record_keys=record_keys)
             cascade_dir = self._cascade_root / cascade_id
             intent = self._read_intent(cascade_dir)
@@ -336,6 +360,45 @@ class CascadeJournal:
                 # nothing below this line may touch a live path before it is.
                 self._mark_ready(cascade_id)
                 self._commit(cascade_dir)
+
+    def _require_no_pending_cascade(self, record_keys: Sequence[str]) -> None:
+        """Refuse a cascade over a key whose last one is waiting to replay."""
+        for record_key in record_keys:
+            pending = self.pending_cascade_for(record_key)
+            if pending is not None:
+                raise PendingCascadeError(
+                    f"record {record_key!r} has a cascade ({pending}) that was "
+                    "left ready to replay after its commit failed part-way "
+                    "through, so this key is closed to new writes: committing "
+                    "one now would be silently overwritten when startup "
+                    "recovery replays the older staged files on top of it. "
+                    "Recovery finishes or sets aside that cascade, and it runs "
+                    "at startup under an exclusive lock, so the remedy is to "
+                    "restart the backend - not to repair anything by hand."
+                )
+
+    def pending_cascade_for(self, record_key: str) -> str | None:
+        """The id of a ready cascade recovery will replay over ``record_key``.
+
+        "Ready" is the whole condition. A cascade without the marker is
+        discarded by recovery rather than replayed, so it can overwrite
+        nothing and does not close the key -- and within this process it
+        cannot be observed at all, since the journal lock is held for a
+        cascade's entire life. A quarantined cascade is likewise excluded
+        (via _sweepable_cascade_dirs): it is never replayed, and counting
+        it would close a key permanently.
+
+        Membership is read from staged/<record_key>/, the same place
+        _commit replays from, rather than from intent.json -- recovery
+        never reads the intent, so a key that is *named* by an intent but
+        has nothing staged for it is not a key anything will be written to.
+        """
+        for cascade_dir in self._sweepable_cascade_dirs():
+            if not (cascade_dir / _READY_FILENAME).is_file():
+                continue
+            if (cascade_dir / _STAGED_DIRNAME / record_key).is_dir():
+                return cascade_dir.name
+        return None
 
     def has_pending_cascades(self) -> bool:
         """Whether a sweep would find anything at all to act on.

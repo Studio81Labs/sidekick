@@ -41,6 +41,7 @@ from app.domain.imported_hands import (
     ImportedHandRecord,
     extract_hero_decision_points,
 )
+from app.storage.cascade_journal import CascadeJournal, PendingCascadeError
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
     ImportedHandCascade,
@@ -1006,3 +1007,174 @@ def test_an_unchanged_record_publishes_normally(tmp_path: Path) -> None:
     assert reapproved.lifecycle.active_canonical_revision == 2
     assert store.get(key).lifecycle.active_canonical_revision == 2
     assert store.active_decisions(key) is not None
+
+
+def commit_failing_once_on(relative_name: str) -> Any:
+    """Fail one _commit_replace for a named file, as a torn disk write would.
+
+    A cascade's content files publish in sorted path order, so
+    `decisions/...` lands before `record.json`: failing on the record
+    leaves the artifact committed, the record not, and the cascade sitting
+    ready to be replayed.
+    """
+    fail_once = [True]
+    real_commit_replace = CascadeJournal._commit_replace
+
+    def flaky(
+        journal: CascadeJournal, record_key: str, relative: Any, staged_file: Any
+    ) -> None:
+        if fail_once and relative.as_posix() == relative_name:
+            fail_once.clear()
+            raise OSError("simulated disk failure mid-commit")
+        real_commit_replace(journal, record_key, relative, staged_file)
+
+    return mock.patch.object(CascadeJournal, "_commit_replace", flaky)
+
+
+def test_a_key_is_closed_to_writes_while_a_cascade_waits_to_replay(
+    tmp_path: Path,
+) -> None:
+    """Roll-forward assumes nothing newer happened; this makes that true.
+
+    Reproduced before it was closed: a reapproval's commit publishes the
+    decision artifact and then fails on record.json, so the cascade is left
+    ready. A withdrawal then committed cleanly over the half-applied state
+    -- and the next startup sweep replayed the older staged record on top,
+    erasing the withdrawal while reporting the sweep `completed`. The
+    compare-and-swap cannot see it: it runs at transition time, and the
+    overwrite happens later, during recovery.
+
+    So the key stays closed from the moment its cascade is left pending
+    until recovery deals with it. The refusal names the cascade and says
+    the remedy is a restart, because recovery needs an exclusive
+    interprocess hold that a request path must not take.
+    """
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+
+    with commit_failing_once_on("record.json"):
+        with pytest.raises(OSError):
+            service.reapprove(key, revision_two())
+
+    # Half applied: the new artifact is on disk, the record is not.
+    assert store.list_decision_artifacts(key) == [
+        (1, 0, "r1-g0.json"),
+        (2, 0, "r2-g0.json"),
+    ]
+    assert store.get(key).lifecycle.active_canonical_revision == 1
+
+    with pytest.raises(PendingCascadeError) as refusal:
+        service.withdraw(key, reason="player retracted it", at=CLOSED_AT)
+
+    message = str(refusal.value)
+    assert key in message
+    assert "restart" in message
+    # Nothing was written by the refused transition.
+    assert store.get(key).lifecycle.active_canonical_revision == 1
+
+
+def test_recovery_reopens_the_key_it_closed(tmp_path: Path) -> None:
+    """The block is temporary and a restart is the whole remedy.
+
+    Recovery finishes the pending cascade, so the record reaches the state
+    that write intended, and the transition that was refused then applies
+    on top of it -- against the correct state rather than over it.
+    """
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    with commit_failing_once_on("record.json"):
+        with pytest.raises(OSError):
+            service.reapprove(key, revision_two())
+
+    report = store.recover()
+
+    assert len(report.completed) == 1
+    assert report.quarantined == () and report.failed == ()
+    assert store.get(key).lifecycle.active_canonical_revision == 2
+
+    withdrawn = service.withdraw(key, reason="player retracted it", at=CLOSED_AT)
+
+    assert withdrawn.lifecycle.status == "withdrawn"
+    assert store.get(key).lifecycle.status == "withdrawn"
+
+
+def test_a_transition_cannot_move_the_lifecycle_marker_backwards(
+    tmp_path: Path,
+) -> None:
+    """A delayed withdrawal must not regress lifecycle.changed_at.
+
+    The aggregate accepts it: it compares changed_at only against the
+    audit events the record retains, and this instant is later than all of
+    them. But classify_restore compares the two records' markers directly
+    to decide which is newer, so a regressed marker makes a real
+    withdrawal look `stale_record` beside the approval it replaced, and a
+    restore would discard it as out of date.
+    """
+    service, store, key = lifecycle_fixture(tmp_path)
+    approved = service.approve(key, revision_one())
+    assert approved.lifecycle.changed_at == APPROVED_AT
+    before_the_approval = APPROVED_AT - timedelta(seconds=1)
+    # Later than every retained audit event, so the domain is content.
+    assert before_the_approval > revision_one().approved_at
+
+    with pytest.raises(LifecycleCascadeError, match="backwards"):
+        service.withdraw(key, reason="player retracted it", at=before_the_approval)
+
+    assert store.get(key).lifecycle.status == "active"
+    assert store.get(key).lifecycle.changed_at == APPROVED_AT
+
+
+@pytest.mark.parametrize("offset", [timedelta(0), timedelta(seconds=1)])
+def test_a_transition_at_or_after_the_current_marker_is_accepted(
+    tmp_path: Path, offset: timedelta
+) -> None:
+    """Equal is allowed: two transitions may share an instant."""
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+
+    withdrawn = service.withdraw(
+        key, reason="player retracted it", at=APPROVED_AT + offset
+    )
+
+    assert withdrawn.lifecycle.status == "withdrawn"
+    assert store.get(key).lifecycle.changed_at == APPROVED_AT + offset
+
+
+def test_an_accepted_write_is_never_erased_by_a_stale_replay(tmp_path: Path) -> None:
+    """The end state the refusal exists to protect, asserted as an invariant.
+
+    Two outcomes are legitimate for a transition arriving behind a
+    half-applied cascade: refuse it now, or accept it and have it survive.
+    The one outcome that is not is accepting it and then silently erasing
+    it, which is what roll-forward did before the refusal existed -- the
+    boot sweep replayed the older staged record over the committed
+    withdrawal and reported itself `completed`.
+
+    Written as "whatever was accepted must still be there afterwards" so
+    the failure is that erasure rather than a missing exception, and so
+    the test keeps its meaning if the refusal is ever replaced by a
+    different mechanism.
+    """
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    with commit_failing_once_on("record.json"):
+        with pytest.raises(OSError):
+            service.reapprove(key, revision_two())
+
+    try:
+        service.withdraw(key, reason="player retracted it", at=CLOSED_AT)
+    except PendingCascadeError:
+        accepted = False
+    else:
+        accepted = True
+
+    store.recover()
+
+    if accepted:
+        assert store.get(key).lifecycle.status == "withdrawn", (
+            "a withdrawal that committed successfully was erased by startup "
+            "recovery replaying an older staged record over it"
+        )
+    else:
+        # Refused instead, so the pending cascade is what recovery lands.
+        assert store.get(key).lifecycle.active_canonical_revision == 2
