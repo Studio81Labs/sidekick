@@ -14,6 +14,7 @@ from app.application.imported_hand_ports import (
     ImportedHandRepository,
 )
 from app.data_lock import (
+    DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     InterprocessDataLock,
 )
@@ -78,6 +79,7 @@ class WorkspaceCoordinator:
         imported_hand_lock_stripes: int = DEFAULT_IMPORTED_HAND_LOCK_STRIPES,
         imported_hand_lock_factory: Callable[[], LockType] = Lock,
         recovery_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+        startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     ) -> Self:
         data_lock = InterprocessDataLock(data_dir)
         imported_hands = FileImportedHandStore(data_dir)
@@ -129,17 +131,29 @@ class WorkspaceCoordinator:
         # pre-existing one, tracked separately, and not fixed by widening
         # a lock introduced for something else.
         #
-        # Bounded for the same reason as the acquire above, and it is a
-        # separate acquire so it needs its own bound: this one is released
-        # and retaken, so an exclusive holder arriving in between blocks it
-        # on its own. The exposure is narrower - only exclusive holders
-        # block a shared acquire, and they drain rather than starve it -
-        # but a backup export holding exclusive while it builds a large
-        # archive, or another instance's own sweep, would otherwise wedge
-        # this boot with no bound and no log line.
+        # This acquire is bounded too, but on its OWN, much larger budget,
+        # because it is protecting against a different failure than the
+        # exclusive one above.
+        #
+        # A shared acquire is blocked only by exclusive holders, and those
+        # drain: the runbook's daily export takes the exclusive side for
+        # as long as it takes to build an archive, then releases, and the
+        # boot proceeds. Waiting that out is CORRECT - before this branch
+        # the acquire was unbounded and did exactly that, slowly but
+        # always successfully. Sharing the exclusive side's tight bound
+        # here turned a legitimate scheduled job into a failed deploy: the
+        # boot died at 30s where it used to wait and then start.
+        #
+        # So the bound is kept only for the case it was really introduced
+        # for - a system that is genuinely stuck, wedged with no log line -
+        # and set well clear of any export that is merely slow. It stays
+        # bounded rather than reverting to an infinite wait because
+        # startup happens before uvicorn binds: a silent hang here is a
+        # container that never turns healthy and a deploy nobody can
+        # diagnose.
         with data_lock.hold(
             exclusive=False,
-            timeout_seconds=recovery_lock_timeout_seconds,
+            timeout_seconds=startup_lock_timeout_seconds,
         ):
             workspace = cls(
                 jobs=FileJobStore(data_dir),

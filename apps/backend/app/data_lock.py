@@ -8,7 +8,24 @@ from pathlib import Path
 
 
 DATA_LOCK_FILENAME = ".poker-hero-data.lock"
+
+# Two bounds, because the two sides of this lock fail in different ways
+# and must not share a number.
+#
+# An EXCLUSIVE acquire can be starved indefinitely: flock() has no writer
+# preference, so a steady stream of overlapping shared holders can keep
+# one waiting forever. There is no length of wait that makes that
+# succeed, so the bound is tight - fail fast and say so.
+#
+# A SHARED acquire is blocked only by exclusive holders, and those
+# *drain*: the backup export finishes its archive and the wait ends.
+# Waiting is the correct behaviour there, so the bound exists only to
+# convert a genuinely stuck system into a message instead of an infinite
+# wedge with no log line. It has to sit well clear of a legitimate
+# export, which the runbook schedules daily and which builds up to a
+# 100 MB archive under the exclusive side.
 DEFAULT_DATA_LOCK_TIMEOUT_SECONDS = 30
+DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS = 600
 
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 _MILLISECONDS_PER_SECOND = 1_000

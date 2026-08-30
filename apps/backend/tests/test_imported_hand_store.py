@@ -26,6 +26,8 @@ from app.application.imported_hand_ports import (
 )
 from app.data_lock import (
     DATA_LOCK_FILENAME,
+    DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DataLockTimeoutError,
     InterprocessDataLock,
 )
@@ -1270,7 +1272,11 @@ def test_startup_gives_up_loudly_rather_than_hanging_on_its_shared_acquire(
     with mock.patch.object(InterprocessDataLock, "acquire", blocking_acquire):
         try:
             with pytest.raises(DataLockTimeoutError) as failure:
-                WorkspaceCoordinator.open(tmp_path, recovery_lock_timeout_seconds=0)
+                WorkspaceCoordinator.open(
+                    tmp_path,
+                    recovery_lock_timeout_seconds=10,
+                    startup_lock_timeout_seconds=0,
+                )
         finally:
             for descriptor in blocking_descriptor:
                 InterprocessDataLock.release(descriptor)
@@ -1281,8 +1287,17 @@ def test_startup_gives_up_loudly_rather_than_hanging_on_its_shared_acquire(
     assert "shared" in message
 
 
-def test_startup_waits_for_a_lock_that_is_released_in_time(tmp_path: Path) -> None:
-    """The bound is a deadline, not a single attempt."""
+def test_a_boot_waits_out_an_export_instead_of_failing(tmp_path: Path) -> None:
+    """The behaviour a scheduled export must not break.
+
+    An exclusive holder - in production, the runbook's daily backup export
+    building an archive - blocks startup's shared acquire. That wait is
+    correct and always was: before this branch the acquire was unbounded
+    and simply waited. The bound must therefore be a backstop for a stuck
+    system, not a deadline a legitimate export can trip, so a holder that
+    releases within the window must leave the boot succeeding rather than
+    failing.
+    """
     data_lock = InterprocessDataLock(tmp_path)
     descriptor = data_lock.acquire(exclusive=True)
     released = threading.Event()
@@ -1295,12 +1310,75 @@ def test_startup_waits_for_a_lock_that_is_released_in_time(tmp_path: Path) -> No
     releaser = threading.Thread(target=release_shortly)
     releaser.start()
     try:
-        workspace = WorkspaceCoordinator.open(tmp_path, recovery_lock_timeout_seconds=10)
+        workspace = WorkspaceCoordinator.open(
+            tmp_path, startup_lock_timeout_seconds=30
+        )
     finally:
         releaser.join()
 
-    assert released.is_set(), "open() returned before the lock was released"
+    assert released.is_set(), "open() returned before the export released the lock"
     assert workspace.imported_hand_recovery == ImportedHandRecoveryReport()
+
+
+def test_the_two_startup_bounds_are_configured_independently(
+    tmp_path: Path,
+) -> None:
+    """They protect against different failures and must not share a number.
+
+    An exclusive acquire can be starved indefinitely, so its bound is
+    tight. A shared acquire is blocked only by exclusive holders, which
+    drain, so its bound is generous. Wiring both to one setting is what
+    made a boot overlapping an export fail at the exclusive side's
+    deadline, so this pins that each drives only its own acquire.
+    """
+    # A tight *recovery* bound must not fail a boot that is only waiting
+    # on the shared side: on a clean volume the exclusive acquire never
+    # happens, so its budget is irrelevant however small.
+    data_lock = InterprocessDataLock(tmp_path)
+    descriptor = data_lock.acquire(exclusive=True)
+    released = threading.Event()
+
+    def release_shortly() -> None:
+        time.sleep(0.2)
+        data_lock.release(descriptor)
+        released.set()
+
+    releaser = threading.Thread(target=release_shortly)
+    releaser.start()
+    try:
+        WorkspaceCoordinator.open(
+            tmp_path,
+            recovery_lock_timeout_seconds=0,
+            startup_lock_timeout_seconds=30,
+        )
+    finally:
+        releaser.join()
+    assert released.is_set()
+
+    # And the *startup* bound is what actually governs that wait: a zero
+    # budget fails against the same holder, however generous the other.
+    descriptor = data_lock.acquire(exclusive=True)
+    try:
+        with pytest.raises(DataLockTimeoutError) as failure:
+            WorkspaceCoordinator.open(
+                tmp_path,
+                recovery_lock_timeout_seconds=600,
+                startup_lock_timeout_seconds=0,
+            )
+    finally:
+        data_lock.release(descriptor)
+
+    assert "a shared hold" in str(failure.value)
+
+
+def test_the_shared_startup_budget_is_far_larger_than_the_exclusive_one() -> None:
+    """The defaults encode the asymmetry; a reader should not have to infer it."""
+    assert DEFAULT_DATA_LOCK_TIMEOUT_SECONDS == 30
+    assert DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS == 600
+    assert (
+        DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS
+        > DEFAULT_DATA_LOCK_TIMEOUT_SECONDS * 10
+    ), "the shared bound must sit well clear of a slow but legitimate export"
 
 
 def test_save_holds_the_data_lock_shared_for_its_whole_cascade(
