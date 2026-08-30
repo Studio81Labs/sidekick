@@ -39,6 +39,12 @@ re-deciding any of them here would put a second, drifting copy of the
 domain in the application layer. A ``ValidationError`` propagates to the
 caller and nothing is written.
 
+It is not safe for concurrent callers on its own. The compare-and-swap
+below makes a lost update impossible within one process, but the
+cross-process half needs a hold this layer deliberately cannot take. See
+``ImportedHandLifecycleService`` for what a caller owes until that is
+wired.
+
 It does not reach the store except through
 ``ImportedHandRepository``. The cascade is a port method that yields a
 staging handle, so this layer composes a durable multi-file write while
@@ -78,6 +84,26 @@ class LifecycleCascadeError(RuntimeError):
     """
 
 
+class ConcurrentTransitionError(LifecycleCascadeError):
+    """The record moved between reading it and publishing against it.
+
+    Every verb here is a read-modify-write: it reads the record, builds
+    the whole successor state from what it read, and publishes that. If
+    another transition commits in between, publishing the successor would
+    overwrite it wholesale -- a slow reapproval that read revision 1 would
+    silently undo a withdrawal that landed while it was thinking, ending
+    at ``active`` with an artifact for a revision the record itself denies
+    approving, and nothing anywhere would notice.
+
+    So the record is re-read inside the cascade and compared against the
+    snapshot the transition started from. This says the comparison failed:
+    nothing was staged and nothing was written. It is the one error here
+    a caller can sensibly retry, which is why it is distinguishable from
+    the rest of ``LifecycleCascadeError`` -- re-reading and rebuilding
+    against the record's new state is exactly the right response.
+    """
+
+
 class ImportedHandLifecycleService:
     """Approve, reapprove, withdraw, and reject one imported hand.
 
@@ -90,6 +116,27 @@ class ImportedHandLifecycleService:
     rejection take their instant from the caller instead, because those
     two record a decision a player made at a time the caller already
     knows and this service does not.
+
+    **Concurrency, and what a caller still owes.** Every verb is a
+    read-modify-write, so two transitions racing on one record could each
+    build a successor from the same pre-state and the later commit would
+    silently erase the earlier one. Within this process that is closed:
+    the record is re-read inside the cascade and compared against the
+    snapshot the transition started from, under the journal lock the
+    cascade holds throughout, and a mismatch raises
+    ``ConcurrentTransitionError`` before anything is staged
+    (``_require_unchanged``).
+
+    Across processes it is **not** closed, and this service cannot close
+    it: the store holds the data lock only shared while a cascade is open,
+    so a second process can pass its own compare and commit in the same
+    window. A caller that can be reached concurrently must serialize
+    transitions on a record itself -- the workspace's per-record stripes
+    (``WorkspaceCoordinator.hold_imported_hands``) exist for exactly this
+    ordering, taken *around* the call, never inside it, since the journal
+    lock underneath is a leaf lock. Nothing outside tests wires that up
+    today, which is why this remains an obligation stated here rather
+    than an invariant enforced here.
     """
 
     def __init__(
@@ -128,6 +175,7 @@ class ImportedHandLifecycleService:
             record_key,
             self._approved(record, revision),
             operation="approve",
+            expected=record,
         )
 
     def reapprove(
@@ -150,6 +198,7 @@ class ImportedHandLifecycleService:
             record_key,
             self._approved(record, revision),
             operation="reapprove",
+            expected=record,
         )
 
     def withdraw(
@@ -250,6 +299,7 @@ class ImportedHandLifecycleService:
                 ),
             ),
             operation=operation,
+            expected=record,
         )
 
     def _approved(
@@ -282,6 +332,7 @@ class ImportedHandLifecycleService:
         record: ImportedHandRecord,
         *,
         operation: str,
+        expected: ImportedHandRecord,
     ) -> ImportedHandRecord:
         """Commit ``record`` and everything derived from it as one change.
 
@@ -318,6 +369,14 @@ class ImportedHandLifecycleService:
         satisfied by there being one commit, not by which line runs
         first; the adapter resolves a staged artifact against the record
         staged beside it whichever way round they arrive.
+
+        ``expected`` is the snapshot the transition was built from, and is
+        compared against a fresh read taken **inside** the cascade. That
+        placement is the whole mechanism: the adapter holds the journal's
+        lock for the cascade's lifetime, so between this re-read and the
+        commit no other cascade in this process can run, which makes the
+        compare and the swap one indivisible step. See
+        ``_require_unchanged`` for what this does and does not close.
         """
         extraction: HandDecisionExtraction | None = None
         if record.lifecycle.learning_eligible:
@@ -326,10 +385,43 @@ class ImportedHandLifecycleService:
 
         cascade: ImportedHandCascadeHandle
         with self._store.begin_cascade(record_key, operation=operation) as cascade:
+            self._require_unchanged(record_key, expected)
             cascade.stage_record(record)
             if extraction is not None:
                 cascade.stage_decisions(extraction)
         return record
+
+    def _require_unchanged(
+        self, record_key: str, expected: ImportedHandRecord
+    ) -> None:
+        """Refuse to publish over a record that moved under us.
+
+        Called with the cascade already open, so the journal's lock is
+        held: this read and the commit that follows it cannot be
+        interleaved with another cascade in this process. Nothing has been
+        staged yet, so a refusal costs one read and writes nothing.
+
+        Compares the whole aggregate rather than a version field. Two
+        reads of unchanged bytes parse equal, so this refuses exactly when
+        the stored record actually differs -- and it has to be the whole
+        record, because every verb rebuilds the whole record from what it
+        read, so any part of it going stale makes the successor wrong.
+
+        **What this does not close**: two *processes*. ``begin_cascade``
+        holds the data lock only shared, so a second process can pass its
+        own check and commit inside this window. Closing that needs the
+        exclusive hold and the record-stripe hold the workspace already
+        provides (``WorkspaceCoordinator.hold_imported_hands``) and that
+        nothing outside tests yet wires up -- see this class's docstring.
+        """
+        current = self._store.get(record_key)
+        if current != expected:
+            raise ConcurrentTransitionError(
+                f"record {record_key} changed after this transition read it; "
+                "publishing now would overwrite that change with a state "
+                "built from the record as it was before. Re-read the record "
+                "and rebuild the transition against it."
+            )
 
     @staticmethod
     def _require_bound_extraction(

@@ -244,6 +244,24 @@ including background work. Browser and operational exports take the exclusive
 side of that lock while building an archive, so they wait for active mutations
 and prevent a partial restore or import from becoming a scheduled backup.
 
+Startup also participates in that lock. The backend takes the shared side while
+it recovers interrupted parsing jobs, and takes the **exclusive** side only when
+the imported-hand store has a write journal entry left behind by an interrupted
+write - which is the case a crash leaves, not the case a healthy volume is in.
+When there is nothing to recover the exclusive acquire is skipped entirely, so a
+normal boot never waits on a running export or an in-flight mutation.
+
+When recovery is needed, both startup acquires are bounded by
+`POKER_DATA_LOCK_RECOVERY_TIMEOUT_SECONDS` (default 30). On expiry the backend
+fails to start with a `DataLockTimeoutError` naming the lock file rather than
+hanging silently: startup happens before the server binds, so an unbounded wait
+would leave a container that never becomes healthy and a deploy that never
+completes. The recovery sweep is never skipped to get past the timeout, because
+an unrecovered half-applied write must not be served around. If a boot fails
+this way, the cause is another process holding the data volume lock - most often
+the scheduled export below, which holds the exclusive side unbounded for the
+whole archive build. Let it finish, or raise the timeout, and restart.
+
 Schedule a daily Coolify task against the backend image or run this inside a
 one-off backend container:
 

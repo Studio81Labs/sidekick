@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     )
 
     data_dir: Path = Field(default=Path("data"))
+    # Bounds the exclusive data-lock acquire the imported-hand recovery
+    # sweep takes at startup, and the shared one beside it. Tunable
+    # because that acquire runs before uvicorn binds: on a volume shared
+    # with a long-running backup export or long mutating requests, an
+    # operator may need to raise it rather than have the boot fail, or
+    # lower it to fail fast instead of stalling a deploy healthcheck.
+    # The sweep is skipped entirely when nothing was interrupted, so on a
+    # healthy volume this bound is never reached at all.
+    data_lock_recovery_timeout_seconds: int = Field(default=30, gt=0)
     deployment_environment: Literal["local", "staging", "production"] = "local"
     data_volume_id: str | None = Field(
         default=None,

@@ -200,6 +200,17 @@ class ImportedHandRepository(Protocol):
         """
         ...
 
+    def has_interrupted_writes(self) -> bool:
+        """Whether ``recover`` would find anything to do.
+
+        Lets a caller skip the cost ``recover`` may impose -- an
+        implementation can require an exclusive interprocess lock, which
+        on a busy volume is neither free nor guaranteed to be granted --
+        on the common case of a store where no write was ever interrupted.
+        Must not itself require that lock.
+        """
+        ...
+
     def recover(self) -> ImportedHandRecoveryReport:
         """Finish or set aside writes interrupted by an earlier crash.
 

@@ -25,6 +25,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.application.imported_hand_lifecycle import (
+    ConcurrentTransitionError,
     ImportedHandLifecycleService,
     LifecycleCascadeError,
 )
@@ -936,3 +937,72 @@ def test_a_refused_extraction_never_opens_a_cascade(tmp_path: Path) -> None:
             service.reapprove(key, revision_two())
 
     assert opened == []
+
+
+def test_a_stale_transition_is_refused_rather_than_overwriting_a_committed_one(
+    tmp_path: Path,
+) -> None:
+    """The probed interleaving: read revision 1, withdraw, then reapprove.
+
+    Both reviewers reached this independently. Without the compare-and-swap
+    the reapproval republishes the state it built from the pre-withdrawal
+    snapshot, so the withdrawal is erased and the record ends `active` at
+    revision 2 -- while its own `canonical_revisions` and the surviving
+    `r2-g0.json` artifact describe an approval the player had already
+    retracted. Nothing downstream detects it.
+
+    The interleaving is forced deterministically rather than raced: the
+    competing withdrawal is committed from inside the reapproval's own
+    extract step, which runs after `_current` has taken its snapshot and
+    before the cascade opens.
+    """
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    snapshot = store.get(key)
+
+    competing_committed: list[bool] = []
+    real_extract = extract_hero_decision_points
+
+    def extract_then_let_a_withdrawal_land(
+        record: ImportedHandRecord,
+    ) -> HandDecisionExtraction:
+        if not competing_committed:
+            competing_committed.append(True)
+            service.withdraw(key, reason="player retracted it", at=CLOSED_AT)
+        return real_extract(record)
+
+    racing = ImportedHandLifecycleService(
+        store=store,
+        extract=extract_then_let_a_withdrawal_land,
+        now=lambda: REAPPROVED_AT,
+    )
+
+    with pytest.raises(ConcurrentTransitionError, match="changed after this"):
+        racing.reapprove(key, revision_two())
+
+    assert competing_committed == [True], "the competing withdrawal never landed"
+    published = store.get(key)
+    assert published.lifecycle.status == "withdrawn"
+    assert published.lifecycle.active_canonical_revision is None
+    assert [item.revision for item in published.canonical_revisions] == [1]
+    assert published != snapshot
+    # And the stale transition wrote nothing at all - no artifact for the
+    # revision the record now denies ever approving.
+    assert store.get_decisions(key, revision=2, generation=0) is None
+    assert store.active_decisions(key) is None
+
+
+def test_an_unchanged_record_publishes_normally(tmp_path: Path) -> None:
+    """The compare-and-swap must not refuse the ordinary case.
+
+    A transition that reads, builds, and publishes with nothing else
+    touching the record in between is every real transition today.
+    """
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+
+    reapproved = service.reapprove(key, revision_two())
+
+    assert reapproved.lifecycle.active_canonical_revision == 2
+    assert store.get(key).lifecycle.active_canonical_revision == 2
+    assert store.active_decisions(key) is not None

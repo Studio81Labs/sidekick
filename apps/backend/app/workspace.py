@@ -87,22 +87,40 @@ class WorkspaceCoordinator:
         # can have a live one. The journal serialises begin() against
         # recover() within a process and enforces nothing across them.
         #
-        # The hold is kept as narrow as the requirement allows - the sweep
-        # scans .cascade and nothing else - and is BOUNDED. flock() does
-        # not prioritise waiters, so overlapping shared holders can starve
-        # an exclusive acquire indefinitely, and this runs at import time
+        # But it needs that hold only when there is actually something to
+        # sweep, and that question is answerable without any lock at all.
+        # Asking first matters because the exclusive acquire is a real
+        # availability risk on this path: it runs at import time
         # (app/main.py -> bootstrap.create_app), before uvicorn binds and
-        # before /api/health can answer. An unbounded wait here means a
-        # rolling deploy against a shared data volume hangs silently and
-        # never turns healthy. A loud startup failure is far better, so
-        # the timeout raises DataLockTimeoutError and it is deliberately
-        # not caught: a stranded half-applied cascade must not be served
-        # around quietly.
-        with data_lock.hold(
-            exclusive=True,
-            timeout_seconds=recovery_lock_timeout_seconds,
-        ):
-            recovery = imported_hands.recover()
+        # before /api/health can answer, and flock does not prioritise
+        # waiters. A daily backup export holds the exclusive side
+        # unbounded while it builds an archive
+        # (docs/process/deployment.md), and API mutations hold the shared
+        # side for a complete request, which the provider and solver
+        # timeouts allow to exceed this bound. Any of those turns a boot
+        # into a DataLockTimeoutError, a container that exits, and a
+        # restart loop until the other holder releases. Paying that risk
+        # on every boot forever, to sweep a journal that is empty on every
+        # boot forever, is the wrong trade.
+        #
+        # Skipping is safe in both directions. Nothing to sweep means
+        # nothing for exclusivity to protect; and if a cascade appears
+        # between the question and the answer, it belongs to another
+        # process and is LIVE, which a sweep must not touch anyway. A
+        # cascade that finishes in that window merely leaves the sweep
+        # with nothing to do.
+        recovery = ImportedHandRecoveryReport()
+        if imported_hands.has_interrupted_writes():
+            # Something really was interrupted, so exclusivity is now
+            # worth its cost - and this is the case the bound was built
+            # for. The timeout raises DataLockTimeoutError and is
+            # deliberately not caught: a stranded half-applied cascade
+            # must not be served around quietly.
+            with data_lock.hold(
+                exclusive=True,
+                timeout_seconds=recovery_lock_timeout_seconds,
+            ):
+                recovery = imported_hands.recover()
         # Everything else keeps the shared hold it has always had.
         # recover_interrupted_jobs() reads and validates every job record
         # on disk, which is the dominant cost here and has no business

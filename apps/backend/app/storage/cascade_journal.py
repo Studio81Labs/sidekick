@@ -337,25 +337,50 @@ class CascadeJournal:
                 self._mark_ready(cascade_id)
                 self._commit(cascade_dir)
 
+    def has_pending_cascades(self) -> bool:
+        """Whether a sweep would find anything at all to act on.
+
+        Exists so a caller can decide whether recover() is worth an
+        exclusive interprocess hold *before* paying for one. It reads the
+        same directories recover() sweeps, through the same helper, so the
+        two can never disagree about what counts as a cascade - in
+        particular an empty .cascade, or one holding nothing but permanent
+        quarantine evidence, is correctly "nothing to do" rather than
+        "something to sweep forever".
+
+        Takes no lock, and needs none in either direction. False cannot
+        become stale in a harmful way: a cascade appearing afterwards is a
+        *live* one belonging to another process, which a sweep must not
+        touch regardless. True can become stale harmlessly: the cascade
+        may finish before the sweep runs, which leaves the sweep with
+        nothing to do and an empty report.
+        """
+        return bool(self._sweepable_cascade_dirs())
+
+    def _sweepable_cascade_dirs(self) -> list[Path]:
+        """Every directory under .cascade that a sweep would consider.
+
+        The quarantine directory holds evidence, not cascades. Sweeping it
+        would see a directory with no ready marker and rmtree exactly what
+        quarantine exists to preserve.
+        """
+        if not self._cascade_root.is_dir():
+            return []
+        return sorted(
+            (
+                path
+                for path in self._cascade_root.iterdir()
+                if path.is_dir() and path.name != _QUARANTINE_DIRNAME
+            ),
+            key=lambda path: path.name,
+        )
+
     def recover(self) -> CascadeRecoveryReport:
         with self._exclusive("recover"):
-            if not self._cascade_root.is_dir():
-                return CascadeRecoveryReport()
             completed: list[str] = []
             quarantined: list[str] = []
             failed: list[str] = []
-            cascade_dirs = sorted(
-                (
-                    path
-                    for path in self._cascade_root.iterdir()
-                    # The quarantine directory holds evidence, not cascades.
-                    # Sweeping it would see a directory with no ready marker
-                    # and rmtree exactly what quarantine exists to preserve.
-                    if path.is_dir() and path.name != _QUARANTINE_DIRNAME
-                ),
-                key=lambda path: path.name,
-            )
-            for cascade_dir in cascade_dirs:
+            for cascade_dir in self._sweepable_cascade_dirs():
                 if not (cascade_dir / _READY_FILENAME).is_file():
                     # Before the marker: discard is always right. Commit
                     # never began, so staging may be complete, partial, or

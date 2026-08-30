@@ -902,7 +902,15 @@ def test_the_file_store_satisfies_every_call_the_repository_protocol_declares() 
     declared = sorted(
         name for name in vars(ImportedHandRepository) if not name.startswith("_")
     )
-    assert declared == ["begin_cascade", "find", "get", "list_keys", "recover", "save"]
+    assert declared == [
+        "begin_cascade",
+        "find",
+        "get",
+        "has_interrupted_writes",
+        "list_keys",
+        "recover",
+        "save",
+    ]
 
     for name in declared:
         implementation = getattr(FileImportedHandStore, name, None)
@@ -987,15 +995,90 @@ def exclusive_data_lock_is_blocked(data_dir: Path) -> bool:
         os.close(descriptor)
 
 
-def test_workspace_recovers_records_under_an_exclusive_interprocess_lock(
+def seed_interrupted_cascade(data_dir: Path, record: ImportedHandRecord) -> str:
+    """Leave a ready-but-uncommitted cascade behind, as a crash would.
+
+    Built through the journal's own test seams so it is the real shape a
+    sweep has to finish, not an approximation of one.
+    """
+    store = FileImportedHandStore(data_dir)
+    journal = CascadeJournal(store.records_dir)
+    record_key = imported_hand_record_key(record.identity)
+    cascade_id = journal._prepare(  # test seam
+        operation="save", record_keys=[record_key]
+    )
+    content = (
+        store.records_dir / ".cascade" / cascade_id / "staged" / record_key / "content"
+    )
+    content.mkdir(parents=True)
+    (content / "record.json").write_bytes(
+        record.model_dump_json(indent=2).encode("utf-8")
+    )
+    journal._mark_ready(cascade_id)  # test seam
+    return cascade_id
+
+
+def test_a_clean_volume_boots_without_any_exclusive_acquire(tmp_path: Path) -> None:
+    """The state every production boot in this slice is actually in.
+
+    An exclusive acquire on this path is a real availability risk: it runs
+    at import time, before uvicorn binds and before /api/health can
+    answer, and a daily backup export or a long mutating request holding
+    the lock turns a boot into a timeout, a container exit, and a restart
+    loop. Paying that forever to sweep a journal with nothing in it is the
+    wrong trade, so the sweep is not even asked for.
+    """
+    acquires: list[bool] = []
+    real_acquire = InterprocessDataLock.acquire
+
+    def recording_acquire(
+        lock: InterprocessDataLock,
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
+        acquires.append(exclusive)
+        return real_acquire(
+            lock, exclusive=exclusive, timeout_seconds=timeout_seconds
+        )
+
+    with mock.patch.object(InterprocessDataLock, "acquire", recording_acquire):
+        workspace = WorkspaceCoordinator.open(tmp_path)
+
+    assert acquires == [False], "a clean volume must never acquire exclusively"
+    assert workspace.imported_hand_recovery == ImportedHandRecoveryReport()
+
+
+def test_a_clean_volume_boots_while_another_process_holds_the_lock_shared(
     tmp_path: Path,
 ) -> None:
-    """A shared hold would let another process sweep away a live cascade.
+    """The regression this is really about: startup used to fail here.
+
+    A shared holder is the ordinary state of a running instance serving a
+    mutating request. Before the skip, the boot's exclusive acquire waited
+    on it and, past the bound, killed the container.
+    """
+    FileImportedHandStore(tmp_path)  # create the store directory first
+
+    with InterprocessDataLock(tmp_path).hold(exclusive=False):
+        workspace = WorkspaceCoordinator.open(tmp_path, recovery_lock_timeout_seconds=0)
+
+    assert workspace.imported_hand_recovery == ImportedHandRecoveryReport()
+
+
+def test_an_interrupted_write_is_recovered_under_an_exclusive_hold(
+    tmp_path: Path,
+) -> None:
+    """When there IS something to sweep, exclusivity is worth its cost.
 
     The journal only serialises begin() against recover() inside one
-    process; across processes it enforces nothing, so the sweep has to
-    exclude every other holder of the data lock while it runs.
+    process; across processes it enforces nothing, so a sweep that will
+    actually touch scratch directories has to exclude every other holder
+    of the data lock while it runs.
     """
+    record = pending_review_record()
+    record_key = imported_hand_record_key(record.identity)
+    cascade_id = seed_interrupted_cascade(tmp_path, record)
     observed: list[bool] = []
     real_recover = FileImportedHandStore.recover
 
@@ -1006,11 +1089,36 @@ def test_workspace_recovers_records_under_an_exclusive_interprocess_lock(
     with mock.patch.object(FileImportedHandStore, "recover", recording_recover):
         workspace = WorkspaceCoordinator.open(tmp_path)
 
-    assert observed == [True]
-    assert workspace.imported_hand_recovery == ImportedHandRecoveryReport()
+    assert observed == [True], "the sweep must run under an exclusive hold"
+    assert workspace.imported_hand_recovery == ImportedHandRecoveryReport(
+        completed=(cascade_id,)
+    )
+    assert workspace.imported_hands.get(record_key) == record
     # The hold is released once open() returns, so ordinary shared use
     # of the data lock still works afterwards.
     assert not shared_data_lock_is_blocked(tmp_path)
+
+
+def test_an_empty_cascade_directory_is_not_something_to_sweep(
+    tmp_path: Path,
+) -> None:
+    """`.cascade` survives the first write forever; its existence is not work.
+
+    Nor is permanent quarantine evidence, which a sweep deliberately never
+    touches. Treating either as "something to recover" would reinstate the
+    exclusive acquire on every boot the moment the feature is first used.
+    """
+    store = FileImportedHandStore(tmp_path)
+    store.save(imported_hand_record_key(sample_identity()), pending_review_record())
+    assert (store.records_dir / ".cascade").is_dir()
+
+    assert store.has_interrupted_writes() is False
+
+    (store.records_dir / ".cascade" / "corrupt" / "abcd").mkdir(parents=True)
+    assert store.has_interrupted_writes() is False
+
+    seed_interrupted_cascade(tmp_path, approved_record())
+    assert store.has_interrupted_writes() is True
 
 
 def test_workspace_still_recovers_interrupted_jobs(tmp_path: Path) -> None:
@@ -1086,24 +1194,49 @@ def test_startup_gives_up_loudly_rather_than_hanging_on_its_exclusive_acquire(
     container that hangs silently and never turns healthy, so a deploy
     wedges instead of failing. The error must name the lock file, and the
     sweep must not be skipped to get past it.
+
+    Seeded with an interrupted write, so the exclusive acquire is
+    genuinely reached; the assertion on `acquires` pins that, because
+    without it a skipped sweep would leave the *shared* acquire to fail
+    and the test would pass for the wrong reason.
     """
+    seed_interrupted_cascade(tmp_path, pending_review_record())
+    acquires: list[bool] = []
+    real_acquire = InterprocessDataLock.acquire
+
+    def recording_acquire(
+        lock: InterprocessDataLock,
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
+        acquires.append(exclusive)
+        return real_acquire(
+            lock, exclusive=exclusive, timeout_seconds=timeout_seconds
+        )
+
     data_lock = InterprocessDataLock(tmp_path)
     descriptor = data_lock.acquire(exclusive=True)
     try:
-        with pytest.raises(DataLockTimeoutError) as failure:
-            WorkspaceCoordinator.open(tmp_path, recovery_lock_timeout_seconds=0)
+        with mock.patch.object(InterprocessDataLock, "acquire", recording_acquire):
+            with pytest.raises(DataLockTimeoutError) as failure:
+                WorkspaceCoordinator.open(tmp_path, recovery_lock_timeout_seconds=0)
     finally:
         data_lock.release(descriptor)
 
+    assert acquires == [True], "the failure must be the exclusive acquire, not a later one"
     message = str(failure.value)
     assert DATA_LOCK_FILENAME in message
-    assert "exclusive" in message
+    assert "an exclusive hold" in message
 
 
 def test_startup_gives_up_loudly_rather_than_hanging_on_its_shared_acquire(
     tmp_path: Path,
 ) -> None:
-    """open() makes two separate acquires, so both need their own bound.
+    """open() can make two separate acquires, so both need their own bound.
+
+    Seeded with an interrupted write, because otherwise the sweep is
+    skipped and the exclusive acquire never happens at all.
 
     The exclusive one is released before the shared one is taken, so an
     exclusive holder arriving in that window blocks the shared acquire on
@@ -1113,6 +1246,7 @@ def test_startup_gives_up_loudly_rather_than_hanging_on_its_shared_acquire(
     lets the exclusive acquire succeed and injects the blocker into the
     window between them.
     """
+    seed_interrupted_cascade(tmp_path, pending_review_record())
     blocker = InterprocessDataLock(tmp_path)
     real_acquire = InterprocessDataLock.acquire
     acquires: list[bool] = []
@@ -2085,3 +2219,60 @@ def test_a_cascade_refused_for_retention_is_still_closed(tmp_path: Path) -> None
 
     with pytest.raises(ClosedCascadeError):
         escaped[0].stage_record(record)
+
+
+class CallerFailure(RuntimeError):
+    """A caller's own error, distinguishable from anything the store raises."""
+
+
+def test_a_failing_block_keeps_its_own_exception_when_finalize_would_raise(
+    tmp_path: Path,
+) -> None:
+    """`_finalize` runs while unwinding, so it must not replace the reason.
+
+    It runs in the `finally`/unwinding path, so an error of its own would
+    become the exception the caller sees, with the original surviving only
+    as `__context__`. Its errors are also the less useful of the two:
+    staging decisions before the record is the order the API encourages,
+    so a `stage_record` failure would routinely surface as a retention
+    error resolved against the *stale* on-disk record -- a complaint about
+    a name that was never going to be written, hiding the reason nothing
+    was.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    escaped: list[ImportedHandCascade] = []
+
+    with pytest.raises(CallerFailure) as failure:
+        with store.begin_cascade(key, operation="save") as cascade:
+            escaped.append(cascade)
+            # Two artifacts resolving to one name: _finalize would raise
+            # DecisionArtifactRetentionError if it were allowed to.
+            cascade.stage_decisions(extraction_for(record))
+            cascade.stage_decisions(unbound_rejection(record))
+            raise CallerFailure("the caller's own reason")
+
+    assert str(failure.value) == "the caller's own reason"
+    assert not isinstance(failure.value, DecisionArtifactRetentionError)
+    # Nothing commits either way, and the handle is still invalidated.
+    assert store.list_decision_artifacts(key) == []
+    assert store.get(key) == record
+    with pytest.raises(ClosedCascadeError):
+        escaped[0].stage_decisions(extraction_for(record))
+
+
+def test_a_succeeding_block_still_gets_finalize_errors(tmp_path: Path) -> None:
+    """Suppression is scoped to unwinding only; a clean block still hears it."""
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    with pytest.raises(DecisionArtifactRetentionError):
+        with store.begin_cascade(key, operation="save") as cascade:
+            cascade.stage_decisions(extraction_for(record))
+            cascade.stage_decisions(unbound_rejection(record))
+
+    assert store.list_decision_artifacts(key) == []

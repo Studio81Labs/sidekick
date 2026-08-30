@@ -549,6 +549,9 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         active_settings.data_dir,
         job_lock_stripes=JOB_LOCK_STRIPES,
         job_lock_factory=Lock,
+        recovery_lock_timeout_seconds=(
+            active_settings.data_lock_recovery_timeout_seconds
+        ),
     )
     data_lock = workspace.data_lock
     store = workspace.jobs

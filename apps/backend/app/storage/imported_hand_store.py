@@ -89,13 +89,16 @@ your own hold; the acquire is bounded so that mistake surfaces as a named
 The two methods are therefore deliberately asymmetric, and the asymmetry
 is a decision rather than an oversight. ``save`` self-locks because it is
 self-contained: the hold it needs starts and ends inside the call.
-``recover`` cannot, because the hold it needs is wider than the call --
-it has to span store construction and the sweep together, so that no
-cascade can be opened in the window between them -- and an exclusive
-self-acquire nested inside the caller's own exclusive hold would block on
-that hold, deadlocking on some platforms. So ``recover`` requires its
-caller to hold the lock exclusively and cannot check that it did. This is
-the more dangerous direction to get wrong: a sweep run without the hold
+``recover`` cannot, because an exclusive self-acquire nested inside the
+caller's own exclusive hold would block on that hold, deadlocking on some
+platforms. So ``recover`` requires its caller to hold the lock
+exclusively, and cannot check that it did. What the hold must cover is
+the sweep itself, from before it starts until after it returns -- and
+only that. Construction caches nothing about ``.cascade`` (it creates the
+record directory and builds a journal object; every directory read
+happens inside ``recover``), so it does not need to be inside the hold,
+and ``has_interrupted_writes`` is deliberately outside it. This is the
+more dangerous direction to get wrong: a sweep run without the hold
 deletes another process's live cascade, where an unlocked write merely
 exposes its own. ``WorkspaceCoordinator.open`` is the only caller today;
 anything else that calls it -- a maintenance CLI, say -- must take
@@ -379,9 +382,24 @@ class FileImportedHandStore:
                 # same scratch tree the journal's exception handling
                 # discards wholesale, so it never becomes visible either
                 # way. Either way the cascade is closed once this returns.
+                #
+                # The two calls differ in one way only: when the caller's
+                # block is already unwinding, _finalize must not raise. It
+                # runs in the unwinding path, so its own error would
+                # REPLACE the caller's - leaving the original alive only as
+                # __context__ - and its errors are the least useful of the
+                # two. Staging decisions before the record is the natural
+                # order the API encourages, so a stage_record
+                # ValidationError would routinely surface as a retention
+                # error resolved against the stale on-disk record: a
+                # diagnostic about a name that was never going to be
+                # written, hiding the reason nothing was.
                 try:
                     yield cascade
-                finally:
+                except BaseException:
+                    cascade._finalize(unwinding=True)
+                    raise
+                else:
                     cascade._finalize()
 
     def get_decisions(
@@ -490,16 +508,32 @@ class FileImportedHandStore:
                 )
         return sorted(artifacts)
 
+    def has_interrupted_writes(self) -> bool:
+        """Whether ``recover`` would find anything to finish or set aside.
+
+        Cheap, lock-free, and safe to call before deciding whether to take
+        the exclusive hold ``recover`` requires: a false answer means the
+        journal holds no cascade directory a sweep would act on, so there
+        is nothing for exclusivity to protect. A cascade that appears
+        after a false answer belongs to another process and is *live*,
+        which a sweep must not touch in any case.
+        """
+        return self._journal.has_pending_cascades()
+
     def recover(self) -> ImportedHandRecoveryReport:
         """Finish or set aside writes interrupted by an earlier crash.
 
-        **The caller must already hold the data lock exclusively**, and
-        must have held it since before this store was constructed. Unlike
-        ``save``, this does not and cannot take the hold itself: the hold
-        has to be wider than this call, and an exclusive self-acquire
-        inside the caller's own exclusive hold would block on it. Nothing
-        here verifies the caller complied -- see the module docstring for
-        why the two methods differ, and for what a new caller owes.
+        **The caller must hold the data lock exclusively across this
+        call.** Unlike ``save``, this does not and cannot take the hold
+        itself: an exclusive self-acquire inside the caller's own
+        exclusive hold would block on it. Nothing here verifies the caller
+        complied -- see the module docstring for why the two methods
+        differ, and for what a new caller owes.
+
+        Ask ``has_interrupted_writes`` first: it needs no hold, and a
+        false answer means this call has nothing to do, so the exclusive
+        acquire can be skipped entirely rather than paid for on a volume
+        where no write was ever interrupted.
 
         Blocking. Never call it on the event-loop thread.
         """
@@ -756,7 +790,7 @@ class ImportedHandCascade:
                 "never after"
             )
 
-    def _finalize(self) -> None:
+    def _finalize(self, *, unwinding: bool = False) -> None:
         """Resolve and write every buffered decision artifact, then close.
 
         Called exactly once, by ``begin_cascade``, in a ``finally`` after
@@ -781,6 +815,14 @@ class ImportedHandCascade:
         raised: a refusal must not leave a live handle behind, which
         would be exactly the escaped-cascade hole ``ClosedCascadeError``
         exists to make loud.
+
+        ``unwinding`` says the caller's block is already failing. Then
+        this reports nothing of its own: it still stages what it can and
+        still closes, but swallows its own error rather than replacing an
+        in-flight exception with a worse one. Nothing is lost by that --
+        the whole cascade is discarded either way, so this method's
+        errors only ever describe a write that was never going to happen
+        -- and the caller keeps the exception that says why.
         """
         try:
             staged: dict[str, bytes] = {}
@@ -796,6 +838,12 @@ class ImportedHandCascade:
                 self._require_retention_preserved(relative_path, payload, staged)
                 self._staging.stage(self._record_key, relative_path, payload)
                 staged[relative_path] = payload
+        except Exception:
+            if not unwinding:
+                raise
+            # Deliberately swallowed: see `unwinding` above. KeyboardInterrupt
+            # and SystemExit are not caught here - they are not statements
+            # about this cascade and must keep propagating.
         finally:
             self._closed = True
 
