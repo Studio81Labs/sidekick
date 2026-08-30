@@ -322,6 +322,65 @@ class HandDecisionExtraction(ImportedHandModel):
             raise ValueError("an extracted hand requires its stable identity")
         return self
 
+    @model_validator(mode="after")
+    def validate_point_binding(self) -> Self:
+        """Bind every retained artifact to this envelope and to the hand's order.
+
+        ``validate_outcome`` runs first and already proves that decision points
+        exist only for a ``decisions`` outcome, which carries a non-``None``
+        identity and canonical revision -- so the equality checks below are only
+        ever reached with a fully bound envelope. A rejection outcome retains no
+        points or excluded actions at all, and nothing here applies to it.
+
+        Without this, a rehydrated envelope could mix revisions or generations,
+        or reorder what the hand actually did, and supersede or deletion logic
+        would treat stale decisions as current.
+        """
+
+        for point in self.decision_points:
+            if point.identity != self.identity:
+                raise ValueError(
+                    "decision point identity does not match the extracted hand"
+                )
+            if point.canonical_revision != self.canonical_revision:
+                raise ValueError(
+                    "decision point canonical revision does not match the"
+                    " extracted hand"
+                )
+            if point.deletion_generation != self.deletion_generation:
+                raise ValueError(
+                    "decision point deletion generation does not match the"
+                    " extracted hand"
+                )
+        indexes = [point.decision_index for point in self.decision_points]
+        if indexes != list(range(len(indexes))):
+            raise ValueError(
+                "decision_index values must be contiguous and ordered from zero"
+            )
+        decided = [
+            (_STREET_ORDER[point.street], point.action_sequence)
+            for point in self.decision_points
+        ]
+        if decided != sorted(set(decided)):
+            raise ValueError(
+                "decision points must run in street then action order"
+            )
+        excluded = [
+            (_STREET_ORDER[action.street], action.action_sequence)
+            for action in self.excluded_actions
+        ]
+        if excluded != sorted(set(excluded)):
+            raise ValueError(
+                "excluded actions must run in street then action order without"
+                " repeating one"
+            )
+        if set(decided) & set(excluded):
+            raise ValueError(
+                "a hero action cannot be both a decision point and an excluded"
+                " action"
+            )
+        return self
+
 
 def extract_hero_decision_points(
     record: ImportedHandRecord,

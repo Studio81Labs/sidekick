@@ -1775,3 +1775,130 @@ def test_extraction_table_action_never_contradicts_the_hero_seat() -> None:
 
     assert inspected > 0
     assert shoves > 0
+
+
+def foreign_identity(payload: dict[str, object]) -> None:
+    payload["decision_points"][0]["identity"] = {
+        "site": "ggpoker",
+        "source_hand_id": "999999999",
+    }
+
+
+def foreign_canonical_revision(payload: dict[str, object]) -> None:
+    payload["decision_points"][1]["canonical_revision"] = 2
+
+
+def foreign_deletion_generation(payload: dict[str, object]) -> None:
+    payload["decision_points"][1]["deletion_generation"] = 7
+
+
+def gapped_decision_indexes(payload: dict[str, object]) -> None:
+    for offset, point in enumerate(payload["decision_points"]):
+        point["decision_index"] = 10 + offset * 3
+
+
+def duplicated_decision_index(payload: dict[str, object]) -> None:
+    payload["decision_points"][1]["decision_index"] = 0
+
+
+def shuffled_decision_chronology(payload: dict[str, object]) -> None:
+    points = payload["decision_points"]
+    points[0], points[-1] = points[-1], points[0]
+    for index, point in enumerate(points):
+        point["decision_index"] = index
+
+
+def duplicated_excluded_action(payload: dict[str, object]) -> None:
+    payload["excluded_actions"] = [
+        *payload["excluded_actions"],
+        dict(payload["excluded_actions"][0]),
+    ]
+
+
+def reversed_excluded_actions(payload: dict[str, object]) -> None:
+    payload["excluded_actions"] = list(reversed(payload["excluded_actions"]))
+
+
+def excluded_action_shadowing_a_decision(payload: dict[str, object]) -> None:
+    point = payload["decision_points"][0]
+    shadow = dict(payload["excluded_actions"][0])
+    shadow["street"] = point["street"]
+    shadow["action_sequence"] = point["action_sequence"]
+    payload["excluded_actions"] = [shadow]
+
+
+@pytest.mark.parametrize(
+    ("mutate", "expected_error"),
+    [
+        (foreign_identity, "identity does not match the extracted hand"),
+        (
+            foreign_canonical_revision,
+            "canonical revision does not match the extracted hand",
+        ),
+        (
+            foreign_deletion_generation,
+            "deletion generation does not match the extracted hand",
+        ),
+        (gapped_decision_indexes, "contiguous and ordered from zero"),
+        (duplicated_decision_index, "contiguous and ordered from zero"),
+        (
+            shuffled_decision_chronology,
+            "decision points must run in street then action order",
+        ),
+        (
+            duplicated_excluded_action,
+            "excluded actions must run in street then action order",
+        ),
+        (
+            excluded_action_shadowing_a_decision,
+            "cannot be both a decision point and an excluded action",
+        ),
+    ],
+)
+def test_hand_decision_extraction_rejects_an_unbound_envelope(
+    mutate: object,
+    expected_error: str,
+) -> None:
+    payload = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).model_dump(mode="python")
+
+    assert HandDecisionExtraction.model_validate(payload) is not None
+    mutate(payload)  # type: ignore[operator]
+
+    with pytest.raises(ValidationError, match=expected_error):
+        HandDecisionExtraction.model_validate(payload)
+
+
+def test_hand_decision_extraction_rejects_reordered_excluded_actions() -> None:
+    # The shared four-street hand excludes only the hero's blind post, so
+    # reversing it is a no-op; the ante hand excludes an ante and a blind.
+    payload = extract_hero_decision_points(ante_decision_record()).model_dump(
+        mode="python"
+    )
+
+    assert len(payload["excluded_actions"]) == 2
+    assert HandDecisionExtraction.model_validate(payload) is not None
+    reversed_excluded_actions(payload)
+
+    with pytest.raises(
+        ValidationError,
+        match="excluded actions must run in street then action order",
+    ):
+        HandDecisionExtraction.model_validate(payload)
+
+
+def test_hand_decision_extraction_binds_every_point_to_the_envelope() -> None:
+    extraction = extract_hero_decision_points(multi_street_decision_record())
+
+    assert extraction.outcome == "decisions"
+    assert len(extraction.decision_points) == 4
+    for index, point in enumerate(extraction.decision_points):
+        assert point.identity == extraction.identity
+        assert point.canonical_revision == extraction.canonical_revision
+        assert point.deletion_generation == extraction.deletion_generation
+        assert point.decision_index == index
+    assert [
+        (point.street, point.action_sequence)
+        for point in extraction.decision_points
+    ] == [("preflop", 2), ("flop", 1), ("turn", 1), ("river", 1)]
