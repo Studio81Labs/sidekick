@@ -39,14 +39,16 @@ revision 2 would silently ``os.replace`` its revision-1 predecessor's
 retained verdict out of existence, which is exactly the deletion-outside-Task-6
 this module forbids. So a rejection is instead filed under the *record's*
 current ``active_canonical_revision`` when it has one, preserving the
-revision dimension across reapprovals that keep failing; only when neither
-the extraction nor the record has a revision to offer -- the record itself
-is not ``learning_eligible`` -- does it fall to the reserved
-``NO_CANONICAL_REVISION`` sentinel, which can never equal a real revision and
-so can never be mistaken for an active canonical artifact. Either way, a
-rejection is still generation-stamped, which is what lets a caller tell
-"still not extractable at generation 2" apart from a stale verdict computed
-at generation 1.
+revision dimension across reapprovals that keep failing -- except a
+``not_active`` rejection, which proves from its own content that the record
+was not learning eligible at the moment it was computed and so must never
+borrow whatever revision the record has since been reactivated to (see
+``FileImportedHandStore._decision_revision_for``). Only when no revision
+survives to offer does it fall to the reserved ``NO_CANONICAL_REVISION``
+sentinel, which can never equal a real revision and so can never be mistaken
+for an active canonical artifact. Either way, a rejection is still
+generation-stamped, which is what lets a caller tell "still not extractable
+at generation 2" apart from a stale verdict computed at generation 1.
 
 Every write goes through :class:`app.storage.cascade_journal.CascadeJournal`
 rather than a bare atomic file write, even though a record write touches
@@ -155,6 +157,24 @@ class ImportedHandNotFoundError(LookupError):
     """
 
 
+class ClosedCascadeError(RuntimeError):
+    """A ``stage_*`` call reached an ``ImportedHandCascade`` after its
+    ``with`` block already exited.
+
+    Neither the cascade handle nor its underlying ``CascadeStaging`` is
+    otherwise invalidated on exit -- ``CascadeStaging`` was always shaped
+    that way, harmlessly, while it stayed internal to this module.
+    ``begin_cascade`` hands one to callers now, including future
+    application-layer code where "compute the extraction in a helper that
+    returns the cascade" is an ordinary mistake to make. A call on an
+    escaped handle would otherwise succeed locally while writing nothing
+    durable: the scratch directory it recreates has no ready marker, and
+    the next ``recover()`` sweep discards a marker-less directory
+    silently -- reported in none of its three buckets, because pre-marker
+    discard is not surfaced. This exists so that mistake is loud instead.
+    """
+
+
 def imported_hand_record_key(identity: StableHandIdentity) -> str:
     """Return the durable store key for a hand's stable identity.
 
@@ -252,6 +272,13 @@ class FileImportedHandStore:
         (a fresh approval, a reapproval) wants ``begin_cascade`` directly
         instead, so the artifact is filed against the revision the cascade
         is about to publish rather than whatever is still live until commit.
+
+        Persisting a rejection this way is coupled to ``record_key``'s
+        stored record still parsing: when the extraction itself carries no
+        canonical revision, resolving its filename rereads that record,
+        and a corrupted one makes this raise rather than silently losing
+        the revision dimension by falling back to a sentinel it cannot
+        justify (see ``FileImportedHandStore._decision_revision_for``).
         """
         with self.begin_cascade(record_key, operation="save") as cascade:
             cascade.stage_decisions(extraction)
@@ -273,6 +300,16 @@ class FileImportedHandStore:
         moving more than one thing together -- an approval, a reapproval, a
         purge -- must call this directly instead of composing calls to
         those wrappers, none of which this store implements itself.
+
+        A decision artifact staged through the returned handle is not
+        written until the ``with`` block finishes: which revision it
+        resolves to can depend on a record staged *later* in the same
+        cascade, so resolution happens once, at the end, against whatever
+        record the cascade ends up staging -- never against call order.
+        The handle is invalidated the instant the block exits, success or
+        failure alike; a ``stage_*`` call afterward raises
+        ``ClosedCascadeError`` rather than writing into scratch space
+        nothing will ever commit.
 
         Takes the same shared interprocess hold ``save`` always has, for
         the same reason (see the module docstring), for the whole cascade
@@ -304,7 +341,18 @@ class FileImportedHandStore:
             with self._journal.begin(
                 operation=operation, record_keys=[record_key]
             ) as staging:
-                yield ImportedHandCascade(self, record_key, staging)
+                cascade = ImportedHandCascade(self, record_key, staging)
+                # _finalize runs whether the caller's block raised or not:
+                # on success it resolves and writes every buffered decision
+                # artifact before the journal's own context manager decides
+                # to commit; on failure whatever it writes lands in the
+                # same scratch tree the journal's exception handling
+                # discards wholesale, so it never becomes visible either
+                # way. Either way the cascade is closed once this returns.
+                try:
+                    yield cascade
+                finally:
+                    cascade._finalize()
 
     def get_decisions(
         self, record_key: str, *, revision: int, generation: int
@@ -387,11 +435,12 @@ class FileImportedHandStore:
         The filename is the exact name matched on disk, not a name
         reconstructed from the parsed pair -- ``r01-g0.json`` parses to
         ``(1, 0)`` under this method's own pattern, but is not the name
-        ``_decision_artifact_path``/``ImportedHandCascade.stage_decisions_delete``
-        would build from that pair. A caller staging a delete (Task 6's
-        purge) must target the filename this call actually saw, or a
-        reconstructed one that silently does not match leaves the real
-        file behind: ``_commit_delete`` unlinks with ``missing_ok=True``,
+        ``_decision_artifact_path`` would build from that pair. That is
+        exactly why ``ImportedHandCascade.stage_decisions_delete`` (Task
+        6's purge) takes this filename directly rather than a
+        ``(revision, generation)`` pair to reconstruct from: a
+        reconstructed name that silently does not match leaves the real
+        file behind -- ``_commit_delete`` unlinks with ``missing_ok=True``,
         so a purge would report success while the artifact survives it.
         """
         try:
@@ -497,24 +546,60 @@ class FileImportedHandStore:
         revision must not collide with its predecessor's retained
         rejection (see the module docstring). This is key derivation, not
         a domain rule -- it does not re-derive *why* the hand was
-        rejected, only *where* to file the verdict. The sentinel is
-        reserved for when neither exists: a record with no active revision
-        (or no record at all yet) has only one meaningful rejection state,
-        so a collision there is harmless.
+        rejected, only *where* to file the verdict.
+
+        Two cases never take that fallback, both because trusting the
+        record's *current* state would describe a different moment than
+        the one the extraction actually describes:
+
+        - ``rejection == "not_active"`` proves, from the extraction's own
+          content alone, that the record was not learning eligible at the
+          moment it was computed. If the hand has since been reactivated,
+          the record's current ``active_canonical_revision`` belongs to
+          that reactivation, not to this rejection -- filing it there
+          would produce an artifact whose filename claims "this is the
+          hand's current active revision" while its content says "this
+          hand was not active", and ``active_decisions`` would then serve
+          a not-active verdict as the hand's live decisions. This is
+          decidable from the extraction alone, so it always takes the
+          sentinel, never the fallback.
+        - A generation mismatch between ``record`` and ``extraction``
+          means the record has moved on to a different incarnation (a
+          purge and reimport) since this extraction was computed. Its
+          ``active_canonical_revision`` belongs to that different
+          incarnation; pairing it with the extraction's own, older
+          ``deletion_generation`` would file a name whose two halves
+          describe two different snapshots in time.
+
+        Both fall to the reserved sentinel instead of guessing, which is
+        never wrong here: a record with no active revision to offer, or
+        whose generation has already moved past this extraction, has only
+        one meaningful rejection slot for this generation, so a collision
+        there is harmless.
 
         ``record``, when given, is preferred over rereading the store: a
         caller composing this into a cascade that also stages a new
         revision of the record itself (``ImportedHandCascade.stage_record``
-        earlier in the same cascade) needs the revision *about to be*
-        published, not whatever is still live on disk until commit.
+        in the same cascade) needs the revision *about to be* published,
+        not whatever is still live on disk until commit. Rereading the
+        store when ``record`` is ``None`` couples persisting a rejection
+        to ``record.json`` still parsing: a corrupted record now makes
+        this raise rather than silently falling back to a sentinel that
+        would have lost the revision dimension without a trace. That
+        coupling is deliberate, not an oversight -- see
+        ``save_decisions``'s own docstring.
         """
         if extraction.canonical_revision is not None:
             return extraction.canonical_revision
+        if extraction.rejection == "not_active":
+            return NO_CANONICAL_REVISION
         if record is None:
             try:
                 record = self.get(record_key)
             except ImportedHandNotFoundError:
                 return NO_CANONICAL_REVISION
+        if record.lifecycle.deletion_generation != extraction.deletion_generation:
+            return NO_CANONICAL_REVISION
         active_revision = record.lifecycle.active_canonical_revision
         return NO_CANONICAL_REVISION if active_revision is None else active_revision
 
@@ -526,6 +611,16 @@ class ImportedHandCascade:
     directly. Every ``stage_*`` call here stages into the same underlying
     ``CascadeStaging``, so everything staged through one instance commits
     or is discarded as a single unit -- see ``begin_cascade``'s docstring.
+
+    A decision artifact staged here is buffered, not written immediately:
+    which revision it resolves to can depend on a record staged *later* in
+    the same cascade (``stage_record``), so every buffered artifact is
+    resolved once, at cascade exit, against whichever record this cascade
+    ends up staging -- never against the order the caller happened to call
+    these methods in. Invalidated the instant the caller's ``with`` block
+    exits, success or failure alike: a ``stage_*`` call afterward raises
+    ``ClosedCascadeError`` rather than writing into scratch space nothing
+    will ever commit.
     """
 
     def __init__(
@@ -538,15 +633,21 @@ class ImportedHandCascade:
         self._record_key = record_key
         self._staging = staging
         self._staged_record: ImportedHandRecord | None = None
+        self._pending_extractions: list[HandDecisionExtraction] = []
+        self._closed = False
 
     def stage_record(self, record: ImportedHandRecord) -> None:
         """Stage ``record`` as this cascade's ``record.json``.
 
         Same identity/key rule ``FileImportedHandStore.save`` enforces.
-        Remembers ``record`` so a ``stage_decisions`` call later in the
-        same cascade prefers *this* record's active revision over
-        rereading the stale one still live on disk until commit.
+        Written immediately, unlike a decision artifact: ``record.json``'s
+        name never depends on anything else staged in this cascade.
+        Remembers ``record`` so a ``stage_decisions`` call anywhere in the
+        same cascade -- before this call or after -- resolves against
+        *this* record's active revision at cascade exit, rather than
+        whatever is still live on disk until commit.
         """
+        self._require_open()
         self._store._require_matching_identity(
             self._record_key, record.identity, subject="record"
         )
@@ -560,25 +661,35 @@ class ImportedHandCascade:
     def stage_decisions(self, extraction: HandDecisionExtraction) -> None:
         """Stage ``extraction`` as one decision artifact in this cascade.
 
-        Filename derivation is ``FileImportedHandStore._decision_revision_for``
-        -- see the module docstring for the rule and why a rejection needs
-        it. Never removes a sibling artifact: a superseded revision's file
-        is left exactly where it is, retained for audit per issue #432.
+        Identity is checked immediately, so a caller learns of a foreign
+        extraction right away; the filename itself
+        (``FileImportedHandStore._decision_revision_for`` -- see the
+        module docstring for the rule) is resolved later, at cascade exit,
+        against whichever record this cascade ends up staging -- not
+        against whatever ``stage_record`` has been called with *so far*.
+        Computing the extraction before building the record it came from
+        is the natural order, and that order must not silently change
+        which revision it lands under. Never removes a sibling artifact:
+        a superseded revision's file is left exactly where it is, retained
+        for audit per issue #432.
         """
+        self._require_open()
         self._store._require_matching_identity(
             self._record_key, extraction.identity, subject="extraction"
         )
-        revision = self._store._decision_revision_for(
-            self._record_key, extraction, record=self._staged_record
-        )
-        relative_path = (
-            f"{DECISIONS_DIRNAME}/r{revision}-g{extraction.deletion_generation}.json"
-        )
-        payload = extraction.model_dump_json(indent=2).encode("utf-8")
-        self._staging.stage(self._record_key, relative_path, payload)
+        self._pending_extractions.append(extraction)
 
-    def stage_decisions_delete(self, *, revision: int, generation: int) -> None:
+    def stage_decisions_delete(self, filename: str) -> None:
         """Stage the removal of one decision artifact in this cascade.
+
+        ``filename`` must be the exact name ``list_decision_artifacts``
+        reported, never one reconstructed from a ``(revision, generation)``
+        pair: ``r01-g0.json`` parses to ``(1, 0)`` under that method's own
+        pattern but is not the name a reconstruction from that pair would
+        build, and staging a delete for the wrong name leaves the real
+        file behind silently -- ``_commit_delete`` unlinks with
+        ``missing_ok=True``, so a purge built that way would report
+        success while the artifact survives it.
 
         For Task 6's purge only: a decision artifact is otherwise retained
         forever (see the module docstring). Staging a delete outside a
@@ -589,8 +700,47 @@ class ImportedHandCascade:
         deliberately only reachable through an open cascade, never as a
         standalone call.
         """
-        relative_path = f"{DECISIONS_DIRNAME}/r{revision}-g{generation}.json"
-        self._staging.stage_delete(self._record_key, relative_path)
+        self._require_open()
+        if DECISION_ARTIFACT_PATTERN.fullmatch(filename) is None:
+            raise ValueError(
+                f"{filename!r} is not a decision artifact filename; pass "
+                "the exact name list_decision_artifacts reported, never "
+                "one reconstructed from a (revision, generation) pair"
+            )
+        self._staging.stage_delete(
+            self._record_key, f"{DECISIONS_DIRNAME}/{filename}"
+        )
+
+    def _require_open(self) -> None:
+        if self._closed:
+            raise ClosedCascadeError(
+                "this ImportedHandCascade's `with` block has already "
+                "exited; every stage_* call must happen before it does, "
+                "never after"
+            )
+
+    def _finalize(self) -> None:
+        """Resolve and write every buffered decision artifact, then close.
+
+        Called exactly once, by ``begin_cascade``, in a ``finally`` after
+        the caller's block has finished, whether it raised or not -- so a
+        decision artifact's revision is always resolved against this
+        cascade's *final* staged record, regardless of ``stage_record`` /
+        ``stage_decisions`` call order. Safe to run even when the caller's
+        block raised: whatever this stages lands in the same scratch tree
+        the journal's own exception handling discards wholesale, so it
+        never reaches a live path either way.
+        """
+        for extraction in self._pending_extractions:
+            revision = self._store._decision_revision_for(
+                self._record_key, extraction, record=self._staged_record
+            )
+            relative_path = (
+                f"{DECISIONS_DIRNAME}/r{revision}-g{extraction.deletion_generation}.json"
+            )
+            payload = extraction.model_dump_json(indent=2).encode("utf-8")
+            self._staging.stage(self._record_key, relative_path, payload)
+        self._closed = True
 
 
 def resolve_reimport(

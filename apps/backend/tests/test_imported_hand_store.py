@@ -53,6 +53,7 @@ from app.storage.cascade_journal import (
 )
 from app.storage.imported_hand_store import (
     NO_CANONICAL_REVISION,
+    ClosedCascadeError,
     FileImportedHandStore,
     ImportedHandNotFoundError,
     imported_hand_record_key,
@@ -1496,8 +1497,13 @@ def test_a_not_extractable_verdict_is_persisted_and_generation_stamped(
         (NO_CANONICAL_REVISION, 0, f"r{NO_CANONICAL_REVISION}-g0.json"),
         (NO_CANONICAL_REVISION, 1, f"r{NO_CANONICAL_REVISION}-g1.json"),
     ]
-    # A rejection binds no canonical artifact, so it can never be "active",
-    # no matter how current its generation is.
+    # This hand's rejection is always "not_active", which always takes the
+    # sentinel (see _decision_revision_for) and so can never be "active"
+    # here -- not a general property of every rejection. The other five
+    # reasons can accurately BE the current artifact while their revision
+    # and generation stay current; see
+    # test_a_not_active_rejection_never_takes_the_sentinel_fallback and
+    # test_a_rejection_on_an_active_record_preserves_the_revision_dimension.
     assert store.active_decisions(key) is None
 
 
@@ -1542,6 +1548,75 @@ def test_a_rejection_on_an_active_record_preserves_the_revision_dimension(
         (revision, generation)
         for revision, generation, _ in store.list_decision_artifacts(key)
     ] == [(1, 0), (2, 0)]
+
+
+def test_a_not_active_rejection_never_takes_the_sentinel_fallback(
+    tmp_path: Path,
+) -> None:
+    """The one rejection reason the record-read fallback must never use.
+
+    A ``not_active`` rejection proves, from its own content, that the
+    record was not learning eligible when it was computed. If the hand is
+    reactivated before the rejection is ever saved, the fallback would
+    otherwise file it under the record's newly-current revision: an
+    artifact whose filename claims "this is the hand's current active
+    revision" while its content says "this hand was not active", served
+    by ``active_decisions`` as the hand's live decisions.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = withdrawn_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    rejection = extract_hero_decision_points(record)
+    assert rejection.rejection == "not_active"
+
+    # Reactivate at revision 1 -- the same revision the record-read
+    # fallback would otherwise hand back -- before the stale rejection is
+    # ever persisted.
+    store.save(key, approved_record(identity=record.identity))
+    store.save_decisions(key, rejection)
+
+    assert store.get_decisions(key, revision=1, generation=0) is None
+    assert store.active_decisions(key) is None
+    assert (
+        store.get_decisions(key, revision=NO_CANONICAL_REVISION, generation=0)
+        == rejection
+    )
+
+
+def test_a_rejection_never_borrows_a_revision_from_a_different_generation(
+    tmp_path: Path,
+) -> None:
+    """The record's active_canonical_revision belongs to whichever
+    incarnation it is CURRENTLY at. Pairing it with an extraction stamped
+    at an older generation (a purge-and-reimport cycle happened between
+    extraction and save) would file a name whose revision and generation
+    describe two different snapshots in time. The fallback trusts the
+    record only when both agree.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()  # revision 1, generation 0
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    stale_rejection = extract_hero_decision_points(record)  # generation 0
+    assert stale_rejection.canonical_revision is None
+    assert stale_rejection.rejection != "not_active"
+    assert stale_rejection.deletion_generation == 0
+
+    # The record moves on to a new generation before the stale rejection
+    # is ever persisted.
+    record_g1 = approved_record(deletion_generation=1)  # revision 1, generation 1
+    store.save(key, record_g1)
+
+    store.save_decisions(key, stale_rejection)
+
+    # Never borrows record_g1's revision for a generation it does not
+    # belong to.
+    assert store.get_decisions(key, revision=1, generation=0) is None
+    assert (
+        store.get_decisions(key, revision=NO_CANONICAL_REVISION, generation=0)
+        == stale_rejection
+    )
 
 
 def test_save_decisions_round_trips_a_real_decisions_outcome_losslessly(
@@ -1648,9 +1723,107 @@ def test_stage_decisions_delete_removes_an_artifact_when_the_cascade_commits(
     assert store.get_decisions(key, revision=1, generation=0) is not None
 
     with store.begin_cascade(key, operation="purge") as cascade:
-        cascade.stage_decisions_delete(revision=1, generation=0)
+        cascade.stage_decisions_delete("r1-g0.json")
 
     assert store.get_decisions(key, revision=1, generation=0) is None
+
+
+def test_stage_decisions_delete_removes_exactly_the_listed_filename(
+    tmp_path: Path,
+) -> None:
+    """Proves the fix: a delete keyed by revision/generation alone can
+    silently miss a filename that does not exactly match what
+    reconstruction would build (``r01-g0.json`` parses to ``(1, 0)`` but
+    is not ``r1-g0.json``). Deleting by the exact filename
+    ``list_decision_artifacts`` returned cannot have this gap, because it
+    targets what was actually seen, not a guess.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    extraction = extraction_for(record)
+    # A weird-but-legal-looking filename a reconstruction from (1, 0)
+    # would never produce.
+    decisions_dir = store.records_dir / key / "decisions"
+    decisions_dir.mkdir(parents=True, exist_ok=True)
+    (decisions_dir / "r01-g0.json").write_bytes(
+        extraction.model_dump_json(indent=2).encode("utf-8")
+    )
+
+    artifacts = store.list_decision_artifacts(key)
+    assert artifacts == [(1, 0, "r01-g0.json")]
+    [(_, _, filename)] = artifacts
+
+    with store.begin_cascade(key, operation="purge") as cascade:
+        cascade.stage_decisions_delete(filename)
+
+    assert store.list_decision_artifacts(key) == []
+    assert not (decisions_dir / "r01-g0.json").exists()
+
+
+def test_stage_decisions_delete_refuses_a_non_artifact_filename(
+    tmp_path: Path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    with pytest.raises(ValueError, match="not a decision artifact filename"):
+        with store.begin_cascade(key, operation="purge") as cascade:
+            cascade.stage_decisions_delete("record.json")
+
+
+def test_stage_decisions_before_stage_record_still_resolves_to_the_new_revision(
+    tmp_path: Path,
+) -> None:
+    """Proves the fix: computing the extraction before building the
+    record it came from -- the natural order -- must not misfile the
+    artifact under whatever revision is still live on disk at the moment
+    ``stage_decisions`` is called. Resolution happens once, at cascade
+    exit, against the cascade's *final* staged record.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()  # revision 1
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    record_r2 = reapproved_record()  # revision 2, still not extraction-ready
+    rejection = extract_hero_decision_points(record_r2)
+    assert rejection.canonical_revision is None
+
+    with store.begin_cascade(key, operation="reapprove") as cascade:
+        cascade.stage_decisions(rejection)  # decisions staged FIRST
+        cascade.stage_record(record_r2)  # record staged second
+
+    assert store.get(key) == record_r2
+    assert store.get_decisions(key, revision=2, generation=0) == rejection
+    assert store.get_decisions(key, revision=1, generation=0) is None
+
+
+def test_stage_methods_raise_on_a_closed_cascade(tmp_path: Path) -> None:
+    """A handle that escapes its ``with`` block must fail loudly on reuse.
+
+    Neither ``ImportedHandCascade`` nor its underlying ``CascadeStaging``
+    is otherwise invalidated on exit -- a call on an escaped handle would
+    succeed locally while writing into a scratch directory the next
+    recover() sweep discards silently, in no reported bucket.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    extraction = extraction_for(record)
+
+    with store.begin_cascade(key, operation="approve") as cascade:
+        pass
+
+    with pytest.raises(ClosedCascadeError):
+        cascade.stage_record(record)
+    with pytest.raises(ClosedCascadeError):
+        cascade.stage_decisions(extraction)
+    with pytest.raises(ClosedCascadeError):
+        cascade.stage_decisions_delete("r1-g0.json")
 
 
 def test_calling_save_inside_an_open_cascade_raises_reentrantly(
