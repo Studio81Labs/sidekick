@@ -10,12 +10,23 @@ that missing primitive.
 The design is roll-forward, never rollback. begin() durably writes an
 intent.json naming every record key the cascade will touch before it lets
 the caller stage anything. Staged bytes live under a scratch
-.cascade/<cascade_id>/staged/ tree until the with block exits cleanly, at
-which point commit renames every staged file into its live location. If
-the process is killed after intent.json is durable but before the cascade
-directory is removed, recover() finishes the job by replaying the same
-commit - which is why commit must be idempotent, and why stage() refuses
-any record key the intent did not name up front.
+.cascade/<cascade_id>/staged/ tree until the with block exits cleanly. At
+that point, and before any staged file is published to its live location,
+a ready marker is written and made durable - the marker's own file
+descriptor is fsynced, then the cascade directory is fsynced so the
+marker's directory entry survives a crash too. Only once that marker is
+durable does commit start renaming staged files into their live
+locations.
+
+That marker is what makes staging all-or-nothing. If the process is
+killed at any point before the marker exists, no live file has been
+touched, and recover() finds a cascade directory with no ready marker and
+simply discards it - indistinguishable from a crash before begin() ever
+ran. If the process is killed after the marker exists (mid-commit, or
+before the cascade directory is removed), recover() finds the marker,
+trusts it, and finishes the job by replaying the same commit - which is
+why commit must be idempotent, and why stage() refuses any record key the
+intent did not name up front.
 """
 
 from __future__ import annotations
@@ -47,6 +58,7 @@ CASCADE_SCHEMA_VERSION = "imported-hand-cascade/v1"
 _CASCADE_DIRNAME = ".cascade"
 _STAGED_DIRNAME = "staged"
 _INTENT_FILENAME = "intent.json"
+_READY_FILENAME = "ready"
 _UNLINK_SUFFIX = ".unlink"
 
 
@@ -142,6 +154,9 @@ class CascadeJournal:
             shutil.rmtree(cascade_dir, ignore_errors=True)
             raise
         else:
+            # Staging is only all-or-nothing once this marker is durable:
+            # nothing below this line may touch a live path before it is.
+            self._mark_ready(cascade_id)
             self._commit(cascade_dir)
 
     def recover(self) -> list[str]:
@@ -153,6 +168,12 @@ class CascadeJournal:
             key=lambda path: path.name,
         )
         for cascade_dir in cascade_dirs:
+            if not (cascade_dir / _READY_FILENAME).is_file():
+                # No ready marker proves commit never began: staging may be
+                # complete, partial, or empty, but no live file has been
+                # touched either way, so discarding is always safe.
+                shutil.rmtree(cascade_dir, ignore_errors=True)
+                continue
             try:
                 self._read_intent(cascade_dir)
             except (FileNotFoundError, ValidationError, json.JSONDecodeError):
@@ -178,6 +199,10 @@ class CascadeJournal:
             intent.model_dump_json().encode("utf-8"),
         )
         return cascade_id
+
+    def _mark_ready(self, cascade_id: str) -> None:
+        cascade_dir = self._cascade_root / cascade_id
+        _durable_replace(cascade_dir / _READY_FILENAME, b"")
 
     def _read_intent(self, cascade_dir: Path) -> CascadeIntent:
         payload = (cascade_dir / _INTENT_FILENAME).read_bytes()

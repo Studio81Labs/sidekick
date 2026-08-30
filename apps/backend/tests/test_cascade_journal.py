@@ -26,19 +26,51 @@ def test_cascade_discards_every_change_when_the_block_raises(tmp_path: Path) -> 
     assert not any((tmp_path / ".cascade").iterdir())
 
 
-def test_recover_completes_a_cascade_interrupted_before_commit(tmp_path: Path) -> None:
+def test_recover_discards_a_cascade_interrupted_before_commit(tmp_path: Path) -> None:
     # Simulate a hard kill: build the cascade dir by hand exactly as begin() would,
-    # then never commit.
+    # then never mark it ready and never commit.
     journal = CascadeJournal(tmp_path)
     cascade_id = journal._prepare(operation="approve", record_keys=["aa"])  # test seam
     staged = tmp_path / ".cascade" / cascade_id / "staged" / "aa"
     staged.mkdir(parents=True)
     (staged / "record.json").write_bytes(b'{"a": 1}')
 
+    assert journal.recover() == []
+
+    assert not (tmp_path / "aa" / "record.json").exists()
+    assert not (tmp_path / ".cascade" / cascade_id).exists()
+
+
+def test_recover_discards_a_cascade_that_never_reached_commit(tmp_path: Path) -> None:
+    """A crash mid-staging must apply nothing, not a partial set."""
+    journal = CascadeJournal(tmp_path)
+    cascade_id = journal._prepare(operation="approve", record_keys=["aa", "bb"])
+    staged = tmp_path / ".cascade" / cascade_id / "staged" / "aa"
+    staged.mkdir(parents=True)
+    (staged / "record.json").write_bytes(b'{"a": 1}')
+    # "bb" was never staged and no ready marker was written.
+
+    assert journal.recover() == []
+
+    assert not (tmp_path / "aa" / "record.json").exists()
+    assert not (tmp_path / "bb" / "record.json").exists()
+    assert not (tmp_path / ".cascade" / cascade_id).exists()
+
+
+def test_recover_completes_a_cascade_that_reached_commit(tmp_path: Path) -> None:
+    """With the marker present, replay finishes the cascade for every named key."""
+    journal = CascadeJournal(tmp_path)
+    cascade_id = journal._prepare(operation="approve", record_keys=["aa", "bb"])
+    for key, payload in (("aa", b'{"a": 1}'), ("bb", b'{"b": 2}')):
+        staged = tmp_path / ".cascade" / cascade_id / "staged" / key
+        staged.mkdir(parents=True)
+        (staged / "record.json").write_bytes(payload)
+    journal._mark_ready(cascade_id)          # test seam, mirrors _prepare
+
     assert journal.recover() == [cascade_id]
 
     assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
-    assert not (tmp_path / ".cascade" / cascade_id).exists()
+    assert (tmp_path / "bb" / "record.json").read_bytes() == b'{"b": 2}'
 
 
 def test_recover_is_idempotent(tmp_path: Path) -> None:
