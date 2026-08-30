@@ -39,6 +39,22 @@ mutating request) is unaffected. The one rule this creates: never call
 your own hold; the acquire is bounded so that mistake surfaces as a named
 ``DataLockTimeoutError`` rather than a hang.
 
+The two methods are therefore deliberately asymmetric, and the asymmetry
+is a decision rather than an oversight. ``save`` self-locks because it is
+self-contained: the hold it needs starts and ends inside the call.
+``recover`` cannot, because the hold it needs is wider than the call --
+it has to span store construction and the sweep together, so that no
+cascade can be opened in the window between them -- and an exclusive
+self-acquire nested inside the caller's own exclusive hold would block on
+that hold, deadlocking on some platforms. So ``recover`` requires its
+caller to hold the lock exclusively and cannot check that it did. This is
+the more dangerous direction to get wrong: a sweep run without the hold
+deletes another process's live cascade, where an unlocked write merely
+exposes its own. ``WorkspaceCoordinator.open`` is the only caller today;
+anything else that calls it -- a maintenance CLI, say -- must take
+``InterprocessDataLock(data_dir).hold(exclusive=True)`` around store
+construction and the sweep together.
+
 Within the process, the journal holds its own lock for the whole of a
 ``save`` and the whole of a ``recover``, and treats it as a **leaf lock**:
 a caller that also needs the workspace's striped record locks must take
@@ -195,8 +211,15 @@ class FileImportedHandStore:
     def recover(self) -> ImportedHandRecoveryReport:
         """Finish or set aside writes interrupted by an earlier crash.
 
-        Must run under an exclusive interprocess hold of the data lock
-        and never on the event-loop thread; see the module docstring.
+        **The caller must already hold the data lock exclusively**, and
+        must have held it since before this store was constructed. Unlike
+        ``save``, this does not and cannot take the hold itself: the hold
+        has to be wider than this call, and an exclusive self-acquire
+        inside the caller's own exclusive hold would block on it. Nothing
+        here verifies the caller complied -- see the module docstring for
+        why the two methods differ, and for what a new caller owes.
+
+        Blocking. Never call it on the event-loop thread.
         """
         report = self._journal.recover()
         return ImportedHandRecoveryReport(

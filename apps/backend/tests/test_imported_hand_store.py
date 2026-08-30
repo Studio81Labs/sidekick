@@ -277,6 +277,57 @@ def _signature_without_self(function: object) -> inspect.Signature:
     return signature.replace(parameters=list(signature.parameters.values())[1:])
 
 
+def _assert_accepts_the_declared_call_shape(
+    name: str,
+    declared_member: object,
+    implementation: object,
+) -> None:
+    """Assert the implementation accepts every call the Protocol permits.
+
+    Deliberately not Signature equality, which is stricter than structural
+    conformance in two ways that both produce false positives: it rejects
+    an extra *optional* parameter, which a Protocol permits and which a
+    later task may well want to add; and because annotations are strings
+    under `from __future__ import annotations`, it compares `str` against
+    `'str'` for any module that omits that import, so the test would
+    silently depend on both files keeping it.
+
+    What conformance actually requires is that the declared call goes
+    through, and that a caller may still pass the declared parameters by
+    name. Both are checked; annotations are not.
+    """
+    declared = list(_signature_without_self(declared_member).parameters.values())
+    actual = _signature_without_self(implementation)
+
+    positional: list[object] = []
+    keyword: dict[str, object] = {}
+    for parameter in declared:
+        if parameter.kind is inspect.Parameter.KEYWORD_ONLY:
+            keyword[parameter.name] = _ANY_ARGUMENT
+        else:
+            positional.append(_ANY_ARGUMENT)
+    try:
+        actual.bind(*positional, **keyword)
+    except TypeError as exc:
+        raise AssertionError(
+            f"{name} does not accept the call shape the Protocol declares: {exc}"
+        ) from exc
+
+    for parameter in declared:
+        implemented = actual.parameters.get(parameter.name)
+        assert implemented is not None, (
+            f"{name} has no parameter named {parameter.name!r}; a caller "
+            "typed against the Protocol may pass it by keyword"
+        )
+        assert implemented.kind is parameter.kind, (
+            f"{name}'s {parameter.name!r} is {implemented.kind}, but the "
+            f"Protocol declares {parameter.kind}"
+        )
+
+
+_ANY_ARGUMENT = object()
+
+
 def test_save_and_get_round_trip(tmp_path: Path) -> None:
     store = FileImportedHandStore(tmp_path)
     record = pending_review_record()
@@ -575,12 +626,12 @@ def test_a_failed_cascade_is_retried_and_completed_by_the_next_sweep(
     assert store.get(key) == record
 
 
-def test_the_file_store_matches_the_repository_protocol_member_for_member() -> None:
+def test_the_file_store_satisfies_every_call_the_repository_protocol_declares() -> None:
     """A bare annotation checks nothing: no mypy or ruff runs in this repo.
 
-    Compare the declared and implemented signatures directly, so a deleted
-    method or a changed parameter list fails here rather than at the first
-    call site in a later task.
+    So check conformance directly - every declared member exists, and each
+    accepts the call the Protocol declares - without over-constraining it
+    into rejecting implementations the Protocol allows.
     """
     declared = sorted(
         name for name in vars(ImportedHandRepository) if not name.startswith("_")
@@ -588,12 +639,13 @@ def test_the_file_store_matches_the_repository_protocol_member_for_member() -> N
     assert declared == ["find", "get", "list_keys", "recover", "save"]
 
     for name in declared:
-        protocol_member = getattr(ImportedHandRepository, name)
         implementation = getattr(FileImportedHandStore, name, None)
         assert implementation is not None, f"{name} is not implemented"
-        assert _signature_without_self(implementation) == _signature_without_self(
-            protocol_member
-        ), name
+        _assert_accepts_the_declared_call_shape(
+            name,
+            getattr(ImportedHandRepository, name),
+            implementation,
+        )
 
 
 def shared_data_lock_is_blocked(data_dir: Path) -> bool:
@@ -674,13 +726,21 @@ def test_workspace_still_recovers_interrupted_jobs(tmp_path: Path) -> None:
     assert recovered.error == INTERRUPTED_PARSER_ERROR
 
 
-def test_job_recovery_stays_outside_the_exclusive_hold(tmp_path: Path) -> None:
-    """The exclusive hold covers the cascade sweep and nothing more.
+def test_job_recovery_runs_under_the_shared_hold_not_the_exclusive_one(
+    tmp_path: Path,
+) -> None:
+    """Two halves, and both need pinning.
 
     recover_interrupted_jobs() reads and validates every job record on
     disk. That scan is the dominant cost of startup and must not be what
-    other processes are blocked behind, so it runs under the shared hold
-    it has always had.
+    other processes are blocked behind, so it must not be inside the
+    exclusive hold. But it must still be inside the *shared* hold it has
+    always had - asserting only "not exclusive" is equally satisfied by
+    "under no lock at all", which is a different regression entirely.
+
+    So both probes run: an exclusive acquire must fail (something holds
+    the lock) while a shared acquire must succeed (that something is not
+    holding it exclusively). Together those mean exactly "shared".
     """
     from app.storage.file_job_store import FileJobStore
 
@@ -689,11 +749,16 @@ def test_job_recovery_stays_outside_the_exclusive_hold(tmp_path: Path) -> None:
         image_bytes=b"image",
         parser_provider="mock",
     )
-    observed: list[bool] = []
+    observed: list[tuple[bool, bool]] = []
     real_recover_jobs = WorkspaceCoordinator.recover_interrupted_jobs
 
     def recording_recover_jobs(self: WorkspaceCoordinator) -> None:
-        observed.append(shared_data_lock_is_blocked(tmp_path))
+        observed.append(
+            (
+                exclusive_data_lock_is_blocked(tmp_path),
+                shared_data_lock_is_blocked(tmp_path),
+            )
+        )
         real_recover_jobs(self)
 
     with mock.patch.object(
@@ -701,10 +766,12 @@ def test_job_recovery_stays_outside_the_exclusive_hold(tmp_path: Path) -> None:
     ):
         WorkspaceCoordinator.open(tmp_path)
 
-    assert observed == [False]
+    assert observed == [(True, False)], (
+        "job recovery must run under a shared hold: held, but not exclusively"
+    )
 
 
-def test_startup_gives_up_loudly_rather_than_hanging_on_a_held_lock(
+def test_startup_gives_up_loudly_rather_than_hanging_on_its_exclusive_acquire(
     tmp_path: Path,
 ) -> None:
     """flock has no writer preference, so the wait must be bounded.
@@ -726,6 +793,53 @@ def test_startup_gives_up_loudly_rather_than_hanging_on_a_held_lock(
     message = str(failure.value)
     assert DATA_LOCK_FILENAME in message
     assert "exclusive" in message
+
+
+def test_startup_gives_up_loudly_rather_than_hanging_on_its_shared_acquire(
+    tmp_path: Path,
+) -> None:
+    """open() makes two separate acquires, so both need their own bound.
+
+    The exclusive one is released before the shared one is taken, so an
+    exclusive holder arriving in that window blocks the shared acquire on
+    its own - a backup export building a large archive, or another
+    instance's sweep. A test that only holds the lock up front never
+    reaches this acquire, because the first one fails first, so this one
+    lets the exclusive acquire succeed and injects the blocker into the
+    window between them.
+    """
+    blocker = InterprocessDataLock(tmp_path)
+    real_acquire = InterprocessDataLock.acquire
+    acquires: list[bool] = []
+    blocking_descriptor: list[int] = []
+
+    def blocking_acquire(
+        lock: InterprocessDataLock,
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
+        acquires.append(exclusive)
+        if len(acquires) == 2:
+            assert not exclusive, "the second startup acquire should be shared"
+            # Hold it exclusively from "another process" for the duration.
+            blocking_descriptor.append(real_acquire(blocker, exclusive=True))
+        return real_acquire(
+            lock, exclusive=exclusive, timeout_seconds=timeout_seconds
+        )
+
+    with mock.patch.object(InterprocessDataLock, "acquire", blocking_acquire):
+        try:
+            with pytest.raises(DataLockTimeoutError) as failure:
+                WorkspaceCoordinator.open(tmp_path, recovery_lock_timeout_seconds=0)
+        finally:
+            for descriptor in blocking_descriptor:
+                InterprocessDataLock.release(descriptor)
+
+    assert acquires == [True, False], "the sweep's own acquire must have succeeded"
+    message = str(failure.value)
+    assert DATA_LOCK_FILENAME in message
+    assert "shared" in message
 
 
 def test_startup_waits_for_a_lock_that_is_released_in_time(tmp_path: Path) -> None:

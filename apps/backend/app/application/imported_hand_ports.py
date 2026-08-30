@@ -100,8 +100,14 @@ class ImportedHandRepository(Protocol):
     def recover(self) -> ImportedHandRecoveryReport:
         """Finish or set aside writes interrupted by an earlier crash.
 
-        Blocking, and safe only when no other process can be writing to
-        the same store, so implementations may require an exclusive
-        interprocess lock. Never call it from an event-loop thread.
+        Safe only when no other process can be writing to the same store.
+        An implementation may therefore require the caller to have taken
+        an exclusive interprocess lock *before constructing it*, and
+        cannot check that the caller did -- unlike ``save``, which is
+        self-contained and locks itself. Getting this wrong destroys
+        another process's in-flight write rather than merely exposing
+        your own, so a new call site must read the adapter's own contract
+        instead of assuming it is guarded. Blocking: never call it from an
+        event-loop thread.
         """
         ...

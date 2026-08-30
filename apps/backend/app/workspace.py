@@ -110,7 +110,19 @@ class WorkspaceCoordinator:
         # records under a shared lock, which is a real race - but a
         # pre-existing one, tracked separately, and not fixed by widening
         # a lock introduced for something else.
-        with data_lock.hold(exclusive=False):
+        #
+        # Bounded for the same reason as the acquire above, and it is a
+        # separate acquire so it needs its own bound: this one is released
+        # and retaken, so an exclusive holder arriving in between blocks it
+        # on its own. The exposure is narrower - only exclusive holders
+        # block a shared acquire, and they drain rather than starve it -
+        # but a backup export holding exclusive while it builds a large
+        # archive, or another instance's own sweep, would otherwise wedge
+        # this boot with no bound and no log line.
+        with data_lock.hold(
+            exclusive=False,
+            timeout_seconds=recovery_lock_timeout_seconds,
+        ):
             workspace = cls(
                 jobs=FileJobStore(data_dir),
                 benchmarks=FileBenchmarkStore(data_dir),
