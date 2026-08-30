@@ -32,6 +32,7 @@ from app.domain.imported_hands import (
     CanonicalHandRevision,
     DeletionReceipt,
     DetectedImportedHand,
+    HandDecisionExtraction,
     ImportProvenance,
     ImportedHandLifecycle,
     ImportedHandRecord,
@@ -41,11 +42,13 @@ from app.domain.imported_hands import (
     SourceChronology,
     StableHandIdentity,
     UserCorrection,
+    extract_hero_decision_points,
     imported_hand_canonical_json,
     imported_hand_state_sha256,
 )
 from app.storage.cascade_journal import CascadeJournal, CascadeStaging
 from app.storage.imported_hand_store import (
+    NO_CANONICAL_REVISION,
     FileImportedHandStore,
     ImportedHandNotFoundError,
     imported_hand_record_key,
@@ -250,6 +253,8 @@ def pending_review_record(
 
 def approved_record(
     identity: StableHandIdentity | None = None,
+    *,
+    deletion_generation: int = 0,
 ) -> ImportedHandRecord:
     hand_identity = identity or sample_identity()
     return ImportedHandRecord(
@@ -260,8 +265,78 @@ def approved_record(
         lifecycle=ImportedHandLifecycle(
             status="active",
             active_canonical_revision=1,
+            deletion_generation=deletion_generation,
             changed_at=NOW,
         ),
+    )
+
+
+def reapproved_record(identity: StableHandIdentity | None = None) -> ImportedHandRecord:
+    """The same hand approved a second time, superseding revision 1 with 2.
+
+    The second revision reuses ``conflicting_detection``'s state, which
+    already carries the corrected hero seat, so it needs no corrections of
+    its own -- a canonical revision's state may differ from its detection
+    only through recorded corrections, and here there is none to record.
+    """
+    hand_identity = identity or sample_identity()
+    second_revision = CanonicalHandRevision(
+        revision=2,
+        detection_id="detection-2",
+        approved_at=NOW,
+        state=hand_state(hand_identity, hero_player_id="hero"),
+    )
+    return ImportedHandRecord(
+        identity=hand_identity,
+        raw_sources=[raw_source(hand_identity)],
+        detections=[detected(hand_identity), conflicting_detection(hand_identity)],
+        canonical_revisions=[revision(hand_identity), second_revision],
+        lifecycle=ImportedHandLifecycle(
+            status="active",
+            active_canonical_revision=2,
+            changed_at=NOW,
+        ),
+    )
+
+
+def withdrawn_record(identity: StableHandIdentity | None = None) -> ImportedHandRecord:
+    """The same hand's approval withdrawn: retained, but no longer active.
+
+    The canonical revision stays on the record for audit -- only
+    ``lifecycle`` changes -- so this is not learning eligible even though
+    revision 1 is still sitting right there.
+    """
+    hand_identity = identity or sample_identity()
+    return ImportedHandRecord(
+        identity=hand_identity,
+        raw_sources=[raw_source(hand_identity)],
+        detections=[detected(hand_identity)],
+        canonical_revisions=[revision(hand_identity)],
+        lifecycle=ImportedHandLifecycle(status="withdrawn", changed_at=NOW),
+    )
+
+
+def extraction_for(record: ImportedHandRecord) -> HandDecisionExtraction:
+    """The smallest legal extraction bound to ``record``'s current revision.
+
+    These store tests exercise filename derivation and staleness, not the
+    domain extraction algorithm itself -- that is
+    test_imported_hand_decisions.py's job -- so this is a ``no_decision``
+    outcome rather than a fully played hand.
+    """
+    assert record.identity is not None
+    active_revision = record.lifecycle.active_canonical_revision
+    assert active_revision is not None
+    return HandDecisionExtraction(
+        identity=record.identity,
+        chronology=chronology(),
+        provenance=raw_source(record.identity).provenance,
+        canonical_revision=active_revision,
+        deletion_generation=record.lifecycle.deletion_generation,
+        outcome="no_decision",
+        rejection=None,
+        decision_points=[],
+        excluded_actions=[],
     )
 
 
@@ -1233,3 +1308,246 @@ def test_coordinator_rejects_an_empty_imported_hand_lock_pool(tmp_path: Path) ->
             data_lock=workspace.data_lock,
             imported_hand_lock_stripes=0,
         )
+
+
+def test_active_decisions_ignores_a_superseded_revision(tmp_path: Path) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()  # active revision 1, generation 0
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    extraction = extraction_for(record)
+    store.save_decisions(key, extraction)
+
+    active = store.active_decisions(key)
+    assert active is not None
+    # Full equality, not just presence: a round trip that silently dropped
+    # or altered a field would still pass an `is not None` check.
+    assert active == extraction
+
+    store.save(key, reapproved_record())  # active revision 2
+    assert store.active_decisions(key) is None  # r1 artifact is stale
+    assert store.list_decision_artifacts(key) == [(1, 0)]  # retained for audit
+
+
+def test_active_decisions_returns_nothing_when_the_hand_is_not_learning_eligible(
+    tmp_path: Path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    store.save_decisions(key, extraction_for(record))
+
+    store.save(key, withdrawn_record())
+    assert store.active_decisions(key) is None
+    # Withdrawing is not purging: the artifact stays on disk for audit.
+    assert store.list_decision_artifacts(key) == [(1, 0)]
+
+
+def test_active_decisions_never_attempts_a_lookup_when_not_learning_eligible(
+    tmp_path: Path,
+) -> None:
+    """The ineligibility gate is a short circuit, not an accidental miss.
+
+    A withdrawn record's ``active_canonical_revision`` is always ``None``
+    (the domain forbids an inactive lifecycle from retaining one), and
+    ``None`` can never collide with a real saved filename -- so a black-box
+    check alone cannot tell "deliberately gated" apart from "happened to
+    look up a name nothing is filed under". Patching ``get_decisions`` to
+    blow up on any call closes that gap directly.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = withdrawn_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    with mock.patch.object(
+        FileImportedHandStore,
+        "get_decisions",
+        side_effect=AssertionError("get_decisions must not be called"),
+    ):
+        assert store.active_decisions(key) is None
+
+
+def test_decision_artifacts_are_keyed_by_revision_and_generation(
+    tmp_path: Path,
+) -> None:
+    """r1-g0 and r1-g1 coexist and are independently retrievable."""
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    extraction_g0 = extraction_for(record)
+    store.save_decisions(key, extraction_g0)
+
+    record_g1 = approved_record(deletion_generation=1)
+    store.save(key, record_g1)
+    extraction_g1 = extraction_for(record_g1)
+    store.save_decisions(key, extraction_g1)
+
+    at_g0 = store.get_decisions(key, revision=1, generation=0)
+    at_g1 = store.get_decisions(key, revision=1, generation=1)
+    assert at_g0 == extraction_g0
+    assert at_g1 == extraction_g1
+    assert store.list_decision_artifacts(key) == [(1, 0), (1, 1)]
+    # The record is now at generation 1, so that's the one that's active.
+    assert store.active_decisions(key) == at_g1
+
+
+def test_get_decisions_returns_none_for_an_artifact_that_was_never_saved(
+    tmp_path: Path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    assert store.get_decisions(key, revision=1, generation=0) is None
+    assert store.get_decisions("0" * 64, revision=1, generation=0) is None
+
+
+def test_list_decision_artifacts_is_empty_for_a_record_with_no_decisions(
+    tmp_path: Path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    assert store.list_decision_artifacts(key) == []
+    assert store.list_decision_artifacts("0" * 64) == []
+
+
+def test_a_not_extractable_verdict_is_persisted_and_generation_stamped(
+    tmp_path: Path,
+) -> None:
+    """A rejection binds no canonical revision but is still generation-stamped.
+
+    ``extract_hero_decision_points`` reports ``not_active`` for a hand that
+    is not learning eligible, and stamps it with whatever deletion
+    generation the record is currently at even though it binds no
+    canonical revision -- so a caller can tell "still not extractable at
+    generation 1" apart from a verdict computed at generation 0, exactly
+    as the rejection outcome is designed to allow.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = withdrawn_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    rejection_g0 = extract_hero_decision_points(record)
+    assert rejection_g0.outcome == "not_extractable"
+    assert rejection_g0.rejection == "not_active"
+    assert rejection_g0.canonical_revision is None
+    store.save_decisions(key, rejection_g0)
+
+    record_g1 = withdrawn_record().model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(
+                status="withdrawn",
+                deletion_generation=1,
+                changed_at=NOW,
+            )
+        }
+    )
+    store.save(key, record_g1)
+    rejection_g1 = extract_hero_decision_points(record_g1)
+    store.save_decisions(key, rejection_g1)
+
+    stored_g0 = store.get_decisions(key, revision=NO_CANONICAL_REVISION, generation=0)
+    stored_g1 = store.get_decisions(key, revision=NO_CANONICAL_REVISION, generation=1)
+    assert stored_g0 == rejection_g0
+    assert stored_g1 == rejection_g1
+    assert stored_g0.deletion_generation == 0
+    assert stored_g1.deletion_generation == 1
+    assert store.list_decision_artifacts(key) == [
+        (NO_CANONICAL_REVISION, 0),
+        (NO_CANONICAL_REVISION, 1),
+    ]
+    # A rejection binds no canonical artifact, so it can never be "active",
+    # no matter how current its generation is.
+    assert store.active_decisions(key) is None
+
+
+def test_save_decisions_publishes_through_the_journal(tmp_path: Path) -> None:
+    """Named for what it pins: every decisions write opens its own cascade.
+
+    Mirrors test_save_publishes_through_the_journal for the record path.
+    Uses the journal's own "save" operation label, not a bespoke one:
+    CascadeIntent reserves "save" for exactly this -- a plain write
+    undescribed by any lifecycle verb -- and there is no "save_decisions"
+    literal to spend.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    extraction = extraction_for(record)
+    opened: list[tuple[str, list[str]]] = []
+    real_begin = CascadeJournal.begin
+
+    @contextmanager
+    def observing_begin(
+        journal: CascadeJournal,
+        *,
+        operation: str,
+        record_keys: Sequence[str],
+    ) -> Iterator[CascadeStaging]:
+        opened.append((operation, list(record_keys)))
+        with real_begin(
+            journal, operation=operation, record_keys=record_keys
+        ) as staging:
+            yield staging
+
+    with mock.patch.object(CascadeJournal, "begin", observing_begin):
+        store.save_decisions(key, extraction)
+
+    assert opened == [("save", [key])]
+    assert store.active_decisions(key) == extraction
+
+
+def test_save_decisions_holds_the_data_lock_shared_for_its_whole_cascade(
+    tmp_path: Path,
+) -> None:
+    """Mirrors test_save_holds_the_data_lock_shared_for_its_whole_cascade.
+
+    A decisions write left uncovered by the shared hold would be just as
+    invisible to a concurrent exclusive recovery sweep as an unlocked
+    record write.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    extraction = extraction_for(record)
+    held_during_cascade: list[bool] = []
+    real_stage = CascadeStaging.stage
+
+    def observing_stage(
+        staging: CascadeStaging,
+        record_key: str,
+        relative_path: str,
+        payload: bytes,
+    ) -> None:
+        held_during_cascade.append(exclusive_data_lock_is_blocked(tmp_path))
+        real_stage(staging, record_key, relative_path, payload)
+
+    with mock.patch.object(CascadeStaging, "stage", observing_stage):
+        store.save_decisions(key, extraction)
+
+    assert held_during_cascade == [True]
+    assert not exclusive_data_lock_is_blocked(tmp_path)
+
+
+def test_save_decisions_refuses_a_key_foreign_to_the_extractions_identity(
+    tmp_path: Path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    extraction = extraction_for(record)
+    other_key = imported_hand_record_key(sample_identity(hand_ordinal=2))
+
+    with pytest.raises(ValueError, match="not derived from this extraction"):
+        store.save_decisions(other_key, extraction)

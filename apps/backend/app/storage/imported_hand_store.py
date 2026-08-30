@@ -3,6 +3,7 @@
 Layout, relative to the data directory::
 
     imported-hands/<record_key>/record.json
+    imported-hands/<record_key>/decisions/r<revision>-g<generation>.json
     imported-hands/.cascade/...            (the write journal's scratch area)
 
 ``<record_key>`` is a sha256 of the hand's stable identity, computed once
@@ -15,6 +16,23 @@ already holds is what lets a later re-import of the same hand find the
 tombstone and bump its deletion generation. Nothing here may fall back to
 scanning records and comparing ``identity`` fields -- that fallback reads
 as harmless and fails silently for exactly the case it exists to serve.
+
+Decision artifacts are the hero decision points ``extract_hero_decision_points``
+derives from an approved hand -- a later, separate concern from the record
+above, so they get their own file rather than growing record.json. Each is
+named for the exact ``(canonical_revision, deletion_generation)`` pair it was
+extracted from, ``r<revision>-g<generation>.json``, so whether one is stale is
+decidable **from the filename alone**: it is active only while both numbers
+still match the record's current ``lifecycle``, and nothing here may open a
+file just to find that out. A superseded artifact is never deleted here --
+issue #432 requires it stay retained for audit -- only Task 6's purge may
+remove one. A ``not_extractable`` verdict binds no canonical revision at all,
+so it is filed under the reserved ``NO_CANONICAL_REVISION`` sentinel instead;
+it is still generation-stamped, which is what lets a caller tell "still not
+extractable at generation 2" apart from a stale verdict computed at
+generation 1, but a sentinel revision can never equal a record's real active
+revision, so a rejection can never be mistaken for an active canonical
+artifact.
 
 Every write goes through :class:`app.storage.cascade_journal.CascadeJournal`
 rather than a bare atomic file write, even though a record write touches
@@ -61,8 +79,9 @@ a caller that also needs the workspace's striped record locks must take
 those *first* (``WorkspaceCoordinator.hold_imported_hands``), because
 taking a workspace lock inside an open cascade inverts the established
 order into an ABBA deadlock. This store takes no workspace lock of its
-own, so the journal stays innermost. Both ``save`` and ``recover`` block,
-so neither may be called on the event-loop thread of the FastAPI process.
+own, so the journal stays innermost. ``save``, ``save_decisions``, and
+``recover`` all block, so none of them may be called on the event-loop
+thread of the FastAPI process.
 """
 
 from __future__ import annotations
@@ -82,6 +101,7 @@ from app.data_lock import (
 )
 from app.domain.imported_hands import (
     DetectedImportedHand,
+    HandDecisionExtraction,
     ImportedHandRecord,
     RawHandHistory,
     StableHandIdentity,
@@ -93,6 +113,13 @@ from app.storage.cascade_journal import CascadeJournal
 IMPORTED_HANDS_DIRNAME = "imported-hands"
 RECORD_FILENAME = "record.json"
 RECORD_KEY_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+DECISIONS_DIRNAME = "decisions"
+DECISION_ARTIFACT_PATTERN = re.compile(r"^r(?P<revision>\d+)-g(?P<generation>\d+)\.json$")
+# HandDecisionExtraction.canonical_revision is a PositiveInteger whenever it
+# is set, so 0 is never a real revision: reserved as the filename's revision
+# component for a not_extractable extraction, which binds no canonical
+# revision at all (see the module docstring).
+NO_CANONICAL_REVISION = 0
 
 
 class ImportedHandNotFoundError(LookupError):
@@ -215,6 +242,129 @@ class FileImportedHandStore:
                 staging.stage(record_key, RECORD_FILENAME, payload)
         return record
 
+    def save_decisions(self, record_key: str, extraction: HandDecisionExtraction) -> None:
+        """Durably persist one decision-extraction artifact for ``record_key``.
+
+        Keyed by the extraction's own ``canonical_revision`` and
+        ``deletion_generation`` -- see the module docstring for the exact
+        filename and why it, not the record's current lifecycle, is what
+        drives it: the filename must describe what is actually inside the
+        file, or "decidable from the filename alone" would not be
+        trustworthy. A ``not_extractable`` extraction has no canonical
+        revision to describe, so it is filed under the reserved
+        ``NO_CANONICAL_REVISION`` sentinel instead, keyed by generation only.
+
+        Never removes a sibling artifact: a superseded revision's file is
+        left exactly where it is, retained for audit per issue #432. Only
+        Task 6's purge may remove one.
+
+        Goes through the same journal ``save`` does, and takes the same
+        shared interprocess hold the same way and for the same reason --
+        see the module docstring -- so this composes into the same kind of
+        cascade a future lifecycle transition will open to move a record
+        and its derived artifacts together. Opened under the journal's own
+        ``"save"`` operation label, not a bespoke one: ``CascadeIntent``
+        reserves that label for exactly this -- the record store's own
+        plain write, undescribed by any lifecycle verb -- and this is one.
+        """
+        self._require_well_formed_key(record_key)
+        if (
+            extraction.identity is not None
+            and imported_hand_record_key(extraction.identity) != record_key
+        ):
+            # Mirrors save()'s own guard, and for the same reason: an
+            # extraction filed under a key not derived from its own
+            # identity would need a store-wide scan to find. A
+            # not_extractable extraction for a hand with no stable
+            # identity is exempt, because there is no identity left to
+            # check against -- it is filed under the key of the record it
+            # was extracted from, which is the point.
+            raise ValueError(
+                f"record key {record_key!r} was not derived from this "
+                "extraction's own stable identity"
+            )
+        revision = (
+            NO_CANONICAL_REVISION
+            if extraction.canonical_revision is None
+            else extraction.canonical_revision
+        )
+        relative_path = (
+            f"{DECISIONS_DIRNAME}/r{revision}-g{extraction.deletion_generation}.json"
+        )
+        payload = extraction.model_dump_json(indent=2).encode("utf-8")
+        with self._data_lock.hold(
+            exclusive=False,
+            timeout_seconds=self._write_lock_timeout_seconds,
+        ):
+            with self._journal.begin(
+                operation="save", record_keys=[record_key]
+            ) as staging:
+                staging.stage(record_key, relative_path, payload)
+
+    def get_decisions(
+        self, record_key: str, *, revision: int, generation: int
+    ) -> HandDecisionExtraction | None:
+        """Return the artifact stored at exactly this revision and generation.
+
+        ``None`` means only that nothing was ever staged there -- it says
+        nothing about whether ``revision``/``generation`` are current for
+        ``record_key``. A caller that wants the current artifact, and only
+        the current one, wants ``active_decisions`` instead.
+        """
+        path = self._decision_artifact_path(record_key, revision, generation)
+        try:
+            payload = path.read_bytes()
+        except FileNotFoundError:
+            return None
+        return HandDecisionExtraction.model_validate_json(payload)
+
+    def active_decisions(self, record_key: str) -> HandDecisionExtraction | None:
+        """Return the one artifact current for ``record_key``, or ``None``.
+
+        "Current" is decided against the record's live lifecycle, read
+        fresh on every call, never against whatever the caller last saw:
+        its present ``active_canonical_revision`` and
+        ``deletion_generation``. A record that is not ``learning_eligible``
+        has no active revision to bind an artifact to and so has no active
+        decisions at all, even while a prior revision's artifact is still
+        sitting on disk, retained for audit.
+        """
+        try:
+            record = self.get(record_key)
+        except ImportedHandNotFoundError:
+            return None
+        if not record.lifecycle.learning_eligible:
+            return None
+        active_revision = record.lifecycle.active_canonical_revision
+        assert active_revision is not None  # guaranteed by learning_eligible
+        return self.get_decisions(
+            record_key,
+            revision=active_revision,
+            generation=record.lifecycle.deletion_generation,
+        )
+
+    def list_decision_artifacts(self, record_key: str) -> list[tuple[int, int]]:
+        """Return every retained ``(revision, generation)`` pair, sorted.
+
+        Filename-only, like every staleness decision this store makes: no
+        artifact is opened or parsed to build this list. Includes
+        artifacts that are no longer active, retained for audit per issue
+        #432, and the ``NO_CANONICAL_REVISION`` slot a rejected extraction
+        is filed under.
+        """
+        try:
+            entries = list(self._decisions_dir(record_key).iterdir())
+        except (FileNotFoundError, ImportedHandNotFoundError):
+            return []
+        artifacts: list[tuple[int, int]] = []
+        for path in entries:
+            match = DECISION_ARTIFACT_PATTERN.fullmatch(path.name)
+            if match is not None and path.is_file():
+                artifacts.append(
+                    (int(match.group("revision")), int(match.group("generation")))
+                )
+        return sorted(artifacts)
+
     def recover(self) -> ImportedHandRecoveryReport:
         """Finish or set aside writes interrupted by an earlier crash.
 
@@ -244,6 +394,14 @@ class FileImportedHandStore:
             # resolve it as a path first.
             raise ImportedHandNotFoundError(record_key)
         return self.records_dir / record_key
+
+    def _decisions_dir(self, record_key: str) -> Path:
+        return self._record_dir(record_key) / DECISIONS_DIRNAME
+
+    def _decision_artifact_path(
+        self, record_key: str, revision: int, generation: int
+    ) -> Path:
+        return self._decisions_dir(record_key) / f"r{revision}-g{generation}.json"
 
     @staticmethod
     def _require_well_formed_key(record_key: str) -> None:
