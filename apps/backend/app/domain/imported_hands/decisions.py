@@ -43,8 +43,10 @@ from app.domain.imported_hands.models import (
     _economics_ready_for_extraction,
     _hero_decision_contexts_for_extraction,
     _known_action_orders,
+    _STREET_BOARD_CARDS,
     _STREET_ORDER,
     _TABLE_ACTIONS,
+    _validate_action_shape,
     _terminal_hand_ready_for_extraction,
 )
 from app.domain.poker import Card
@@ -95,6 +97,19 @@ class HeroTableAction(ImportedHandModel):
     all_in: bool
     origin: ActionOrigin
     evidence: list[SourceEvidence]
+
+    @model_validator(mode="after")
+    def validate_table_action_shape(self) -> Self:
+        # The same rules the import boundary applied to this action: a rehydrated
+        # payload must not carry a shape `ImportedAction` would have refused,
+        # such as a check with an amount or a fold marked all-in.
+        _validate_action_shape(
+            self.action_type,
+            amount=self.amount,
+            all_in=self.all_in,
+            origin_kind=self.origin.kind,
+        )
+        return self
 
 
 class DecisionActionRecord(ImportedHandModel):
@@ -228,7 +243,103 @@ class HeroDecisionState(ImportedHandModel):
                 f" {completed_total}, which contradicts"
                 f" committed_pot_before_street {self.committed_pot_before_street}"
             )
+        self._validate_cards()
+        self._validate_current_street()
         return self
+
+    def _validate_cards(self) -> None:
+        """Require the exact cards this street's decision is made with."""
+
+        if len(self.hero_cards) != 2:
+            raise ValueError("a decision requires both hero cards")
+        expected_board = _STREET_BOARD_CARDS[self.street]
+        if len(self.board_cards) != expected_board:
+            raise ValueError(
+                f"a {self.street} decision requires exactly {expected_board}"
+                f" board cards, not {len(self.board_cards)}"
+            )
+        codes = [card.code for card in (*self.hero_cards, *self.board_cards)]
+        if len(set(codes)) != len(codes):
+            raise ValueError(
+                "hero cards and board cards must not repeat a card"
+            )
+
+    def _validate_current_street(self) -> None:
+        """Bind the street in progress to the chip snapshot beside it.
+
+        Every seat's ``street_commitment`` is the cumulative total of that
+        player's last action on this street, or zero if they have not acted --
+        including the hero, whose own action the line excludes, so their
+        commitment is the one they carry into the decision. That tie is skipped
+        when any record on this street has an unresolved total, exactly as the
+        completed-street check skips, because the walk may legitimately leave a
+        value unknown and this contract must not read that as zero.
+
+        The pot, the call amount, and the stacks are then checked against the
+        seats unconditionally: they are derived from values the same snapshot
+        publishes, so nothing about them can be unknown.
+        """
+
+        current = self.action_history[-1]
+        street_totals: dict[str, NonNegativeDecimal] = {}
+        for record in current.actions:
+            if record.total_committed is None:
+                street_totals = {}
+                break
+            street_totals[record.player_id] = record.total_committed
+        else:
+            for seat in self.seats:
+                published = street_totals.get(seat.player_id, Decimal(0))
+                if seat.street_commitment != published:
+                    raise ValueError(
+                        f"{seat.player_id} committed {seat.street_commitment} on"
+                        f" {self.street}, which contradicts the"
+                        f" {published} its action history shows"
+                    )
+        for seat in self.seats:
+            if seat.live_commitment > seat.street_commitment:
+                raise ValueError(
+                    f"{seat.player_id} live commitment exceeds its street"
+                    " commitment"
+                )
+            if seat.stack_before_action != (
+                seat.starting_stack - seat.hand_commitment
+            ):
+                raise ValueError(
+                    f"{seat.player_id} stack does not match its starting stack"
+                    " less what it has committed"
+                )
+        pot = self.committed_pot_before_street + sum(
+            (seat.street_commitment for seat in self.seats),
+            Decimal(0),
+        )
+        if pot != self.pot_before_action:
+            raise ValueError(
+                f"pot_before_action {self.pot_before_action} contradicts the"
+                f" {pot} its seats and completed streets commit"
+            )
+        hero = next(
+            (
+                seat
+                for seat in self.seats
+                if seat.position == self.hero_position
+            ),
+            None,
+        )
+        if hero is None:
+            raise ValueError("hero_position does not identify a seat")
+        if self.hero_stack_before_action != hero.stack_before_action:
+            raise ValueError(
+                "hero_stack_before_action contradicts the hero's own seat"
+            )
+        expected_call = max(
+            Decimal(0), self.current_wager - hero.live_commitment
+        )
+        if self.amount_to_call != expected_call:
+            raise ValueError(
+                f"amount_to_call {self.amount_to_call} contradicts the"
+                f" {expected_call} owed at wager {self.current_wager}"
+            )
 
 
 class HeroDecisionPoint(ImportedHandModel):

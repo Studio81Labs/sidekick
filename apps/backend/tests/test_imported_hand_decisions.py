@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from decimal import Decimal
 from typing import Literal
 
@@ -2143,3 +2144,123 @@ def test_decision_types_reject_a_zero_full_wager_increment() -> None:
             model.model_validate(
                 {**payload, "last_full_wager_increment": Decimal(0)}
             )
+
+
+@pytest.mark.parametrize(
+    ("index", "street", "board_cards"),
+    [(0, "preflop", 0), (1, "flop", 3), (2, "turn", 4), (3, "river", 5)],
+)
+def test_decision_state_rejects_a_malformed_card_set(
+    index: int,
+    street: str,
+    board_cards: int,
+) -> None:
+    point = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[index]
+    payload = point.state.model_dump(mode="python")
+
+    assert (payload["street"], len(payload["board_cards"])) == (
+        street,
+        board_cards,
+    )
+    assert decisions.HeroDecisionState.model_validate(payload) is not None
+
+    # One hero card is not a hand.
+    with pytest.raises(ValidationError, match="requires both hero cards"):
+        decisions.HeroDecisionState.model_validate(
+            {**payload, "hero_cards": payload["hero_cards"][:1]}
+        )
+
+    # The board must be exactly this street's, short or long.
+    river = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[3]
+    # One card past the river, so even a five-card street can be overfilled.
+    full_board = [
+        *river.state.model_dump(mode="python")["board_cards"],
+        {"rank": "3", "suit": "spades"},
+    ]
+    for wrong in (board_cards + 1, board_cards - 1):
+        if wrong < 0:
+            continue
+        with pytest.raises(
+            ValidationError,
+            match=f"a {street} decision requires exactly {board_cards} board",
+        ):
+            decisions.HeroDecisionState.model_validate(
+                {**payload, "board_cards": full_board[:wrong]}
+            )
+
+    # A card cannot be in two places at once.
+    if board_cards:
+        duplicated = [dict(payload["hero_cards"][0]), *payload["board_cards"][1:]]
+        with pytest.raises(ValidationError, match="must not repeat a card"):
+            decisions.HeroDecisionState.model_validate(
+                {**payload, "board_cards": duplicated}
+            )
+
+
+def test_hero_table_action_rejects_an_invalid_action_shape() -> None:
+    payload = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[1].table_action.model_dump(mode="python")
+
+    assert payload["action_type"] == "bet"
+    assert decisions.HeroTableAction.model_validate(payload) is not None
+
+    with pytest.raises(ValidationError, match="cannot carry an amount"):
+        decisions.HeroTableAction.model_validate(
+            {**payload, "action_type": "check", "amount": Decimal("5")}
+        )
+    with pytest.raises(ValidationError, match="cannot be all-in"):
+        decisions.HeroTableAction.model_validate(
+            {**payload, "action_type": "fold", "amount": None, "all_in": True}
+        )
+
+
+def test_decision_state_binds_the_current_street_to_the_chip_snapshot() -> None:
+    """The line in progress and the chip snapshot must tell the same story."""
+
+    point = extract_hero_decision_points(
+        contested_decision_record()
+    ).decision_points[1]
+    payload = point.state.model_dump(mode="python")
+
+    assert payload["street"] == "flop"
+    assert decisions.HeroDecisionState.model_validate(payload) is not None
+    opponent_bet = payload["action_history"][-1]["actions"][0]
+    assert (opponent_bet["player_id"], opponent_bet["total_committed"]) == (
+        "villain-2",
+        Decimal("4"),
+    )
+
+    # Inflate the action and leave the snapshot alone.
+    inflated_action = copy.deepcopy(payload)
+    inflated_action["action_history"][-1]["actions"][0]["total_committed"] = (
+        Decimal("5")
+    )
+    with pytest.raises(
+        ValidationError, match="contradicts the 5 its action history shows"
+    ):
+        decisions.HeroDecisionState.model_validate(inflated_action)
+
+    # Inflate the snapshot and leave the action alone.
+    inflated_seat = copy.deepcopy(payload)
+    next(
+        seat
+        for seat in inflated_seat["seats"]
+        if seat["player_id"] == "villain-2"
+    )["street_commitment"] = Decimal("5")
+    with pytest.raises(
+        ValidationError, match="contradicts the 4 its action history shows"
+    ):
+        decisions.HeroDecisionState.model_validate(inflated_seat)
+
+    # The derived fields are bound to the seats too.
+    wrong_pot = {**payload, "pot_before_action": Decimal("7")}
+    with pytest.raises(ValidationError, match="pot_before_action 7 contradicts"):
+        decisions.HeroDecisionState.model_validate(wrong_pot)
+    wrong_call = {**payload, "amount_to_call": Decimal("1")}
+    with pytest.raises(ValidationError, match="amount_to_call 1 contradicts"):
+        decisions.HeroDecisionState.model_validate(wrong_call)

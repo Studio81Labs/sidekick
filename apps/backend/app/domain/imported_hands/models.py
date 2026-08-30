@@ -95,6 +95,12 @@ LifecycleStatus = Literal[
 ]
 SeatDecisionStatus = Literal["live", "folded", "all_in"]
 
+_STREET_BOARD_CARDS: dict[StreetName, int] = {
+    "preflop": 0,
+    "flop": 3,
+    "turn": 4,
+    "river": 5,
+}
 _STREET_ORDER: dict[StreetName, int] = {
     "preflop": 0,
     "flop": 1,
@@ -627,15 +633,12 @@ class ImportedAction(ImportedHandModel):
 
     @model_validator(mode="after")
     def validate_action_shape(self) -> Self:
-        if self.action_type not in _CHIP_ACTIONS and self.amount is not None:
-            raise ValueError("fold and check actions cannot carry an amount")
-        if self.action_type in _FORCED_ACTIONS and self.origin.kind != "forced_system":
-            raise ValueError("posts and uncalled returns must be forced/system actions")
-        if self.action_type in {"fold", "check", "bet", "call", "raise"}:
-            if self.origin.kind == "forced_system":
-                raise ValueError("table decisions cannot be classified as forced/system")
-        if self.all_in and self.action_type in {"fold", "check", "uncalled_return"}:
-            raise ValueError("fold, check, and return actions cannot be all-in")
+        _validate_action_shape(
+            self.action_type,
+            amount=self.amount,
+            all_in=self.all_in,
+            origin_kind=self.origin.kind,
+        )
         return self
 
     @property
@@ -644,6 +647,30 @@ class ImportedAction(ImportedHandModel):
             self.action_type in _TABLE_ACTIONS
             and self.origin.kind == "player_selected"
         )
+
+
+def _validate_action_shape(
+    action_type: ActionType,
+    *,
+    amount: Decimal | None,
+    all_in: bool,
+    origin_kind: OriginKind,
+) -> None:
+    """Apply one action's shape rules wherever an action is published.
+
+    The imported action enforces these on the way in; a decision point's table
+    action enforces the same ones on the way back out, so a rehydrated payload
+    cannot carry a shape the import boundary would have refused.
+    """
+
+    if action_type not in _CHIP_ACTIONS and amount is not None:
+        raise ValueError("fold and check actions cannot carry an amount")
+    if action_type in _FORCED_ACTIONS and origin_kind != "forced_system":
+        raise ValueError("posts and uncalled returns must be forced/system actions")
+    if action_type in _TABLE_ACTIONS and origin_kind == "forced_system":
+        raise ValueError("table decisions cannot be classified as forced/system")
+    if all_in and action_type in {"fold", "check", "uncalled_return"}:
+        raise ValueError("fold, check, and return actions cannot be all-in")
 
 
 class ImportedStreet(ImportedHandModel):
@@ -657,7 +684,7 @@ class ImportedStreet(ImportedHandModel):
         actual = [action.sequence for action in self.actions]
         if actual != expected:
             raise ValueError("street action sequence must be contiguous and ordered from zero")
-        maximum_cards = {"preflop": 0, "flop": 3, "turn": 4, "river": 5}[self.street]
+        maximum_cards = _STREET_BOARD_CARDS[self.street]
         if len(self.board_cards) > maximum_cards:
             raise ValueError(f"{self.street} cannot contain more than {maximum_cards} board cards")
         return self
@@ -4319,12 +4346,7 @@ def _hero_decision_contexts_for_extraction(
     )
 
     for street in state.streets:
-        required_board_cards = {
-            "preflop": 0,
-            "flop": 3,
-            "turn": 4,
-            "river": 5,
-        }[street.street]
+        required_board_cards = _STREET_BOARD_CARDS[street.street]
         cards_are_ready = (
             len(state.hero_cards) == 2
             and len(street.board_cards) == required_board_cards
