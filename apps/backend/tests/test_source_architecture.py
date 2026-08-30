@@ -25,6 +25,13 @@ FORBIDDEN_APP_IMPORTS = {
     "subprocess",
     "app.config",
     "app.infrastructure",
+    # Repository ports live in the application layer and adapters import
+    # them, never the reverse: app/application/imported_hand_ports.py
+    # declares ImportedHandRepository and app/storage/imported_hand_store.py
+    # implements it. package_target() cannot catch this on its own, because
+    # "app.storage" resolves to no layer at all, so the direction has to be
+    # named here.
+    "app.storage",
 }
 ROUTER_FORBIDDEN_IMPORT_PREFIXES = {
     "app.config",

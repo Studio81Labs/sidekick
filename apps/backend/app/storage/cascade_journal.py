@@ -201,7 +201,12 @@ class CascadeIntent(BaseModel):
 
     schema_version: Literal["imported-hand-cascade/v1"]
     cascade_id: str
+    # "save" is the record store's own plain write, which no lifecycle
+    # verb below describes - a first import lands as pending_review, and
+    # naming that "approve" would put a false operation in the one field
+    # an operator reading a stranded cascade directory has to go on.
     operation: Literal[
+        "save",
         "approve",
         "reapprove",
         "withdraw",
