@@ -195,6 +195,29 @@ def detected(identity: StableHandIdentity) -> DetectedImportedHand:
     )
 
 
+def conflicting_detection(identity: StableHandIdentity) -> DetectedImportedHand:
+    """Same raw source as ``detected``, but a state that disagrees on hero.
+
+    ``_detected_state_semantic_sha256`` normalizes away source-evidence
+    locations and, under a zero ante, ``ante_mode`` -- but nothing else,
+    and certainly not ``hero_player_id``. Flipping only that field is
+    therefore a semantic disagreement on the *same bytes*: exactly the
+    shape of mistake a detector or adapter upgrade could introduce by
+    reinterpreting an unchanged raw hand history, which is what the
+    identity_conflict escalation in ``classify_reimport`` exists to catch.
+    """
+    state = hand_state(identity, hero_player_id="hero")
+    return DetectedImportedHand(
+        detection_id="detection-2",
+        raw_source_id="file-1",
+        detector_id="pokerstars",
+        detector_version="1.1.0",
+        detected_at=NOW,
+        state=state,
+        content_sha256=imported_hand_state_sha256(state),
+    )
+
+
 def revision(identity: StableHandIdentity) -> CanonicalHandRevision:
     return CanonicalHandRevision(
         revision=1,
@@ -466,6 +489,38 @@ def test_resolve_reimport_reports_identity_conflict_for_differing_content(
     assert resolution.record_key == key
     assert resolution.disposition == "identity_conflict"
     assert resolution.existing_raw_source_id is None
+    assert resolution.found_tombstone is False
+
+
+def test_resolve_reimport_escalates_to_identity_conflict_on_semantic_detection_mismatch(
+    tmp_path: Path,
+) -> None:
+    """Byte-identical content is not exact_reimport if its meaning changed.
+
+    classify_reimport escalates exact_reimport to identity_conflict when
+    candidate_detection's state disagrees semantically with every existing
+    detection of the matching raw source -- the guard against a detector
+    or adapter upgrade reinterpreting unchanged bytes, a real risk while
+    adapters here are still being written. That branch is only reachable
+    through resolve_reimport if candidate_detection is actually forwarded
+    to classify_reimport: none of the other tests in this file pass a
+    non-default candidate_detection, so this is the only one that would
+    notice a refactor that dropped or misforwarded it.
+    """
+    store = FileImportedHandStore(tmp_path)
+    identity = sample_identity()
+    key = imported_hand_record_key(identity)
+    store.save(key, pending_review_record(identity))
+
+    resolution = resolve_reimport(
+        store,
+        identity,
+        raw_source(identity),
+        candidate_detection=conflicting_detection(identity),
+    )
+
+    assert resolution.record_key == key
+    assert resolution.disposition == "identity_conflict"
     assert resolution.found_tombstone is False
 
 
