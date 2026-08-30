@@ -35,8 +35,12 @@ approval only.
 
 ## Consequences
 
-Staging data persisted with the removed status or fields is not migrated:
-reset the staging data directory (or remove those jobs) before deploying.
+V1 data migration and learning-surface compatibility remain out of scope. The
+container entrypoint removes persisted screenshot job directories whose raw
+record has the retired `recommended` status before the application validates
+the current store. Cleanup takes the exclusive data-volume lock and rechecks
+the candidates before deletion, so it cannot overlap another process's
+mutation. Current models remain strict and never accept the retired status.
 The PWA is an administrator OCR test console plus history/backups until the
 Phase 1 import-first learning loop ships; the street/position/certainty
 breakdowns return under the concept-mastery model per specification §6.8.

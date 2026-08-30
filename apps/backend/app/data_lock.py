@@ -14,10 +14,11 @@ DATA_LOCK_FILENAME = ".poker-hero-data.lock"
 # and that is a coincidence rather than a link. Anyone tuning one of these
 # must be able to do it without silently moving the others.
 #
-# STARTUP, EXCLUSIVE side (the imported-hand recovery sweep). An exclusive
-# acquire can be starved indefinitely: flock() has no writer preference,
-# so a steady stream of overlapping shared holders can keep one waiting
-# forever. No length of wait rescues that, so the bound is tight - fail
+# STARTUP, EXCLUSIVE side (retired-record deployment cleanup and the imported-
+# hand recovery sweep). Both paths skip the acquire unless raw candidates exist.
+# An exclusive acquire can be starved indefinitely: flock() has no writer
+# preference, so a steady stream of overlapping shared holders can keep one
+# waiting forever. No length of wait rescues that, so the bound is tight - fail
 # fast and say which side was wanted.
 DEFAULT_DATA_LOCK_TIMEOUT_SECONDS = 30
 

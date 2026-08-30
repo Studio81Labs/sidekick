@@ -91,9 +91,9 @@ class Settings(BaseSettings):
     # tight and the other is not; both are tunable because they run
     # before uvicorn binds, where a wrong bound is a failed deploy.
     #
-    # The exclusive acquire the imported-hand recovery sweep needs. It is
-    # skipped entirely unless a write was actually interrupted, so on a
-    # healthy volume this is never reached.
+    # The exclusive acquire used by retired-record deployment cleanup and the
+    # imported-hand recovery sweep. Each is skipped unless raw candidates
+    # exist, so on a current healthy volume neither requests the lock.
     data_lock_recovery_timeout_seconds: int = Field(
         default=DEFAULT_DATA_LOCK_TIMEOUT_SECONDS, gt=0
     )

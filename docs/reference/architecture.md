@@ -1217,8 +1217,13 @@ requests only after a version change. Search results and their match count remai
 separate from the global archive count and newest-page browser cache.
 Local development uses `apps/backend/data`; the container contract uses
 `/app/data`. Coolify must mount persistent storage at `/app/data`. The container
-entrypoint repairs volume ownership before dropping to the non-root `poker`
-user.
+entrypoint repairs volume ownership, then runs a strict deployment cleanup as
+the non-root `poker` user before starting the requested process. Cleanup deletes
+only valid screenshot job directories whose raw record has the retired V1
+`recommended` status. It acquires the exclusive data-volume lock and rechecks
+the candidates before deletion; current, malformed, unknown, and untrusted-path
+records are not rewritten or removed. Current application models remain strict
+and never load the retired status.
 
 ## Deployment Topology
 
