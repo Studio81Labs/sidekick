@@ -18,9 +18,36 @@ fallback that walks stored records: see ``find`` below.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 
 from app.domain.imported_hands import ImportedHandRecord, StableHandIdentity
+
+
+@dataclass(frozen=True)
+class ReimportResolution:
+    """What a freshly parsed raw hand means relative to the local store.
+
+    ``classify_reimport`` (``app.domain.imported_hands``) is the sole
+    authority for ``disposition`` and ``existing_raw_source_id`` -- both
+    are carried through unchanged. This adds only what that classifier has
+    no way to know without a store: the ``record_key`` the candidate's
+    identity maps to, and whether that key currently holds a deletion
+    tombstone rather than a live or pending record.
+
+    A tombstone keeps no raw sources or detections at all
+    (``ImportedHandRecord.validate_aggregate`` forbids a deleted record
+    from retaining any), so classifying against one always yields
+    ``new_identity`` -- ``found_tombstone`` is what lets a caller tell that
+    apart from a hand that was never imported before. Seeing it true is
+    not license to resurrect anything: the generation bump that turns this
+    into a real restoration belongs to the lifecycle boundary that
+    consumes this resolution, never to whatever produced it.
+    """
+
+    disposition: Literal["new_identity", "exact_reimport", "identity_conflict"]
+    existing_raw_source_id: str | None
+    record_key: str
+    found_tombstone: bool
 
 
 @dataclass(frozen=True)

@@ -71,14 +71,21 @@ import re
 from hashlib import sha256
 from pathlib import Path
 
-from app.application.imported_hand_ports import ImportedHandRecoveryReport
+from app.application.imported_hand_ports import (
+    ImportedHandRecoveryReport,
+    ImportedHandRepository,
+    ReimportResolution,
+)
 from app.data_lock import (
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     InterprocessDataLock,
 )
 from app.domain.imported_hands import (
+    DetectedImportedHand,
     ImportedHandRecord,
+    RawHandHistory,
     StableHandIdentity,
+    classify_reimport,
     imported_hand_canonical_json,
 )
 from app.storage.cascade_journal import CascadeJournal
@@ -245,3 +252,60 @@ class FileImportedHandStore:
                 f"record key {record_key!r} must be a lowercase hex sha256 "
                 "digest produced by imported_hand_record_key"
             )
+
+
+def resolve_reimport(
+    store: ImportedHandRepository,
+    identity: StableHandIdentity,
+    raw: RawHandHistory,
+    candidate_detection: DetectedImportedHand | None = None,
+) -> ReimportResolution:
+    """Resolve a candidate raw import against whatever already sits at its key.
+
+    ``classify_reimport`` is the domain's sole authority on what
+    ``new_identity`` / ``exact_reimport`` / ``identity_conflict`` means; it
+    is called here, not reimplemented. This function only supplies what
+    that classifier has no way to know by itself: which store key
+    ``identity`` maps to, and whether that key currently holds a deletion
+    tombstone rather than a live or pending record.
+
+    ``store.find`` is what makes the tombstone case reachable at all -- it
+    resolves through the same key derivation ``save`` used, so a purged
+    record (identity=None, every audit list empty) is still found by the
+    identity of the hand being re-imported. Classifying against a
+    tombstone's empty ``raw_sources`` always yields ``new_identity``
+    from the domain's own rule (no existing source shares any identity),
+    so ``found_tombstone`` is the only thing that lets a caller tell "never
+    imported" apart from "was imported, then deleted". This function does
+    not act on that difference -- it neither mutates nor even re-reads the
+    stored tombstone after finding it. Bumping the deletion generation to
+    turn a hit into a real restoration is the lifecycle boundary's job,
+    not this one's.
+    """
+    if raw.identity != identity:
+        # The key below is derived from `identity` alone; if `raw` names a
+        # different one, classify_reimport would silently compare it
+        # against the wrong record's sources (or none at all) instead of
+        # the ones this key actually holds. Failing loudly beats guessing
+        # which of the two the caller meant.
+        raise ValueError(
+            "resolve_reimport's identity and raw.identity must match: the "
+            "store key is derived from identity, and a mismatch would "
+            "silently stop the candidate from being classified against "
+            "its own stored raw sources"
+        )
+    record_key = imported_hand_record_key(identity)
+    existing = store.find(identity)
+    found_tombstone = existing is not None and existing.identity is None
+    disposition = classify_reimport(
+        existing.raw_sources if existing is not None else [],
+        raw,
+        existing_detections=existing.detections if existing is not None else None,
+        candidate_detection=candidate_detection,
+    )
+    return ReimportResolution(
+        disposition=disposition.kind,
+        existing_raw_source_id=disposition.existing_raw_source_id,
+        record_key=record_key,
+        found_tombstone=found_tombstone,
+    )

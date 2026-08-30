@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from app.application.imported_hand_ports import (
     ImportedHandRecoveryReport,
     ImportedHandRepository,
+    ReimportResolution,
 )
 from app.data_lock import (
     DATA_LOCK_FILENAME,
@@ -48,6 +49,7 @@ from app.storage.imported_hand_store import (
     FileImportedHandStore,
     ImportedHandNotFoundError,
     imported_hand_record_key,
+    resolve_reimport,
 )
 from app.workspace import WorkspaceCoordinator
 
@@ -93,6 +95,37 @@ def raw_source(identity: StableHandIdentity) -> RawHandHistory:
         ),
         content_sha256=sha256(RAW_TEXT.encode()).hexdigest(),
         raw_text=RAW_TEXT,
+    )
+
+
+def conflicting_raw_source(identity: StableHandIdentity) -> RawHandHistory:
+    """Same identity as ``raw_source``, but bytes that do not match it.
+
+    ``classify_reimport`` treats a same-identity candidate whose content
+    matches no existing raw source as a conflict to be reported, never as
+    grounds to overwrite anything silently.
+    """
+    text = RAW_TEXT + "Table 'x' 2-max Seat #1 is the button\n"
+    return RawHandHistory(
+        raw_source_id="file-2",
+        identity=identity,
+        chronology=SourceChronology(
+            played_at=None,
+            source_timezone=None,
+            source_session_id="session-1",
+            source_file_id="file-2",
+            hand_ordinal=1,
+        ),
+        provenance=ImportProvenance(
+            import_id="import-file-2",
+            imported_at=NOW,
+            adapter_id="pokerstars",
+            adapter_version="1.0.0",
+            format_revision="pokerstars-text/v1",
+            source_filename="HH20260830-conflict.txt",
+        ),
+        content_sha256=sha256(text.encode()).hexdigest(),
+        raw_text=text,
     )
 
 
@@ -386,6 +419,100 @@ def test_a_reimport_finds_the_tombstone_of_the_hand_it_replaces(
     assert found is not None
     assert found.identity is None
     assert found.lifecycle.deletion_generation == 1
+
+
+def test_resolve_reimport_reports_new_identity_when_nothing_is_stored(
+    tmp_path: Path,
+) -> None:
+    """No record at all is the ordinary case: classify against no sources."""
+    store = FileImportedHandStore(tmp_path)
+    identity = sample_identity()
+
+    resolution = resolve_reimport(store, identity, raw_source(identity))
+
+    assert isinstance(resolution, ReimportResolution)
+    assert resolution.record_key == imported_hand_record_key(identity)
+    assert resolution.disposition == "new_identity"
+    assert resolution.existing_raw_source_id is None
+    assert resolution.found_tombstone is False
+
+
+def test_resolve_reimport_reports_exact_reimport_for_byte_identical_content(
+    tmp_path: Path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    identity = sample_identity()
+    key = imported_hand_record_key(identity)
+    store.save(key, pending_review_record(identity))
+
+    resolution = resolve_reimport(store, identity, raw_source(identity))
+
+    assert resolution.record_key == key
+    assert resolution.disposition == "exact_reimport"
+    assert resolution.existing_raw_source_id == "file-1"
+    assert resolution.found_tombstone is False
+
+
+def test_resolve_reimport_reports_identity_conflict_for_differing_content(
+    tmp_path: Path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    identity = sample_identity()
+    key = imported_hand_record_key(identity)
+    store.save(key, pending_review_record(identity))
+
+    resolution = resolve_reimport(store, identity, conflicting_raw_source(identity))
+
+    assert resolution.record_key == key
+    assert resolution.disposition == "identity_conflict"
+    assert resolution.existing_raw_source_id is None
+    assert resolution.found_tombstone is False
+
+
+def test_reimport_onto_a_tombstone_is_reported_not_resurrected(
+    tmp_path: Path,
+) -> None:
+    """A purged record has no identity or audit trail left to classify against.
+
+    resolve_reimport must still surface the tombstone it found rather than
+    silently treating this as an ordinary new import: found_tombstone is
+    what lets a caller tell "never imported" apart from "was imported, then
+    deleted". Bumping the deletion generation to actually restore it is
+    Task 6's lifecycle boundary, not this call, so the stored tombstone
+    must come back byte-for-byte unchanged -- not merely "no exception".
+    """
+    store = FileImportedHandStore(tmp_path)
+    identity = sample_identity()
+    key = imported_hand_record_key(identity)
+    store.save(key, tombstone_record(generation=1))
+    before = store.get(key)
+
+    resolution = resolve_reimport(store, identity, raw_source(identity))
+
+    assert resolution.record_key == key
+    assert resolution.found_tombstone is True
+    assert resolution.disposition == "new_identity"
+    assert store.get(key) == before
+    assert store.get(key).lifecycle.status == "deleted"
+
+
+def test_resolve_reimport_rejects_a_raw_source_whose_identity_does_not_match(
+    tmp_path: Path,
+) -> None:
+    """The key is derived from ``identity``; a mismatched raw would silently
+    stop matching whatever is already stored under that key instead of
+    raising, which is worse than either disposition it might paper over.
+    """
+    store = FileImportedHandStore(tmp_path)
+    identity = sample_identity()
+    key = imported_hand_record_key(identity)
+    store.save(key, pending_review_record(identity))
+    mismatched = raw_source(sample_identity(hand_ordinal=2))
+
+    with pytest.raises(ValueError, match="identity"):
+        resolve_reimport(store, identity, mismatched)
+
+    assert store.get(key) == pending_review_record(identity)
 
 
 def test_get_raises_for_an_unknown_key(tmp_path: Path) -> None:
