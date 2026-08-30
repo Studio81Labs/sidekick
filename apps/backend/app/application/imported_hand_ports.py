@@ -13,14 +13,27 @@ adapter's own directory naming is thereafter the only way to find that
 record again. A purged record keeps its key but loses everything it was
 derived from, so nothing here may offer a "look it up by identity"
 fallback that walks stored records: see ``find`` below.
+
+``begin_cascade`` is the one composition primitive here, and it is what
+keeps a lifecycle transition honest without naming a mechanism: a caller
+stages a record and its derived artifacts through the handle it yields
+and gets them published together. Expressing that as a port method
+rather than as an ordered pair of writes is deliberate -- ordering two
+independent writes cannot close the window between them, and only the
+adapter knows how to make one unit of both.
 """
 
 from __future__ import annotations
 
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Literal, Protocol
 
-from app.domain.imported_hands import ImportedHandRecord, StableHandIdentity
+from app.domain.imported_hands import (
+    HandDecisionExtraction,
+    ImportedHandRecord,
+    StableHandIdentity,
+)
 
 
 @dataclass(frozen=True)
@@ -88,6 +101,44 @@ class ImportedHandRecoveryReport:
         return bool(self.completed or self.quarantined or self.failed)
 
 
+class ImportedHandCascadeHandle(Protocol):
+    """The write surface of one open cascade over a single record key.
+
+    Everything staged through one handle commits together or not at all.
+    That is the only thing this layer may assume about how the adapter
+    achieves it, and the only thing it needs: a lifecycle transition has
+    to publish a record's new state and the derived artifacts of the
+    revision it supersedes as one unit, so that no reader can observe a
+    record at revision 2 while an artifact still claims revision 1 is
+    current.
+
+    The handle lives exactly as long as the ``with`` block that yielded
+    it. Holding one past that -- returning it from a helper, keeping it
+    on ``self`` -- is a bug the adapter is entitled to raise on rather
+    than silently accept, so a caller must stage everything before the
+    block ends.
+
+    Staging order carries no meaning. An artifact's identity may depend
+    on the record staged beside it, and resolving that is the adapter's
+    job at commit time, not the caller's to arrange by calling these in
+    a particular sequence.
+    """
+
+    def stage_record(self, record: ImportedHandRecord) -> None:
+        """Stage ``record`` as this cascade's new stored aggregate."""
+        ...
+
+    def stage_decisions(self, extraction: HandDecisionExtraction) -> None:
+        """Stage one derived decision artifact in this cascade.
+
+        Never removes the artifact it supersedes: issue #432 retains
+        superseded artifacts for audit, and a superseded artifact stops
+        being *served* because the record's lifecycle moved, not because
+        anything deleted it.
+        """
+        ...
+
+
 class ImportedHandRepository(Protocol):
     """Durable storage for imported-hand aggregates, keyed by record key."""
 
@@ -120,7 +171,32 @@ class ImportedHandRepository(Protocol):
         """Durably publish ``record`` under ``record_key``.
 
         All-or-nothing: an interrupted save leaves no partially written
-        record visible.
+        record visible. It publishes the record and nothing else, so a
+        transition that also has to move derived artifacts must not be
+        assembled from this plus a second write -- see ``begin_cascade``.
+        """
+        ...
+
+    def begin_cascade(
+        self, record_key: str, *, operation: str
+    ) -> AbstractContextManager[ImportedHandCascadeHandle]:
+        """Open one durable unit over ``record_key``.
+
+        Everything staged through the yielded handle becomes visible
+        together when the block exits normally, and nothing does if it
+        raises. This is what a lifecycle transition composes with: the
+        record's new state and the derived artifacts of the revision it
+        supersedes are one change, and publishing them as two would leave
+        a window in which a record's active revision has no artifact
+        matching it.
+
+        ``operation`` names the transition for whoever later reads a
+        write interrupted by a crash, so it must describe what was
+        actually in flight. The adapter decides which labels it accepts
+        and rejects an unknown one before anything is staged.
+
+        Blocking, and not reentrant: neither this nor ``save`` may be
+        called again from inside an open cascade.
         """
         ...
 

@@ -19,6 +19,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.application.imported_hand_ports import (
+    ImportedHandCascadeHandle,
     ImportedHandRecoveryReport,
     ImportedHandRepository,
     ReimportResolution,
@@ -55,6 +56,7 @@ from app.storage.imported_hand_store import (
     NO_CANONICAL_REVISION,
     ClosedCascadeError,
     FileImportedHandStore,
+    ImportedHandCascade,
     ImportedHandNotFoundError,
     imported_hand_record_key,
     resolve_reimport,
@@ -899,7 +901,7 @@ def test_the_file_store_satisfies_every_call_the_repository_protocol_declares() 
     declared = sorted(
         name for name in vars(ImportedHandRepository) if not name.startswith("_")
     )
-    assert declared == ["find", "get", "list_keys", "recover", "save"]
+    assert declared == ["begin_cascade", "find", "get", "list_keys", "recover", "save"]
 
     for name in declared:
         implementation = getattr(FileImportedHandStore, name, None)
@@ -909,6 +911,45 @@ def test_the_file_store_satisfies_every_call_the_repository_protocol_declares() 
             getattr(ImportedHandRepository, name),
             implementation,
         )
+
+
+def test_the_cascade_satisfies_every_call_the_handle_protocol_declares() -> None:
+    """The handle crosses the port too, so it needs its own conformance check.
+
+    ``begin_cascade`` is only usable from the application layer if what
+    it yields is declared as well: an undeclared ``stage_*`` method would
+    be reached through an annotation that never mentioned it. The
+    Protocol deliberately declares less than ``ImportedHandCascade``
+    offers -- ``stage_decisions_delete`` belongs to a purge no
+    application-layer caller performs yet -- so this checks that every
+    declared member exists, not that the two sets are equal.
+    """
+    declared = sorted(
+        name for name in vars(ImportedHandCascadeHandle) if not name.startswith("_")
+    )
+    assert declared == ["stage_decisions", "stage_record"]
+
+    for name in declared:
+        implementation = getattr(ImportedHandCascade, name, None)
+        assert implementation is not None, f"{name} is not implemented"
+        _assert_accepts_the_declared_call_shape(
+            name,
+            getattr(ImportedHandCascadeHandle, name),
+            implementation,
+        )
+
+
+def test_begin_cascade_yields_the_handle_the_port_promises(tmp_path: Path) -> None:
+    """A Protocol member list proves nothing about what is actually yielded."""
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+
+    with store.begin_cascade(key, operation="approve") as cascade:
+        assert isinstance(cascade, ImportedHandCascade)
+        cascade.stage_record(record)
+
+    assert store.get(key) == record
 
 
 def shared_data_lock_is_blocked(data_dir: Path) -> bool:
