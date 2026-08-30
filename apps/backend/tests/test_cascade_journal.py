@@ -498,3 +498,132 @@ def test_the_journal_lock_is_still_released_after_a_refused_re_entry(
     thread = threading.Thread(target=run_recover, daemon=True)
     thread.start()
     assert done.wait(timeout=5), "journal lock was left held after a refused re-entry"
+
+
+def test_recover_reports_a_failed_quarantine_instead_of_aborting_the_sweep(
+    tmp_path: Path,
+) -> None:
+    """A failure of the quarantine attempt itself must not escape.
+
+    ENOSPC is both a plausible cause of a torn cascade and a plausible
+    cause of a failed rename, so the one condition most likely to need
+    recovery would otherwise be the one that stops it running. Here the
+    same shape is produced without a full disk, by making the quarantine
+    directory impossible to create.
+    """
+    journal = CascadeJournal(tmp_path)
+    corrupt_id, healthy_id = "0" * 32, "f" * 32   # corrupt sorts first
+    cascade_root = tmp_path / ".cascade"
+    cascade_root.mkdir(parents=True)
+    # A regular file where the quarantine directory needs to go, so
+    # _quarantine's own mkdir raises.
+    (cascade_root / "corrupt").write_bytes(b"not a directory")
+
+    corrupt_dir = cascade_root / corrupt_id
+    corrupt_dir.mkdir()
+    (corrupt_dir / "ready").write_bytes(b"")     # ready, but no staged/ at all
+
+    healthy_dir = cascade_root / healthy_id
+    (healthy_dir / "staged" / "cc" / "content").mkdir(parents=True)
+    (healthy_dir / "staged" / "cc" / "content" / "record.json").write_bytes(b'{"c": 3}')
+    (healthy_dir / "ready").write_bytes(b"")
+
+    report = journal.recover()
+
+    assert report == CascadeRecoveryReport(
+        completed=(healthy_id,), failed=(corrupt_id,)
+    )
+    # The cascade sorted behind the un-quarantinable one still finished.
+    assert (tmp_path / "cc" / "record.json").read_bytes() == b'{"c": 3}'
+    # It could not be moved, so it stays where it is for the next sweep.
+    assert (corrupt_dir / "ready").is_file()
+
+
+def test_recover_leaves_a_failed_cascade_in_place_and_retries_it_next_sweep(
+    tmp_path: Path,
+) -> None:
+    """A cascade whose commit raised something other than corruption is
+    reported failed and left exactly where it is.
+
+    It is not proven unusable, only proven to have failed this time, and
+    it may be half-applied - so quarantining it would strand it and
+    discarding it would lose it. Leaving it lets the next sweep retry it,
+    which is the whole behavioural difference from quarantine.
+    """
+    journal = CascadeJournal(tmp_path)
+    failing_id, healthy_id = "0" * 32, "f" * 32   # failing sorts first
+    cascade_root = tmp_path / ".cascade"
+    # A regular file where record key "bb"'s directory needs to go, so
+    # _commit_replace's mkdir raises FileExistsError - not corruption.
+    (tmp_path / "bb").write_bytes(b"not a directory")
+
+    failing_dir = cascade_root / failing_id
+    (failing_dir / "staged" / "bb" / "content").mkdir(parents=True)
+    (failing_dir / "staged" / "bb" / "content" / "record.json").write_bytes(b'{"b": 2}')
+    (failing_dir / "ready").write_bytes(b"")
+
+    healthy_dir = cascade_root / healthy_id
+    (healthy_dir / "staged" / "cc" / "content").mkdir(parents=True)
+    (healthy_dir / "staged" / "cc" / "content" / "record.json").write_bytes(b'{"c": 3}')
+    (healthy_dir / "ready").write_bytes(b"")
+
+    first = journal.recover()
+
+    assert first == CascadeRecoveryReport(
+        completed=(healthy_id,), failed=(failing_id,)
+    )
+    assert (tmp_path / "cc" / "record.json").read_bytes() == b'{"c": 3}'
+    # Left in place, unmoved and intact - not quarantined, not discarded.
+    assert not (cascade_root / "corrupt").exists()
+    assert (failing_dir / "ready").is_file()
+    assert (
+        failing_dir / "staged" / "bb" / "content" / "record.json"
+    ).read_bytes() == b'{"b": 2}'
+
+    # Clear the cause; the next sweep must finish what it left behind.
+    (tmp_path / "bb").unlink()
+
+    assert journal.recover() == CascadeRecoveryReport(completed=(failing_id,))
+    assert (tmp_path / "bb" / "record.json").read_bytes() == b'{"b": 2}'
+    assert not failing_dir.exists()
+
+
+def test_quarantine_reports_the_directory_the_evidence_landed_in(
+    tmp_path: Path,
+) -> None:
+    """On an id collision the report must name the directory this sweep's
+    evidence actually landed in, not the one holding the previous
+    sweep's - an operator sent to the wrong directory reads the wrong
+    cascade's evidence."""
+    journal = CascadeJournal(tmp_path)
+    cascade_id = "0" * 32
+    cascade_root = tmp_path / ".cascade"
+    older = cascade_root / "corrupt" / cascade_id
+    older.mkdir(parents=True)
+    (older / "older-evidence").write_bytes(b"from an earlier sweep")
+
+    corrupt_dir = cascade_root / cascade_id
+    corrupt_dir.mkdir()
+    (corrupt_dir / "ready").write_bytes(b"")     # ready, but no staged/ at all
+    (corrupt_dir / "new-evidence").write_bytes(b"from this sweep")
+
+    report = journal.recover()
+
+    assert len(report.quarantined) == 1
+    landed = cascade_root / "corrupt" / report.quarantined[0]
+    assert (landed / "new-evidence").read_bytes() == b"from this sweep"
+    # ...and the earlier sweep's evidence was not clobbered.
+    assert (older / "older-evidence").read_bytes() == b"from an earlier sweep"
+
+
+def test_an_empty_recovery_report_is_falsy(tmp_path: Path) -> None:
+    """`if journal.recover():` must not warn on every clean boot."""
+    assert not CascadeRecoveryReport()
+    assert CascadeRecoveryReport(completed=("aa",))
+    assert CascadeRecoveryReport(quarantined=("aa",))
+    assert CascadeRecoveryReport(failed=("aa",))
+
+    journal = CascadeJournal(tmp_path)
+    with journal.begin(operation="approve", record_keys=["aa"]) as staging:
+        staging.stage("aa", "record.json", b'{"a": 1}')
+    assert not journal.recover()

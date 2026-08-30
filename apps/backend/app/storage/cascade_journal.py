@@ -37,12 +37,27 @@ trusts it, and finishes the job by replaying the same commit - which is
 why commit must be idempotent, and why stage() refuses any record key the
 intent did not name up front.
 
-recover() is a startup path, so one unusable cascade directory must never
-be able to stop it. A cascade it cannot trust enough to finish is renamed
-aside into .cascade/corrupt/<cascade_id> and reported separately from the
-ones it completed, rather than deleted (the evidence is the only record of
-what went wrong) or raised (that would abort the sweep, strand every other
-half-applied cascade, and fail every subsequent boot the same way).
+recover() is a startup path, so no single cascade directory may stop it,
+whatever goes wrong there. Every cascade is swept under its own exception
+boundary that catches anything short of a BaseException, and lands in one
+of three buckets:
+
+- completed - committed and its directory removed.
+- quarantined - proven structurally unusable (CascadeCorruptionError), so
+  renamed aside into .cascade/corrupt/<cascade_id> rather than deleted:
+  the evidence is the only record of what went wrong.
+- failed - commit raised something else. The directory is left exactly
+  where it is so the next sweep retries it.
+
+The split between the last two is the important one. Quarantine moves a
+directory out of the replay path, which is right only when that directory
+is proven unusable; a cascade that merely failed to commit may be
+half-applied, and moving it aside would strand it forever. Anything not
+proven structurally corrupt is therefore left in place to be retried. The
+quarantine attempt is itself wrapped, so a failure to move a directory
+aside lands in failed rather than escaping the sweep - otherwise the one
+condition most likely to produce a torn cascade in the first place (a full
+disk) would also be the one that stops recovery from running.
 
 Locking. This class holds an internal lock for the lifetime of a cascade
 and for the whole of recover(), which has three consequences callers must
@@ -120,7 +135,10 @@ class CascadeCorruptionError(RuntimeError):
     they must know. Out of recover(), it does not - recover() contains it
     per cascade and quarantines the directory, because a startup sweep
     that aborts on one bad directory strands every other half-applied
-    cascade and fails identically on every subsequent boot.
+    cascade and fails identically on every subsequent boot. It is also the
+    one error that licenses *moving* a cascade aside: it is a statement
+    about the directory's contents, where any other exception says only
+    that this attempt failed.
     """
 
 
@@ -138,15 +156,35 @@ class CascadeReentryError(RuntimeError):
 class CascadeRecoveryReport:
     """What one recover() sweep did.
 
-    completed and quarantined are deliberately separate: a completed
-    cascade was finished and its directory removed, while a quarantined
-    one was moved to <root>/.cascade/corrupt/<cascade_id> untouched and
-    still needs a human. Conflating them would let a boot report success
-    over a cascade nobody has looked at.
+    The three buckets are deliberately distinct, because they call for
+    different things from the caller:
+
+    - completed - finished and its directory removed. Nothing to do.
+    - quarantined - proven structurally unusable and moved to
+      <root>/.cascade/corrupt/<name>, where the name is the *directory*
+      the evidence actually landed in, not necessarily the cascade id
+      (see CascadeJournal._quarantine on collisions). Needs a human; will
+      not be retried.
+    - failed - commit raised, and the directory was left in place. The
+      next sweep retries it, so a transient cause self-heals, but a
+      persistent one will keep reappearing here.
+
+    Conflating any two of these would let a boot report success over a
+    cascade nobody has looked at, or strand one that only needed a retry.
     """
 
     completed: tuple[str, ...] = ()
     quarantined: tuple[str, ...] = ()
+    failed: tuple[str, ...] = ()
+
+    def __bool__(self) -> bool:
+        """False when the sweep had nothing to report.
+
+        The dataclass default would make every report truthy, so a caller
+        writing `if journal.recover():` would warn on every clean boot and
+        `if not report:` would never fire.
+        """
+        return bool(self.completed or self.quarantined or self.failed)
 
 
 class CascadeIntent(BaseModel):
@@ -300,6 +338,7 @@ class CascadeJournal:
                 return CascadeRecoveryReport()
             completed: list[str] = []
             quarantined: list[str] = []
+            failed: list[str] = []
             cascade_dirs = sorted(
                 (
                     path
@@ -331,29 +370,60 @@ class CascadeJournal:
                 # record-key validation stage() does at write time, not
                 # for recovery. Do not reintroduce an intent.json check
                 # on this branch.
+                # Everything below is contained to this one cascade.
+                # Letting anything out of the loop would abort the sweep,
+                # leave this directory in place to abort every future
+                # sweep the same way, and strand the very half-applied
+                # cascades recovery exists to finish.
                 try:
                     self._commit(cascade_dir)
                 except CascadeCorruptionError:
-                    # Contain it to this cascade. Letting it out of the
-                    # loop would abort the sweep, leave this directory in
-                    # place to abort every future sweep the same way, and
-                    # strand the very half-applied cascades recovery
-                    # exists to finish - a permanent boot failure needing
-                    # manual filesystem surgery.
-                    quarantined.append(self._quarantine(cascade_dir))
+                    # Proven structurally unusable, so it is safe - and
+                    # necessary - to move it out of the replay path.
+                    try:
+                        quarantined.append(self._quarantine(cascade_dir))
+                    except Exception:
+                        # Even moving it aside failed. Report it and move
+                        # on rather than re-raising: a full disk is both a
+                        # plausible cause of a torn cascade and a plausible
+                        # cause of a failed rename, and it must not be able
+                        # to stop the sweep on its way through.
+                        failed.append(cascade_dir.name)
+                    continue
+                except Exception:
+                    # Not proven corrupt - only proven to have failed this
+                    # time. It may be half-applied, so leave the directory
+                    # exactly where it is: quarantining it would strand it,
+                    # and discarding it would lose it. The next sweep
+                    # retries it, so a transient cause self-heals.
+                    failed.append(cascade_dir.name)
                     continue
                 completed.append(cascade_dir.name)
             return CascadeRecoveryReport(
-                completed=tuple(completed), quarantined=tuple(quarantined)
+                completed=tuple(completed),
+                quarantined=tuple(quarantined),
+                failed=tuple(failed),
             )
 
     def _quarantine(self, cascade_dir: Path) -> str:
-        """Move an untrustworthy cascade aside and return its id.
+        """Move an untrustworthy cascade aside, returning where it landed.
 
         Renamed rather than deleted: this directory is the only record of
         what went wrong, and unlike the pre-marker discard branch there is
         no proof here that commit never began, so its staged tree may be
         the only surviving copy of a half-applied write.
+
+        A quarantined id is not by itself evidence that any data is wrong.
+        A cascade that was fully applied and then killed during _commit's
+        final rmtree - which can remove staged/ before ready, since scandir
+        order is arbitrary - is indistinguishable from a genuinely corrupt
+        one, and lands here too. Treat a quarantined id as "a human should
+        look", not as "this record is broken".
+
+        Returns the *name of the directory the evidence landed in*, which
+        is the cascade id except when that name was already taken. Callers
+        report this to operators, so returning the id regardless would
+        point them at the previous sweep's evidence instead of this one's.
         """
         quarantine_root = self._cascade_root / _QUARANTINE_DIRNAME
         quarantine_root.mkdir(parents=True, exist_ok=True)
@@ -366,7 +436,7 @@ class CascadeJournal:
         os.rename(cascade_dir, destination)
         _fsync_directory(quarantine_root)
         _fsync_directory(self._cascade_root)
-        return cascade_dir.name
+        return destination.name
 
     def _prepare(self, *, operation: str, record_keys: Sequence[str]) -> str:
         cascade_id = uuid4().hex
