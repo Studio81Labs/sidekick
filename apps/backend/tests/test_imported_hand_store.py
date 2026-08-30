@@ -55,6 +55,7 @@ from app.storage.cascade_journal import (
 from app.storage.imported_hand_store import (
     NO_CANONICAL_REVISION,
     ClosedCascadeError,
+    DecisionArtifactRetentionError,
     FileImportedHandStore,
     ImportedHandCascade,
     ImportedHandNotFoundError,
@@ -1965,3 +1966,122 @@ def test_save_decisions_refuses_a_key_foreign_to_the_extractions_identity(
 
     with pytest.raises(ValueError, match="not derived from this extraction"):
         store.save_decisions(other_key, extraction)
+
+
+def unbound_rejection(record: ImportedHandRecord) -> HandDecisionExtraction:
+    """A rejection that resolves to the same name as ``extraction_for``.
+
+    Carries no canonical revision of its own (decisions.py forbids one on
+    a ``not_extractable`` outcome), so the record-read fallback files it
+    under the record's own active revision -- the very name a successful
+    extraction of that same revision already occupies.
+    """
+    return HandDecisionExtraction(
+        identity=record.identity,
+        chronology=None,
+        provenance=None,
+        canonical_revision=None,
+        deletion_generation=record.lifecycle.deletion_generation,
+        outcome="not_extractable",
+        rejection="incomplete_hand_state",
+        decision_points=[],
+        excluded_actions=[],
+    )
+
+
+def test_stage_decisions_refuses_to_publish_over_a_retained_artifact(
+    tmp_path: Path,
+) -> None:
+    """Retention is not only about deletion; an overwrite destroys too.
+
+    Issue #432 retains a superseded artifact for audit, and every path
+    that could remove one was closed in Task 4 -- except this one, which
+    removes it by writing a different artifact over its name. A
+    transition that leaves a record's revision and generation exactly
+    where they are (recording a conflict against an already-approved
+    hand) resolves to the name the approved artifact already occupies,
+    and ``os.replace`` takes it out with no trace in
+    ``list_decision_artifacts``.
+
+    The application layer cannot see this namespace, so the refusal has
+    to live here: it is a storage invariant about names this store owns,
+    and it protects every caller rather than one service.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    retained = extraction_for(record)
+    store.save_decisions(key, retained)
+
+    with pytest.raises(DecisionArtifactRetentionError):
+        store.save_decisions(key, unbound_rejection(record))
+
+    assert store.get_decisions(key, revision=1, generation=0) == retained
+    assert store.list_decision_artifacts(key) == [(1, 0, "r1-g0.json")]
+
+
+def test_stage_decisions_accepts_an_identical_republish(tmp_path: Path) -> None:
+    """Idempotent replay is not an overwrite: nothing is lost.
+
+    A retried cascade recomputes the same verdict for the same revision
+    and generation, and refusing that would turn a harmless replay into a
+    failure the caller has no way to distinguish from real corruption.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    extraction = extraction_for(record)
+
+    store.save_decisions(key, extraction)
+    store.save_decisions(key, extraction)
+
+    assert store.get_decisions(key, revision=1, generation=0) == extraction
+    assert store.list_decision_artifacts(key) == [(1, 0, "r1-g0.json")]
+
+
+def test_one_cascade_cannot_stage_two_artifacts_over_each_other(
+    tmp_path: Path,
+) -> None:
+    """The same hazard with no file on disk to compare against yet.
+
+    Both extractions resolve to one name, so the second would replace the
+    first inside the scratch tree and only one would ever be published --
+    the loss happening before commit rather than at it.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    with pytest.raises(DecisionArtifactRetentionError):
+        with store.begin_cascade(key, operation="save") as cascade:
+            cascade.stage_decisions(extraction_for(record))
+            cascade.stage_decisions(unbound_rejection(record))
+
+    assert store.list_decision_artifacts(key) == []
+
+
+def test_a_cascade_refused_for_retention_is_still_closed(tmp_path: Path) -> None:
+    """The handle must not survive the failure that closed its cascade.
+
+    ``_finalize`` now has a reason of its own to raise, and the flag that
+    invalidates an escaped handle is set there. Set on the way out or
+    not at all, a retention refusal would leave a live handle behind and
+    quietly undo Task 4's escaped-cascade protection.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    escaped: list[ImportedHandCascade] = []
+
+    with pytest.raises(DecisionArtifactRetentionError):
+        with store.begin_cascade(key, operation="save") as cascade:
+            escaped.append(cascade)
+            cascade.stage_decisions(extraction_for(record))
+            cascade.stage_decisions(unbound_rejection(record))
+
+    with pytest.raises(ClosedCascadeError):
+        escaped[0].stage_record(record)

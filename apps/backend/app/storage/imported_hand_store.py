@@ -25,7 +25,12 @@ named ``r<revision>-g<generation>.json``, so whether one is stale is decidable
 the record's current ``lifecycle``, and nothing here may open a file just to
 find that out. A superseded artifact is never deleted here -- issue #432
 requires it stay retained for audit -- only Task 6's purge, through
-``ImportedHandCascade.stage_decisions_delete``, may remove one.
+``ImportedHandCascade.stage_decisions_delete``, may remove one. Nor is
+one ever silently replaced: staging a *different* artifact under a name
+already occupied raises ``DecisionArtifactRetentionError`` rather than
+``os.replace``-ing the retained one out of existence, which is the same
+loss by another route and one no caller above this layer can even see
+coming (see that class).
 
 The revision component is *not* simply the extraction's own
 ``canonical_revision``: a rejected extraction (``outcome="not_extractable"``)
@@ -154,6 +159,31 @@ class ImportedHandNotFoundError(LookupError):
     Absence only. A permanently deleted hand is *not* absent -- its
     tombstone is a stored record and ``get`` returns it -- so callers
     must not read this as "deleted".
+    """
+
+
+class DecisionArtifactRetentionError(RuntimeError):
+    """Staging an artifact would have replaced a different one already
+    filed under the same ``(revision, generation)`` name.
+
+    Issue #432 retains a superseded artifact for audit, and every path
+    that could remove one is closed except this one, which removes it by
+    writing over its name: ``_commit_replace`` ends in ``os.replace``,
+    which is silent, and ``list_decision_artifacts`` reports the same
+    triple before and after, so nothing downstream can tell the artifact
+    changed identity. A caller whose transition leaves a record's
+    revision and generation exactly where they are -- recording a
+    conflict against an already-approved hand is the reachable case --
+    resolves to a name the approved verdict already occupies.
+
+    Refused here rather than above this layer because the artifact
+    namespace is this store's, and nothing holding only the repository
+    port can see it. Identical bytes are not a replacement and still
+    succeed, so a retried cascade recomputing the same verdict is
+    unaffected; the comparison is on the serialized payload, so an
+    artifact written by an older model version can compare unequal to a
+    semantically identical one and be refused. That is the safe
+    direction: it fails loudly rather than losing the older bytes.
     """
 
 
@@ -672,6 +702,13 @@ class ImportedHandCascade:
         which revision it lands under. Never removes a sibling artifact:
         a superseded revision's file is left exactly where it is, retained
         for audit per issue #432.
+
+        Nor does it replace one. If the resolved name already holds a
+        different artifact -- on disk, or staged earlier in this same
+        cascade -- ``_finalize`` raises
+        ``DecisionArtifactRetentionError`` and nothing commits. Staging
+        the identical payload again is not a replacement and succeeds,
+        so a retried cascade is unaffected.
         """
         self._require_open()
         self._store._require_matching_identity(
@@ -730,17 +767,63 @@ class ImportedHandCascade:
         block raised: whatever this stages lands in the same scratch tree
         the journal's own exception handling discards wholesale, so it
         never reaches a live path either way.
+
+        This is also where retention is enforced, because a name is only
+        known once it is resolved: an artifact that would replace a
+        different one already filed under it raises
+        ``DecisionArtifactRetentionError`` and the whole cascade is
+        discarded. Two buffered extractions resolving to one name are
+        refused on the same rule, before either reaches scratch -- there
+        the loss would happen before the commit rather than at it, and
+        would never be visible on a live path at all.
+
+        Closes the cascade on the way out whether or not any of that
+        raised: a refusal must not leave a live handle behind, which
+        would be exactly the escaped-cascade hole ``ClosedCascadeError``
+        exists to make loud.
         """
-        for extraction in self._pending_extractions:
-            revision = self._store._decision_revision_for(
-                self._record_key, extraction, record=self._staged_record
-            )
-            relative_path = (
-                f"{DECISIONS_DIRNAME}/r{revision}-g{extraction.deletion_generation}.json"
-            )
-            payload = extraction.model_dump_json(indent=2).encode("utf-8")
-            self._staging.stage(self._record_key, relative_path, payload)
-        self._closed = True
+        try:
+            staged: dict[str, bytes] = {}
+            for extraction in self._pending_extractions:
+                revision = self._store._decision_revision_for(
+                    self._record_key, extraction, record=self._staged_record
+                )
+                relative_path = (
+                    f"{DECISIONS_DIRNAME}/"
+                    f"r{revision}-g{extraction.deletion_generation}.json"
+                )
+                payload = extraction.model_dump_json(indent=2).encode("utf-8")
+                self._require_retention_preserved(relative_path, payload, staged)
+                self._staging.stage(self._record_key, relative_path, payload)
+                staged[relative_path] = payload
+        finally:
+            self._closed = True
+
+    def _require_retention_preserved(
+        self, relative_path: str, payload: bytes, staged: dict[str, bytes]
+    ) -> None:
+        """Refuse ``payload`` if a different artifact already holds its name.
+
+        Checks what this cascade has already staged first, then what is
+        live on disk -- the live file is still the retained artifact,
+        since nothing this cascade staged has been committed yet.
+        """
+        previous = staged.get(relative_path)
+        if previous is None:
+            try:
+                previous = (
+                    self._store._record_dir(self._record_key) / relative_path
+                ).read_bytes()
+            except FileNotFoundError:
+                return
+        if previous == payload:
+            return
+        raise DecisionArtifactRetentionError(
+            f"staging {relative_path!r} for record {self._record_key} would "
+            "replace a different artifact already retained under that name; "
+            "issue #432 retains a superseded artifact for audit, and only a "
+            "purge may remove one"
+        )
 
 
 def resolve_reimport(

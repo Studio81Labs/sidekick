@@ -21,7 +21,14 @@ For a withdrawal or a rejection the same rule needs no second stage at
 all, because the record ceasing to be learning eligible is itself what
 deactivates every artifact it had.
 
-Two things this service deliberately does not do.
+Three things this service deliberately does not do.
+
+It does not undo a pending deletion. A ``deletion_request`` may only be
+retained by a ``deletion_pending`` record, so every verb here would have
+to drop one to publish at all, and nothing downstream could tell: a
+record without a request is valid under every other status. Rather than
+cancel a player's deletion as a side effect of an unrelated transition,
+each verb refuses outright -- see ``_current``.
 
 It does not compose lifecycle states by hand. Each verb builds the whole
 ``ImportedHandRecord`` it intends to publish and lets
@@ -101,13 +108,15 @@ class ImportedHandLifecycleService:
     ) -> ImportedHandRecord:
         """Publish this hand's first approval, with its decisions.
 
-        Refuses a hand that already carries a canonical revision. That is
+        Refuses a hand that already carries a canonical revision --
+        whatever its status is now, so a *withdrawn* hand being approved
+        afresh is a reapproval too. That is
         a reapproval however it is spelled, and the cascade's operation
         label is the one thing an operator reading a write interrupted by
         a crash has to go on, so it must not say "first approval" when a
         supersession was in flight.
         """
-        record = self._store.get(record_key)
+        record = self._current(record_key)
         if record.canonical_revisions:
             raise LifecycleCascadeError(
                 f"record {record_key} has already been approved at revision "
@@ -131,7 +140,7 @@ class ImportedHandLifecycleService:
         lifecycle state is visible, so the new revision's artifact has to
         become visible in that same instant.
         """
-        record = self._store.get(record_key)
+        record = self._current(record_key)
         if not record.canonical_revisions:
             raise LifecycleCascadeError(
                 f"record {record_key} has never been approved; there is no "
@@ -167,6 +176,42 @@ class ImportedHandLifecycleService:
             at=at,
         )
 
+    def _current(self, record_key: str) -> ImportedHandRecord:
+        """Read the record a transition starts from, refusing one mid-deletion.
+
+        A ``deletion_request`` may only be retained by a
+        ``deletion_pending`` record -- ``validate_lifecycle`` says so in
+        both directions -- so every verb here, all of which publish some
+        other status, would have to drop the request to validate at all.
+        Nothing would catch that: only ``deletion_pending`` *requires* a
+        request, so an active, withdrawn, or rejected record without one
+        is perfectly valid. A player's pending deletion would be
+        cancelled by an unrelated withdrawal, silently, with nothing left
+        on the record to show it was ever asked for.
+
+        Carrying the request forward is not the alternative -- the domain
+        forbids it on every status these verbs produce. Cancelling a
+        deletion is a transition of its own, which the journal already
+        reserves ``restore`` for, and it has to be asked for rather than
+        arrived at sideways. So this refuses, and it refuses ahead of
+        each verb's own precondition, because "you cannot do this while a
+        deletion is pending" is the true reason and "you have already
+        approved this hand" would be a misleading one.
+
+        Runs before anything is staged and before any lock is taken, so a
+        refusal costs a single read.
+        """
+        record = self._store.get(record_key)
+        if record.lifecycle.deletion_request is not None:
+            raise LifecycleCascadeError(
+                f"record {record_key} has a deletion pending at generation "
+                f"{record.lifecycle.deletion_generation}; publishing any "
+                "other lifecycle state would drop that request and cancel "
+                "the deletion without a trace, so it must be restored "
+                "before it can be approved, withdrawn, or rejected"
+            )
+        return record
+
     def _close(
         self,
         record_key: str,
@@ -187,7 +232,7 @@ class ImportedHandLifecycleService:
         not learning eligible, so nothing would ever serve it, and it
         would sit beside the real artifacts looking like one of them.
         """
-        record = self._store.get(record_key)
+        record = self._current(record_key)
         return self._publish(
             record_key,
             ImportedHandRecord(
@@ -249,24 +294,25 @@ class ImportedHandLifecycleService:
         being published, never from which verb asked. That is what makes
         this boundary closed rather than a list of four special cases: a
         transition that leaves a hand learning eligible always republishes
-        its decisions, so any future verb routed through here -- one that
-        records a conflict, resolves one, or restores a purged hand --
-        inherits the guarantee instead of having to remember it. The gap
-        ``active_decisions`` documents (a record that stays active and
-        stops being extractable without its revision moving) is exactly
-        the gap this closes, and it closes only for transitions that come
-        through here.
+        its decisions, so a future verb that appends a canonical revision
+        -- approving a corrected re-import, say -- inherits the guarantee
+        instead of having to remember it. The gap ``active_decisions``
+        documents (a record that stays active and stops being extractable
+        without its revision moving) is closed for exactly those
+        transitions, and only for transitions that come through here.
 
-        One thing a future verb routed through here has to know, because
-        the four below cannot reach it: every verb here either appends a
-        canonical revision or ends the hand's eligibility, so a
-        republished artifact always lands under a name nothing occupies.
-        A verb that left the active revision *and* generation where they
-        are -- recording a conflict against an already-approved hand is
-        the obvious one -- would republish over the retained artifact at
-        that same name rather than beside it, which is the one way this
-        boundary could destroy audit history. Such a verb needs a ruling
-        on that before it is written, not a fix here.
+        A verb that leaves the active revision **and** generation where
+        they are does **not** inherit it, and must not be written on the
+        assumption that it does. Recording an unresolved conflict against
+        an already-approved hand is the reachable case: its recomputed
+        rejection resolves to the very name the approved verdict already
+        occupies, so it would replace retained audit history rather than
+        land beside it. That is refused at the adapter --
+        ``DecisionArtifactRetentionError``, which the four verbs below
+        can never trigger because each either appends a revision or ends
+        eligibility -- so such a verb fails loudly rather than losing the
+        artifact. Making it *work* needs a ruling on where that hand's
+        superseding rejection should live, not a change here.
 
         The two stages are not ordered. "Deactivate before publish" is
         satisfied by there being one commit, not by which line runs

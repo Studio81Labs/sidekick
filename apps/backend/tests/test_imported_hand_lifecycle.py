@@ -14,6 +14,7 @@ after both stages are in and proves neither half survived.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -27,9 +28,13 @@ from app.application.imported_hand_lifecycle import (
     ImportedHandLifecycleService,
     LifecycleCascadeError,
 )
-from app.application.imported_hand_ports import ImportedHandRepository
+from app.application.imported_hand_ports import (
+    ImportedHandCascadeHandle,
+    ImportedHandRepository,
+)
 from app.domain.imported_hands import (
     CanonicalHandRevision,
+    DeletionRequest,
     HandDecisionExtraction,
     ImportedHandLifecycle,
     ImportedHandRecord,
@@ -37,6 +42,7 @@ from app.domain.imported_hands import (
 )
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
+    ImportedHandCascade,
     imported_hand_record_key,
 )
 from test_imported_hand_decisions import hero_fold_decision_record
@@ -44,6 +50,7 @@ from test_imported_hand_models import NOW
 from test_imported_hand_store import (
     pending_review_record as bare_pending_record,
 )
+from test_imported_hand_store import exclusive_data_lock_is_blocked
 from test_imported_hand_store import revision as bare_revision_one
 from test_imported_hand_store import sample_identity as bare_identity
 
@@ -53,6 +60,7 @@ from test_imported_hand_store import sample_identity as bare_identity
 # lifecycle.changed_at never precedes a retained audit event.
 APPROVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 CLOSED_AT = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
+REAPPROVED_AT = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
 
 
 def playable_pending_record() -> ImportedHandRecord:
@@ -95,10 +103,33 @@ def revision_two() -> CanonicalHandRevision:
     )
 
 
+def deletion_pending_record() -> ImportedHandRecord:
+    """An approved hand whose permanent deletion the player has asked for.
+
+    Retains its canonical revision -- the request is pending, not carried
+    out -- so it is a record every verb here would otherwise happily
+    transition.
+    """
+    approved = hero_fold_decision_record()
+    return ImportedHandRecord(
+        identity=approved.identity,
+        raw_sources=approved.raw_sources,
+        detections=approved.detections,
+        canonical_revisions=approved.canonical_revisions,
+        lifecycle=ImportedHandLifecycle(
+            status="deletion_pending",
+            deletion_generation=1,
+            changed_at=CLOSED_AT,
+            deletion_request=DeletionRequest(generation=1, requested_at=CLOSED_AT),
+        ),
+    )
+
+
 def lifecycle_fixture(
     tmp_path: Path,
     *,
     record: ImportedHandRecord | None = None,
+    now: Callable[[], datetime] = lambda: APPROVED_AT,
 ) -> tuple[ImportedHandLifecycleService, FileImportedHandStore, str]:
     store = FileImportedHandStore(tmp_path)
     pending = record if record is not None else playable_pending_record()
@@ -108,9 +139,26 @@ def lifecycle_fixture(
     service = ImportedHandLifecycleService(
         store=store,
         extract=extract_hero_decision_points,
-        now=lambda: APPROVED_AT,
+        now=now,
     )
     return service, store, key
+
+
+@contextmanager
+def recorded_cascades(opened: list[str]) -> Iterator[None]:
+    """Record the operation label of every cascade opened in the block."""
+    real_begin_cascade = FileImportedHandStore.begin_cascade
+
+    @contextmanager
+    def recording(
+        self: FileImportedHandStore, record_key: str, *, operation: str
+    ) -> Any:
+        opened.append(operation)
+        with real_begin_cascade(self, record_key, operation=operation) as cascade:
+            yield cascade
+
+    with mock.patch.object(FileImportedHandStore, "begin_cascade", recording):
+        yield
 
 
 def unextractable_fixture(
@@ -220,6 +268,7 @@ def test_rejection_after_approval_deactivates_derived_decisions(
     assert record.lifecycle.status == "rejected"
     assert record.lifecycle.active_canonical_revision is None
     assert record.lifecycle.reason == "not the hand I meant to import"
+    assert record.lifecycle.changed_at == CLOSED_AT
     assert store.active_decisions(key) is None
     assert artifact_keys(store, key) == [(1, 0)]  # audit retained
     assert store.get_decisions(key, revision=1, generation=0) is not None
@@ -273,15 +322,6 @@ def test_a_transition_opens_exactly_one_cascade_and_never_a_bare_save(
     """
     service, store, key = lifecycle_fixture(tmp_path)
     opened: list[str] = []
-    real_begin_cascade = FileImportedHandStore.begin_cascade
-
-    @contextmanager
-    def recording_begin_cascade(
-        self: FileImportedHandStore, record_key: str, *, operation: str
-    ) -> Any:
-        opened.append(operation)
-        with real_begin_cascade(self, record_key, operation=operation) as cascade:
-            yield cascade
 
     def no_bare_write(*args: object, **kwargs: object) -> None:
         raise AssertionError(
@@ -290,9 +330,7 @@ def test_a_transition_opens_exactly_one_cascade_and_never_a_bare_save(
         )
 
     with (
-        mock.patch.object(
-            FileImportedHandStore, "begin_cascade", recording_begin_cascade
-        ),
+        recorded_cascades(opened),
         mock.patch.object(FileImportedHandStore, "save", no_bare_write),
         mock.patch.object(FileImportedHandStore, "save_decisions", no_bare_write),
     ):
@@ -309,19 +347,8 @@ def test_a_rejection_transition_is_journalled_under_its_own_operation(
     service, store, key = lifecycle_fixture(tmp_path)
     service.approve(key, revision_one())
     opened: list[str] = []
-    real_begin_cascade = FileImportedHandStore.begin_cascade
 
-    @contextmanager
-    def recording_begin_cascade(
-        self: FileImportedHandStore, record_key: str, *, operation: str
-    ) -> Any:
-        opened.append(operation)
-        with real_begin_cascade(self, record_key, operation=operation) as cascade:
-            yield cascade
-
-    with mock.patch.object(
-        FileImportedHandStore, "begin_cascade", recording_begin_cascade
-    ):
+    with recorded_cascades(opened):
         service.reject(key, reason="not mine", at=CLOSED_AT)
 
     assert opened == ["reject"]
@@ -586,13 +613,37 @@ def test_a_still_unextractable_reapproval_supersedes_without_deleting(
 # ---------------------------------------------------------------------------
 
 
+class PortOnlyCascade:
+    """Exposes exactly the members ``ImportedHandCascadeHandle`` declares.
+
+    Restricting the repository alone leaves a hole: ``begin_cascade``
+    hands back the adapter's own concrete cascade, so every method the
+    port never declared -- ``stage_decisions_delete`` above all -- is
+    reachable from inside the ``with`` block through an annotation that
+    is never evaluated under ``from __future__ import annotations``. The
+    handle is where Task 6's purge will operate, so it is where the
+    boundary has to actually hold.
+    """
+
+    def __init__(self, inner: object) -> None:
+        self._inner = inner
+
+    def __getattr__(self, name: str) -> object:
+        if name.startswith("_") or name not in vars(ImportedHandCascadeHandle):
+            raise AttributeError(
+                f"{name!r} is not declared by ImportedHandCascadeHandle"
+            )
+        return getattr(self._inner, name)
+
+
 class PortOnlyRepository:
     """Exposes exactly the members ``ImportedHandRepository`` declares.
 
     The service is annotated against the port, but no type checker runs
     here, so an undeclared store method would be reached at runtime with
     nothing to stop it. This makes the annotation load-bearing: anything
-    the port does not declare is simply absent.
+    the port does not declare is simply absent, including on the cascade
+    handle ``begin_cascade`` yields.
     """
 
     def __init__(self, inner: FileImportedHandStore) -> None:
@@ -605,6 +656,21 @@ class PortOnlyRepository:
             )
         return getattr(self._inner, name)
 
+    @contextmanager
+    def begin_cascade(self, record_key: str, *, operation: str) -> Any:
+        with self._inner.begin_cascade(record_key, operation=operation) as cascade:
+            yield PortOnlyCascade(cascade)
+
+
+def port_only_service(
+    store: FileImportedHandStore, *, now: Callable[[], datetime] = lambda: APPROVED_AT
+) -> ImportedHandLifecycleService:
+    return ImportedHandLifecycleService(
+        store=PortOnlyRepository(store),
+        extract=extract_hero_decision_points,
+        now=now,
+    )
+
 
 def test_the_service_needs_only_what_the_repository_port_declares(
     tmp_path: Path,
@@ -614,11 +680,7 @@ def test_the_service_needs_only_what_the_repository_port_declares(
     assert pending.identity is not None
     key = imported_hand_record_key(pending.identity)
     store.save(key, pending)
-    service = ImportedHandLifecycleService(
-        store=PortOnlyRepository(store),
-        extract=extract_hero_decision_points,
-        now=lambda: APPROVED_AT,
-    )
+    service = port_only_service(store)
 
     service.approve(key, revision_one())
     service.reapprove(key, revision_two())
@@ -626,3 +688,251 @@ def test_the_service_needs_only_what_the_repository_port_declares(
 
     assert store.get(key).lifecycle.status == "withdrawn"
     assert sorted(artifact_keys(store, key)) == [(1, 0), (2, 0)]
+
+
+def test_rejection_and_an_unextractable_hand_also_stay_within_the_port(
+    tmp_path: Path,
+) -> None:
+    """The two paths the port-only run above never reaches.
+
+    ``reject`` has its own ``_close`` call site, and a hand whose
+    extraction is refused takes the branch where the artifact carries no
+    canonical revision -- the one whose filename the adapter has to
+    resolve by rereading the record.
+    """
+    store = FileImportedHandStore(tmp_path)
+    identity = bare_identity()
+    pending = bare_pending_record(identity)
+    key = imported_hand_record_key(identity)
+    store.save(key, pending)
+    service = port_only_service(store)
+
+    service.approve(key, bare_revision_one(identity))
+    service.reject(key, reason="not the hand I meant to import", at=CLOSED_AT)
+
+    record = store.get(key)
+    assert record.lifecycle.status == "rejected"
+    assert store.active_decisions(key) is None
+    assert artifact_keys(store, key) == [(1, 0)]
+    retained = store.get_decisions(key, revision=1, generation=0)
+    assert retained is not None
+    assert retained.outcome == "not_extractable"
+
+
+def test_the_cascade_the_port_yields_hides_the_purge_only_stage(
+    tmp_path: Path,
+) -> None:
+    """What the wrapper restricts, asserted rather than assumed.
+
+    Without this, ``PortOnlyRepository`` could stop restricting the
+    handle -- by yielding the concrete cascade again -- and every test
+    above would stay green, because none of them reaches for a member
+    the port does not declare.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = playable_pending_record()
+    assert record.identity is not None
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+    repository = PortOnlyRepository(store)
+
+    with repository.begin_cascade(key, operation="save") as cascade:
+        assert not isinstance(cascade, ImportedHandCascade)
+        with pytest.raises(AttributeError):
+            cascade.stage_decisions_delete("r1-g0.json")
+        cascade.stage_record(record)
+
+    assert store.get(key) == record
+
+
+# ---------------------------------------------------------------------------
+# A pending deletion is not something a transition may quietly undo
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "transition",
+    [
+        pytest.param(
+            lambda service, key: service.approve(key, revision_two()), id="approve"
+        ),
+        pytest.param(
+            lambda service, key: service.reapprove(key, revision_two()),
+            id="reapprove",
+        ),
+        pytest.param(
+            lambda service, key: service.withdraw(key, reason="changed my mind", at=REAPPROVED_AT),
+            id="withdraw",
+        ),
+        pytest.param(
+            lambda service, key: service.reject(key, reason="not mine", at=REAPPROVED_AT),
+            id="reject",
+        ),
+    ],
+)
+def test_every_verb_refuses_a_record_whose_deletion_is_pending(
+    tmp_path: Path,
+    transition: Callable[[ImportedHandLifecycleService, str], object],
+) -> None:
+    """A deletion request may only be retained by a deletion_pending record.
+
+    The domain says so outright, so any verb here that rebuilt the
+    lifecycle around a new status would have to drop the request to
+    validate at all -- cancelling a player's pending deletion as an
+    invisible side effect of an unrelated transition, with nothing left
+    on the record to show it ever existed. Cancelling a deletion is its
+    own transition (the journal reserves ``restore`` for it) and has to
+    be asked for.
+
+    Matched on the message because the deletion guard has to fire ahead
+    of each verb's own precondition -- ``approve`` would otherwise refuse
+    this record for having been approved already, and ``reapprove``
+    accept it -- and both raise the same error type.
+    """
+    service, store, key = lifecycle_fixture(tmp_path, record=deletion_pending_record())
+    before = store.get(key)
+    assert before.lifecycle.deletion_request is not None
+
+    with pytest.raises(LifecycleCascadeError, match="deletion"):
+        transition(service, key)
+
+    after = store.get(key)
+    assert after == before
+    assert after.lifecycle.deletion_request is not None
+    assert after.lifecycle.status == "deletion_pending"
+
+
+def test_a_refused_deletion_pending_transition_opens_no_cascade(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path, record=deletion_pending_record())
+    opened: list[str] = []
+
+    with recorded_cascades(opened):
+        with pytest.raises(LifecycleCascadeError):
+            service.withdraw(key, reason="changed my mind", at=REAPPROVED_AT)
+
+    assert opened == []
+
+
+# ---------------------------------------------------------------------------
+# approve vs reapprove: the path where the two candidate predicates differ
+# ---------------------------------------------------------------------------
+
+
+def test_approving_a_withdrawn_hand_again_is_a_reapproval(tmp_path: Path) -> None:
+    """The only path on which the two candidate predicates disagree.
+
+    "Has this hand ever been approved" and "is it currently active" agree
+    everywhere except here: a withdrawn hand carries a canonical revision
+    but is not eligible. The ruling is the former -- the journal's
+    operation label is read by a human, and a hand that was approved
+    before is being approved *again* whatever its status in between --
+    so ``approve`` must refuse this and ``reapprove`` must take it.
+    Without this test either predicate passes the whole suite.
+    """
+    clock = [APPROVED_AT]
+    service, store, key = lifecycle_fixture(tmp_path, now=lambda: clock[0])
+    service.approve(key, revision_one())
+    service.withdraw(key, reason="player withdrew approval", at=CLOSED_AT)
+    assert not store.get(key).lifecycle.learning_eligible
+
+    with pytest.raises(LifecycleCascadeError, match="already been approved"):
+        service.approve(key, revision_two())
+
+    clock[0] = REAPPROVED_AT
+    opened: list[str] = []
+    with recorded_cascades(opened):
+        service.reapprove(key, revision_two())
+
+    assert opened == ["reapprove"]
+    record = store.get(key)
+    assert record.lifecycle.active_canonical_revision == 2
+    assert record.lifecycle.changed_at == REAPPROVED_AT
+    assert sorted(artifact_keys(store, key)) == [(1, 0), (2, 0)]
+    active = store.active_decisions(key)
+    assert active is not None
+    assert active.canonical_revision == 2
+    assert_published_invariant(store, key)
+
+
+# ---------------------------------------------------------------------------
+# The clock, and the two properties _publish's docstring claims
+# ---------------------------------------------------------------------------
+
+
+def test_an_approval_stamps_the_injected_clock(tmp_path: Path) -> None:
+    """``now`` is the only thing that may date a lifecycle change here.
+
+    Every other timestamp within reach -- the revision's own
+    ``approved_at``, the record's previous ``changed_at`` -- is close
+    enough to be substituted for it without any assertion noticing, and
+    they are all consistent with the aggregate's ordering rules, so
+    ``validate_aggregate`` would not catch the substitution either.
+    """
+    clock = [APPROVED_AT]
+    service, store, key = lifecycle_fixture(tmp_path, now=lambda: clock[0])
+    assert revision_one().approved_at != APPROVED_AT
+
+    service.approve(key, revision_one())
+    assert store.get(key).lifecycle.changed_at == APPROVED_AT
+
+    clock[0] = REAPPROVED_AT
+    service.reapprove(key, revision_two())
+    assert store.get(key).lifecycle.changed_at == REAPPROVED_AT
+
+
+def test_the_extraction_is_computed_before_the_cascade_takes_any_lock(
+    tmp_path: Path,
+) -> None:
+    """``extract`` is injected, so it may block for as long as it likes.
+
+    Running it inside the cascade would hold the interprocess data lock
+    across a callable this service does not control, and the store's own
+    contract is that the hold starts and ends inside the call. Both the
+    ordering and the lock itself are asserted: ordering alone would stay
+    green if the lock were ever taken earlier for some other reason.
+    """
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    events: list[str] = []
+    real_extract = extract_hero_decision_points
+
+    def recording_extract(record: ImportedHandRecord) -> HandDecisionExtraction:
+        events.append("extract")
+        assert not exclusive_data_lock_is_blocked(tmp_path), (
+            "the data lock is already held while the extraction runs"
+        )
+        return real_extract(record)
+
+    with (
+        mock.patch.object(service, "_extract", recording_extract),
+        recorded_cascades(events),
+    ):
+        service.reapprove(key, revision_two())
+
+    assert events == ["extract", "reapprove"]
+
+
+def test_a_refused_extraction_never_opens_a_cascade(tmp_path: Path) -> None:
+    """The guard runs before staging, not merely before commit.
+
+    Checking it after staging would leave the same end state -- the
+    exception still escapes the ``with`` block and the journal still
+    discards -- so nothing on disk can tell the two apart. What differs
+    is whether a lock was taken and a scratch tree built for a write
+    that was never going to be allowed.
+    """
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    outgoing = store.active_decisions(key)
+    assert outgoing is not None
+    opened: list[str] = []
+
+    with recorded_cascades(opened), mock.patch.object(
+        service, "_extract", return_value=outgoing
+    ):
+        with pytest.raises(LifecycleCascadeError):
+            service.reapprove(key, revision_two())
+
+    assert opened == []
