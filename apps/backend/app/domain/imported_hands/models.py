@@ -2324,7 +2324,10 @@ class HeroActionContext(ImportedHandModel):
     raise rather than offer one of arbitrary size.
 
     ``raise_reopened`` reports whether raising is legal for the hero here.
-    It is ``False`` for either of two reasons the hand validator enforces:
+    It is ``False`` when the hero has no chips beyond ``amount_to_call``, since
+    a raise must add more than a call and an all-in call is then the most they
+    can put in. It is also ``False`` for either of two table conditions the
+    hand validator enforces:
     an actor who has already acted on this street is reopened only once
     the wager has grown by at least the increment that stood when they
     acted, so a short all-in leaves them call-or-fold; or the hero is the
@@ -4718,6 +4721,7 @@ def _hero_decision_context(
             )
         )
     hero = next(seat for seat in seats if seat.player_id == action.actor_id)
+    amount_to_call = max(Decimal(0), current_wager - hero.live_commitment)
     return HeroActionContext(
         street=street.street,
         action_sequence=action.sequence,
@@ -4729,9 +4733,13 @@ def _hero_decision_context(
         pot_before_action=committed_pot_before_street
         + sum(resolved_street_commitments.values(), Decimal(0)),
         current_wager=current_wager,
-        amount_to_call=max(Decimal(0), current_wager - hero.live_commitment),
+        amount_to_call=amount_to_call,
         last_full_wager_increment=last_full_wager_increment,
-        raise_reopened=raise_reopened,
+        # Raising also takes chips the hero may not have: holding exactly the
+        # call leaves an all-in call as the only way to put them in, so the
+        # table may have reopened betting while this hero still cannot raise.
+        raise_reopened=raise_reopened
+        and hero.stack_before_action > amount_to_call,
         hero_stack_before_action=hero.stack_before_action,
         seats=seats,
     )

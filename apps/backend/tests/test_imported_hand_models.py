@@ -17903,3 +17903,116 @@ def short_stacked_hero_decision_record() -> ImportedHandRecord:
     payload["results"] = {"stated_pot": {"gross_total": Decimal("10")}}
     state = ImportedHandState.model_validate(payload)
     return extraction_record_for_state(state)
+
+
+def hero_facing_a_raise_decision_record(
+    *,
+    hero_stack: Decimal,
+) -> ImportedHandRecord:
+    """Build a three-handed hand where the hero calls a raise with both
+    opponents still able to act.
+
+    With a stack of exactly 4 the hero's second call takes their last chip, so
+    raising is impossible however open the table is; with a deeper stack the
+    same spot leaves room to raise.
+    """
+
+    board = decision_context_board()
+    payload = three_handed_decision_payload(
+        villain_stack=Decimal("100"),
+        villain_2_stack=Decimal("100"),
+    )
+    payload["seats"][0]["starting_stack"] = hero_stack
+    hero_is_all_in = hero_stack == Decimal("4")
+    streets: list[dict[str, object]] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2, "hero", "call", amount=Decimal("1"), total=Decimal("1")
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "raise",
+                    amount=Decimal("3.5"),
+                    total=Decimal("4"),
+                ),
+                wager_action(
+                    4,
+                    "villain-2",
+                    "call",
+                    amount=Decimal("3"),
+                    total=Decimal("4"),
+                ),
+                wager_action(
+                    5,
+                    "hero",
+                    "call",
+                    amount=Decimal("3"),
+                    total=Decimal("4"),
+                    all_in=hero_is_all_in,
+                ),
+            ],
+        }
+    ]
+    checkers = ["villain", "villain-2"]
+    if not hero_is_all_in:
+        checkers.append("hero")
+    for street_name, board_card_count in (("flop", 3), ("turn", 4), ("river", 5)):
+        streets.append(
+            {
+                "street": street_name,
+                "board_cards": board[:board_card_count],
+                "actions": [
+                    wager_action(index, player_id, "check", total=Decimal(0))
+                    for index, player_id in enumerate(checkers)
+                ],
+            }
+        )
+    payload["streets"] = streets
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("12")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def test_hero_decision_context_closes_raising_without_chips_beyond_the_call() -> None:
+    all_in_call = hero_facing_a_raise_decision_record(hero_stack=Decimal("4"))
+    deeper = hero_facing_a_raise_decision_record(hero_stack=Decimal("10"))
+
+    short_contexts = all_in_call.active_hero_decision_contexts
+    deep_contexts = deeper.active_hero_decision_contexts
+
+    facing_raise = short_contexts[1]
+    assert (facing_raise.street, facing_raise.action_sequence) == ("preflop", 5)
+    assert facing_raise.amount_to_call == Decimal("3")
+    # The hero holds exactly the call, so an all-in call is the most they can
+    # put in and no raise is possible, however open the table is.
+    assert facing_raise.hero_stack_before_action == Decimal("3")
+    assert facing_raise.raise_reopened is False
+
+    # The same spot with chips behind stays open: this is not a blanket
+    # suppression of the verdict.
+    control = deep_contexts[1]
+    assert (control.street, control.action_sequence) == ("preflop", 5)
+    assert control.amount_to_call == Decimal("3")
+    assert control.hero_stack_before_action == Decimal("9")
+    assert control.raise_reopened is True
+
+    # And the hero's earlier decision, with a full stack behind, is unaffected.
+    assert short_contexts[0].raise_reopened is True
+    assert deep_contexts[0].raise_reopened is True
