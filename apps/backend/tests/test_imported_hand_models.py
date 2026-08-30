@@ -11914,6 +11914,43 @@ def extraction_record_for_state(
     )
 
 
+def reapproval_extraction_record(
+    detected_state: ImportedHandState,
+    corrected_state: ImportedHandState,
+    corrections: list[UserCorrection],
+) -> ImportedHandRecord:
+    """Build a two-revision extraction-ready record: a corrected reapproval.
+
+    Revision 1 approves ``detected_state`` untouched. Revision 2 applies
+    ``corrections`` to reach ``corrected_state`` and becomes the sole active
+    revision, mirroring a hand that was corrected and reapproved after its
+    first approval.
+    """
+
+    first_approval = extraction_record_for_state(detected_state)
+    first_revision = first_approval.canonical_revisions[0]
+    second_approved_at = first_revision.approved_at + timedelta(minutes=1)
+    second_revision = first_revision.model_copy(
+        update={
+            "revision": 2,
+            "approved_at": second_approved_at,
+            "state": corrected_state,
+            "corrections": corrections,
+        }
+    )
+    return ImportedHandRecord(
+        identity=first_approval.identity,
+        raw_sources=first_approval.raw_sources,
+        detections=first_approval.detections,
+        canonical_revisions=[first_revision, second_revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 2,
+            "changed_at": second_approved_at,
+        },
+    )
+
+
 def automatic_action(
     sequence: int,
     actor_id: str,
@@ -16872,3 +16909,1183 @@ def test_restore_requires_merge_before_reactivating_an_inactive_record() -> None
     disposition = classify_restore(current, candidate)
 
     assert disposition.kind == "conflict_merge_required"
+
+
+def decision_context_board() -> list[dict[str, str]]:
+    return [
+        {"rank": "2", "suit": "clubs"},
+        {"rank": "7", "suit": "diamonds"},
+        {"rank": "9", "suit": "spades"},
+        {"rank": "J", "suit": "clubs"},
+        {"rank": "Q", "suit": "hearts"},
+    ]
+
+
+def multi_street_decision_record() -> ImportedHandRecord:
+    """Build a heads-up hand with one hero decision on every street."""
+
+    board = decision_context_board()
+    streets: list[dict[str, object]] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1"),
+                ),
+                wager_action(3, "villain", "check", total=Decimal("1")),
+            ],
+        }
+    ]
+    for street_name, board_card_count, bet in (
+        ("flop", 3, Decimal("2")),
+        ("turn", 4, Decimal("2")),
+        ("river", 5, Decimal("4")),
+    ):
+        streets.append(
+            {
+                "street": street_name,
+                "board_cards": board[:board_card_count],
+                "actions": [
+                    wager_action(0, "villain", "check", total=Decimal(0)),
+                    wager_action(1, "hero", "bet", amount=bet, total=bet),
+                    wager_action(2, "villain", "call", amount=bet, total=bet),
+                ],
+            }
+        )
+    return extraction_record_for_streets(
+        streets,
+        button_seat=1,
+        configured_blinds=True,
+        stated_gross=Decimal("18"),
+    )
+
+
+def contested_decision_record() -> ImportedHandRecord:
+    """Build a hand where one opponent folds and another is already all-in."""
+
+    board = decision_context_board()
+    payload = extraction_ready_state_payload()
+    payload["game"]["table_size"] = 3
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "villain-2",
+            "starting_stack": Decimal("5"),
+            "participation": "dealt_in",
+        }
+    )
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(3, "villain", "fold", total=Decimal("0.5")),
+                wager_action(4, "villain-2", "check", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "board_cards": board[:3],
+            "actions": [
+                wager_action(
+                    0,
+                    "villain-2",
+                    "bet",
+                    amount=Decimal("4"),
+                    total=Decimal("4"),
+                    all_in=True,
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=Decimal("4"),
+                    total=Decimal("4"),
+                ),
+            ],
+        },
+        {"street": "turn", "board_cards": board[:4], "actions": []},
+        {"street": "river", "board_cards": board, "actions": []},
+    ]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("10.5")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def uncalled_return_decision_record() -> ImportedHandRecord:
+    """Build a hand whose winning hero bet is returned uncalled."""
+
+    payload = extraction_ready_state_payload()
+    payload["streets"][1]["board_cards"] = decision_context_board()[:3]
+    payload["streets"][1]["actions"] = [
+        automatic_action(0, "villain"),
+        wager_action(1, "hero", "bet", amount=Decimal("2"), total=Decimal("2")),
+        automatic_action(2, "villain", "fold"),
+        forced_post(3, "uncalled_return", amount=Decimal("2"), total=Decimal(0)),
+    ]
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def withdrawn_decision_record() -> ImportedHandRecord:
+    """Build an extraction-ready record the lifecycle has since withdrawn."""
+
+    record = extraction_record_for_state(
+        ImportedHandState.model_validate(extraction_ready_state_payload())
+    )
+    return record.model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(status="withdrawn", changed_at=NOW)
+        }
+    )
+
+
+def ante_decision_record() -> ImportedHandRecord:
+    """Build a per-player ante hand where the hero posts the small blind.
+
+    The ante is dead money: it raises the hero's street commitment without
+    answering the big blind, so the hero's street and live commitments diverge
+    by exactly the posted ante.
+    """
+
+    payload = extraction_ready_state_payload()
+    payload["game"]["blinds"]["ante"] = Decimal("0.25")
+    payload["game"]["blinds"]["ante_mode"] = "per_player"
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("2.5")}}
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_ante",
+                    amount=Decimal("0.25"),
+                    total=Decimal("0.25"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_ante",
+                    amount=Decimal("0.25"),
+                    total=Decimal("0.25"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.75"),
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1.25"),
+                ),
+                wager_action(
+                    4,
+                    "hero",
+                    "call",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1.25"),
+                ),
+                automatic_action(5, "villain", total=Decimal("1.25")),
+            ],
+        },
+        {
+            "street": "flop",
+            "actions": [automatic_action(0, "villain", "fold")],
+        },
+    ]
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def test_hero_decision_context_exposes_exact_preflop_chip_state() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    record = extraction_record_for_state(state)
+
+    contexts = record.active_hero_decision_contexts
+
+    assert len(contexts) == 1
+    context = contexts[0]
+    assert context.street == "preflop"
+    assert context.action_sequence == 2
+    assert context.action == state.streets[0].actions[2]
+    assert context.board_cards == []
+    assert context.committed_pot_before_street == Decimal(0)
+    assert context.pot_before_action == Decimal("1.5")
+    assert context.current_wager == Decimal("1")
+    assert context.amount_to_call == Decimal("0.5")
+    assert context.hero_stack_before_action == Decimal("99.5")
+    assert [seat.player_id for seat in context.seats] == ["hero", "villain"]
+    assert [seat.position.display_label for seat in context.seats] == [
+        "BTN/SB",
+        "BB",
+    ]
+    assert [seat.status for seat in context.seats] == ["live", "live"]
+    assert [seat.starting_stack for seat in context.seats] == [
+        Decimal("100"),
+        Decimal("100"),
+    ]
+    assert [seat.street_commitment for seat in context.seats] == [
+        Decimal("0.5"),
+        Decimal("1"),
+    ]
+    assert [seat.live_commitment for seat in context.seats] == [
+        Decimal("0.5"),
+        Decimal("1"),
+    ]
+    assert [seat.hand_commitment for seat in context.seats] == [
+        Decimal("0.5"),
+        Decimal("1"),
+    ]
+    assert [seat.stack_before_action for seat in context.seats] == [
+        Decimal("99.5"),
+        Decimal("99"),
+    ]
+
+
+def test_hero_decision_context_follows_street_then_sequence_order() -> None:
+    record = multi_street_decision_record()
+    state = record.active_state_for_extraction
+
+    contexts = record.active_hero_decision_contexts
+
+    assert state is not None
+    assert [(context.street, context.action_sequence) for context in contexts] == [
+        ("preflop", 2),
+        ("flop", 1),
+        ("turn", 1),
+        ("river", 1),
+    ]
+    assert [len(context.board_cards) for context in contexts] == [0, 3, 4, 5]
+    assert [context.board_cards for context in contexts] == [
+        street.board_cards for street in state.streets
+    ]
+    assert [context.committed_pot_before_street for context in contexts] == [
+        Decimal(0),
+        Decimal("2"),
+        Decimal("6"),
+        Decimal("10"),
+    ]
+    assert [context.pot_before_action for context in contexts] == [
+        Decimal("1.5"),
+        Decimal("2"),
+        Decimal("6"),
+        Decimal("10"),
+    ]
+    assert [context.current_wager for context in contexts] == [
+        Decimal("1"),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+    ]
+    assert [context.amount_to_call for context in contexts] == [
+        Decimal("0.5"),
+        Decimal(0),
+        Decimal(0),
+        Decimal(0),
+    ]
+    assert [context.hero_stack_before_action for context in contexts] == [
+        Decimal("99.5"),
+        Decimal("99"),
+        Decimal("97"),
+        Decimal("95"),
+    ]
+
+
+def test_hero_decision_context_reports_folded_and_all_in_opponents() -> None:
+    record = contested_decision_record()
+
+    contexts = record.active_hero_decision_contexts
+
+    assert [(context.street, context.action_sequence) for context in contexts] == [
+        ("preflop", 2),
+        ("flop", 1),
+    ]
+    assert [seat.player_id for seat in contexts[0].seats] == [
+        "hero",
+        "villain",
+        "villain-2",
+    ]
+    assert [seat.status for seat in contexts[0].seats] == ["live", "live", "live"]
+
+    flop = contexts[1]
+    seats = {seat.player_id: seat for seat in flop.seats}
+    assert seats["villain"].status == "folded"
+    assert seats["villain"].street_commitment == Decimal(0)
+    assert seats["villain"].hand_commitment == Decimal("0.5")
+    assert seats["villain"].stack_before_action == Decimal("99.5")
+    assert seats["villain-2"].status == "all_in"
+    assert seats["villain-2"].street_commitment == Decimal("4")
+    assert seats["villain-2"].hand_commitment == Decimal("5")
+    assert seats["villain-2"].stack_before_action == Decimal(0)
+    assert seats["hero"].status == "live"
+    assert seats["hero"].hand_commitment == Decimal("1")
+    assert flop.committed_pot_before_street == Decimal("2.5")
+    assert flop.pot_before_action == Decimal("6.5")
+    assert flop.current_wager == Decimal("4")
+    assert flop.amount_to_call == Decimal("4")
+    assert flop.hero_stack_before_action == Decimal("99")
+
+
+def test_hero_decision_context_measures_the_call_against_live_commitments() -> None:
+    record = ante_decision_record()
+
+    contexts = record.active_hero_decision_contexts
+
+    assert len(contexts) == 1
+    context = contexts[0]
+    assert (context.street, context.action_sequence) == ("preflop", 4)
+    assert context.current_wager == Decimal("1")
+    # A posted ante pays the pot without answering the big blind, so the hero
+    # still owes the full blind gap; the imported action agrees.
+    assert context.amount_to_call == Decimal("0.5")
+    assert context.amount_to_call == context.action.amount
+    assert context.pot_before_action == Decimal("2")
+    assert context.hero_stack_before_action == Decimal("99.25")
+
+    seats = {seat.player_id: seat for seat in context.seats}
+    assert seats["hero"].street_commitment == Decimal("0.75")
+    assert seats["hero"].live_commitment == Decimal("0.5")
+    assert seats["hero"].hand_commitment == Decimal("0.75")
+    assert seats["hero"].stack_before_action == Decimal("99.25")
+    assert seats["villain"].street_commitment == Decimal("1.25")
+    assert seats["villain"].live_commitment == Decimal("1")
+    assert seats["villain"].hand_commitment == Decimal("1.25")
+    assert seats["villain"].stack_before_action == Decimal("98.75")
+    assert [
+        seat.street_commitment - seat.live_commitment for seat in context.seats
+    ] == [Decimal("0.25"), Decimal("0.25")]
+
+
+def test_hero_decision_context_actions_match_the_extracted_hero_actions() -> None:
+    fixtures: list[tuple[ImportedHandRecord, list[tuple[str, int]]]] = [
+        (
+            extraction_record_for_state(
+                ImportedHandState.model_validate(extraction_ready_state_payload())
+            ),
+            [("preflop", 2)],
+        ),
+        (ante_decision_record(), [("preflop", 4)]),
+        (uncalled_return_decision_record(), [("preflop", 2), ("flop", 1)]),
+        (
+            multi_street_decision_record(),
+            [("preflop", 2), ("flop", 1), ("turn", 1), ("river", 1)],
+        ),
+        (contested_decision_record(), [("preflop", 2), ("flop", 1)]),
+        (withdrawn_decision_record(), []),
+    ]
+
+    for record, expected in fixtures:
+        state = record.active_state_for_extraction
+        expected_actions = []
+        for street_name, sequence in expected:
+            assert state is not None
+            street = next(
+                item for item in state.streets if item.street == street_name
+            )
+            expected_actions.append(street.actions[sequence])
+        contexts = record.active_hero_decision_contexts
+
+        assert [
+            (context.street, context.action_sequence) for context in contexts
+        ] == expected
+        assert [context.action for context in contexts] == expected_actions
+        assert record.active_hero_actions_for_extraction == expected_actions
+    assert [
+        len(record.active_hero_actions_for_extraction) for record, _ in fixtures
+    ] == [1, 1, 2, 4, 2, 0]
+
+
+def test_hero_decision_context_is_empty_for_a_withdrawn_record() -> None:
+    record = withdrawn_decision_record()
+
+    assert record.active_hero_decision_contexts == []
+    assert record.active_hero_actions_for_extraction == []
+
+
+def three_handed_decision_payload(
+    *,
+    villain_stack: Decimal,
+    villain_2_stack: Decimal,
+) -> dict[str, object]:
+    """Seat a third player behind the shared extraction-ready hero payload.
+
+    The hero keeps seat 1 and the button, so the ring is hero (BTN), villain
+    (SB), villain-2 (BB) and the hero opens the preflop action.
+    """
+
+    payload = extraction_ready_state_payload()
+    payload["game"]["table_size"] = 3
+    payload["seats"][1]["starting_stack"] = villain_stack
+    payload["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "villain-2",
+            "starting_stack": villain_2_stack,
+            "participation": "dealt_in",
+        }
+    )
+    return payload
+
+
+def short_all_in_raise_decision_record() -> ImportedHandRecord:
+    """Build a hand whose short all-in raise cannot reopen the hero's betting.
+
+    The hero raises to 3, making the last full increment 2. Villain's all-in to
+    4 adds only 1, so the hand validator would reject a hero re-raise here and
+    the hero is left with call or fold.
+    """
+
+    board = decision_context_board()
+    payload = three_handed_decision_payload(
+        villain_stack=Decimal("4"),
+        villain_2_stack=Decimal("100"),
+    )
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "raise",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "raise",
+                    amount=Decimal("3.5"),
+                    total=Decimal("4"),
+                    all_in=True,
+                ),
+                wager_action(4, "villain-2", "fold", total=Decimal("1")),
+                wager_action(
+                    5,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("4"),
+                ),
+            ],
+        },
+        {"street": "flop", "board_cards": board[:3], "actions": []},
+        {"street": "turn", "board_cards": board[:4], "actions": []},
+        {"street": "river", "board_cards": board, "actions": []},
+    ]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("9")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def full_raise_decision_record() -> ImportedHandRecord:
+    """Build a hand whose full re-raise reopens the hero's betting.
+
+    Villain's raise to 5 adds exactly the standing increment of 2, so raising
+    is legal for the hero again.
+    """
+
+    board = decision_context_board()
+    payload = three_handed_decision_payload(
+        villain_stack=Decimal("100"),
+        villain_2_stack=Decimal("100"),
+    )
+    streets: list[dict[str, object]] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "raise",
+                    amount=Decimal("3"),
+                    total=Decimal("3"),
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "raise",
+                    amount=Decimal("4.5"),
+                    total=Decimal("5"),
+                ),
+                wager_action(4, "villain-2", "fold", total=Decimal("1")),
+                wager_action(
+                    5,
+                    "hero",
+                    "call",
+                    amount=Decimal("2"),
+                    total=Decimal("5"),
+                ),
+            ],
+        }
+    ]
+    for street_name, board_card_count in (
+        ("flop", 3),
+        ("turn", 4),
+        ("river", 5),
+    ):
+        streets.append(
+            {
+                "street": street_name,
+                "board_cards": board[:board_card_count],
+                "actions": [
+                    wager_action(0, "villain", "check", total=Decimal(0)),
+                    wager_action(1, "hero", "check", total=Decimal(0)),
+                ],
+            }
+        )
+    payload["streets"] = streets
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("11")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def unmarked_all_in_blind_decision_record() -> ImportedHandRecord:
+    """Build a hand where a blind post exhausts a stack without an all-in flag."""
+
+    board = decision_context_board()
+    payload = three_handed_decision_payload(
+        villain_stack=Decimal("0.5"),
+        villain_2_stack=Decimal("100"),
+    )
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(3, "villain-2", "check", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "board_cards": board[:3],
+            "actions": [automatic_action(0, "villain-2", "fold")],
+        },
+        {"street": "turn", "board_cards": board[:4], "actions": []},
+        {"street": "river", "board_cards": board, "actions": []},
+    ]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("2.5")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def test_hero_decision_context_closes_raising_after_a_short_all_in() -> None:
+    record = short_all_in_raise_decision_record()
+
+    contexts = record.active_hero_decision_contexts
+
+    assert [
+        (context.street, context.action_sequence) for context in contexts
+    ] == [("preflop", 2), ("preflop", 5)]
+    opening, facing_all_in = contexts
+
+    # The hero's own raise to 3 sets the standing increment to 2.
+    assert opening.last_full_wager_increment == Decimal("1")
+    assert opening.raise_reopened is True
+
+    # Villain's all-in to 4 adds only 1, short of that increment, so betting is
+    # not reopened for a hero who has already acted on this street.
+    assert facing_all_in.current_wager == Decimal("4")
+    assert facing_all_in.amount_to_call == Decimal("1")
+    assert facing_all_in.last_full_wager_increment == Decimal("2")
+    assert facing_all_in.raise_reopened is False
+    seats = {seat.player_id: seat for seat in facing_all_in.seats}
+    assert seats["villain"].status == "all_in"
+    assert seats["villain-2"].status == "folded"
+
+
+def test_hero_decision_context_reopens_raising_after_a_full_raise() -> None:
+    record = full_raise_decision_record()
+
+    contexts = record.active_hero_decision_contexts
+
+    assert [
+        (context.street, context.action_sequence) for context in contexts
+    ] == [
+        ("preflop", 2),
+        ("preflop", 5),
+        ("flop", 1),
+        ("turn", 1),
+        ("river", 1),
+    ]
+    facing_raise = contexts[1]
+
+    # Villain's raise to 5 adds exactly the standing increment of 2.
+    assert facing_raise.current_wager == Decimal("5")
+    assert facing_raise.amount_to_call == Decimal("2")
+    assert facing_raise.last_full_wager_increment == Decimal("2")
+    assert facing_raise.raise_reopened is True
+
+    # The yardstick resets to the big blind on every later street.
+    assert [context.last_full_wager_increment for context in contexts] == [
+        Decimal("1"),
+        Decimal("2"),
+        Decimal("1"),
+        Decimal("1"),
+        Decimal("1"),
+    ]
+    assert [context.raise_reopened for context in contexts] == [True] * 5
+
+
+def test_hero_decision_context_opens_with_only_the_blind_increment() -> None:
+    state = ImportedHandState.model_validate(extraction_ready_state_payload())
+    record = extraction_record_for_state(state)
+
+    contexts = record.active_hero_decision_contexts
+
+    assert len(contexts) == 1
+    context = contexts[0]
+    # Nobody has bet or raised, so the big blind is the only full increment and
+    # the hero, who has posted but never acted, may still raise.
+    assert context.last_full_wager_increment == state.game.blinds.big_blind
+    assert context.last_full_wager_increment == Decimal("1")
+    assert context.raise_reopened is True
+
+
+def test_hero_decision_context_infers_all_in_from_an_exhausted_stack() -> None:
+    record = unmarked_all_in_blind_decision_record()
+    state = record.active_state_for_extraction
+
+    contexts = record.active_hero_decision_contexts
+
+    assert state is not None
+    # The source never marked the post, but it takes the poster's whole stack.
+    blind_post = state.streets[0].actions[0]
+    assert blind_post.actor_id == "villain"
+    assert blind_post.all_in is False
+
+    assert len(contexts) == 1
+    seats = {seat.player_id: seat for seat in contexts[0].seats}
+    assert seats["villain"].status == "all_in"
+    assert seats["villain"].starting_stack == Decimal("0.5")
+    assert seats["villain"].hand_commitment == Decimal("0.5")
+    assert seats["villain"].stack_before_action == Decimal(0)
+    assert seats["hero"].status == "live"
+    assert seats["villain-2"].status == "live"
+
+
+def heads_up_shove_and_call_decision_record() -> ImportedHandRecord:
+    """Build a heads-up hand where the hero can only call or fold a flop shove.
+
+    The hero has not acted on the flop, so wager history alone would say
+    raising is reopened; villain is all-in, so no opponent could answer a raise
+    and the hand validator would reject one.
+    """
+
+    board = decision_context_board()
+    payload = extraction_ready_state_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1"),
+                ),
+                wager_action(3, "villain", "check", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "board_cards": board[:3],
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("99"),
+                    total=Decimal("99"),
+                    all_in=True,
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=Decimal("99"),
+                    total=Decimal("99"),
+                    all_in=True,
+                ),
+            ],
+        },
+        {"street": "turn", "board_cards": board[:4], "actions": []},
+        {"street": "river", "board_cards": board, "actions": []},
+    ]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("200")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def test_hero_decision_context_closes_raising_when_no_opponent_can_respond() -> None:
+    record = heads_up_shove_and_call_decision_record()
+
+    contexts = record.active_hero_decision_contexts
+
+    assert [
+        (context.street, context.action_sequence) for context in contexts
+    ] == [("preflop", 2), ("flop", 1)]
+    facing_shove = contexts[1]
+
+    # The hero has not acted on this street, so prior wager history alone would
+    # report raising as reopened; the sole live opponent is all-in, so nobody
+    # could answer a raise and the aggregate would reject one.
+    assert facing_shove.current_wager == Decimal("99")
+    assert facing_shove.amount_to_call == Decimal("99")
+    assert facing_shove.raise_reopened is False
+    seats = {seat.player_id: seat for seat in facing_shove.seats}
+    assert seats["villain"].status == "all_in"
+    assert seats["villain"].stack_before_action == Decimal(0)
+    assert seats["hero"].status == "live"
+
+    # Raising was open before the shove, so the verdict tracks the table.
+    assert contexts[0].raise_reopened is True
+
+
+def test_hero_decision_context_restores_an_inferred_all_in_after_a_return() -> None:
+    """The walk shares the validator's terminal transition, reversal included.
+
+    ``validate_hand`` rejects every hand that puts a hero decision after an
+    uncalled return -- betting is closed once the only actionable player has
+    matched the wager -- so the reversal is exercised through the rule both the
+    validator and the extraction walk now run.
+
+    This is a unit test of the shared ``_apply_terminal_transition`` rule, not
+    a record-level regression guard: a record-level version cannot exist
+    because the gate requires exact commitments, so the validator's
+    uncalled-return guard always applies and ``betting_closed_by_all_ins``
+    rejects any later table decision.
+    """
+
+    from app.domain.imported_hands.models import _apply_terminal_transition
+
+    terminal_actors: dict[str, tuple[str, str]] = {}
+    live_players = {"hero", "villain"}
+    actionable_players = {"hero", "villain"}
+    inferred_stack_exhausted_players: set[str] = set()
+    exhausting_bet = ImportedAction.model_validate(
+        wager_action(0, "hero", "bet", amount=Decimal("5"), total=Decimal("5"))
+    )
+    uncalled_return = ImportedAction.model_validate(
+        forced_post(1, "uncalled_return", amount=Decimal("2"), total=Decimal("3"))
+    )
+
+    reversed_by_bet = _apply_terminal_transition(
+        exhausting_bet,
+        "flop",
+        confirmed_all_in=False,
+        known_stack_exhausted=True,
+        terminal_actors=terminal_actors,
+        live_players=live_players,
+        actionable_players=actionable_players,
+        inferred_stack_exhausted_players=inferred_stack_exhausted_players,
+    )
+
+    assert reversed_by_bet is False
+    assert terminal_actors == {"hero": ("all_in", "flop")}
+    assert actionable_players == {"villain"}
+    assert inferred_stack_exhausted_players == {"hero"}
+
+    reversed_by_return = _apply_terminal_transition(
+        uncalled_return,
+        "flop",
+        confirmed_all_in=False,
+        known_stack_exhausted=False,
+        terminal_actors=terminal_actors,
+        live_players=live_players,
+        actionable_players=actionable_players,
+        inferred_stack_exhausted_players=inferred_stack_exhausted_players,
+    )
+
+    # The return restored the hero's chips, so the inferred all-in is reversed
+    # and any hand-wide betting closure has to be reconsidered.
+    assert reversed_by_return is True
+    assert terminal_actors == {}
+    assert actionable_players == {"hero", "villain"}
+    assert inferred_stack_exhausted_players == set()
+
+
+def test_hero_decision_context_never_publishes_a_stale_all_in_seat() -> None:
+    """No emitted seat may be all-in while it still has chips behind."""
+
+    records = [
+        heads_up_shove_and_call_decision_record(),
+        short_all_in_raise_decision_record(),
+        unmarked_all_in_blind_decision_record(),
+        contested_decision_record(),
+        uncalled_return_decision_record(),
+        multi_street_decision_record(),
+    ]
+
+    published = [
+        (seat.status, seat.stack_before_action)
+        for record in records
+        for context in record.active_hero_decision_contexts
+        for seat in context.seats
+    ]
+
+    assert published
+    assert all(
+        (status == "all_in") == (stack_before_action == 0)
+        or status == "folded"
+        for status, stack_before_action in published
+    )
+
+
+def short_stacked_hero_decision_record() -> ImportedHandRecord:
+    """Build a hand whose hero shoves without a marker and bets without an amount.
+
+    The hero's turn bet of 2 is their last 2 chips, and the source never marks
+    it all-in; the flop bet states only its street total. Both are the values
+    the walk resolves rather than the ones the adapter wrote down.
+    """
+
+    board = decision_context_board()
+    payload = extraction_ready_state_payload()
+    payload["seats"][0]["starting_stack"] = Decimal("5")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2, "hero", "call", amount=Decimal("0.5"), total=Decimal("1")
+                ),
+                wager_action(3, "villain", "check", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "board_cards": board[:3],
+            "actions": [
+                wager_action(0, "villain", "check", total=Decimal(0)),
+                wager_action(1, "hero", "bet", total=Decimal("2")),
+                wager_action(
+                    2, "villain", "call", amount=Decimal("2"), total=Decimal("2")
+                ),
+            ],
+        },
+        {
+            "street": "turn",
+            "board_cards": board[:4],
+            "actions": [
+                wager_action(0, "villain", "check", total=Decimal(0)),
+                wager_action(
+                    1, "hero", "bet", amount=Decimal("2"), total=Decimal("2")
+                ),
+                wager_action(
+                    2, "villain", "call", amount=Decimal("2"), total=Decimal("2")
+                ),
+            ],
+        },
+        {"street": "river", "board_cards": board, "actions": []},
+    ]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("10")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def hero_facing_a_raise_decision_record(
+    *,
+    hero_stack: Decimal,
+) -> ImportedHandRecord:
+    """Build a three-handed hand where the hero calls a raise with both
+    opponents still able to act.
+
+    With a stack of exactly 4 the hero's second call takes their last chip, so
+    raising is impossible however open the table is; with a deeper stack the
+    same spot leaves room to raise.
+    """
+
+    board = decision_context_board()
+    payload = three_handed_decision_payload(
+        villain_stack=Decimal("100"),
+        villain_2_stack=Decimal("100"),
+    )
+    payload["seats"][0]["starting_stack"] = hero_stack
+    hero_is_all_in = hero_stack == Decimal("4")
+    streets: list[dict[str, object]] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2, "hero", "call", amount=Decimal("1"), total=Decimal("1")
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "raise",
+                    amount=Decimal("3.5"),
+                    total=Decimal("4"),
+                ),
+                wager_action(
+                    4,
+                    "villain-2",
+                    "call",
+                    amount=Decimal("3"),
+                    total=Decimal("4"),
+                ),
+                wager_action(
+                    5,
+                    "hero",
+                    "call",
+                    amount=Decimal("3"),
+                    total=Decimal("4"),
+                    all_in=hero_is_all_in,
+                ),
+            ],
+        }
+    ]
+    checkers = ["villain", "villain-2"]
+    if not hero_is_all_in:
+        checkers.append("hero")
+    for street_name, board_card_count in (("flop", 3), ("turn", 4), ("river", 5)):
+        streets.append(
+            {
+                "street": street_name,
+                "board_cards": board[:board_card_count],
+                "actions": [
+                    wager_action(index, player_id, "check", total=Decimal(0))
+                    for index, player_id in enumerate(checkers)
+                ],
+            }
+        )
+    payload["streets"] = streets
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("12")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def test_hero_decision_context_closes_raising_without_chips_beyond_the_call() -> None:
+    all_in_call = hero_facing_a_raise_decision_record(hero_stack=Decimal("4"))
+    deeper = hero_facing_a_raise_decision_record(hero_stack=Decimal("10"))
+
+    short_contexts = all_in_call.active_hero_decision_contexts
+    deep_contexts = deeper.active_hero_decision_contexts
+
+    facing_raise = short_contexts[1]
+    assert (facing_raise.street, facing_raise.action_sequence) == ("preflop", 5)
+    assert facing_raise.amount_to_call == Decimal("3")
+    # The hero holds exactly the call, so an all-in call is the most they can
+    # put in and no raise is possible, however open the table is.
+    assert facing_raise.hero_stack_before_action == Decimal("3")
+    assert facing_raise.raise_reopened is False
+
+    # The same spot with chips behind stays open: this is not a blanket
+    # suppression of the verdict.
+    control = deep_contexts[1]
+    assert (control.street, control.action_sequence) == ("preflop", 5)
+    assert control.amount_to_call == Decimal("3")
+    assert control.hero_stack_before_action == Decimal("9")
+    assert control.raise_reopened is True
+
+    # And the hero's earlier decision, with a full stack behind, is unaffected.
+    assert short_contexts[0].raise_reopened is True
+    assert deep_contexts[0].raise_reopened is True
+
+
+def short_all_in_with_live_caller_decision_record() -> ImportedHandRecord:
+    """Build the one spot whose closed raise cannot be re-derived downstream.
+
+    Villain's short all-in does not reopen betting for a hero who has already
+    acted, but villain-2 calls and stays actionable, so neither of the reasons
+    a published decision state can prove -- no chips behind, or no opponent
+    able to answer -- applies here.
+    """
+
+    board = decision_context_board()
+    payload = three_handed_decision_payload(
+        villain_stack=Decimal("4"),
+        villain_2_stack=Decimal("100"),
+    )
+    streets: list[dict[str, object]] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2, "hero", "raise", amount=Decimal("3"), total=Decimal("3")
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "raise",
+                    amount=Decimal("3.5"),
+                    total=Decimal("4"),
+                    all_in=True,
+                ),
+                wager_action(
+                    4,
+                    "villain-2",
+                    "call",
+                    amount=Decimal("3"),
+                    total=Decimal("4"),
+                ),
+                wager_action(
+                    5, "hero", "call", amount=Decimal("1"), total=Decimal("4")
+                ),
+            ],
+        }
+    ]
+    for street_name, board_card_count in (("flop", 3), ("turn", 4), ("river", 5)):
+        streets.append(
+            {
+                "street": street_name,
+                "board_cards": board[:board_card_count],
+                "actions": [
+                    wager_action(index, player_id, "check", total=Decimal(0))
+                    for index, player_id in enumerate(["villain-2", "hero"])
+                ],
+            }
+        )
+    payload["streets"] = streets
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("12")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)

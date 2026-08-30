@@ -57,6 +57,9 @@ NonNegativeInteger = Annotated[int, Field(ge=0, strict=True)]
 
 ParticipationStatus = Literal["dealt_in", "sitting_out", "not_dealt", "unknown"]
 AnteMode = Literal["per_player", "big_blind", "unknown"]
+GameVariant = Literal["texas_holdem"]
+BettingLimit = Literal["no_limit", "pot_limit", "fixed_limit", "unknown"]
+TableSize = Annotated[int, Field(ge=2, le=10, strict=True)]
 StreetName = Literal["preflop", "flop", "turn", "river"]
 ActionType = Literal[
     "post_ante",
@@ -90,7 +93,14 @@ LifecycleStatus = Literal[
     "deletion_pending",
     "deleted",
 ]
+SeatDecisionStatus = Literal["live", "folded", "all_in"]
 
+_STREET_BOARD_CARDS: dict[StreetName, int] = {
+    "preflop": 0,
+    "flop": 3,
+    "turn": 4,
+    "river": 5,
+}
 _STREET_ORDER: dict[StreetName, int] = {
     "preflop": 0,
     "flop": 1,
@@ -493,9 +503,9 @@ Economics = Annotated[
 
 
 class GameContext(ImportedHandModel):
-    variant: Literal["texas_holdem"] = "texas_holdem"
-    betting_limit: Literal["no_limit", "pot_limit", "fixed_limit", "unknown"]
-    table_size: Annotated[int, Field(ge=2, le=10, strict=True)]
+    variant: GameVariant = "texas_holdem"
+    betting_limit: BettingLimit
+    table_size: TableSize
     blinds: BlindStructure
     economics: Economics
 
@@ -623,15 +633,12 @@ class ImportedAction(ImportedHandModel):
 
     @model_validator(mode="after")
     def validate_action_shape(self) -> Self:
-        if self.action_type not in _CHIP_ACTIONS and self.amount is not None:
-            raise ValueError("fold and check actions cannot carry an amount")
-        if self.action_type in _FORCED_ACTIONS and self.origin.kind != "forced_system":
-            raise ValueError("posts and uncalled returns must be forced/system actions")
-        if self.action_type in {"fold", "check", "bet", "call", "raise"}:
-            if self.origin.kind == "forced_system":
-                raise ValueError("table decisions cannot be classified as forced/system")
-        if self.all_in and self.action_type in {"fold", "check", "uncalled_return"}:
-            raise ValueError("fold, check, and return actions cannot be all-in")
+        _validate_action_shape(
+            self.action_type,
+            amount=self.amount,
+            all_in=self.all_in,
+            origin_kind=self.origin.kind,
+        )
         return self
 
     @property
@@ -640,6 +647,35 @@ class ImportedAction(ImportedHandModel):
             self.action_type in _TABLE_ACTIONS
             and self.origin.kind == "player_selected"
         )
+
+
+def _validate_action_shape(
+    action_type: ActionType,
+    *,
+    amount: Decimal | None,
+    all_in: bool,
+    origin_kind: OriginKind | None = None,
+) -> None:
+    """Apply one action's shape rules wherever an action is published.
+
+    The imported action enforces these on the way in; a decision point's table
+    action and every record in its betting line enforce the same ones on the
+    way back out, so a rehydrated payload cannot carry a shape the import
+    boundary would have refused. A published betting line deliberately drops
+    the origin, so ``origin_kind`` is optional and the two rules that need it
+    are skipped rather than guessed when it is absent.
+    """
+
+    if action_type not in _CHIP_ACTIONS and amount is not None:
+        raise ValueError("fold and check actions cannot carry an amount")
+    if all_in and action_type in {"fold", "check", "uncalled_return"}:
+        raise ValueError("fold, check, and return actions cannot be all-in")
+    if origin_kind is None:
+        return
+    if action_type in _FORCED_ACTIONS and origin_kind != "forced_system":
+        raise ValueError("posts and uncalled returns must be forced/system actions")
+    if action_type in _TABLE_ACTIONS and origin_kind == "forced_system":
+        raise ValueError("table decisions cannot be classified as forced/system")
 
 
 class ImportedStreet(ImportedHandModel):
@@ -653,7 +689,7 @@ class ImportedStreet(ImportedHandModel):
         actual = [action.sequence for action in self.actions]
         if actual != expected:
             raise ValueError("street action sequence must be contiguous and ordered from zero")
-        maximum_cards = {"preflop": 0, "flop": 3, "turn": 4, "river": 5}[self.street]
+        maximum_cards = _STREET_BOARD_CARDS[self.street]
         if len(self.board_cards) > maximum_cards:
             raise ValueError(f"{self.street} cannot contain more than {maximum_cards} board cards")
         return self
@@ -1106,8 +1142,12 @@ class ImportedHandState(ImportedHandModel):
                 short_forced_post = False
                 unresolved_configured_post_minimum = Decimal(0)
                 unresolved_configured_post_strict_positive = False
-                bet_increment: Decimal | None = None
-                raise_increment: Decimal | None = None
+                bet_increment, raise_increment = _wager_increments(
+                    action,
+                    current_wager=current_wager,
+                    actor_live_commitment=actor_live_commitment,
+                    resolved_live_commitment=resolved_live_commitment,
+                )
                 forced_post_field = _FORCED_POST_FIELDS.get(action.action_type)
                 if forced_post_field is not None:
                     if street.street != "preflop":
@@ -1141,9 +1181,9 @@ class ImportedHandState(ImportedHandModel):
                                 " known dealt-in seat ring"
                             )
                         seen_structural_blind_posts.add(action.action_type)
-                    configured_post_amount = getattr(
+                    configured_post_amount = _configured_forced_post_amount(
+                        action,
                         self.game.blinds,
-                        forced_post_field,
                     )
                     if action.action_type == "post_ante" and required_ante_players:
                         if action.actor_id not in required_ante_players:
@@ -1169,13 +1209,11 @@ class ImportedHandState(ImportedHandModel):
                                 " in the known dealt-in seat ring"
                             )
                         seen_straddle_players.add(action.actor_id)
-                    posted_amount = action.amount
-                    if (
-                        posted_amount is None
-                        and actor_commitment is not None
-                        and resolved_commitment is not None
-                    ):
-                        posted_amount = resolved_commitment - actor_commitment
+                    posted_amount = _posted_forced_amount(
+                        action,
+                        prior_commitment=actor_commitment,
+                        resolved_commitment=resolved_commitment,
+                    )
                     if (
                         configured_post_amount is not None
                         and (
@@ -1411,10 +1449,13 @@ class ImportedHandState(ImportedHandModel):
                 ):
                     known_all_in_commitment = resolved_commitment
                 known_stack_exhausted = (
-                    actor_seat.starting_stack is not None
-                    and (
-                        known_all_in_commitment == actor_seat.starting_stack
-                        or (
+                    _stack_is_exhausted(
+                        actor_seat.starting_stack,
+                        known_all_in_commitment,
+                    )
+                    or (
+                        actor_seat.starting_stack is not None
+                        and (
                             resolved_cumulative_minimum
                             == actor_seat.starting_stack
                             and not resolved_cumulative_unresolved_positive
@@ -1467,13 +1508,6 @@ class ImportedHandState(ImportedHandModel):
                 elif action.action_type == "bet" and current_wager is not None:
                     if current_wager > 0:
                         raise ValueError("a bet requires no outstanding wager")
-                    if resolved_live_commitment is not None:
-                        if actor_live_commitment is not None:
-                            bet_increment = (
-                                resolved_live_commitment - actor_live_commitment
-                            )
-                        elif action.amount is not None:
-                            bet_increment = action.amount
                     if resolved_live_commitment is not None and (
                         resolved_live_commitment <= 0
                         or (
@@ -1497,19 +1531,14 @@ class ImportedHandState(ImportedHandModel):
                     if current_wager == 0:
                         raise ValueError("a raise requires an outstanding wager")
                     if resolved_live_commitment is not None:
-                        raise_increment = resolved_live_commitment - current_wager
-                        if raise_increment <= 0:
+                        if raise_increment is not None and raise_increment <= 0:
                             raise ValueError("a raise must increase the outstanding wager")
-                        acted_wager = acted_wager_by_player.get(action.actor_id)
-                        reopen_increment = reopen_increment_by_player.get(
-                            action.actor_id
-                        )
-                        if (
-                            enforce_full_raise_increment
-                            and action.actor_id in acted_wager_by_player
-                            and acted_wager is not None
-                            and reopen_increment is not None
-                            and current_wager - acted_wager < reopen_increment
+                        if not _raise_is_reopened(
+                            action.actor_id,
+                            enforce_full_raise_increment=enforce_full_raise_increment,
+                            current_wager=current_wager,
+                            acted_wager_by_player=acted_wager_by_player,
+                            reopen_increment_by_player=reopen_increment_by_player,
                         ):
                             raise ValueError(
                                 "a raise is not allowed because short all-ins have not"
@@ -1659,30 +1688,25 @@ class ImportedHandState(ImportedHandModel):
                     )
                 ):
                     forced_stack_exhausted_players.add(action.actor_id)
-                if action.action_type == "fold":
-                    terminal_actors[action.actor_id] = ("folded", street.street)
-                    inferred_stack_exhausted_players.discard(action.actor_id)
-                    live_players.discard(action.actor_id)
-                    actionable_players.discard(action.actor_id)
-                    if len(live_players) == 1:
-                        fold_end = (street.street, next(iter(live_players)))
-                elif confirmed_all_in:
-                    terminal_actors[action.actor_id] = ("all_in", street.street)
-                    inferred_stack_exhausted_players.discard(action.actor_id)
-                    actionable_players.discard(action.actor_id)
-                elif known_stack_exhausted:
-                    terminal_actors[action.actor_id] = ("all_in", street.street)
-                    inferred_stack_exhausted_players.add(action.actor_id)
-                    actionable_players.discard(action.actor_id)
-                elif action.actor_id in inferred_stack_exhausted_players:
-                    terminal_actors.pop(action.actor_id, None)
-                    inferred_stack_exhausted_players.discard(action.actor_id)
-                    actionable_players.add(action.actor_id)
-                    # A return can restore chips to a player whose all-in state
-                    # was inferred only from their prior known commitment. The
+                if _apply_terminal_transition(
+                    action,
+                    street.street,
+                    confirmed_all_in=confirmed_all_in,
+                    known_stack_exhausted=known_stack_exhausted,
+                    terminal_actors=terminal_actors,
+                    live_players=live_players,
+                    actionable_players=actionable_players,
+                    inferred_stack_exhausted_players=(
+                        inferred_stack_exhausted_players
+                    ),
+                ):
+                    # A return restored chips to a player whose all-in state was
+                    # inferred only from their prior known commitment. The
                     # hand-wide betting closure must be reconsidered with that
                     # player actionable again.
                     betting_closed_by_all_ins = False
+                if action.action_type == "fold" and len(live_players) == 1:
+                    fold_end = (street.street, next(iter(live_players)))
                 cumulative_commitments[action.actor_id] = (
                     resolved_cumulative_commitment
                 )
@@ -1726,50 +1750,15 @@ class ImportedHandState(ImportedHandModel):
                     resolved_street_unresolved_positive_live
                 )
                 live_commitments[action.actor_id] = resolved_live_commitment
-                if action.action_type in {"post_big_blind", "post_straddle"}:
-                    full_live_post = (
-                        posted_amount is not None
-                        and (
-                            (
-                                configured_post_amount is not None
-                                and posted_amount >= configured_post_amount
-                            )
-                            or (
-                                configured_post_amount is None
-                                and not confirmed_all_in
-                            )
-                        )
-                    )
-                    if full_live_post and posted_amount is not None:
-                        if (
-                            last_full_wager_increment is None
-                            or posted_amount > last_full_wager_increment
-                        ):
-                            last_full_wager_increment = posted_amount
-                    elif action.action_type == "post_straddle" and posted_amount is None:
-                        last_full_wager_increment = None
-                elif action.action_type == "bet":
-                    if bet_increment is None:
-                        last_full_wager_increment = None
-                    elif (
-                        last_full_wager_increment is None
-                        and not confirmed_all_in
-                    ) or (
-                        last_full_wager_increment is not None
-                        and bet_increment >= last_full_wager_increment
-                    ):
-                        last_full_wager_increment = bet_increment
-                elif action.action_type == "raise":
-                    if raise_increment is None:
-                        last_full_wager_increment = None
-                    elif (
-                        last_full_wager_increment is None
-                        and not confirmed_all_in
-                    ) or (
-                        last_full_wager_increment is not None
-                        and raise_increment >= last_full_wager_increment
-                    ):
-                        last_full_wager_increment = raise_increment
+                last_full_wager_increment = _updated_full_wager_increment(
+                    action,
+                    last_full_wager_increment=last_full_wager_increment,
+                    blinds=self.game.blinds,
+                    posted_amount=posted_amount,
+                    bet_increment=bet_increment,
+                    raise_increment=raise_increment,
+                    confirmed_all_in=confirmed_all_in,
+                )
                 if action.action_type in {
                     "bet",
                     "raise",
@@ -2274,6 +2263,119 @@ class ImportedHandLifecycle(ImportedHandModel):
         return self.status == "active" and self.active_canonical_revision is not None
 
 
+class SeatDecisionState(ImportedHandModel):
+    """A dealt-in player's chip position immediately before a hero action.
+
+    ``street_commitment`` and ``live_commitment`` differ by exactly the dead
+    chips this player has posted on the street -- antes, which pay the pot but
+    do not answer a wager. Only ``live_commitment`` is comparable to
+    ``HeroActionContext.current_wager``: a call costs
+    ``current_wager - live_commitment``, and subtracting the ante-inclusive
+    ``street_commitment`` instead understates it by the posted ante.
+    """
+
+    player_id: Identifier
+    position: StructuralPosition
+    starting_stack: NonNegativeDecimal
+    stack_before_action: NonNegativeDecimal
+    street_commitment: NonNegativeDecimal
+    live_commitment: NonNegativeDecimal
+    hand_commitment: NonNegativeDecimal
+    status: SeatDecisionStatus
+
+
+class ResolvedAction(ImportedHandModel):
+    """One imported action with the chips the extraction walk resolved for it.
+
+    A source may state an action's incremental ``amount``, its street-cumulative
+    ``total_committed``, or only one of the two. The walk resolves both from the
+    ordered stream, so consumers read the resolved values rather than whichever
+    field the adapter happened to fill. A value stays ``None`` only when the
+    walk could not establish it exactly.
+
+    ``all_in`` is likewise the verdict the walk reached, read back from the
+    terminal state its own transition produced -- not the source's marker. A
+    source that omits the marker on an action which exhausts a known stack
+    still leaves its actor all-in, and the seat status published beside this
+    record says so, so the two must be decided by the same rule.
+    """
+
+    action: ImportedAction
+    amount: PositiveDecimal | None
+    total_committed: NonNegativeDecimal | None
+    all_in: bool
+
+
+class StreetActionSlice(ImportedHandModel):
+    """The ordered actions of one street as the extraction walk saw them.
+
+    Completed streets carry every action; the street the hero is acting on is
+    truncated immediately before the hero's own action, so the slice is exactly
+    what the hero could have observed when deciding.
+    """
+
+    street: StreetName
+    actions: list[ResolvedAction]
+
+
+class HeroActionContext(ImportedHandModel):
+    """Exact chip state the aggregate computed for one voluntary hero action.
+
+    ``last_full_wager_increment`` is the yardstick a minimum legal raise is
+    measured against -- the last full bet or raise increment still in force.
+    ``None`` means the aggregate could not establish it; a known increment is
+    always positive, so ``None`` is the only "unknown" and can never be
+    confused with one. A consumer that cannot size a raise has to withhold the
+    raise rather than offer one of arbitrary size.
+
+    ``raise_reopened`` reports whether raising is legal for the hero here.
+    It is ``False`` when the hero has no chips beyond ``amount_to_call``, since
+    a raise must add more than a call and an all-in call is then the most they
+    can put in. It is also ``False`` for either of two table conditions the
+    hand validator enforces:
+    an actor who has already acted on this street is reopened only once
+    the wager has grown by at least the increment that stood when they
+    acted, so a short all-in leaves them call-or-fold; or the hero is the
+    sole actionable player and every live opponent is all-in, so no one
+    could answer a raise and the validator rejects one outright. It is
+    ``True`` whenever the aggregate holds no evidence that betting is
+    closed, which is exactly when the validator would admit a raise.
+
+    ``action_history`` is the ordered betting line: every street from preflop
+    through this one, with this street truncated before the hero's own action.
+    Distinct lines reach identical pots, wagers, and commitments, so the chip
+    snapshot alone cannot identify the spot a line-sensitive consumer needs.
+
+    ``action`` is the hero's action exactly as approved, and ``resolved_action``
+    wraps that same object with the chips and all-in verdict the walk resolved
+    for it -- the treatment every opponent action already gets in the line. The
+    raw field stays because ``active_hero_actions_for_extraction`` returns it.
+    """
+
+    @model_validator(mode="after")
+    def validate_resolved_action(self) -> Self:
+        if self.resolved_action.action != self.action:
+            raise ValueError(
+                "resolved_action must resolve this context's own hero action"
+            )
+        return self
+
+    street: StreetName
+    action_sequence: NonNegativeInteger
+    action: ImportedAction
+    resolved_action: ResolvedAction
+    board_cards: list[Card]
+    action_history: list[StreetActionSlice]
+    committed_pot_before_street: NonNegativeDecimal
+    pot_before_action: NonNegativeDecimal
+    current_wager: NonNegativeDecimal
+    amount_to_call: NonNegativeDecimal
+    last_full_wager_increment: PositiveDecimal | None
+    raise_reopened: bool
+    hero_stack_before_action: NonNegativeDecimal
+    seats: list[SeatDecisionState]
+
+
 class ImportedHandRecord(ImportedHandModel):
     """Aggregate shape; persistence must transition it atomically."""
 
@@ -2581,8 +2683,8 @@ class ImportedHandRecord(ImportedHandModel):
         return context[0] if context is not None else None
 
     @property
-    def active_hero_actions_for_extraction(self) -> list[ImportedAction]:
-        """Return only voluntary hero actions from the active approved revision.
+    def active_hero_decision_contexts(self) -> list[HeroActionContext]:
+        """Return voluntary hero decisions with their exact chip context.
 
         Forced, client-automatic, and unresolved actions remain in the canonical
         audit stream but cannot become learning decision points. Player-selected
@@ -2636,7 +2738,32 @@ class ImportedHandRecord(ImportedHandModel):
             return []
         if _known_action_orders(state.seats, state.button_seat) is None:
             return []
-        return _hero_actions_ready_for_extraction(state)
+        return _hero_decision_contexts_for_extraction(state)
+
+    @property
+    def active_hero_actions_for_extraction(self) -> list[ImportedAction]:
+        """Return the bare hero decisions behind ``active_hero_decision_contexts``."""
+
+        return [context.action for context in self.active_hero_decision_contexts]
+
+    @property
+    def active_pot_reconciles_for_extraction(self) -> bool:
+        """Report the extraction gate's pot verdict for the active revision.
+
+        The independent comparator needs the active detection and revision,
+        which only the aggregate resolves, so callers outside it reuse this
+        verdict instead of reconciling the pot a second time.
+        """
+
+        context = self._active_extraction_context()
+        if context is None:
+            return False
+        state, detection, revision = context
+        return _pot_reconciliation_ready_for_extraction(
+            state,
+            detection=detection,
+            revision=revision,
+        )
 
 
 class ReimportDisposition(ImportedHandModel):
@@ -3743,6 +3870,175 @@ def _known_live_action_total(
     return prior_live_commitment + action.amount
 
 
+def _resolved_action_amount(
+    action: ImportedAction,
+    *,
+    prior_commitment: Decimal | None,
+    resolved_commitment: Decimal | None,
+) -> Decimal | None:
+    """Return the chips this action moved, from the walk's own resolution.
+
+    A stated amount is authoritative -- ``_known_action_total`` has already
+    rejected one that contradicts the commitment stream. Otherwise the movement
+    is the difference the walk resolved, which is zero for an action that only
+    matches what the actor already had in.
+    """
+
+    if action.amount is not None:
+        return action.amount
+    if prior_commitment is None or resolved_commitment is None:
+        return None
+    moved = (
+        prior_commitment - resolved_commitment
+        if action.action_type == "uncalled_return"
+        else resolved_commitment - prior_commitment
+    )
+    return moved if moved > 0 else None
+
+
+def _stack_is_exhausted(
+    starting_stack: Decimal | None,
+    cumulative_commitment: Decimal | None,
+) -> bool:
+    """Report a known commitment that leaves its actor with no chips behind."""
+
+    return (
+        starting_stack is not None
+        and cumulative_commitment is not None
+        and cumulative_commitment == starting_stack
+    )
+
+
+def _configured_forced_post_amount(
+    action: ImportedAction,
+    blinds: BlindStructure,
+) -> Decimal | None:
+    """Return the chips this forced post was configured to add, if any."""
+
+    field_name = _FORCED_POST_FIELDS.get(action.action_type)
+    if field_name is None:
+        return None
+    configured: Decimal | None = getattr(blinds, field_name)
+    return configured
+
+
+def _posted_forced_amount(
+    action: ImportedAction,
+    *,
+    prior_commitment: Decimal | None,
+    resolved_commitment: Decimal | None,
+) -> Decimal | None:
+    """Recover a forced post's chips from its amount or its commitment delta."""
+
+    if action.action_type not in _FORCED_POST_FIELDS:
+        return None
+    if action.amount is not None:
+        return action.amount
+    if prior_commitment is None or resolved_commitment is None:
+        return None
+    return resolved_commitment - prior_commitment
+
+
+def _wager_increments(
+    action: ImportedAction,
+    *,
+    current_wager: Decimal | None,
+    actor_live_commitment: Decimal | None,
+    resolved_live_commitment: Decimal | None,
+) -> tuple[Decimal | None, Decimal | None]:
+    """Return the bet and raise increments this action adds to the live wager."""
+
+    if current_wager is None or resolved_live_commitment is None:
+        return None, None
+    if action.action_type == "bet":
+        if actor_live_commitment is not None:
+            return resolved_live_commitment - actor_live_commitment, None
+        if action.amount is not None:
+            return action.amount, None
+        return None, None
+    if action.action_type == "raise":
+        return None, resolved_live_commitment - current_wager
+    return None, None
+
+
+def _updated_full_wager_increment(
+    action: ImportedAction,
+    *,
+    last_full_wager_increment: Decimal | None,
+    blinds: BlindStructure,
+    posted_amount: Decimal | None,
+    bet_increment: Decimal | None,
+    raise_increment: Decimal | None,
+    confirmed_all_in: bool,
+) -> Decimal | None:
+    """Advance the yardstick a minimum legal raise is measured against.
+
+    ``None`` means the increment is no longer established -- a short all-in or
+    an unresolved wager has erased it -- and callers must never read that as
+    zero.
+    """
+
+    if action.action_type in {"post_big_blind", "post_straddle"}:
+        configured_post_amount = _configured_forced_post_amount(action, blinds)
+        full_live_post = posted_amount is not None and (
+            (
+                configured_post_amount is not None
+                and posted_amount >= configured_post_amount
+            )
+            or (configured_post_amount is None and not confirmed_all_in)
+        )
+        if full_live_post and posted_amount is not None:
+            if (
+                last_full_wager_increment is None
+                or posted_amount > last_full_wager_increment
+            ):
+                return posted_amount
+            return last_full_wager_increment
+        if action.action_type == "post_straddle" and posted_amount is None:
+            return None
+        return last_full_wager_increment
+    if action.action_type == "bet":
+        increment = bet_increment
+    elif action.action_type == "raise":
+        increment = raise_increment
+    else:
+        return last_full_wager_increment
+    if increment is None:
+        return None
+    if (last_full_wager_increment is None and not confirmed_all_in) or (
+        last_full_wager_increment is not None
+        and increment >= last_full_wager_increment
+    ):
+        return increment
+    return last_full_wager_increment
+
+
+def _raise_is_reopened(
+    player_id: str,
+    *,
+    enforce_full_raise_increment: bool,
+    current_wager: Decimal | None,
+    acted_wager_by_player: dict[str, Decimal | None],
+    reopen_increment_by_player: dict[str, Decimal | None],
+) -> bool:
+    """Report whether raising is still legal for one actor at this wager.
+
+    A player who has already acted is reopened only once the wager has grown by
+    at least the full increment that stood when they acted; a short all-in that
+    does not clear that bar leaves them with call-or-fold only.
+    """
+
+    if not enforce_full_raise_increment:
+        return True
+    if player_id not in acted_wager_by_player:
+        return True
+    acted_wager = acted_wager_by_player[player_id]
+    reopen_increment = reopen_increment_by_player.get(player_id)
+    if acted_wager is None or reopen_increment is None or current_wager is None:
+        return True
+    return current_wager - acted_wager >= reopen_increment
+
+
 def _economics_ready_for_extraction(
     economics: Economics,
     *,
@@ -4012,26 +4308,53 @@ def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:
     )
 
 
-def _hero_actions_ready_for_extraction(
+def _hero_decision_contexts_for_extraction(
     state: ImportedHandState,
-) -> list[ImportedAction]:
-    """Return hero decisions with complete cards and reconstructable chip state."""
+) -> list[HeroActionContext]:
+    """Return hero decisions with complete cards and reconstructable chip state.
+
+    The walk already resolves every chip value a decision point needs, so it
+    emits that context rather than discarding it; no caller re-derives the pot,
+    the wager, or a seat's committed chips from the action stream a second time.
+    """
 
     assert state.hero_player_id is not None
+    positions = _known_structural_positions(state.seats, state.button_seat)
+    # Unreachable through the aggregate property: its gate already rejects a
+    # state whose `_known_action_orders` -- derived from these positions -- is
+    # unresolved. Retained so the function stands on its own.
+    if positions is None:
+        return []
+    ring = sorted(
+        (seat for seat in state.seats if seat.participation == "dealt_in"),
+        key=lambda seat: positions[seat.seat_number].button_distance,
+    )
     player_ids = {seat.player_id for seat in state.seats}
-    extracted: list[ImportedAction] = []
+    extracted: list[HeroActionContext] = []
     committed_pot_before_street: Decimal | None = Decimal(0)
+    committed_hand_commitments: dict[str, Decimal] = {
+        player_id: Decimal(0) for player_id in player_ids
+    }
+    terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]] = {}
+    live_players = {
+        seat.player_id
+        for seat in state.seats
+        if seat.participation in {"dealt_in", "unknown"}
+    }
+    actionable_players = set(live_players)
+    inferred_stack_exhausted_players: set[str] = set()
+    completed_street_slices: list[StreetActionSlice] = []
+    starting_stacks = {seat.player_id: seat.starting_stack for seat in state.seats}
+    enforce_full_raise_increment = state.game.betting_limit in {
+        "no_limit",
+        "pot_limit",
+    }
     live_player_count = sum(
         seat.participation in {"dealt_in", "unknown"} for seat in state.seats
     )
 
     for street in state.streets:
-        required_board_cards = {
-            "preflop": 0,
-            "flop": 3,
-            "turn": 4,
-            "river": 5,
-        }[street.street]
+        required_board_cards = _STREET_BOARD_CARDS[street.street]
         cards_are_ready = (
             len(state.hero_cards) == 2
             and len(street.board_cards) == required_board_cards
@@ -4043,6 +4366,11 @@ def _hero_actions_ready_for_extraction(
             player_id: Decimal(0) for player_id in player_ids
         }
         current_wager: Decimal | None = Decimal(0)
+        last_full_wager_increment: Decimal | None = state.game.blinds.big_blind
+        increment_is_established = True
+        acted_wager_by_player: dict[str, Decimal | None] = {}
+        reopen_increment_by_player: dict[str, Decimal | None] = {}
+        street_resolved_actions: list[ResolvedAction] = []
 
         for action in street.actions:
             prior_commitment = street_commitments[action.actor_id]
@@ -4076,18 +4404,6 @@ def _hero_actions_ready_for_extraction(
                 and action.amount is None
                 and action.total_committed is None
             )
-            if (
-                action.actor_id == state.hero_player_id
-                and action.is_player_decision
-                and cards_are_ready
-                and committed_pot_before_street is not None
-                and current_wager is not None
-                and exact_commitment_context
-                and exact_live_context
-                and selected_chip_action_is_resolved
-            ):
-                extracted.append(action)
-
             resolved_commitment = _known_action_total(
                 action,
                 effective_prior_commitment,
@@ -4114,78 +4430,324 @@ def _hero_actions_ready_for_extraction(
                     if resolved_live_commitment is None:
                         resolved_live_commitment = current_wager
 
+            actor_starting_stack = starting_stacks[action.actor_id]
+            actor_cumulative_commitment = (
+                committed_hand_commitments[action.actor_id] + resolved_commitment
+                if committed_pot_before_street is not None
+                and resolved_commitment is not None
+                else None
+            )
+            stack_is_exhausted = _stack_is_exhausted(
+                actor_starting_stack,
+                actor_cumulative_commitment,
+            )
+            confirmed_all_in = action.all_in and (
+                actor_starting_stack is None or stack_is_exhausted
+            )
+            # Resolve the action once, before the emit that may publish it:
+            # the hero's own decision carries it as its table action, and every
+            # later decision reads the same record in the betting line.
+            resolved_action = ResolvedAction(
+                action=action,
+                amount=_resolved_action_amount(
+                    action,
+                    prior_commitment=effective_prior_commitment,
+                    resolved_commitment=resolved_commitment,
+                ),
+                total_committed=resolved_commitment,
+                all_in=_action_leaves_actor_all_in(
+                    action,
+                    confirmed_all_in=confirmed_all_in,
+                    known_stack_exhausted=stack_is_exhausted,
+                ),
+            )
+            if (
+                action.actor_id == state.hero_player_id
+                and action.is_player_decision
+                and cards_are_ready
+                and committed_pot_before_street is not None
+                and current_wager is not None
+                and exact_commitment_context
+                and exact_live_context
+                and selected_chip_action_is_resolved
+            ):
+                assert effective_prior_commitment is not None
+                extracted.append(
+                    _hero_decision_context(
+                        street=street,
+                        action=action,
+                        ring=ring,
+                        positions=positions,
+                        committed_hand_commitments=committed_hand_commitments,
+                        street_commitments=street_commitments,
+                        live_commitments=live_commitments,
+                        actor_street_commitment=effective_prior_commitment,
+                        resolved_action=resolved_action,
+                        action_history=[
+                            *completed_street_slices,
+                            StreetActionSlice(
+                                street=street.street,
+                                actions=list(street_resolved_actions),
+                            ),
+                        ],
+                        committed_pot_before_street=committed_pot_before_street,
+                        current_wager=current_wager,
+                        last_full_wager_increment=(
+                            last_full_wager_increment
+                            if increment_is_established
+                            else None
+                        ),
+                        raise_reopened=(
+                            _sole_actionable_player_with_only_all_in_opponents(
+                                live_players,
+                                actionable_players,
+                            )
+                            != action.actor_id
+                            and _raise_is_reopened(
+                                action.actor_id,
+                                enforce_full_raise_increment=(
+                                    enforce_full_raise_increment
+                                ),
+                                current_wager=current_wager,
+                                acted_wager_by_player=acted_wager_by_player,
+                                reopen_increment_by_player=(
+                                    reopen_increment_by_player
+                                ),
+                            )
+                        ),
+                        terminal_actors=terminal_actors,
+                    )
+                )
+
             street_commitments[action.actor_id] = resolved_commitment
             live_commitments[action.actor_id] = resolved_live_commitment
-            if action.action_type in {"fold", "check", "post_ante"}:
-                continue
-            if action.action_type == "uncalled_return":
-                current_wager = (
-                    max(
-                        commitment
-                        for commitment in live_commitments.values()
-                        if commitment is not None
-                    )
-                    if all(
-                        commitment is not None
-                        for commitment in live_commitments.values()
-                    )
-                    else None
-                )
-                continue
-            if action.action_type == "call":
-                if (
-                    current_wager is None
-                    and resolved_live_commitment is not None
-                    and not action.all_in
-                ):
-                    current_wager = resolved_live_commitment
-                continue
-            if resolved_live_commitment is None:
-                current_wager = None
-                continue
-            if action.action_type in {"bet", "raise"}:
-                current_wager = resolved_live_commitment
-                continue
-            if current_wager is not None:
-                current_wager = max(current_wager, resolved_live_commitment)
-                if (
-                    action.action_type == "post_big_blind"
-                    and state.game.blinds.big_blind is not None
-                    and live_player_count >= 3
-                ):
-                    posted_amount = action.amount
-                    if (
-                        posted_amount is None
-                        and effective_prior_commitment is not None
-                        and resolved_commitment is not None
-                    ):
-                        posted_amount = (
-                            resolved_commitment - effective_prior_commitment
-                        )
-                    if (
-                        posted_amount is not None
-                        and 0 < posted_amount < state.game.blinds.big_blind
-                    ):
-                        current_wager = max(
-                            current_wager,
-                            state.game.blinds.big_blind,
-                        )
+            # The same transition the hand validator applies: a commitment that
+            # exhausts a known stack is terminal even without the source's
+            # all-in marker, and a later return that restores those chips makes
+            # an inferred all-in actionable again.
+            _apply_terminal_transition(
+                action,
+                street.street,
+                confirmed_all_in=confirmed_all_in,
+                known_stack_exhausted=stack_is_exhausted,
+                terminal_actors=terminal_actors,
+                live_players=live_players,
+                actionable_players=actionable_players,
+                inferred_stack_exhausted_players=inferred_stack_exhausted_players,
+            )
+            street_resolved_actions.append(resolved_action)
 
+            posted_amount = _posted_forced_amount(
+                action,
+                prior_commitment=effective_prior_commitment,
+                resolved_commitment=resolved_commitment,
+            )
+            bet_increment, raise_increment = _wager_increments(
+                action,
+                current_wager=current_wager,
+                actor_live_commitment=prior_live_commitment,
+                resolved_live_commitment=resolved_live_commitment,
+            )
+            last_full_wager_increment = _updated_full_wager_increment(
+                action,
+                last_full_wager_increment=last_full_wager_increment,
+                blinds=state.game.blinds,
+                posted_amount=posted_amount,
+                bet_increment=bet_increment,
+                raise_increment=raise_increment,
+                confirmed_all_in=confirmed_all_in,
+            )
+            if (
+                action.all_in
+                and actor_starting_stack is not None
+                and actor_cumulative_commitment is None
+            ):
+                # The validator can still confirm this all-in from a commitment
+                # lower bound, which this walk does not track. Stop claiming an
+                # increment rather than publish one derived from a weaker
+                # verdict than the one the hand was validated against.
+                increment_is_established = False
+
+            current_wager = _advanced_current_wager(
+                action,
+                current_wager=current_wager,
+                live_commitments=live_commitments,
+                resolved_live_commitment=resolved_live_commitment,
+                posted_amount=posted_amount,
+                big_blind=state.game.blinds.big_blind,
+                live_player_count=live_player_count,
+            )
+            if action.action_type in {"check", "bet", "call", "raise"}:
+                acted_wager_by_player[action.actor_id] = current_wager
+                reopen_increment_by_player[action.actor_id] = (
+                    last_full_wager_increment if increment_is_established else None
+                )
+
+        completed_street_slices.append(
+            StreetActionSlice(
+                street=street.street,
+                actions=list(street_resolved_actions),
+            )
+        )
         if committed_pot_before_street is not None and all(
             commitment is not None for commitment in street_commitments.values()
         ):
-            committed_pot_before_street += sum(
-                (
-                    commitment
-                    for commitment in street_commitments.values()
-                    if commitment is not None
-                ),
+            for player_id, commitment in street_commitments.items():
+                if commitment is not None:
+                    committed_hand_commitments[player_id] += commitment
+            committed_pot_before_street = sum(
+                committed_hand_commitments.values(),
                 Decimal(0),
             )
         else:
             committed_pot_before_street = None
 
     return extracted
+
+
+def _advanced_current_wager(
+    action: ImportedAction,
+    *,
+    current_wager: Decimal | None,
+    live_commitments: dict[str, Decimal | None],
+    resolved_live_commitment: Decimal | None,
+    posted_amount: Decimal | None,
+    big_blind: Decimal | None,
+    live_player_count: int,
+) -> Decimal | None:
+    """Advance the outstanding wager once this action has been applied."""
+
+    if action.action_type in {"fold", "check", "post_ante"}:
+        return current_wager
+    if action.action_type == "uncalled_return":
+        if any(commitment is None for commitment in live_commitments.values()):
+            return None
+        return max(
+            commitment
+            for commitment in live_commitments.values()
+            if commitment is not None
+        )
+    if action.action_type == "call":
+        if (
+            current_wager is None
+            and resolved_live_commitment is not None
+            and not action.all_in
+        ):
+            return resolved_live_commitment
+        return current_wager
+    if resolved_live_commitment is None:
+        return None
+    if action.action_type in {"bet", "raise"}:
+        return resolved_live_commitment
+    if current_wager is None:
+        return None
+    advanced = max(current_wager, resolved_live_commitment)
+    if (
+        action.action_type == "post_big_blind"
+        and big_blind is not None
+        and live_player_count >= 3
+        and posted_amount is not None
+        and 0 < posted_amount < big_blind
+    ):
+        return max(advanced, big_blind)
+    return advanced
+
+
+def _hero_decision_context(
+    *,
+    street: ImportedStreet,
+    action: ImportedAction,
+    ring: list[ImportedSeat],
+    positions: dict[int, StructuralPosition],
+    committed_hand_commitments: dict[str, Decimal],
+    street_commitments: dict[str, Decimal | None],
+    live_commitments: dict[str, Decimal | None],
+    actor_street_commitment: Decimal,
+    resolved_action: ResolvedAction,
+    action_history: list[StreetActionSlice],
+    committed_pot_before_street: Decimal,
+    current_wager: Decimal,
+    last_full_wager_increment: Decimal | None,
+    raise_reopened: bool,
+    terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]],
+) -> HeroActionContext:
+    """Snapshot the chip state the extraction walk holds at one hero action.
+
+    ``current_wager`` is tracked from ``live_commitments``, so the call amount
+    is measured against the hero's live commitment -- the same quantity the
+    walk's own call arithmetic uses. Measuring it against the ante-inclusive
+    ``street_commitments`` would understate it by the hero's posted ante.
+    """
+
+    resolved_street_commitments: dict[str, Decimal] = {}
+    for player_id, commitment in street_commitments.items():
+        resolved = (
+            actor_street_commitment
+            if player_id == action.actor_id
+            else commitment
+        )
+        assert resolved is not None
+        resolved_street_commitments[player_id] = resolved
+    seats: list[SeatDecisionState] = []
+    for seat in ring:
+        assert seat.starting_stack is not None
+        street_commitment = resolved_street_commitments[seat.player_id]
+        live_commitment = live_commitments[seat.player_id]
+        assert live_commitment is not None
+        hand_commitment = (
+            committed_hand_commitments[seat.player_id] + street_commitment
+        )
+        terminal = terminal_actors.get(seat.player_id)
+        # Defence in depth, not a guard against a stale `all_in`: the
+        # extraction gate requires reconcile_pot(...).status == "pass",
+        # so every commitment here is already exact and this exhaustion
+        # check is redundant with the incremental membership above (0
+        # divergences measured across 401 calls). It is also `or`-shaped,
+        # so it can only add `all_in`, never clear one -- it would start
+        # to matter only if inexact commitments were ever let through.
+        status: SeatDecisionStatus = (
+            "folded"
+            if terminal is not None and terminal[0] == "folded"
+            else "all_in"
+            if (terminal is not None and terminal[0] == "all_in")
+            or _stack_is_exhausted(seat.starting_stack, hand_commitment)
+            else "live"
+        )
+        seats.append(
+            SeatDecisionState(
+                player_id=seat.player_id,
+                position=positions[seat.seat_number],
+                starting_stack=seat.starting_stack,
+                stack_before_action=seat.starting_stack - hand_commitment,
+                street_commitment=street_commitment,
+                live_commitment=live_commitment,
+                hand_commitment=hand_commitment,
+                status=status,
+            )
+        )
+    hero = next(seat for seat in seats if seat.player_id == action.actor_id)
+    amount_to_call = max(Decimal(0), current_wager - hero.live_commitment)
+    return HeroActionContext(
+        street=street.street,
+        action_sequence=action.sequence,
+        action=action,
+        resolved_action=resolved_action,
+        board_cards=list(street.board_cards),
+        action_history=action_history,
+        committed_pot_before_street=committed_pot_before_street,
+        pot_before_action=committed_pot_before_street
+        + sum(resolved_street_commitments.values(), Decimal(0)),
+        current_wager=current_wager,
+        amount_to_call=amount_to_call,
+        last_full_wager_increment=last_full_wager_increment,
+        # Raising also takes chips the hero may not have: holding exactly the
+        # call leaves an all-in call as the only way to put them in, so the
+        # table may have reopened betting while this hero still cannot raise.
+        raise_reopened=raise_reopened
+        and hero.stack_before_action > amount_to_call,
+        hero_stack_before_action=hero.stack_before_action,
+        seats=seats,
+    )
 
 
 def _action_implied_prior_commitment(
@@ -4216,6 +4778,69 @@ def _action_implied_prior_commitment(
             current_wager - prior_live_commitment
         )
     return None
+
+
+def _action_leaves_actor_all_in(
+    action: ImportedAction,
+    *,
+    confirmed_all_in: bool,
+    known_stack_exhausted: bool,
+) -> bool:
+    """Report whether this action leaves its actor with no chips to act again.
+
+    A commitment that exhausts a known stack is terminal even when the source
+    omits its all-in marker. Folding is terminal for a different reason and is
+    never all-in.
+    """
+
+    return action.action_type != "fold" and (
+        confirmed_all_in or known_stack_exhausted
+    )
+
+
+def _apply_terminal_transition(
+    action: ImportedAction,
+    street: StreetName,
+    *,
+    confirmed_all_in: bool,
+    known_stack_exhausted: bool,
+    terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]],
+    live_players: set[str],
+    actionable_players: set[str],
+    inferred_stack_exhausted_players: set[str],
+) -> bool:
+    """Advance terminal, live, and actionable membership for one action.
+
+    An all-in inferred only from an exhausting commitment is reversible: a
+    later return can restore the actor's chips and make them actionable again,
+    while a marked all-in stays terminal. Returns ``True`` when such a reversal
+    happened, because it reopens any hand-wide betting closure.
+    """
+
+    if action.action_type == "fold":
+        terminal_actors[action.actor_id] = ("folded", street)
+        inferred_stack_exhausted_players.discard(action.actor_id)
+        live_players.discard(action.actor_id)
+        actionable_players.discard(action.actor_id)
+        return False
+    if _action_leaves_actor_all_in(
+        action,
+        confirmed_all_in=confirmed_all_in,
+        known_stack_exhausted=known_stack_exhausted,
+    ):
+        terminal_actors[action.actor_id] = ("all_in", street)
+        if confirmed_all_in:
+            inferred_stack_exhausted_players.discard(action.actor_id)
+        else:
+            inferred_stack_exhausted_players.add(action.actor_id)
+        actionable_players.discard(action.actor_id)
+        return False
+    if action.actor_id in inferred_stack_exhausted_players:
+        terminal_actors.pop(action.actor_id, None)
+        inferred_stack_exhausted_players.discard(action.actor_id)
+        actionable_players.add(action.actor_id)
+        return True
+    return False
 
 
 def _sole_actionable_player_with_only_all_in_opponents(
