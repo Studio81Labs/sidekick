@@ -24,26 +24,47 @@ one durable unit; routing single-record writes through the same primitive
 now means those calls join an existing cascade instead of inventing a
 second, weaker write path beside it.
 
-Locking. The journal holds its own lock for the whole of a ``save`` and
-the whole of a ``recover``, and treats it as a leaf lock: any caller that
-also needs the workspace's striped record locks must take those *first*
-(``WorkspaceCoordinator.hold_imported_hands``), because taking a
-workspace lock inside an open cascade inverts the established order and
-deadlocks. ``recover`` additionally needs an exclusive interprocess hold
-of the data lock -- the journal serialises against a live cascade only
-within one process -- and both it and ``save`` block, so neither may be
-called on the event-loop thread of the FastAPI process.
+Locking, both halves of it. ``recover`` needs an **exclusive**
+interprocess hold of the data lock, because the journal serialises a
+sweep against a live cascade only within one process. That is only half
+a contract: exclusivity means nothing unless every writer is holding the
+same lock **shared** while its cascade is open. Inheriting that from the
+HTTP middleware would be an accident -- ``/mcp`` is exempt from the data
+lock entirely (``bootstrap.py:511-513``) and already carries mutating
+tools, and a background thread or a non-mutating GET is exempt too -- so
+``save`` takes the shared hold itself rather than trusting its caller.
+Shared holds compose, so a caller that already holds one (an in-flight
+mutating request) is unaffected. The one rule this creates: never call
+``save`` while holding the data lock *exclusively*, which would block on
+your own hold; the acquire is bounded so that mistake surfaces as a named
+``DataLockTimeoutError`` rather than a hang.
+
+Within the process, the journal holds its own lock for the whole of a
+``save`` and the whole of a ``recover``, and treats it as a **leaf lock**:
+a caller that also needs the workspace's striped record locks must take
+those *first* (``WorkspaceCoordinator.hold_imported_hands``), because
+taking a workspace lock inside an open cascade inverts the established
+order into an ABBA deadlock. This store takes no workspace lock of its
+own, so the journal stays innermost. Both ``save`` and ``recover`` block,
+so neither may be called on the event-loop thread of the FastAPI process.
 """
 
 from __future__ import annotations
 
-import json
 import re
 from hashlib import sha256
 from pathlib import Path
 
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
-from app.domain.imported_hands import ImportedHandRecord, StableHandIdentity
+from app.data_lock import (
+    DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    InterprocessDataLock,
+)
+from app.domain.imported_hands import (
+    ImportedHandRecord,
+    StableHandIdentity,
+    imported_hand_canonical_json,
+)
 from app.storage.cascade_journal import CascadeJournal
 
 IMPORTED_HANDS_DIRNAME = "imported-hands"
@@ -63,10 +84,10 @@ class ImportedHandNotFoundError(LookupError):
 def imported_hand_record_key(identity: StableHandIdentity) -> str:
     """Return the durable store key for a hand's stable identity.
 
-    Canonicalised exactly the way ``imported_hand_state_sha256`` already
-    canonicalises detected state (json.dumps with sorted keys, compact
-    separators, no ASCII escaping, utf-8) so this codebase has one
-    canonical form rather than two that drift apart.
+    Canonicalised through ``imported_hand_canonical_json``, the same
+    domain helper ``imported_hand_state_sha256`` uses, so there is one
+    canonical form in the codebase rather than two copies of a formula
+    that can drift apart.
 
     The digest is lowercase hex, which also satisfies the journal's
     record-key rules: a single path segment, no separators, no ``..``,
@@ -83,23 +104,26 @@ def imported_hand_record_key(identity: StableHandIdentity) -> str:
             "a deletion tombstone has none, so its key is only recoverable "
             "from the identity of the hand being re-imported"
         )
-    payload = json.dumps(
-        identity.model_dump(mode="json"),
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return sha256(payload).hexdigest()
+    return sha256(
+        imported_hand_canonical_json(identity.model_dump(mode="json"))
+    ).hexdigest()
 
 
 class FileImportedHandStore:
     """``ImportedHandRepository`` implemented over the local data volume."""
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        *,
+        write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    ) -> None:
         self.data_dir = Path(data_dir)
         self.records_dir = (self.data_dir / IMPORTED_HANDS_DIRNAME).resolve()
         self.records_dir.mkdir(parents=True, exist_ok=True)
         self._journal = CascadeJournal(self.records_dir)
+        self._data_lock = InterprocessDataLock(self.data_dir)
+        self._write_lock_timeout_seconds = write_lock_timeout_seconds
 
     def get(self, record_key: str) -> ImportedHandRecord:
         path = self._record_path(record_key)
@@ -151,10 +175,21 @@ class FileImportedHandStore:
         # (ImportedHandRecord.serialize_revalidated), so a record that no
         # longer holds together never reaches the disk.
         payload = record.model_dump_json(indent=2).encode("utf-8")
-        with self._journal.begin(
-            operation="save", record_keys=[record_key]
-        ) as staging:
-            staging.stage(record_key, RECORD_FILENAME, payload)
+        # The shared interprocess hold is what gives the startup sweep's
+        # exclusive hold any meaning: a cascade opened without it is
+        # invisible to a recover() running in another process, which would
+        # then sweep it away mid-flight. Taken here rather than left to the
+        # caller because several real entry points (/mcp, background
+        # threads, non-mutating GETs) hold no data lock at all. Data lock
+        # outside, journal inside - the journal is the leaf lock.
+        with self._data_lock.hold(
+            exclusive=False,
+            timeout_seconds=self._write_lock_timeout_seconds,
+        ):
+            with self._journal.begin(
+                operation="save", record_keys=[record_key]
+            ) as staging:
+                staging.stage(record_key, RECORD_FILENAME, payload)
         return record
 
     def recover(self) -> ImportedHandRecoveryReport:

@@ -13,7 +13,10 @@ from app.application.imported_hand_ports import (
     ImportedHandRecoveryReport,
     ImportedHandRepository,
 )
-from app.data_lock import InterprocessDataLock
+from app.data_lock import (
+    DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    InterprocessDataLock,
+)
 from app.domain.hands import JobRecord
 from app.storage.file_benchmark_store import FileBenchmarkStore
 from app.storage.file_job_store import FileJobStore
@@ -74,38 +77,51 @@ class WorkspaceCoordinator:
         job_lock_factory: Callable[[], LockType] = Lock,
         imported_hand_lock_stripes: int = DEFAULT_IMPORTED_HAND_LOCK_STRIPES,
         imported_hand_lock_factory: Callable[[], LockType] = Lock,
+        recovery_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     ) -> Self:
         data_lock = InterprocessDataLock(data_dir)
-        # Exclusive, not shared. The record store's recovery sweep replays
-        # or discards write-journal scratch directories, and it can only
-        # tell a crashed cascade from a live one if no other process can
-        # have a live one: the journal serialises begin() against
-        # recover() within a process and enforces nothing across
-        # processes. Under the previous shared hold, a second process
-        # serving requests could have a cascade open while this one swept
-        # it away, after which that cascade would mark itself ready over
-        # an emptied directory, publish nothing, and raise nothing.
+        imported_hands = FileImportedHandStore(data_dir)
+        # The record store's recovery sweep needs an EXCLUSIVE hold: it
+        # replays or discards write-journal scratch directories, and can
+        # only tell a crashed cascade from a live one if no other process
+        # can have a live one. The journal serialises begin() against
+        # recover() within a process and enforces nothing across them.
         #
-        # The whole of open() moves under the exclusive hold rather than
-        # only the sweep. Two reasons: splitting it would reopen a window
-        # between the sweep and the coordinator existing in which another
-        # process could start a cascade this boot never accounted for; and
-        # recover_interrupted_jobs() *writes* job records, which under the
-        # old shared hold it did concurrently with any other process doing
-        # the same. Startup is the one place where paying for exclusivity
-        # is cheap, so both recoveries take it together.
-        with data_lock.hold(exclusive=True):
+        # The hold is kept as narrow as the requirement allows - the sweep
+        # scans .cascade and nothing else - and is BOUNDED. flock() does
+        # not prioritise waiters, so overlapping shared holders can starve
+        # an exclusive acquire indefinitely, and this runs at import time
+        # (app/main.py -> bootstrap.create_app), before uvicorn binds and
+        # before /api/health can answer. An unbounded wait here means a
+        # rolling deploy against a shared data volume hangs silently and
+        # never turns healthy. A loud startup failure is far better, so
+        # the timeout raises DataLockTimeoutError and it is deliberately
+        # not caught: a stranded half-applied cascade must not be served
+        # around quietly.
+        with data_lock.hold(
+            exclusive=True,
+            timeout_seconds=recovery_lock_timeout_seconds,
+        ):
+            recovery = imported_hands.recover()
+        # Everything else keeps the shared hold it has always had.
+        # recover_interrupted_jobs() reads and validates every job record
+        # on disk, which is the dominant cost here and has no business
+        # inside an exclusive hold taken for the sweep. It does write job
+        # records under a shared lock, which is a real race - but a
+        # pre-existing one, tracked separately, and not fixed by widening
+        # a lock introduced for something else.
+        with data_lock.hold(exclusive=False):
             workspace = cls(
                 jobs=FileJobStore(data_dir),
                 benchmarks=FileBenchmarkStore(data_dir),
-                imported_hands=FileImportedHandStore(data_dir),
+                imported_hands=imported_hands,
                 data_lock=data_lock,
                 job_lock_stripes=job_lock_stripes,
                 job_lock_factory=job_lock_factory,
                 imported_hand_lock_stripes=imported_hand_lock_stripes,
                 imported_hand_lock_factory=imported_hand_lock_factory,
             )
-            workspace.imported_hand_recovery = workspace.imported_hands.recover()
+            workspace.imported_hand_recovery = recovery
             workspace.recover_interrupted_jobs()
         return workspace
 

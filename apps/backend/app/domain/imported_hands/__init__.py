@@ -62,6 +62,7 @@ from app.domain.imported_hands.models import (
     classify_reimport,
     classify_restore,
     derive_structural_positions,
+    imported_hand_canonical_json,
     imported_hand_state_sha256,
     structural_position_labels,
 )
@@ -133,6 +134,7 @@ __all__ = [
     "classify_restore",
     "derive_structural_positions",
     "extract_hero_decision_points",
+    "imported_hand_canonical_json",
     "imported_hand_state_sha256",
     "reconcile_pot",
     "structural_position_labels",

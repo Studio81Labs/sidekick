@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import fcntl
+import inspect
 import json
 import os
+import threading
+import time
 from contextlib import contextmanager
+from threading import Lock
 from collections.abc import Iterator, Sequence
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -14,8 +18,15 @@ from unittest import mock
 import pytest
 from pydantic import ValidationError
 
-from app.application.imported_hand_ports import ImportedHandRecoveryReport
-from app.data_lock import DATA_LOCK_FILENAME
+from app.application.imported_hand_ports import (
+    ImportedHandRecoveryReport,
+    ImportedHandRepository,
+)
+from app.data_lock import (
+    DATA_LOCK_FILENAME,
+    DataLockTimeoutError,
+    InterprocessDataLock,
+)
 from app.domain.imported_hands import (
     CanonicalHandRevision,
     DeletionReceipt,
@@ -29,6 +40,7 @@ from app.domain.imported_hands import (
     SourceChronology,
     StableHandIdentity,
     UserCorrection,
+    imported_hand_canonical_json,
     imported_hand_state_sha256,
 )
 from app.storage.cascade_journal import CascadeJournal, CascadeStaging
@@ -224,19 +236,45 @@ def test_record_key_is_stable_and_identity_derived() -> None:
 
 
 def test_record_key_uses_the_domains_own_canonical_json_form() -> None:
-    """One canonical form, not two that can silently drift apart."""
+    """One canonical form, not a second copy of the formula.
+
+    Two assertions, because either alone is satisfiable by a divergent
+    copy: the first pins the record key to imported_hand_canonical_json's
+    actual output, the second pins the domain's own state digest to that
+    same helper. Changing the serialization now changes both together or
+    fails here.
+    """
     identity = sample_identity()
 
-    expected = sha256(
-        json.dumps(
-            identity.model_dump(mode="json"),
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
+    assert (
+        imported_hand_record_key(identity)
+        == sha256(
+            imported_hand_canonical_json(identity.model_dump(mode="json"))
+        ).hexdigest()
+    )
 
-    assert imported_hand_record_key(identity) == expected
+    canonicalised: list[bytes] = []
+
+    def recording(payload: object) -> bytes:
+        result = imported_hand_canonical_json(payload)
+        canonicalised.append(result)
+        return result
+
+    with mock.patch(
+        "app.domain.imported_hands.models.imported_hand_canonical_json",
+        recording,
+    ):
+        imported_hand_state_sha256(hand_state(identity))
+
+    assert len(canonicalised) == 1, (
+        "imported_hand_state_sha256 no longer routes through the shared "
+        "canonical form"
+    )
+
+
+def _signature_without_self(function: object) -> inspect.Signature:
+    signature = inspect.signature(function)
+    return signature.replace(parameters=list(signature.parameters.values())[1:])
 
 
 def test_save_and_get_round_trip(tmp_path: Path) -> None:
@@ -349,15 +387,28 @@ def test_stored_records_are_revalidated_on_load(tmp_path: Path) -> None:
         store.get(key)
 
 
-def test_list_keys_ignores_the_journals_own_scratch_area(tmp_path: Path) -> None:
-    """.cascade lives beside the records and is not one of them."""
+def test_list_keys_returns_every_record_sorted_and_nothing_else(
+    tmp_path: Path,
+) -> None:
+    """Sorted, and filtered: .cascade and stray directories are not records."""
     store = FileImportedHandStore(tmp_path)
-    record = pending_review_record()
-    key = imported_hand_record_key(record.identity)
-    store.save(key, record)
+    keys: list[str] = []
+    for ordinal in range(1, 6):
+        identity = sample_identity(hand_ordinal=ordinal)
+        key = imported_hand_record_key(identity)
+        store.save(key, pending_review_record(identity))
+        keys.append(key)
+    assert len(set(keys)) == 5
+    assert keys != sorted(keys), "fixture must not already be in sorted order"
 
+    # Neighbours that are not records: the journal's own scratch area, a
+    # directory whose name is not a digest, and a digest-shaped directory
+    # with no record.json in it.
     assert (tmp_path / "imported-hands" / ".cascade").is_dir()
-    assert store.list_keys() == [key]
+    (tmp_path / "imported-hands" / "not-a-record-key").mkdir()
+    (tmp_path / "imported-hands" / ("f" * 64)).mkdir()
+
+    assert store.list_keys() == sorted(keys)
 
 
 def test_save_refuses_a_key_that_is_not_a_derived_digest(tmp_path: Path) -> None:
@@ -437,44 +488,112 @@ def test_recover_reports_nothing_when_there_is_nothing_to_recover(
 def test_recover_keeps_the_three_outcomes_apart(tmp_path: Path) -> None:
     """completed, quarantined and failed mean different things.
 
-    Collapsing them into one list of ids would let a boot report success
-    over a directory nobody has looked at, or set aside one that only
-    needed retrying.
+    Collapsing them would let a boot report success over a directory
+    nobody has looked at, set aside one that only needed retrying, or --
+    the case this covers -- drop the one bucket that says "retry me next
+    boot" and lose a half-applied write silently. All three are produced
+    in a single sweep, and each is checked physically as well as in the
+    report: quarantined moves aside, failed stays exactly where it is.
     """
     store = FileImportedHandStore(tmp_path)
     journal = CascadeJournal(store.records_dir)
     cascade_root = store.records_dir / ".cascade"
 
-    healthy_key = imported_hand_record_key(sample_identity())
-    healthy = journal._prepare(operation="save", record_keys=[healthy_key])
-    healthy_content = (
-        cascade_root / healthy / "staged" / healthy_key / "content"
-    )
-    healthy_content.mkdir(parents=True)
-    (healthy_content / "record.json").write_bytes(
-        pending_review_record().model_dump_json(indent=2).encode("utf-8")
-    )
-    journal._mark_ready(healthy)
+    def stage_ready_cascade(record_key: str, record: ImportedHandRecord) -> str:
+        cascade_id = journal._prepare(  # test seam
+            operation="save", record_keys=[record_key]
+        )
+        content = cascade_root / cascade_id / "staged" / record_key / "content"
+        content.mkdir(parents=True)
+        (content / "record.json").write_bytes(
+            record.model_dump_json(indent=2).encode("utf-8")
+        )
+        journal._mark_ready(cascade_id)  # test seam
+        return cascade_id
 
+    healthy_key = imported_hand_record_key(sample_identity())
+    healthy = stage_ready_cascade(healthy_key, pending_review_record())
+
+    # Structurally unusable: ready, but with no staged/ to replay from.
     corrupt = journal._prepare(operation="save", record_keys=[healthy_key])
     journal._mark_ready(corrupt)
     (cascade_root / corrupt / "staged").rmdir()
+
+    # Perfectly formed, but commit cannot land it: a regular file sits
+    # where the record's own directory has to be created, so mkdir raises.
+    # Nothing about the cascade is wrong, so it must be retried, not moved.
+    failing_identity = sample_identity(hand_ordinal=7)
+    failing_key = imported_hand_record_key(failing_identity)
+    failing = stage_ready_cascade(
+        failing_key, pending_review_record(failing_identity)
+    )
+    (store.records_dir / failing_key).write_bytes(b"not a directory")
 
     report = store.recover()
 
     assert report.completed == (healthy,)
     assert report.quarantined == (corrupt,)
-    assert report.failed == ()
-    assert (cascade_root / "corrupt" / corrupt).is_dir()
+    assert report.failed == (failing,)
+
+    # Quarantine moved the corrupt one aside, with its evidence.
+    assert sorted(path.name for path in (cascade_root / "corrupt").iterdir()) == [
+        corrupt
+    ]
+    # The failing one was left untouched, staged tree and all, so the next
+    # sweep can retry it once the cause is cleared.
+    assert (cascade_root / failing / "ready").is_file()
+    assert (
+        cascade_root / failing / "staged" / failing_key / "content" / "record.json"
+    ).is_file()
     assert store.list_keys() == [healthy_key]
 
 
-def test_the_repository_protocol_is_satisfied_structurally(tmp_path: Path) -> None:
-    from app.application.imported_hand_ports import ImportedHandRepository
+def test_a_failed_cascade_is_retried_and_completed_by_the_next_sweep(
+    tmp_path: Path,
+) -> None:
+    """That is the whole point of `failed`: it is not terminal."""
+    store = FileImportedHandStore(tmp_path)
+    journal = CascadeJournal(store.records_dir)
+    identity = sample_identity()
+    record = pending_review_record(identity)
+    key = imported_hand_record_key(identity)
+    cascade_id = journal._prepare(operation="save", record_keys=[key])  # test seam
+    content = store.records_dir / ".cascade" / cascade_id / "staged" / key / "content"
+    content.mkdir(parents=True)
+    (content / "record.json").write_bytes(
+        record.model_dump_json(indent=2).encode("utf-8")
+    )
+    journal._mark_ready(cascade_id)  # test seam
+    blocker = store.records_dir / key
+    blocker.write_bytes(b"not a directory")
 
-    repository: ImportedHandRepository = FileImportedHandStore(tmp_path)
+    assert store.recover() == ImportedHandRecoveryReport(failed=(cascade_id,))
 
-    assert repository.list_keys() == []
+    blocker.unlink()
+
+    assert store.recover() == ImportedHandRecoveryReport(completed=(cascade_id,))
+    assert store.get(key) == record
+
+
+def test_the_file_store_matches_the_repository_protocol_member_for_member() -> None:
+    """A bare annotation checks nothing: no mypy or ruff runs in this repo.
+
+    Compare the declared and implemented signatures directly, so a deleted
+    method or a changed parameter list fails here rather than at the first
+    call site in a later task.
+    """
+    declared = sorted(
+        name for name in vars(ImportedHandRepository) if not name.startswith("_")
+    )
+    assert declared == ["find", "get", "list_keys", "recover", "save"]
+
+    for name in declared:
+        protocol_member = getattr(ImportedHandRepository, name)
+        implementation = getattr(FileImportedHandStore, name, None)
+        assert implementation is not None, f"{name} is not implemented"
+        assert _signature_without_self(implementation) == _signature_without_self(
+            protocol_member
+        ), name
 
 
 def shared_data_lock_is_blocked(data_dir: Path) -> bool:
@@ -489,6 +608,20 @@ def shared_data_lock_is_blocked(data_dir: Path) -> bool:
     try:
         try:
             fcntl.flock(descriptor, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(descriptor)
+
+
+def exclusive_data_lock_is_blocked(data_dir: Path) -> bool:
+    """True when something holds the data lock at all, shared or exclusive."""
+    descriptor = os.open(data_dir / DATA_LOCK_FILENAME, os.O_RDONLY | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             return True
         fcntl.flock(descriptor, fcntl.LOCK_UN)
@@ -523,10 +656,8 @@ def test_workspace_recovers_records_under_an_exclusive_interprocess_lock(
     assert not shared_data_lock_is_blocked(tmp_path)
 
 
-def test_workspace_still_recovers_interrupted_jobs_under_the_exclusive_hold(
-    tmp_path: Path,
-) -> None:
-    """The stronger hold must not drop the recovery that already ran there."""
+def test_workspace_still_recovers_interrupted_jobs(tmp_path: Path) -> None:
+    """Narrowing the exclusive hold must not drop the recovery beside it."""
     from app.storage.file_job_store import FileJobStore
     from app.workspace import INTERRUPTED_PARSER_ERROR
 
@@ -543,18 +674,143 @@ def test_workspace_still_recovers_interrupted_jobs_under_the_exclusive_hold(
     assert recovered.error == INTERRUPTED_PARSER_ERROR
 
 
-def test_record_locks_are_held_before_the_journal_lock(tmp_path: Path) -> None:
-    """Record stripes outside, journal inside -- never the reverse.
+def test_job_recovery_stays_outside_the_exclusive_hold(tmp_path: Path) -> None:
+    """The exclusive hold covers the cascade sweep and nothing more.
 
-    The journal's lock is held for the whole of a save and is a leaf lock.
-    A workspace stripe taken from inside an open cascade would invert the
-    ordering workspace.py establishes and deadlock two callers whose
-    record sets overlap.
+    recover_interrupted_jobs() reads and validates every job record on
+    disk. That scan is the dominant cost of startup and must not be what
+    other processes are blocked behind, so it runs under the shared hold
+    it has always had.
     """
-    workspace = WorkspaceCoordinator.open(tmp_path)
+    from app.storage.file_job_store import FileJobStore
+
+    FileJobStore(tmp_path).create_job(
+        original_filename="parsing.png",
+        image_bytes=b"image",
+        parser_provider="mock",
+    )
+    observed: list[bool] = []
+    real_recover_jobs = WorkspaceCoordinator.recover_interrupted_jobs
+
+    def recording_recover_jobs(self: WorkspaceCoordinator) -> None:
+        observed.append(shared_data_lock_is_blocked(tmp_path))
+        real_recover_jobs(self)
+
+    with mock.patch.object(
+        WorkspaceCoordinator, "recover_interrupted_jobs", recording_recover_jobs
+    ):
+        WorkspaceCoordinator.open(tmp_path)
+
+    assert observed == [False]
+
+
+def test_startup_gives_up_loudly_rather_than_hanging_on_a_held_lock(
+    tmp_path: Path,
+) -> None:
+    """flock has no writer preference, so the wait must be bounded.
+
+    open() runs at import time, before uvicorn binds and before
+    /api/health can answer. An unbounded exclusive acquire there means a
+    container that hangs silently and never turns healthy, so a deploy
+    wedges instead of failing. The error must name the lock file, and the
+    sweep must not be skipped to get past it.
+    """
+    data_lock = InterprocessDataLock(tmp_path)
+    descriptor = data_lock.acquire(exclusive=True)
+    try:
+        with pytest.raises(DataLockTimeoutError) as failure:
+            WorkspaceCoordinator.open(tmp_path, recovery_lock_timeout_seconds=0)
+    finally:
+        data_lock.release(descriptor)
+
+    message = str(failure.value)
+    assert DATA_LOCK_FILENAME in message
+    assert "exclusive" in message
+
+
+def test_startup_waits_for_a_lock_that_is_released_in_time(tmp_path: Path) -> None:
+    """The bound is a deadline, not a single attempt."""
+    data_lock = InterprocessDataLock(tmp_path)
+    descriptor = data_lock.acquire(exclusive=True)
+    released = threading.Event()
+
+    def release_shortly() -> None:
+        time.sleep(0.2)
+        data_lock.release(descriptor)
+        released.set()
+
+    releaser = threading.Thread(target=release_shortly)
+    releaser.start()
+    try:
+        workspace = WorkspaceCoordinator.open(tmp_path, recovery_lock_timeout_seconds=10)
+    finally:
+        releaser.join()
+
+    assert released.is_set(), "open() returned before the lock was released"
+    assert workspace.imported_hand_recovery == ImportedHandRecoveryReport()
+
+
+def test_save_holds_the_data_lock_shared_for_its_whole_cascade(
+    tmp_path: Path,
+) -> None:
+    """Exclusivity for the sweep is meaningless unless writers lock too.
+
+    /mcp is exempt from the middleware's data lock entirely and already
+    carries mutating tools; a background thread or a non-mutating GET is
+    exempt as well. A cascade opened with no interprocess lock is
+    invisible to a recover() sweeping in another process, which would
+    delete its staged files mid-flight. So save() takes the shared hold
+    itself instead of inheriting one by accident.
+    """
+    store = FileImportedHandStore(tmp_path)
     record = pending_review_record()
     key = imported_hand_record_key(record.identity)
-    stripe_held_at_begin: list[bool] = []
+    held_during_cascade: list[bool] = []
+    real_stage = CascadeStaging.stage
+
+    def observing_stage(
+        staging: CascadeStaging,
+        record_key: str,
+        relative_path: str,
+        payload: bytes,
+    ) -> None:
+        held_during_cascade.append(exclusive_data_lock_is_blocked(tmp_path))
+        real_stage(staging, record_key, relative_path, payload)
+
+    with mock.patch.object(CascadeStaging, "stage", observing_stage):
+        store.save(key, record)
+
+    assert held_during_cascade == [True]
+    # And the hold is released again once the write is done.
+    assert not exclusive_data_lock_is_blocked(tmp_path)
+
+
+def test_a_save_composes_with_a_shared_hold_the_caller_already_has(
+    tmp_path: Path,
+) -> None:
+    """A mutating request already holds the lock shared; shared holds compose."""
+    store = FileImportedHandStore(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+
+    with InterprocessDataLock(tmp_path).hold(exclusive=False):
+        store.save(key, record)
+
+    assert store.get(key) == record
+
+
+def test_save_publishes_through_the_journal(tmp_path: Path) -> None:
+    """Named for what it pins: every record write opens a cascade.
+
+    It does not pin the caller-side half of the lock ordering -- that
+    obligation belongs to callers, and there are none yet. See
+    test_save_acquires_no_workspace_lock_of_its_own for the half the
+    store itself can violate.
+    """
+    store = FileImportedHandStore(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+    opened: list[tuple[str, list[str]]] = []
     real_begin = CascadeJournal.begin
 
     @contextmanager
@@ -564,24 +820,70 @@ def test_record_locks_are_held_before_the_journal_lock(tmp_path: Path) -> None:
         operation: str,
         record_keys: Sequence[str],
     ) -> Iterator[CascadeStaging]:
-        stripe_held_at_begin.append(
-            all(
-                workspace.imported_hand_lock_for(record_key).locked()
-                for record_key in record_keys
-            )
-        )
+        opened.append((operation, list(record_keys)))
         with real_begin(
             journal, operation=operation, record_keys=record_keys
         ) as staging:
             yield staging
 
     with mock.patch.object(CascadeJournal, "begin", observing_begin):
-        with workspace.hold_imported_hands([key]):
-            workspace.imported_hands.save(key, record)
+        store.save(key, record)
 
-    assert stripe_held_at_begin == [True]
-    assert not workspace.imported_hand_lock_for(key).locked()
-    assert workspace.imported_hands.get(key) == record
+    assert opened == [("save", [key])]
+    assert store.get(key) == record
+
+
+def test_save_acquires_no_workspace_lock_of_its_own(tmp_path: Path) -> None:
+    """The journal must stay the innermost lock.
+
+    workspace.py orders benchmark_corpus_lock -> job_locks -> history_lock
+    above the journal, and the journal's own lock is held for the whole of
+    a save. If the store reached back for a workspace stripe from inside
+    its open cascade, that order would invert into an ABBA deadlock
+    against any caller holding the stripe first. So the store must take no
+    workspace lock at all -- which is the half of the rule code here can
+    break, and the half a test can therefore pin.
+
+    Both arrangements are exercised: a save with no stripe held, and a
+    save inside the stripe a caller is expected to hold, which must also
+    not deadlock.
+    """
+    entered: list[int] = []
+
+    class RecordingLock:
+        def __init__(self, index: int) -> None:
+            self.index = index
+            self._lock = Lock()
+
+        def locked(self) -> bool:
+            return self._lock.locked()
+
+        def __enter__(self) -> "RecordingLock":
+            entered.append(self.index)
+            self._lock.acquire()
+            return self
+
+        def __exit__(self, *exception: object) -> None:
+            self._lock.release()
+
+    stripes = iter(range(4))
+    workspace = WorkspaceCoordinator.open(
+        tmp_path,
+        imported_hand_lock_stripes=4,
+        imported_hand_lock_factory=lambda: RecordingLock(next(stripes)),
+    )
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+
+    workspace.imported_hands.save(key, record)
+
+    assert entered == [], "save() reached for a workspace lock of its own"
+
+    with workspace.hold_imported_hands([key]):
+        workspace.imported_hands.save(key, approved_record())
+
+    assert entered == [workspace.imported_hand_lock_index(key)]
+    assert workspace.imported_hands.get(key).lifecycle.status == "active"
 
 
 def test_hold_imported_hands_enters_stripes_in_sorted_index_order(
