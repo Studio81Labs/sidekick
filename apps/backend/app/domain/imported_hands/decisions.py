@@ -335,9 +335,15 @@ class HandDecisionExtraction(ImportedHandModel):
         Without this, a rehydrated envelope could mix revisions or generations,
         or reorder what the hand actually did, and supersede or deletion logic
         would treat stale decisions as current.
+
+        ``chronology`` and ``provenance`` are hand-level facts rather than
+        envelope fields, so they are bound by requiring the points to agree with
+        each other: every point in one envelope came from one hand, and points
+        that disagree can only have been assembled by hand or corrupted.
         """
 
         for point in self.decision_points:
+            reference = self.decision_points[0]
             if point.identity != self.identity:
                 raise ValueError(
                     "decision point identity does not match the extracted hand"
@@ -351,6 +357,14 @@ class HandDecisionExtraction(ImportedHandModel):
                 raise ValueError(
                     "decision point deletion generation does not match the"
                     " extracted hand"
+                )
+            if point.chronology != reference.chronology:
+                raise ValueError(
+                    "decision points must agree on the hand's source chronology"
+                )
+            if point.provenance != reference.provenance:
+                raise ValueError(
+                    "decision points must agree on the hand's import provenance"
                 )
         indexes = [point.decision_index for point in self.decision_points]
         if indexes != list(range(len(indexes))):

@@ -1819,6 +1819,14 @@ def reversed_excluded_actions(payload: dict[str, object]) -> None:
     payload["excluded_actions"] = list(reversed(payload["excluded_actions"]))
 
 
+def divergent_chronology(payload: dict[str, object]) -> None:
+    payload["decision_points"][1]["chronology"]["hand_ordinal"] = 99
+
+
+def divergent_provenance(payload: dict[str, object]) -> None:
+    payload["decision_points"][1]["provenance"]["import_id"] = "import-other"
+
+
 def excluded_action_shadowing_a_decision(payload: dict[str, object]) -> None:
     point = payload["decision_points"][0]
     shadow = dict(payload["excluded_actions"][0])
@@ -1839,6 +1847,8 @@ def excluded_action_shadowing_a_decision(payload: dict[str, object]) -> None:
             foreign_deletion_generation,
             "deletion generation does not match the extracted hand",
         ),
+        (divergent_chronology, "must agree on the hand's source chronology"),
+        (divergent_provenance, "must agree on the hand's import provenance"),
         (gapped_decision_indexes, "contiguous and ordered from zero"),
         (duplicated_decision_index, "contiguous and ordered from zero"),
         (
