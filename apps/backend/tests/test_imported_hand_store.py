@@ -24,10 +24,12 @@ from app.application.imported_hand_ports import (
     ImportedHandRepository,
     ReimportResolution,
 )
+from app.config import Settings
 from app.data_lock import (
     DATA_LOCK_FILENAME,
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     DataLockTimeoutError,
     InterprocessDataLock,
 )
@@ -1379,6 +1381,59 @@ def test_the_shared_startup_budget_is_far_larger_than_the_exclusive_one() -> Non
         DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS
         > DEFAULT_DATA_LOCK_TIMEOUT_SECONDS * 10
     ), "the shared bound must sit well clear of a slow but legitimate export"
+
+
+def test_all_three_data_lock_budgets_are_tunable_without_moving_each_other(
+    tmp_path: Path,
+) -> None:
+    """Three bounds, three settings, no shared constant behind them.
+
+    The write hold's default equals the startup *exclusive* bound today,
+    which is a coincidence: one protects a request-path write against an
+    exclusive holder and should fail fast, the other protects a boot
+    against starvation. Sharing a constant would mean the next person
+    raising the recovery bound - because a sweep timed out on a slow
+    volume - silently changed how long a client waits for a write, with
+    nothing connecting the two.
+
+    RED for this test is **structural**, not substantive: this round is a
+    decoupling with no behaviour change, so there is no wrong output to
+    reproduce. What it pins is that the three names stay distinct and that
+    the write budget really reaches the store.
+    """
+    assert DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS == 30
+
+    # Each setting moves on its own.
+    for field, other_fields in (
+        (
+            "data_lock_recovery_timeout_seconds",
+            ("data_lock_startup_timeout_seconds", "data_lock_write_timeout_seconds"),
+        ),
+        (
+            "data_lock_startup_timeout_seconds",
+            ("data_lock_recovery_timeout_seconds", "data_lock_write_timeout_seconds"),
+        ),
+        (
+            "data_lock_write_timeout_seconds",
+            ("data_lock_recovery_timeout_seconds", "data_lock_startup_timeout_seconds"),
+        ),
+    ):
+        baseline = Settings(data_dir=tmp_path)
+        tuned = Settings(data_dir=tmp_path, **{field: 123})
+        assert getattr(tuned, field) == 123
+        for untouched in other_fields:
+            assert getattr(tuned, untouched) == getattr(baseline, untouched), (
+                f"tuning {field} moved {untouched}"
+            )
+
+    # And the write budget is not merely a setting nobody reads: it
+    # reaches the store, through the coordinator that builds it.
+    assert (
+        FileImportedHandStore(tmp_path)._write_lock_timeout_seconds
+        == DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS
+    )
+    workspace = WorkspaceCoordinator.open(tmp_path, write_lock_timeout_seconds=17)
+    assert workspace.imported_hands._write_lock_timeout_seconds == 17
 
 
 def test_save_holds_the_data_lock_shared_for_its_whole_cascade(

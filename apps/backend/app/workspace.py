@@ -16,6 +16,7 @@ from app.application.imported_hand_ports import (
 from app.data_lock import (
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     InterprocessDataLock,
 )
 from app.domain.hands import JobRecord
@@ -80,9 +81,14 @@ class WorkspaceCoordinator:
         imported_hand_lock_factory: Callable[[], LockType] = Lock,
         recovery_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
         startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+        write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     ) -> Self:
         data_lock = InterprocessDataLock(data_dir)
-        imported_hands = FileImportedHandStore(data_dir)
+        # Not one of the startup bounds: this one travels with the store
+        # and governs its request-path writes long after open() returns.
+        imported_hands = FileImportedHandStore(
+            data_dir, write_lock_timeout_seconds=write_lock_timeout_seconds
+        )
         # The record store's recovery sweep needs an EXCLUSIVE hold: it
         # replays or discards write-journal scratch directories, and can
         # only tell a crashed cascade from a live one if no other process

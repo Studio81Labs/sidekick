@@ -9,23 +9,35 @@ from pathlib import Path
 
 DATA_LOCK_FILENAME = ".poker-hero-data.lock"
 
-# Two bounds, because the two sides of this lock fail in different ways
-# and must not share a number.
+# Three bounds. They are separate because they protect against different
+# failures, not because the numbers differ - two of them are equal today,
+# and that is a coincidence rather than a link. Anyone tuning one of these
+# must be able to do it without silently moving the others.
 #
-# An EXCLUSIVE acquire can be starved indefinitely: flock() has no writer
-# preference, so a steady stream of overlapping shared holders can keep
-# one waiting forever. There is no length of wait that makes that
-# succeed, so the bound is tight - fail fast and say so.
-#
-# A SHARED acquire is blocked only by exclusive holders, and those
-# *drain*: the backup export finishes its archive and the wait ends.
-# Waiting is the correct behaviour there, so the bound exists only to
-# convert a genuinely stuck system into a message instead of an infinite
-# wedge with no log line. It has to sit well clear of a legitimate
-# export, which the runbook schedules daily and which builds up to a
-# 100 MB archive under the exclusive side.
+# STARTUP, EXCLUSIVE side (the imported-hand recovery sweep). An exclusive
+# acquire can be starved indefinitely: flock() has no writer preference,
+# so a steady stream of overlapping shared holders can keep one waiting
+# forever. No length of wait rescues that, so the bound is tight - fail
+# fast and say which side was wanted.
 DEFAULT_DATA_LOCK_TIMEOUT_SECONDS = 30
+
+# STARTUP, SHARED side (everything else a boot does). Blocked only by
+# exclusive holders, and those *drain*: the backup export finishes its
+# archive and the wait ends. Waiting is the correct behaviour, so this
+# bound exists only to turn a genuinely stuck system into a message
+# instead of an infinite wedge with no log line, and it sits well clear of
+# a legitimate export - the runbook schedules one daily, building up to a
+# 100 MB archive under the exclusive side.
 DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS = 600
+
+# WRITE hold (a record store cascade). Also a shared acquire, so also
+# blocked only by an exclusive holder - an export, or another instance's
+# recovery sweep. Unlike startup, failing fast here is the point rather
+# than a hazard: this runs on a request path, where a write that gives up
+# with a named error is a better answer than one that stalls a client for
+# the length of an archive build. Equal to the startup exclusive bound by
+# coincidence, not by connection.
+DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS = 30
 
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 _MILLISECONDS_PER_SECOND = 1_000

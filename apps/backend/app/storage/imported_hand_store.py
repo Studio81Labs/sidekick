@@ -130,7 +130,7 @@ from app.application.imported_hand_ports import (
     ReimportResolution,
 )
 from app.data_lock import (
-    DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     InterprocessDataLock,
 )
 from app.domain.imported_hands import (
@@ -243,8 +243,27 @@ class FileImportedHandStore:
         self,
         data_dir: Path,
         *,
-        write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+        write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     ) -> None:
+        """Open the store rooted at ``data_dir``.
+
+        ``write_lock_timeout_seconds`` bounds the shared interprocess hold
+        every write takes (see the module docstring on why writes lock at
+        all). What it protects against is a caller holding the data lock
+        *exclusively* while a write wants in: a backup export building an
+        archive, another instance's startup recovery sweep, or -- the bug
+        case -- this process itself, since a write nested inside an
+        exclusive hold would block on that hold forever.
+
+        Failing fast is deliberate here, and it is the opposite of what
+        startup wants. A write runs on a request path, where giving up
+        with a named ``DataLockTimeoutError`` beats stalling a client for
+        the length of an archive build; startup has nowhere to return an
+        error to and so waits an export out instead. The two therefore
+        have separate settings, and the fact that this default currently
+        equals the startup *exclusive* bound is a coincidence, not a link
+        -- either may move without the other.
+        """
         self.data_dir = Path(data_dir)
         self.records_dir = (self.data_dir / IMPORTED_HANDS_DIRNAME).resolve()
         self.records_dir.mkdir(parents=True, exist_ok=True)

@@ -12,6 +12,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.data_lock import (
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
 )
 from app.ocr_layouts import OCR_CV_LAYOUT_PROFILE_IDS
 
@@ -102,6 +103,14 @@ class Settings(BaseSettings):
     # it exists to bound a stuck system, not a slow export.
     data_lock_startup_timeout_seconds: int = Field(
         default=DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS, gt=0
+    )
+    # The shared acquire each imported-hand write takes. Separate from
+    # both of the above: it runs on a request path, where failing fast is
+    # the right answer rather than a hazard, so it must not move when
+    # someone tunes a startup bound. Equal to the recovery default today
+    # by coincidence, not by connection.
+    data_lock_write_timeout_seconds: int = Field(
+        default=DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS, gt=0
     )
     deployment_environment: Literal["local", "staging", "production"] = "local"
     data_volume_id: str | None = Field(
