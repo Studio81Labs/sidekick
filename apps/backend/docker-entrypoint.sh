@@ -11,4 +11,5 @@ if [ -n "$BACKUP_DIR" ]; then
     chown -R poker:poker "$BACKUP_DIR"
 fi
 
+gosu poker python -m app.deployment_cleanup
 exec gosu poker "$@"

@@ -86,12 +86,12 @@ import and backup restore until the mode is enabled again; no setting restores
 player-accessible capture or automatic recommendations.
 
 This release removes the V1 recommendation and training routes and the
-"recommended" job status; reset the staging `POKER_DATA_DIR` (or delete jobs in
-that status) before deploying, because no migration is provided. A job persisted
-with the removed `recommended` status is rejected when the backend validates its
-store at startup, so the process fails to start until that record is removed;
-backup archives exported before this release that contain such a job are refused
-by `POST /api/backups/restore` with a 400.
+`recommended` job status. Before the backend starts, the container entrypoint
+deletes job directories whose raw record has that retired status. It leaves
+current records and malformed or unknown records untouched, and it takes the
+exclusive data-volume lock before deleting anything. Current application
+models remain strict; pre-release backups containing a `recommended` job are
+still refused by `POST /api/backups/restore` with a 400.
 
 After deployment, verify:
 
@@ -257,16 +257,23 @@ of a normal archive build so that a legitimate export never fails a deploy; the
 bound exists only so a genuinely stuck volume produces a message instead of a
 container hanging forever with no log line.
 
-The backend takes the **exclusive** side only when the imported-hand store has a
+The container entrypoint takes the **exclusive** side when its raw preflight scan
+finds a screenshot job with the retired `recommended` status. Under the lock it
+rechecks the candidates, deletes only matching valid job directories, and
+fsyncs the job store before current application models open it. With no matching
+record, it skips the lock entirely.
+
+The backend also takes the **exclusive** side when the imported-hand store has a
 write journal entry left behind by an interrupted write - the state a crash
-leaves, not the state a healthy volume is in. When there is nothing to recover
-that acquire is skipped entirely, so a normal boot never requests exclusivity at
-all. When it is needed it is bounded by
+leaves, not the state a healthy volume is in. When there is nothing to clean or
+recover, both acquires are skipped, so a normal boot never requests exclusivity.
+When either is needed it is bounded by
 `POKER_DATA_LOCK_RECOVERY_TIMEOUT_SECONDS` (default 30), deliberately much
 tighter: `flock` gives no preference to waiters, so an exclusive acquire can be
 starved indefinitely by overlapping shared holders rather than merely delayed,
-and no length of wait fixes that. The recovery sweep is never skipped to get past
-its timeout, because an unrecovered half-applied write must not be served around.
+and no length of wait fixes that. Cleanup and recovery are never skipped to get
+past their timeout, because retired state or an unrecovered half-applied write
+must not be served around.
 
 Either bound expiring makes the backend **fail to start** with a
 `DataLockTimeoutError` naming the lock file and which side it wanted, because
