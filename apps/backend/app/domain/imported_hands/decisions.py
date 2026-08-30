@@ -153,8 +153,9 @@ class HeroDecisionState(ImportedHandModel):
     validator itself would reject.
 
     ``last_full_wager_increment`` is the yardstick a minimum legal raise is
-    measured against. ``None`` means the aggregate could not establish it and
-    must never be read as zero; a consumer that cannot size a raise has to
+    measured against. ``None`` means the aggregate could not establish
+    it; a known increment is always positive, so ``None`` is the only "unknown"
+    and can never be confused with one; a consumer that cannot size a raise has to
     withhold it rather than offer one of arbitrary size.
 
     ``action_history`` is the ordered betting line: every street from preflop
@@ -179,7 +180,7 @@ class HeroDecisionState(ImportedHandModel):
     pot_before_action: NonNegativeDecimal
     current_wager: NonNegativeDecimal
     amount_to_call: NonNegativeDecimal
-    last_full_wager_increment: NonNegativeDecimal | None
+    last_full_wager_increment: PositiveDecimal | None
     raise_reopened: bool
     hero_stack_before_action: NonNegativeDecimal
     seats: list[SeatDecisionState]

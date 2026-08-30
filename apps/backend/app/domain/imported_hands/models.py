@@ -2291,9 +2291,10 @@ class HeroActionContext(ImportedHandModel):
 
     ``last_full_wager_increment`` is the yardstick a minimum legal raise is
     measured against -- the last full bet or raise increment still in force.
-    ``None`` means the aggregate could not establish it and must never be read
-    as zero: a consumer that cannot size a raise has to withhold the raise
-    rather than offer one of arbitrary size.
+    ``None`` means the aggregate could not establish it; a known increment is
+    always positive, so ``None`` is the only "unknown" and can never be
+    confused with one. A consumer that cannot size a raise has to withhold the
+    raise rather than offer one of arbitrary size.
 
     ``raise_reopened`` reports whether raising is legal for the hero here.
     It is ``False`` for either of two reasons the hand validator enforces:
@@ -2334,7 +2335,7 @@ class HeroActionContext(ImportedHandModel):
     pot_before_action: NonNegativeDecimal
     current_wager: NonNegativeDecimal
     amount_to_call: NonNegativeDecimal
-    last_full_wager_increment: NonNegativeDecimal | None
+    last_full_wager_increment: PositiveDecimal | None
     raise_reopened: bool
     hero_stack_before_action: NonNegativeDecimal
     seats: list[SeatDecisionState]

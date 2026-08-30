@@ -12,6 +12,7 @@ from app.domain.imported_hands import (
     DeletionRequest,
     ExcludedHeroAction,
     HandDecisionExtraction,
+    HeroActionContext,
     HeroDecisionPoint,
     ImportProvenance,
     ImportedHandLifecycle,
@@ -2111,3 +2112,34 @@ def test_hand_decision_extraction_requires_hand_provenance(outcome: str) -> None
         with pytest.raises(ValidationError, match=f"a {outcome} outcome {expected}"):
             HandDecisionExtraction.model_validate({**payload, field_name: None})
 
+
+def test_decision_types_reject_a_zero_full_wager_increment() -> None:
+    """Zero is never a legal yardstick; unknown stays distinct as ``None``."""
+
+    record = multi_street_decision_record()
+    context = record.active_hero_decision_contexts[0]
+    point = extract_hero_decision_points(record).decision_points[0]
+
+    assert context.last_full_wager_increment == Decimal("1")
+    assert point.state.last_full_wager_increment == Decimal("1")
+
+    context_payload = context.model_dump(mode="python")
+    state_payload = point.state.model_dump(mode="python")
+    for model, payload in (
+        (HeroActionContext, context_payload),
+        (decisions.HeroDecisionState, state_payload),
+    ):
+        assert model.model_validate(payload) is not None
+        assert (
+            model.model_validate(
+                {**payload, "last_full_wager_increment": None}
+            ).last_full_wager_increment
+            is None
+        )
+        assert model.model_validate(
+            {**payload, "last_full_wager_increment": Decimal("2")}
+        ).last_full_wager_increment == Decimal("2")
+        with pytest.raises(ValidationError, match="greater than 0"):
+            model.model_validate(
+                {**payload, "last_full_wager_increment": Decimal(0)}
+            )
