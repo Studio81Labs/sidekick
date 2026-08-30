@@ -17654,3 +17654,180 @@ def test_hero_decision_context_infers_all_in_from_an_exhausted_stack() -> None:
     assert seats["villain"].stack_before_action == Decimal(0)
     assert seats["hero"].status == "live"
     assert seats["villain-2"].status == "live"
+
+
+def heads_up_shove_and_call_decision_record() -> ImportedHandRecord:
+    """Build a heads-up hand where the hero can only call or fold a flop shove.
+
+    The hero has not acted on the flop, so wager history alone would say
+    raising is reopened; villain is all-in, so no opponent could answer a raise
+    and the hand validator would reject one.
+    """
+
+    board = decision_context_board()
+    payload = extraction_ready_state_payload()
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2,
+                    "hero",
+                    "call",
+                    amount=Decimal("0.5"),
+                    total=Decimal("1"),
+                ),
+                wager_action(3, "villain", "check", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "board_cards": board[:3],
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "bet",
+                    amount=Decimal("99"),
+                    total=Decimal("99"),
+                    all_in=True,
+                ),
+                wager_action(
+                    1,
+                    "hero",
+                    "call",
+                    amount=Decimal("99"),
+                    total=Decimal("99"),
+                    all_in=True,
+                ),
+            ],
+        },
+        {"street": "turn", "board_cards": board[:4], "actions": []},
+        {"street": "river", "board_cards": board, "actions": []},
+    ]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("200")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
+
+
+def test_hero_decision_context_closes_raising_when_no_opponent_can_respond() -> None:
+    record = heads_up_shove_and_call_decision_record()
+
+    contexts = record.active_hero_decision_contexts
+
+    assert [
+        (context.street, context.action_sequence) for context in contexts
+    ] == [("preflop", 2), ("flop", 1)]
+    facing_shove = contexts[1]
+
+    # The hero has not acted on this street, so prior wager history alone would
+    # report raising as reopened; the sole live opponent is all-in, so nobody
+    # could answer a raise and the aggregate would reject one.
+    assert facing_shove.current_wager == Decimal("99")
+    assert facing_shove.amount_to_call == Decimal("99")
+    assert facing_shove.raise_reopened is False
+    seats = {seat.player_id: seat for seat in facing_shove.seats}
+    assert seats["villain"].status == "all_in"
+    assert seats["villain"].stack_before_action == Decimal(0)
+    assert seats["hero"].status == "live"
+
+    # Raising was open before the shove, so the verdict tracks the table.
+    assert contexts[0].raise_reopened is True
+
+
+def test_hero_decision_context_restores_an_inferred_all_in_after_a_return() -> None:
+    """The walk shares the validator's terminal transition, reversal included.
+
+    ``validate_hand`` rejects every hand that puts a hero decision after an
+    uncalled return -- betting is closed once the only actionable player has
+    matched the wager -- so the reversal is exercised through the rule both the
+    validator and the extraction walk now run.
+    """
+
+    from app.domain.imported_hands.models import _apply_terminal_transition
+
+    terminal_actors: dict[str, tuple[str, str]] = {}
+    live_players = {"hero", "villain"}
+    actionable_players = {"hero", "villain"}
+    inferred_stack_exhausted_players: set[str] = set()
+    exhausting_bet = ImportedAction.model_validate(
+        wager_action(0, "hero", "bet", amount=Decimal("5"), total=Decimal("5"))
+    )
+    uncalled_return = ImportedAction.model_validate(
+        forced_post(1, "uncalled_return", amount=Decimal("2"), total=Decimal("3"))
+    )
+
+    reversed_by_bet = _apply_terminal_transition(
+        exhausting_bet,
+        "flop",
+        confirmed_all_in=False,
+        known_stack_exhausted=True,
+        terminal_actors=terminal_actors,
+        live_players=live_players,
+        actionable_players=actionable_players,
+        inferred_stack_exhausted_players=inferred_stack_exhausted_players,
+    )
+
+    assert reversed_by_bet is False
+    assert terminal_actors == {"hero": ("all_in", "flop")}
+    assert actionable_players == {"villain"}
+    assert inferred_stack_exhausted_players == {"hero"}
+
+    reversed_by_return = _apply_terminal_transition(
+        uncalled_return,
+        "flop",
+        confirmed_all_in=False,
+        known_stack_exhausted=False,
+        terminal_actors=terminal_actors,
+        live_players=live_players,
+        actionable_players=actionable_players,
+        inferred_stack_exhausted_players=inferred_stack_exhausted_players,
+    )
+
+    # The return restored the hero's chips, so the inferred all-in is reversed
+    # and any hand-wide betting closure has to be reconsidered.
+    assert reversed_by_return is True
+    assert terminal_actors == {}
+    assert actionable_players == {"hero", "villain"}
+    assert inferred_stack_exhausted_players == set()
+
+
+def test_hero_decision_context_never_publishes_a_stale_all_in_seat() -> None:
+    """No emitted seat may be all-in while it still has chips behind."""
+
+    records = [
+        heads_up_shove_and_call_decision_record(),
+        short_all_in_raise_decision_record(),
+        unmarked_all_in_blind_decision_record(),
+        contested_decision_record(),
+        uncalled_return_decision_record(),
+        multi_street_decision_record(),
+    ]
+
+    published = [
+        (seat.status, seat.stack_before_action)
+        for record in records
+        for context in record.active_hero_decision_contexts
+        for seat in context.seats
+    ]
+
+    assert published
+    assert all(
+        (status == "all_in") == (stack_before_action == 0)
+        or status == "folded"
+        for status, stack_before_action in published
+    )

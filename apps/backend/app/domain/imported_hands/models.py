@@ -1656,30 +1656,25 @@ class ImportedHandState(ImportedHandModel):
                     )
                 ):
                     forced_stack_exhausted_players.add(action.actor_id)
-                if action.action_type == "fold":
-                    terminal_actors[action.actor_id] = ("folded", street.street)
-                    inferred_stack_exhausted_players.discard(action.actor_id)
-                    live_players.discard(action.actor_id)
-                    actionable_players.discard(action.actor_id)
-                    if len(live_players) == 1:
-                        fold_end = (street.street, next(iter(live_players)))
-                elif confirmed_all_in:
-                    terminal_actors[action.actor_id] = ("all_in", street.street)
-                    inferred_stack_exhausted_players.discard(action.actor_id)
-                    actionable_players.discard(action.actor_id)
-                elif known_stack_exhausted:
-                    terminal_actors[action.actor_id] = ("all_in", street.street)
-                    inferred_stack_exhausted_players.add(action.actor_id)
-                    actionable_players.discard(action.actor_id)
-                elif action.actor_id in inferred_stack_exhausted_players:
-                    terminal_actors.pop(action.actor_id, None)
-                    inferred_stack_exhausted_players.discard(action.actor_id)
-                    actionable_players.add(action.actor_id)
-                    # A return can restore chips to a player whose all-in state
-                    # was inferred only from their prior known commitment. The
+                if _apply_terminal_transition(
+                    action,
+                    street.street,
+                    confirmed_all_in=confirmed_all_in,
+                    known_stack_exhausted=known_stack_exhausted,
+                    terminal_actors=terminal_actors,
+                    live_players=live_players,
+                    actionable_players=actionable_players,
+                    inferred_stack_exhausted_players=(
+                        inferred_stack_exhausted_players
+                    ),
+                ):
+                    # A return restored chips to a player whose all-in state was
+                    # inferred only from their prior known commitment. The
                     # hand-wide betting closure must be reconsidered with that
                     # player actionable again.
                     betting_closed_by_all_ins = False
+                if action.action_type == "fold" and len(live_players) == 1:
+                    fold_end = (street.street, next(iter(live_players)))
                 cumulative_commitments[action.actor_id] = (
                     resolved_cumulative_commitment
                 )
@@ -4221,8 +4216,14 @@ def _hero_decision_contexts_for_extraction(
     committed_hand_commitments: dict[str, Decimal] = {
         player_id: Decimal(0) for player_id in player_ids
     }
-    folded_players: set[str] = set()
-    all_in_players: set[str] = set()
+    terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]] = {}
+    live_players = {
+        seat.player_id
+        for seat in state.seats
+        if seat.participation in {"dealt_in", "unknown"}
+    }
+    actionable_players = set(live_players)
+    inferred_stack_exhausted_players: set[str] = set()
     starting_stacks = {seat.player_id: seat.starting_stack for seat in state.seats}
     enforce_full_raise_increment = state.game.betting_limit in {
         "no_limit",
@@ -4315,17 +4316,25 @@ def _hero_decision_contexts_for_extraction(
                             if increment_is_established
                             else None
                         ),
-                        raise_reopened=_raise_is_reopened(
-                            action.actor_id,
-                            enforce_full_raise_increment=(
-                                enforce_full_raise_increment
-                            ),
-                            current_wager=current_wager,
-                            acted_wager_by_player=acted_wager_by_player,
-                            reopen_increment_by_player=reopen_increment_by_player,
+                        raise_reopened=(
+                            _sole_actionable_player_with_only_all_in_opponents(
+                                live_players,
+                                actionable_players,
+                            )
+                            != action.actor_id
+                            and _raise_is_reopened(
+                                action.actor_id,
+                                enforce_full_raise_increment=(
+                                    enforce_full_raise_increment
+                                ),
+                                current_wager=current_wager,
+                                acted_wager_by_player=acted_wager_by_player,
+                                reopen_increment_by_player=(
+                                    reopen_increment_by_player
+                                ),
+                            )
                         ),
-                        folded_players=folded_players,
-                        all_in_players=all_in_players,
+                        terminal_actors=terminal_actors,
                     )
                 )
 
@@ -4369,13 +4378,23 @@ def _hero_decision_contexts_for_extraction(
                 actor_starting_stack,
                 actor_cumulative_commitment,
             )
-            if action.action_type == "fold":
-                folded_players.add(action.actor_id)
-            elif action.all_in or stack_is_exhausted:
-                # The aggregate treats a commitment that exhausts a known stack
-                # as terminal even without the source's all-in marker, so a
-                # short forced post leaves its poster all-in either way.
-                all_in_players.add(action.actor_id)
+            confirmed_all_in = action.all_in and (
+                actor_starting_stack is None or stack_is_exhausted
+            )
+            # The same transition the hand validator applies: a commitment that
+            # exhausts a known stack is terminal even without the source's
+            # all-in marker, and a later return that restores those chips makes
+            # an inferred all-in actionable again.
+            _apply_terminal_transition(
+                action,
+                street.street,
+                confirmed_all_in=confirmed_all_in,
+                known_stack_exhausted=stack_is_exhausted,
+                terminal_actors=terminal_actors,
+                live_players=live_players,
+                actionable_players=actionable_players,
+                inferred_stack_exhausted_players=inferred_stack_exhausted_players,
+            )
 
             posted_amount = _posted_forced_amount(
                 action,
@@ -4395,8 +4414,7 @@ def _hero_decision_contexts_for_extraction(
                 posted_amount=posted_amount,
                 bet_increment=bet_increment,
                 raise_increment=raise_increment,
-                confirmed_all_in=action.all_in
-                and (actor_starting_stack is None or stack_is_exhausted),
+                confirmed_all_in=confirmed_all_in,
             )
             if (
                 action.all_in
@@ -4502,8 +4520,7 @@ def _hero_decision_context(
     current_wager: Decimal,
     last_full_wager_increment: Decimal | None,
     raise_reopened: bool,
-    folded_players: set[str],
-    all_in_players: set[str],
+    terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]],
 ) -> HeroActionContext:
     """Snapshot the chip state the extraction walk holds at one hero action.
 
@@ -4531,6 +4548,18 @@ def _hero_decision_context(
         hand_commitment = (
             committed_hand_commitments[seat.player_id] + street_commitment
         )
+        terminal = terminal_actors.get(seat.player_id)
+        # Every commitment is exact at an emitted decision, so reconcile the
+        # incremental membership the walk mirrors with what the published chips
+        # prove: a seat with nothing behind is all-in however it got there.
+        status: SeatDecisionStatus = (
+            "folded"
+            if terminal is not None and terminal[0] == "folded"
+            else "all_in"
+            if (terminal is not None and terminal[0] == "all_in")
+            or _stack_is_exhausted(seat.starting_stack, hand_commitment)
+            else "live"
+        )
         seats.append(
             SeatDecisionState(
                 player_id=seat.player_id,
@@ -4540,13 +4569,7 @@ def _hero_decision_context(
                 street_commitment=street_commitment,
                 live_commitment=live_commitment,
                 hand_commitment=hand_commitment,
-                status=(
-                    "folded"
-                    if seat.player_id in folded_players
-                    else "all_in"
-                    if seat.player_id in all_in_players
-                    else "live"
-                ),
+                status=status,
             )
         )
     hero = next(seat for seat in seats if seat.player_id == action.actor_id)
@@ -4595,6 +4618,49 @@ def _action_implied_prior_commitment(
             current_wager - prior_live_commitment
         )
     return None
+
+
+def _apply_terminal_transition(
+    action: ImportedAction,
+    street: StreetName,
+    *,
+    confirmed_all_in: bool,
+    known_stack_exhausted: bool,
+    terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]],
+    live_players: set[str],
+    actionable_players: set[str],
+    inferred_stack_exhausted_players: set[str],
+) -> bool:
+    """Advance terminal, live, and actionable membership for one action.
+
+    An all-in inferred only from an exhausting commitment is reversible: a
+    later return can restore the actor's chips and make them actionable again,
+    while a marked all-in stays terminal. Returns ``True`` when such a reversal
+    happened, because it reopens any hand-wide betting closure.
+    """
+
+    if action.action_type == "fold":
+        terminal_actors[action.actor_id] = ("folded", street)
+        inferred_stack_exhausted_players.discard(action.actor_id)
+        live_players.discard(action.actor_id)
+        actionable_players.discard(action.actor_id)
+        return False
+    if confirmed_all_in:
+        terminal_actors[action.actor_id] = ("all_in", street)
+        inferred_stack_exhausted_players.discard(action.actor_id)
+        actionable_players.discard(action.actor_id)
+        return False
+    if known_stack_exhausted:
+        terminal_actors[action.actor_id] = ("all_in", street)
+        inferred_stack_exhausted_players.add(action.actor_id)
+        actionable_players.discard(action.actor_id)
+        return False
+    if action.actor_id in inferred_stack_exhausted_players:
+        terminal_actors.pop(action.actor_id, None)
+        inferred_stack_exhausted_players.discard(action.actor_id)
+        actionable_players.add(action.actor_id)
+        return True
+    return False
 
 
 def _sole_actionable_player_with_only_all_in_opponents(
