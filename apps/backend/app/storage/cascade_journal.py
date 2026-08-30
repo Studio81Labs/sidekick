@@ -31,7 +31,6 @@ intent did not name up front.
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import tempfile
@@ -47,7 +46,6 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
-    ValidationError,
     field_validator,
 )
 
@@ -169,16 +167,22 @@ class CascadeJournal:
         )
         for cascade_dir in cascade_dirs:
             if not (cascade_dir / _READY_FILENAME).is_file():
-                # No ready marker proves commit never began: staging may be
-                # complete, partial, or empty, but no live file has been
-                # touched either way, so discarding is always safe.
+                # Before the marker: discard is always right. Commit never
+                # began, so staging may be complete, partial, or empty, but
+                # no live file has been touched either way - discarding is
+                # indistinguishable from a crash before begin() ever ran.
                 shutil.rmtree(cascade_dir, ignore_errors=True)
                 continue
-            try:
-                self._read_intent(cascade_dir)
-            except (FileNotFoundError, ValidationError, json.JSONDecodeError):
-                shutil.rmtree(cascade_dir, ignore_errors=True)
-                continue
+            # After the marker: commit is always right. commit() may already
+            # have renamed some staged files into live paths, so finishing is
+            # the only safe action - stranding the rest would permanently
+            # half-apply the cascade, which is exactly what the marker exists
+            # to prevent. _commit() replays from staged/ and never reads
+            # intent.json, so intent.json's readability is irrelevant to
+            # finishing: the intent exists for diagnostics and for the
+            # record-key validation stage() does at write time, not for
+            # recovery. Do not reintroduce an intent.json check on this
+            # branch.
             self._commit(cascade_dir)
             completed.append(cascade_dir.name)
         return completed

@@ -73,6 +73,30 @@ def test_recover_completes_a_cascade_that_reached_commit(tmp_path: Path) -> None
     assert (tmp_path / "bb" / "record.json").read_bytes() == b'{"b": 2}'
 
 
+def test_recover_completes_a_committing_cascade_despite_an_unreadable_intent(
+    tmp_path: Path,
+) -> None:
+    """After the ready marker, commit may already have applied some renames,
+    so finishing is the only safe action - the intent is not consulted."""
+    journal = CascadeJournal(tmp_path)
+    cascade_id = journal._prepare(operation="approve", record_keys=["aa", "bb"])
+    for key, payload in (("aa", b'{"a": 1}'), ("bb", b'{"b": 2}')):
+        staged = tmp_path / ".cascade" / cascade_id / "staged" / key
+        staged.mkdir(parents=True)
+        (staged / "record.json").write_bytes(payload)
+    journal._mark_ready(cascade_id)
+    # Simulate a torn write of the intent, and a commit that got as far as "aa".
+    (tmp_path / ".cascade" / cascade_id / "intent.json").write_bytes(b"{not json")
+    (tmp_path / "aa").mkdir()
+    (tmp_path / "aa" / "record.json").write_bytes(b'{"a": 1}')
+
+    assert journal.recover() == [cascade_id]
+
+    assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
+    assert (tmp_path / "bb" / "record.json").read_bytes() == b'{"b": 2}'
+    assert not (tmp_path / ".cascade" / cascade_id).exists()
+
+
 def test_recover_is_idempotent(tmp_path: Path) -> None:
     journal = CascadeJournal(tmp_path)
     with journal.begin(operation="approve", record_keys=["aa"]) as staging:
