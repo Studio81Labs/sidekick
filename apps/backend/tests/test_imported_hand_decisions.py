@@ -35,11 +35,13 @@ from test_imported_hand_models import (
     forced_post,
     full_raise_decision_record,
     heads_up_shove_and_call_decision_record,
+    hero_facing_a_raise_decision_record,
     multi_street_decision_record,
     origin_confirmation_record,
     raw_source,
     reapproval_extraction_record,
     short_all_in_raise_decision_record,
+    short_all_in_with_live_caller_decision_record,
     short_stacked_hero_decision_record,
     state_with_reviewed_action_origin,
     unmarked_all_in_blind_decision_record,
@@ -2362,3 +2364,181 @@ def test_decision_action_record_rejects_an_impossible_shape() -> None:
         "post_small_blind",
         Decimal("0.5"),
     )
+
+
+def test_decision_point_binds_the_table_action_to_the_hero_snapshot() -> None:
+    point = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[1]
+    payload = point.model_dump(mode="python")
+    hero = next(
+        seat
+        for seat in payload["state"]["seats"]
+        if seat["position"] == payload["state"]["hero_position"]
+    )
+
+    assert HeroDecisionPoint.model_validate(payload) is not None
+    assert payload["table_action"]["action_type"] == "bet"
+    assert (
+        payload["table_action"]["amount"],
+        payload["table_action"]["total_committed"],
+    ) == (Decimal("2"), Decimal("2"))
+    assert hero["street_commitment"] == Decimal(0)
+
+    # A bet larger than the hero holds.
+    inflated = copy.deepcopy(payload)
+    inflated["table_action"]["amount"] = Decimal("200")
+    inflated["table_action"]["total_committed"] = Decimal("200")
+    with pytest.raises(ValidationError, match="exceeds the hero's 99 behind"):
+        HeroDecisionPoint.model_validate(inflated)
+
+    # A delta that does not land on the hero's commitment.
+    drifted = copy.deepcopy(payload)
+    drifted["table_action"]["total_committed"] = Decimal("3")
+    with pytest.raises(ValidationError, match="leaves 2, not 3"):
+        HeroDecisionPoint.model_validate(drifted)
+
+    # An action taking the hero's last chip is all-in, and only then.
+    mislabelled = copy.deepcopy(payload)
+    mislabelled["table_action"]["all_in"] = True
+    with pytest.raises(ValidationError, match="behind is not all-in"):
+        HeroDecisionPoint.model_validate(mislabelled)
+
+
+def test_decision_point_binds_a_call_to_what_is_owed() -> None:
+    point = extract_hero_decision_points(
+        hero_facing_a_raise_decision_record(hero_stack=Decimal("10"))
+    ).decision_points[1]
+    payload = point.model_dump(mode="python")
+
+    assert HeroDecisionPoint.model_validate(payload) is not None
+    assert payload["table_action"]["action_type"] == "call"
+    assert payload["state"]["amount_to_call"] == Decimal("3")
+
+    underpaid = copy.deepcopy(payload)
+    underpaid["table_action"]["amount"] = Decimal("2")
+    underpaid["table_action"]["total_committed"] = Decimal("3")
+    with pytest.raises(ValidationError, match="a call must put in the 3"):
+        HeroDecisionPoint.model_validate(underpaid)
+
+    # A short all-in call is the one legitimate way to pay less than is owed.
+    short_all_in = extract_hero_decision_points(
+        hero_facing_a_raise_decision_record(hero_stack=Decimal("4"))
+    ).decision_points[1]
+    assert short_all_in.table_action.amount == Decimal("3")
+    assert short_all_in.state.amount_to_call == Decimal("3")
+    assert short_all_in.table_action.all_in is True
+
+
+@pytest.mark.parametrize(
+    ("factory", "index", "expected_error"),
+    [
+        (
+            contested_decision_record,
+            1,
+            "every live opponent is all-in",
+        ),
+        (
+            heads_up_shove_and_call_decision_record,
+            1,
+            "cannot beat the 99 call",
+        ),
+        (
+            lambda: hero_facing_a_raise_decision_record(hero_stack=Decimal("4")),
+            1,
+            "cannot beat the 3",
+        ),
+    ],
+)
+def test_decision_state_rejects_a_flipped_raise_verdict(
+    factory: object,
+    index: int,
+    expected_error: str,
+) -> None:
+    payload = extract_hero_decision_points(
+        factory()  # type: ignore[operator]
+    ).decision_points[index].state.model_dump(mode="python")
+
+    assert payload["raise_reopened"] is False
+    assert decisions.HeroDecisionState.model_validate(payload) is not None
+
+    with pytest.raises(ValidationError, match=expected_error):
+        decisions.HeroDecisionState.model_validate(
+            {**payload, "raise_reopened": True}
+        )
+
+
+def test_decision_state_cannot_rederive_a_short_all_in_raise_verdict() -> None:
+    """Pin the one closed verdict the published state cannot prove.
+
+    Neither reason a decision state can check applies here, so a flipped
+    verdict on this point is not caught. Closing it needs the increment that
+    stood when the hero acted, which the state does not carry.
+    """
+
+    point = extract_hero_decision_points(
+        short_all_in_with_live_caller_decision_record()
+    ).decision_points[1]
+    state = point.state
+    hero = next(
+        seat for seat in state.seats if seat.position == state.hero_position
+    )
+
+    assert (point.street, point.action_sequence) == ("preflop", 5)
+    assert state.raise_reopened is False
+    # The hero has chips behind ...
+    assert hero.stack_before_action > state.amount_to_call
+    # ... and an opponent who can still answer a raise.
+    assert [seat.status for seat in state.seats] == ["live", "all_in", "live"]
+
+
+def test_hero_table_action_requires_its_evidence() -> None:
+    payload = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[0].table_action.model_dump(mode="python")
+
+    assert decisions.HeroTableAction.model_validate(payload) is not None
+    assert len(payload["evidence"]) == 1
+
+    with pytest.raises(ValidationError, match="at least 1 item"):
+        decisions.HeroTableAction.model_validate({**payload, "evidence": []})
+
+
+@pytest.mark.parametrize("declared", [1, 3, 9])
+def test_decision_state_binds_the_declared_ring_to_its_seats(
+    declared: int,
+) -> None:
+    payload = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[0].state.model_dump(mode="python")
+
+    assert decisions.HeroDecisionState.model_validate(payload) is not None
+    assert payload["dealt_in_player_count"] == len(payload["seats"]) == 2
+
+    with pytest.raises(
+        ValidationError,
+        match=f"dealt_in_player_count {declared} does not match the 2 seats",
+    ):
+        decisions.HeroDecisionState.model_validate(
+            {**payload, "dealt_in_player_count": declared}
+        )
+
+
+def test_decision_state_rejects_a_broken_seat_ring() -> None:
+    payload = extract_hero_decision_points(
+        contested_decision_record()
+    ).decision_points[0].state.model_dump(mode="python")
+
+    assert decisions.HeroDecisionState.model_validate(payload) is not None
+    assert [
+        seat["position"]["button_distance"] for seat in payload["seats"]
+    ] == [0, 1, 2]
+
+    out_of_order = copy.deepcopy(payload)
+    out_of_order["seats"] = [
+        out_of_order["seats"][1],
+        out_of_order["seats"][0],
+        out_of_order["seats"][2],
+    ]
+    with pytest.raises(ValidationError, match="once around the ring"):
+        decisions.HeroDecisionState.model_validate(out_of_order)

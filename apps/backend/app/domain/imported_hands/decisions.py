@@ -10,7 +10,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Literal, Self
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from app.domain.imported_hands.models import (
     ActionOrigin,
@@ -43,6 +43,8 @@ from app.domain.imported_hands.models import (
     _economics_ready_for_extraction,
     _hero_decision_contexts_for_extraction,
     _known_action_orders,
+    _CHIP_ACTIONS,
+    _sole_actionable_player_with_only_all_in_opponents,
     _stack_is_exhausted,
     _STREET_BOARD_CARDS,
     _STREET_ORDER,
@@ -97,7 +99,7 @@ class HeroTableAction(ImportedHandModel):
     total_committed: NonNegativeDecimal | None
     all_in: bool
     origin: ActionOrigin
-    evidence: list[SourceEvidence]
+    evidence: list[SourceEvidence] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_table_action_shape(self) -> Self:
@@ -181,6 +183,11 @@ class HeroDecisionState(ImportedHandModel):
     Offering a raise there grades against an action the hand validator itself
     would reject, or one the hero cannot afford.
 
+    Rehydration re-checks only the first and third of those; the short all-in
+    rule needs the increment that stood when the hero last acted, which this
+    state does not carry. See ``_validate_raise_legality`` for what that leaves
+    unguarded and for the fixture that reproduces it.
+
     ``last_full_wager_increment`` is the yardstick a minimum legal raise is
     measured against. ``None`` means the aggregate could not establish
     it; a known increment is always positive, so ``None`` is the only "unknown"
@@ -257,9 +264,111 @@ class HeroDecisionState(ImportedHandModel):
                 f" {completed_total}, which contradicts"
                 f" committed_pot_before_street {self.committed_pot_before_street}"
             )
+        self._validate_seat_ring()
         self._validate_cards()
         self._validate_current_street()
+        self._validate_raise_legality()
         return self
+
+    def _hero_seat(self) -> SeatDecisionState:
+        hero = next(
+            (
+                seat
+                for seat in self.seats
+                if seat.position == self.hero_position
+            ),
+            None,
+        )
+        if hero is None:
+            raise ValueError("hero_position does not identify a seat")
+        return hero
+
+    def _validate_raise_legality(self) -> None:
+        """Re-check the raise verdict against the reasons this state can prove.
+
+        **This check is incomplete by design, and a reader must not take it for
+        a total one.** The aggregate closes raising for three reasons. Two are
+        covered here, both evaluated through the aggregate's own rules rather
+        than a restatement of them:
+
+        * *hero affordability* -- the hero holds no chips beyond
+          ``amount_to_call``, so an all-in call is the most they can put in;
+        * *opponent actionability* -- the hero is the only actionable player and
+          every live opponent is all-in, so nobody could answer a raise, checked
+          with ``_sole_actionable_player_with_only_all_in_opponents``.
+
+        The third is **not covered**: an opponent's short all-in reopens betting
+        only if the wager has since grown by at least the full increment that
+        stood *when the hero last acted*, and this state publishes only the
+        increment standing *now*. Recovering the earlier one means replaying the
+        wager machinery over the betting line, which would be a second
+        implementation of rules the walk already owns, so nothing is checked
+        about it rather than approximating a verdict that could disagree.
+
+        A rehydrated point closed for that third reason alone therefore passes
+        this check even if its verdict was flipped. The fixture
+        ``short_all_in_with_live_caller_decision_record`` isolates exactly that
+        spot -- villain's short all-in does not reopen betting for the hero,
+        while villain-2 calls and stays actionable, so neither covered reason
+        applies -- and is pinned by
+        ``test_decision_state_cannot_rederive_a_short_all_in_raise_verdict``.
+        Closing the gap belongs with the stored shape in #432, and needs the
+        hero's own ``acted_wager`` and reopening increment published alongside
+        the verdict.
+        """
+
+        if not self.raise_reopened:
+            return
+        hero = self._hero_seat()
+        if hero.stack_before_action <= self.amount_to_call:
+            raise ValueError(
+                f"raising is published open, but the hero's"
+                f" {hero.stack_before_action} behind cannot beat the"
+                f" {self.amount_to_call} call"
+            )
+        sole_actionable = _sole_actionable_player_with_only_all_in_opponents(
+            {seat.player_id for seat in self.seats if seat.status != "folded"},
+            {seat.player_id for seat in self.seats if seat.status == "live"},
+        )
+        if sole_actionable == hero.player_id:
+            raise ValueError(
+                "raising is published open, but every live opponent is all-in"
+                " and no one could answer a raise"
+            )
+
+    def _validate_seat_ring(self) -> None:
+        """Require the seats to be one complete ring of the declared size.
+
+        ``StructuralPosition`` already ties each seat's label and action index
+        to its own count and button distance, so what remains is that the seats
+        agree on that count and occupy every distance in the ring exactly once,
+        in order -- which is the ring ``derive_structural_positions`` builds.
+        """
+
+        if len(self.seats) != self.dealt_in_player_count:
+            raise ValueError(
+                f"dealt_in_player_count {self.dealt_in_player_count} does not"
+                f" match the {len(self.seats)} seats published"
+            )
+        mismatched = [
+            seat.player_id
+            for seat in self.seats
+            if seat.position.dealt_in_player_count != self.dealt_in_player_count
+        ]
+        if mismatched:
+            raise ValueError(
+                f"seat positions disagree with dealt_in_player_count:"
+                f" {', '.join(mismatched)}"
+            )
+        distances = [seat.position.button_distance for seat in self.seats]
+        if distances != list(range(self.dealt_in_player_count)):
+            raise ValueError(
+                "seats must run once around the ring in button order"
+            )
+        if self.hero_position.dealt_in_player_count != self.dealt_in_player_count:
+            raise ValueError(
+                "hero_position disagrees with dealt_in_player_count"
+            )
 
     def _validate_cards(self) -> None:
         """Require the exact cards this street's decision is made with."""
@@ -352,16 +461,7 @@ class HeroDecisionState(ImportedHandModel):
                 f"pot_before_action {self.pot_before_action} contradicts the"
                 f" {pot} its seats and completed streets commit"
             )
-        hero = next(
-            (
-                seat
-                for seat in self.seats
-                if seat.position == self.hero_position
-            ),
-            None,
-        )
-        if hero is None:
-            raise ValueError("hero_position does not identify a seat")
+        hero = self._hero_seat()
         if self.hero_stack_before_action != hero.stack_before_action:
             raise ValueError(
                 "hero_stack_before_action contradicts the hero's own seat"
@@ -435,7 +535,59 @@ class HeroDecisionPoint(ImportedHandModel):
                 "the current street's action history must hold every action"
                 " before the hero's own and stop there"
             )
+        self._validate_table_action_chips()
         return self
+
+    def _validate_table_action_chips(self) -> None:
+        """Bind what the hero did to the chips they had when they did it.
+
+        The seats are the state immediately before this action, so the action's
+        own chips have to continue from them: what it adds lands on the hero's
+        street commitment, an action that takes their last chip is all-in, and
+        a call matches what is owed or goes all-in for less.
+        """
+
+        action = self.table_action
+        hero = self.state._hero_seat()
+        if action.action_type not in _CHIP_ACTIONS:
+            if action.total_committed != hero.street_commitment:
+                raise ValueError(
+                    f"a {action.action_type} leaves the hero's street"
+                    f" commitment at {hero.street_commitment}, not"
+                    f" {action.total_committed}"
+                )
+            return
+        if action.amount is None or action.total_committed is None:
+            raise ValueError(
+                f"a {action.action_type} requires the chips it moved and the"
+                " commitment it left"
+            )
+        expected_total = hero.street_commitment + action.amount
+        if action.total_committed != expected_total:
+            raise ValueError(
+                f"a {action.action_type} of {action.amount} on top of"
+                f" {hero.street_commitment} leaves {expected_total}, not"
+                f" {action.total_committed}"
+            )
+        if action.amount > hero.stack_before_action:
+            raise ValueError(
+                f"a {action.action_type} of {action.amount} exceeds the hero's"
+                f" {hero.stack_before_action} behind"
+            )
+        exhausts = action.amount == hero.stack_before_action
+        if action.all_in != exhausts:
+            raise ValueError(
+                f"a {action.action_type} of {action.amount} against"
+                f" {hero.stack_before_action} behind is"
+                f" {'' if exhausts else 'not '}all-in"
+            )
+        if action.action_type == "call":
+            owed = min(self.state.amount_to_call, hero.stack_before_action)
+            if action.amount != owed:
+                raise ValueError(
+                    f"a call must put in the {owed} owed or the hero's whole"
+                    f" stack, not {action.amount}"
+                )
 
 
 class ExcludedHeroAction(ImportedHandModel):

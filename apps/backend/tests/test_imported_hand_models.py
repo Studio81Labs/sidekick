@@ -18016,3 +18016,76 @@ def test_hero_decision_context_closes_raising_without_chips_beyond_the_call() ->
     # And the hero's earlier decision, with a full stack behind, is unaffected.
     assert short_contexts[0].raise_reopened is True
     assert deep_contexts[0].raise_reopened is True
+
+
+def short_all_in_with_live_caller_decision_record() -> ImportedHandRecord:
+    """Build the one spot whose closed raise cannot be re-derived downstream.
+
+    Villain's short all-in does not reopen betting for a hero who has already
+    acted, but villain-2 calls and stays actionable, so neither of the reasons
+    a published decision state can prove -- no chips behind, or no opponent
+    able to answer -- applies here.
+    """
+
+    board = decision_context_board()
+    payload = three_handed_decision_payload(
+        villain_stack=Decimal("4"),
+        villain_2_stack=Decimal("100"),
+    )
+    streets: list[dict[str, object]] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "villain",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain-2",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2, "hero", "raise", amount=Decimal("3"), total=Decimal("3")
+                ),
+                wager_action(
+                    3,
+                    "villain",
+                    "raise",
+                    amount=Decimal("3.5"),
+                    total=Decimal("4"),
+                    all_in=True,
+                ),
+                wager_action(
+                    4,
+                    "villain-2",
+                    "call",
+                    amount=Decimal("3"),
+                    total=Decimal("4"),
+                ),
+                wager_action(
+                    5, "hero", "call", amount=Decimal("1"), total=Decimal("4")
+                ),
+            ],
+        }
+    ]
+    for street_name, board_card_count in (("flop", 3), ("turn", 4), ("river", 5)):
+        streets.append(
+            {
+                "street": street_name,
+                "board_cards": board[:board_card_count],
+                "actions": [
+                    wager_action(index, player_id, "check", total=Decimal(0))
+                    for index, player_id in enumerate(["villain-2", "hero"])
+                ],
+            }
+        )
+    payload["streets"] = streets
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("12")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
