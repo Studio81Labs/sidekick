@@ -43,6 +43,7 @@ from app.domain.imported_hands.models import (
     _economics_ready_for_extraction,
     _hero_decision_contexts_for_extraction,
     _known_action_orders,
+    _stack_is_exhausted,
     _STREET_BOARD_CARDS,
     _STREET_ORDER,
     _TABLE_ACTIONS,
@@ -135,6 +136,18 @@ class DecisionActionRecord(ImportedHandModel):
     amount: PositiveDecimal | None
     total_committed: NonNegativeDecimal | None
     all_in: bool
+
+    @model_validator(mode="after")
+    def validate_record_shape(self) -> Self:
+        # The line drops the origin, so only the rules that do not need it
+        # apply -- but a check carrying chips, or a fold marked all-in, is
+        # impossible however the record was rehydrated.
+        _validate_action_shape(
+            self.action_type,
+            amount=self.amount,
+            all_in=self.all_in,
+        )
+        return self
 
 
 class StreetActionHistory(ImportedHandModel):
@@ -297,6 +310,11 @@ class HeroDecisionState(ImportedHandModel):
                         f" {self.street}, which contradicts the"
                         f" {published} its action history shows"
                     )
+        last_action_by_player = {
+            record.player_id: record.action_type
+            for entry in self.action_history
+            for record in entry.actions
+        }
         for seat in self.seats:
             if seat.live_commitment > seat.street_commitment:
                 raise ValueError(
@@ -309,6 +327,21 @@ class HeroDecisionState(ImportedHandModel):
                 raise ValueError(
                     f"{seat.player_id} stack does not match its starting stack"
                     " less what it has committed"
+                )
+            # The producer's own derivation: a player who has folded is out, a
+            # player whose commitment exhausts their stack is all-in, and
+            # anyone else is still live.
+            expected_status = (
+                "folded"
+                if last_action_by_player.get(seat.player_id) == "fold"
+                else "all_in"
+                if _stack_is_exhausted(seat.starting_stack, seat.hand_commitment)
+                else "live"
+            )
+            if seat.status != expected_status:
+                raise ValueError(
+                    f"{seat.player_id} is published {seat.status} but its stack"
+                    f" and betting history make it {expected_status}"
                 )
         pot = self.committed_pot_before_street + sum(
             (seat.street_commitment for seat in self.seats),
@@ -332,6 +365,27 @@ class HeroDecisionState(ImportedHandModel):
         if self.hero_stack_before_action != hero.stack_before_action:
             raise ValueError(
                 "hero_stack_before_action contradicts the hero's own seat"
+            )
+        # Tie the wager to the seats rather than to the call amount, which is
+        # derived from it: the outstanding wager is the highest live commitment
+        # on the table, and the one thing that can lift it above that is a big
+        # blind posted short, which floors it at the configured big blind.
+        highest_live = max(
+            (seat.live_commitment for seat in self.seats),
+            default=Decimal(0),
+        )
+        if self.current_wager < highest_live:
+            raise ValueError(
+                f"current_wager {self.current_wager} is below the {highest_live}"
+                " its seats have live"
+            )
+        if (
+            self.current_wager > highest_live
+            and self.current_wager != self.blinds.big_blind
+        ):
+            raise ValueError(
+                f"current_wager {self.current_wager} exceeds the {highest_live}"
+                " its seats have live without a short blind post to explain it"
             )
         expected_call = max(
             Decimal(0), self.current_wager - hero.live_commitment

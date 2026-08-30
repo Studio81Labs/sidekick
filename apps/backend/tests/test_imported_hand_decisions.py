@@ -2264,3 +2264,101 @@ def test_decision_state_binds_the_current_street_to_the_chip_snapshot() -> None:
     wrong_call = {**payload, "amount_to_call": Decimal("1")}
     with pytest.raises(ValidationError, match="amount_to_call 1 contradicts"):
         decisions.HeroDecisionState.model_validate(wrong_call)
+
+
+def contested_flop_state_payload() -> dict[str, object]:
+    """Round-trip the three-handed flop decision, one seat folded, one all-in."""
+
+    return extract_hero_decision_points(
+        contested_decision_record()
+    ).decision_points[1].state.model_dump(mode="python")
+
+
+def test_decision_state_binds_the_wager_to_live_seat_commitments() -> None:
+    payload = contested_flop_state_payload()
+
+    assert decisions.HeroDecisionState.model_validate(payload) is not None
+    assert (payload["current_wager"], payload["amount_to_call"]) == (
+        Decimal("4"),
+        Decimal("4"),
+    )
+
+    # Moving the wager and the call together leaves them consistent with each
+    # other, so only the seats can catch it.
+    raised_together = {
+        **payload,
+        "current_wager": Decimal("5"),
+        "amount_to_call": Decimal("5"),
+    }
+    with pytest.raises(
+        ValidationError, match="current_wager 5 exceeds the 4 its seats have live"
+    ):
+        decisions.HeroDecisionState.model_validate(raised_together)
+
+    lowered = {
+        **payload,
+        "current_wager": Decimal("3"),
+        "amount_to_call": Decimal("3"),
+    }
+    with pytest.raises(
+        ValidationError, match="current_wager 3 is below the 4 its seats have live"
+    ):
+        decisions.HeroDecisionState.model_validate(lowered)
+
+
+@pytest.mark.parametrize(
+    ("player_id", "published", "expected"),
+    [
+        ("villain-2", "live", "all_in"),
+        ("villain-2", "folded", "all_in"),
+        ("villain", "live", "folded"),
+        ("villain", "all_in", "folded"),
+    ],
+)
+def test_decision_state_binds_seat_status_to_stacks_and_history(
+    player_id: str,
+    published: str,
+    expected: str,
+) -> None:
+    payload = contested_flop_state_payload()
+
+    assert decisions.HeroDecisionState.model_validate(payload) is not None
+    seats = {seat["player_id"]: seat["status"] for seat in payload["seats"]}
+    assert seats == {"hero": "live", "villain": "folded", "villain-2": "all_in"}
+
+    mutated = copy.deepcopy(payload)
+    next(
+        seat for seat in mutated["seats"] if seat["player_id"] == player_id
+    )["status"] = published
+
+    with pytest.raises(
+        ValidationError,
+        match=f"{player_id} is published {published} but its stack and betting"
+        f" history make it {expected}",
+    ):
+        decisions.HeroDecisionState.model_validate(mutated)
+
+
+def test_decision_action_record_rejects_an_impossible_shape() -> None:
+    payload = contested_flop_state_payload()
+    record = payload["action_history"][0]["actions"][4]
+
+    assert decisions.HeroDecisionState.model_validate(payload) is not None
+    assert (record["player_id"], record["action_type"]) == ("villain-2", "check")
+
+    with_amount = copy.deepcopy(payload)
+    with_amount["action_history"][0]["actions"][4]["amount"] = Decimal("5")
+    with pytest.raises(ValidationError, match="cannot carry an amount"):
+        decisions.HeroDecisionState.model_validate(with_amount)
+
+    marked_all_in = copy.deepcopy(payload)
+    marked_all_in["action_history"][0]["actions"][4]["all_in"] = True
+    with pytest.raises(ValidationError, match="cannot be all-in"):
+        decisions.HeroDecisionState.model_validate(marked_all_in)
+
+    # A post legitimately carries chips, so the rule is not a blanket ban.
+    blind_post = payload["action_history"][0]["actions"][0]
+    assert (blind_post["action_type"], blind_post["amount"]) == (
+        "post_small_blind",
+        Decimal("0.5"),
+    )

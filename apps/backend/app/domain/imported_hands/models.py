@@ -654,23 +654,28 @@ def _validate_action_shape(
     *,
     amount: Decimal | None,
     all_in: bool,
-    origin_kind: OriginKind,
+    origin_kind: OriginKind | None = None,
 ) -> None:
     """Apply one action's shape rules wherever an action is published.
 
     The imported action enforces these on the way in; a decision point's table
-    action enforces the same ones on the way back out, so a rehydrated payload
-    cannot carry a shape the import boundary would have refused.
+    action and every record in its betting line enforce the same ones on the
+    way back out, so a rehydrated payload cannot carry a shape the import
+    boundary would have refused. A published betting line deliberately drops
+    the origin, so ``origin_kind`` is optional and the two rules that need it
+    are skipped rather than guessed when it is absent.
     """
 
     if action_type not in _CHIP_ACTIONS and amount is not None:
         raise ValueError("fold and check actions cannot carry an amount")
+    if all_in and action_type in {"fold", "check", "uncalled_return"}:
+        raise ValueError("fold, check, and return actions cannot be all-in")
+    if origin_kind is None:
+        return
     if action_type in _FORCED_ACTIONS and origin_kind != "forced_system":
         raise ValueError("posts and uncalled returns must be forced/system actions")
     if action_type in _TABLE_ACTIONS and origin_kind == "forced_system":
         raise ValueError("table decisions cannot be classified as forced/system")
-    if all_in and action_type in {"fold", "check", "uncalled_return"}:
-        raise ValueError("fold, check, and return actions cannot be all-in")
 
 
 class ImportedStreet(ImportedHandModel):
