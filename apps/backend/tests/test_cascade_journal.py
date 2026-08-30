@@ -5,7 +5,14 @@ from pathlib import Path
 
 import pytest
 
-from app.storage.cascade_journal import CascadeCorruptionError, CascadeJournal
+from app.storage.cascade_journal import (
+    CascadeCorruptionError,
+    CascadeJournal,
+    CascadeRecoveryReport,
+    CascadeReentryError,
+    _durable_replace,
+    _fsync_directory,
+)
 
 
 def test_cascade_commit_publishes_every_staged_file(tmp_path: Path) -> None:
@@ -38,7 +45,7 @@ def test_recover_discards_a_cascade_interrupted_before_commit(tmp_path: Path) ->
     staged.mkdir(parents=True)
     (staged / "record.json").write_bytes(b'{"a": 1}')
 
-    assert journal.recover() == []
+    assert journal.recover() == CascadeRecoveryReport()
 
     assert not (tmp_path / "aa" / "record.json").exists()
     assert not (tmp_path / ".cascade" / cascade_id).exists()
@@ -53,7 +60,7 @@ def test_recover_discards_a_cascade_that_never_reached_commit(tmp_path: Path) ->
     (staged / "record.json").write_bytes(b'{"a": 1}')
     # "bb" was never staged and no ready marker was written.
 
-    assert journal.recover() == []
+    assert journal.recover() == CascadeRecoveryReport()
 
     assert not (tmp_path / "aa" / "record.json").exists()
     assert not (tmp_path / "bb" / "record.json").exists()
@@ -70,7 +77,7 @@ def test_recover_completes_a_cascade_that_reached_commit(tmp_path: Path) -> None
         (staged / "record.json").write_bytes(payload)
     journal._mark_ready(cascade_id)          # test seam, mirrors _prepare
 
-    assert journal.recover() == [cascade_id]
+    assert journal.recover() == CascadeRecoveryReport(completed=(cascade_id,))
 
     assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
     assert (tmp_path / "bb" / "record.json").read_bytes() == b'{"b": 2}'
@@ -93,7 +100,7 @@ def test_recover_completes_a_committing_cascade_despite_an_unreadable_intent(
     (tmp_path / "aa").mkdir()
     (tmp_path / "aa" / "record.json").write_bytes(b'{"a": 1}')
 
-    assert journal.recover() == [cascade_id]
+    assert journal.recover() == CascadeRecoveryReport(completed=(cascade_id,))
 
     assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
     assert (tmp_path / "bb" / "record.json").read_bytes() == b'{"b": 2}'
@@ -122,7 +129,7 @@ def test_recover_finishes_a_cascade_where_one_key_already_published(
     (staged_bb / "record.json").write_bytes(b'{"b": 2}')
     journal._mark_ready(cascade_id)
 
-    assert journal.recover() == [cascade_id]
+    assert journal.recover() == CascadeRecoveryReport(completed=(cascade_id,))
 
     assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
     assert (tmp_path / "bb" / "record.json").read_bytes() == b'{"b": 2}'
@@ -136,11 +143,12 @@ def test_commit_refuses_a_cascade_missing_its_staged_directory(tmp_path: Path) -
     cascade."""
     journal = CascadeJournal(tmp_path)
     cascade_id = journal._prepare(operation="approve", record_keys=["aa"])
-    shutil.rmtree(tmp_path / ".cascade" / cascade_id / "staged")
+    cascade_dir = tmp_path / ".cascade" / cascade_id
+    shutil.rmtree(cascade_dir / "staged")
     journal._mark_ready(cascade_id)
 
     with pytest.raises(CascadeCorruptionError):
-        journal.recover()
+        journal._commit(cascade_dir)
 
 
 def test_recover_cannot_destroy_a_cascade_that_is_still_open(tmp_path: Path) -> None:
@@ -161,16 +169,25 @@ def test_recover_cannot_destroy_a_cascade_that_is_still_open(tmp_path: Path) -> 
     cascade_thread.start()
     assert staged.wait(timeout=5), "cascade thread never reached staging"
 
-    recovered: list[str] = []
+    recovered: list[CascadeRecoveryReport] = []
+    entered_recover = threading.Event()
 
     def run_recover() -> None:
-        recovered.extend(journal.recover())
+        entered_recover.set()
+        recovered.append(journal.recover())
 
     recover_thread = threading.Thread(target=run_recover, daemon=True)
     recover_thread.start()
+    # Without this the whole race window can be skipped by a starved
+    # scheduler and the test passes vacuously.
+    assert entered_recover.wait(timeout=5), "recover thread never called recover()"
     # Give an unlocked recover() every chance to interleave before the
     # cascade is allowed to finish.
     time.sleep(0.2)
+    # The lock must still be holding it here: recover() cannot legitimately
+    # return while a cascade is parked inside its begin() block. An
+    # unserialised recover() would already have swept and appended.
+    assert not recovered, "recover() ran to completion while a cascade was open"
     finish.set()
 
     cascade_thread.join(timeout=5)
@@ -178,6 +195,9 @@ def test_recover_cannot_destroy_a_cascade_that_is_still_open(tmp_path: Path) -> 
     assert not cascade_thread.is_alive()
     assert not recover_thread.is_alive()
 
+    # By the time recover() got the lock the cascade had committed and
+    # removed itself, so there was nothing left to finish or quarantine.
+    assert recovered == [CascadeRecoveryReport()]
     assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
 
 
@@ -223,7 +243,7 @@ def test_recover_is_idempotent(tmp_path: Path) -> None:
     journal = CascadeJournal(tmp_path)
     with journal.begin(operation="approve", record_keys=["aa"]) as staging:
         staging.stage("aa", "record.json", b'{"a": 1}')
-    assert journal.recover() == []          # nothing left to do
+    assert journal.recover() == CascadeRecoveryReport()  # nothing left to do
     assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
 
 
@@ -234,7 +254,7 @@ def test_recover_discards_a_cascade_with_no_readable_intent(tmp_path: Path) -> N
     # no intent.json at all
     journal = CascadeJournal(tmp_path)
 
-    assert journal.recover() == []
+    assert journal.recover() == CascadeRecoveryReport()
     assert not orphan.exists()
     assert not (tmp_path / "aa" / "record.json").exists()   # never guessed at
 
@@ -261,3 +281,220 @@ def test_stage_rejects_a_record_key_absent_from_the_intent(tmp_path: Path) -> No
     with pytest.raises(ValueError, match="not named by this cascade"):
         with journal.begin(operation="approve", record_keys=["aa"]) as staging:
             staging.stage("bb", "record.json", b"{}")
+
+
+def test_recover_quarantines_a_corrupt_cascade_and_finishes_the_rest(
+    tmp_path: Path,
+) -> None:
+    """One unusable cascade directory must not abort the startup sweep.
+
+    Left to propagate, CascadeCorruptionError escapes recover()'s loop, so
+    the corrupt directory is never cleaned up, every later sweep dies on it
+    the same way, and the half-applied cascades recovery exists to finish
+    are stranded - a permanent boot failure.
+    """
+    journal = CascadeJournal(tmp_path)
+    corrupt_id, healthy_id = "0" * 32, "f" * 32   # corrupt sorts first
+    cascade_root = tmp_path / ".cascade"
+
+    corrupt_dir = cascade_root / corrupt_id
+    (corrupt_dir / "evidence").mkdir(parents=True)
+    (corrupt_dir / "evidence" / "intent.json").write_bytes(b"{}")
+    (corrupt_dir / "ready").write_bytes(b"")     # ready, but no staged/ at all
+
+    healthy_dir = cascade_root / healthy_id
+    (healthy_dir / "staged" / "bb" / "content").mkdir(parents=True)
+    (healthy_dir / "staged" / "bb" / "content" / "record.json").write_bytes(b'{"b": 2}')
+    (healthy_dir / "ready").write_bytes(b"")
+
+    report = journal.recover()
+
+    assert report == CascadeRecoveryReport(
+        completed=(healthy_id,), quarantined=(corrupt_id,)
+    )
+    # The healthy cascade behind the corrupt one still finished.
+    assert (tmp_path / "bb" / "record.json").read_bytes() == b'{"b": 2}'
+    assert not healthy_dir.exists()
+    # The corrupt one was preserved, not deleted, and is out of the way.
+    assert not corrupt_dir.exists()
+    quarantined = cascade_root / "corrupt" / corrupt_id
+    assert (quarantined / "evidence" / "intent.json").read_bytes() == b"{}"
+    assert (quarantined / "ready").is_file()
+
+
+def test_recover_does_not_sweep_its_own_quarantine_directory(tmp_path: Path) -> None:
+    """The quarantine holds evidence, not cascades. A later sweep must not
+    see it as a cascade with no ready marker and rmtree it."""
+    journal = CascadeJournal(tmp_path)
+    corrupt_id = "0" * 32
+    corrupt_dir = tmp_path / ".cascade" / corrupt_id
+    corrupt_dir.mkdir(parents=True)
+    (corrupt_dir / "ready").write_bytes(b"")
+
+    assert journal.recover() == CascadeRecoveryReport(quarantined=(corrupt_id,))
+    # Quarantining is a one-time event; the sweep is clean afterwards and
+    # the evidence survives it.
+    assert journal.recover() == CascadeRecoveryReport()
+    assert (tmp_path / ".cascade" / "corrupt" / corrupt_id / "ready").is_file()
+
+
+def test_begin_rejects_a_record_key_that_targets_the_journals_own_directory(
+    tmp_path: Path,
+) -> None:
+    """A record key of '.cascade' writes into the journal's scratch
+    namespace: staging '.cascade/<32 hex>/ready' publishes a marker for a
+    cascade that never existed and poisons every later recover()."""
+    journal = CascadeJournal(tmp_path)
+    with pytest.raises(ValueError, match="record key"):
+        with journal.begin(operation="approve", record_keys=[".cascade"]):
+            pass
+    assert not (tmp_path / ".cascade").exists()
+
+
+def test_mark_ready_makes_the_staged_tree_durable_before_the_marker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The marker promises the staged tree will be replayed, so the tree
+    has to be durable before the promise is.
+
+    _durable_replace fsyncs only the directory holding the file it wrote,
+    so staged/<key>'s entry in staged/, and content/'s entry in
+    staged/<key>, are never made durable by staging alone - yet all of them
+    are read *after* the marker. A crash could leave the marker durable
+    over a staged tree that is gone, and _commit cannot detect it because
+    an empty staged/ is a legitimate cascade.
+    """
+    journal = CascadeJournal(tmp_path)
+    cascade_id = journal._prepare(operation="approve", record_keys=["aa"])
+    cascade_dir = tmp_path / ".cascade" / cascade_id
+    content = cascade_dir / "staged" / "aa" / "content"
+    content.mkdir(parents=True)
+    (content / "record.json").write_bytes(b'{"a": 1}')
+    (cascade_dir / "staged" / "aa" / "deletes").mkdir()
+
+    events: list[tuple[str, Path]] = []
+
+    def spy_fsync(directory: Path) -> None:
+        events.append(("fsync", Path(directory).resolve()))
+        _fsync_directory(directory)
+
+    def spy_replace(target: Path, payload: bytes) -> None:
+        events.append(("write", Path(target).resolve()))
+        _durable_replace(target, payload)
+
+    monkeypatch.setattr(
+        "app.storage.cascade_journal._fsync_directory", spy_fsync
+    )
+    monkeypatch.setattr(
+        "app.storage.cascade_journal._durable_replace", spy_replace
+    )
+
+    journal._mark_ready(cascade_id)
+
+    marker = (cascade_dir / "ready").resolve()
+    assert ("write", marker) in events
+    marker_written_at = events.index(("write", marker))
+    for directory in (
+        content,
+        cascade_dir / "staged" / "aa" / "deletes",
+        cascade_dir / "staged" / "aa",
+        cascade_dir / "staged",
+        cascade_dir,
+        tmp_path / ".cascade",
+        tmp_path,
+    ):
+        event = ("fsync", directory.resolve())
+        assert event in events, f"{directory} was never fsynced"
+        assert events.index(event) < marker_written_at, (
+            f"{directory} was only fsynced after the ready marker was written"
+        )
+
+
+def test_stage_rejects_a_path_that_normalises_to_the_record_namespace(
+    tmp_path: Path,
+) -> None:
+    """'x/..' resolves to staged/<key>/content itself. Staging it renames
+    the temp file *onto* that path, creating a file where a directory
+    belongs, after which _commit_record skips the record entirely and the
+    whole cascade commits nothing while reporting success."""
+    live = tmp_path / "aa"
+    live.mkdir()
+    (live / "record.json").write_bytes(b"OLD")
+    journal = CascadeJournal(tmp_path)
+
+    with pytest.raises(ValueError, match="must stay inside"):
+        with journal.begin(operation="approve", record_keys=["aa"]) as staging:
+            staging.stage("aa", "x/..", b"PAYLOAD")
+
+    assert (live / "record.json").read_bytes() == b"OLD"
+    assert not any((tmp_path / ".cascade").iterdir())
+
+
+def test_stage_delete_rejects_a_path_that_normalises_to_the_record_namespace(
+    tmp_path: Path,
+) -> None:
+    """Same defect on the deletes/ side, where it additionally makes a
+    later legitimate stage_delete raise FileExistsError."""
+    journal = CascadeJournal(tmp_path)
+    with pytest.raises(ValueError, match="must stay inside"):
+        with journal.begin(operation="reapprove", record_keys=["aa"]) as staging:
+            staging.stage_delete("aa", "y/..")
+            staging.stage_delete("aa", "decisions/r1-g0.json")
+    assert not any((tmp_path / ".cascade").iterdir())
+
+
+def test_stage_rejects_a_dot_dot_component_that_normalises_back_inside(
+    tmp_path: Path,
+) -> None:
+    """A '..' that lands back inside the record is still refused: the
+    check is on the components, not on where they happen to resolve."""
+    journal = CascadeJournal(tmp_path)
+    with pytest.raises(ValueError, match="must stay inside"):
+        with journal.begin(operation="approve", record_keys=["aa"]) as staging:
+            staging.stage("aa", "decisions/../record.json", b"{}")
+    assert not (tmp_path / "aa").exists()
+
+
+def test_begin_refuses_re_entry_instead_of_deadlocking(tmp_path: Path) -> None:
+    """The journal lock is held across the caller's whole block and is not
+    reentrant, so a nested begin() would otherwise block forever on an
+    untimed acquire."""
+    journal = CascadeJournal(tmp_path)
+    with journal.begin(operation="approve", record_keys=["aa"]) as staging:
+        staging.stage("aa", "record.json", b'{"a": 1}')
+        with pytest.raises(CascadeReentryError):
+            with journal.begin(operation="approve", record_keys=["bb"]):
+                pass
+    # The outer cascade is unharmed and still commits.
+    assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
+
+
+def test_recover_refuses_re_entry_from_inside_an_open_cascade(tmp_path: Path) -> None:
+    journal = CascadeJournal(tmp_path)
+    with journal.begin(operation="approve", record_keys=["aa"]) as staging:
+        staging.stage("aa", "record.json", b'{"a": 1}')
+        with pytest.raises(CascadeReentryError):
+            journal.recover()
+    assert (tmp_path / "aa" / "record.json").read_bytes() == b'{"a": 1}'
+
+
+def test_the_journal_lock_is_still_released_after_a_refused_re_entry(
+    tmp_path: Path,
+) -> None:
+    """Refusing must not leave the lock in a state that blocks the next
+    caller - the guard raises before it ever touches the lock."""
+    journal = CascadeJournal(tmp_path)
+    with journal.begin(operation="approve", record_keys=["aa"]) as staging:
+        staging.stage("aa", "record.json", b'{"a": 1}')
+        with pytest.raises(CascadeReentryError):
+            journal.recover()
+
+    done = threading.Event()
+
+    def run_recover() -> None:
+        journal.recover()
+        done.set()
+
+    thread = threading.Thread(target=run_recover, daemon=True)
+    thread.start()
+    assert done.wait(timeout=5), "journal lock was left held after a refused re-entry"

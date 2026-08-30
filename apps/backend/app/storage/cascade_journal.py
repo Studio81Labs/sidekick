@@ -12,11 +12,20 @@ intent.json naming every record key the cascade will touch before it lets
 the caller stage anything. Staged bytes live under a scratch
 .cascade/<cascade_id>/staged/ tree until the with block exits cleanly. At
 that point, and before any staged file is published to its live location,
-a ready marker is written and made durable - .cascade itself is fsynced
-first so the marker's own directory entry cannot be lost either, then the
-marker's file descriptor is fsynced, then the cascade directory is
+a ready marker is written and made durable. Everything the post-marker
+replay will later *read* is fsynced first, deepest directory outwards -
+every directory of the staged tree, then the cascade directory, then
+.cascade, then root - and only then is the marker itself written and
 fsynced. Only once that marker is durable does commit start renaming
 staged files into their live locations.
+
+The ordering there is the whole point, and it is easy to get wrong: the
+marker is a promise that the staged tree can be replayed, so the staged
+tree has to be durable *before* the promise is, not merely before the
+replay runs. A marker made durable independently of the tree it describes
+can survive a crash that the tree does not, after which recover() commits
+an empty or partial staged tree and reports success - and _commit cannot
+detect it, because an empty staged/ is a legitimate cascade.
 
 That marker is what makes staging all-or-nothing. If the process is
 killed at any point before the marker exists, no live file has been
@@ -28,17 +37,41 @@ trusts it, and finishes the job by replaying the same commit - which is
 why commit must be idempotent, and why stage() refuses any record key the
 intent did not name up front.
 
+recover() is a startup path, so one unusable cascade directory must never
+be able to stop it. A cascade it cannot trust enough to finish is renamed
+aside into .cascade/corrupt/<cascade_id> and reported separately from the
+ones it completed, rather than deleted (the evidence is the only record of
+what went wrong) or raised (that would abort the sweep, strand every other
+half-applied cascade, and fail every subsequent boot the same way).
+
+Locking. This class holds an internal lock for the lifetime of a cascade
+and for the whole of recover(), which has three consequences callers must
+respect:
+
+- It is **non-reentrant by design**. Calling begin() or recover() from a
+  thread already inside a begin() block raises CascadeReentryError rather
+  than deadlocking on an untimed acquire.
+- Treat it as a **leaf lock**. workspace.py:87-95 establishes the order
+  benchmark_corpus_lock -> job_locks -> history_lock; because the journal
+  lock is held across the caller's entire block, taking any workspace lock
+  *inside* a begin() block inverts that order and creates an ABBA
+  deadlock. Acquire every workspace lock you need before begin(), never
+  within it.
+- This runs in a FastAPI process. The acquire is blocking and untimed, so
+  calling begin() or recover() directly on the event-loop thread stalls
+  the whole loop for as long as another cascade is open. Callers must go
+  through a worker thread (run_in_threadpool / asyncio.to_thread).
+
 Cross-process contract: this class only serialises begin() against
-recover() *within one process*, using an internal lock held for the
-lifetime of a cascade and for the whole of recover(). Across processes it
-enforces nothing. Any deployment that opens more than one process against
-the same root must run recover() to completion before any cascade is
-opened against that root anywhere, under an exclusive interprocess lock -
-a shared lock is not enough, because recover() must never run
-concurrently with an open cascade. Violating this can delete a live
-cascade's staged files out from under it: the cascade then durably marks
-itself ready over an emptied directory and commits nothing, while its
-caller sees no exception and believes the write landed.
+recover() *within one process*. Across processes it enforces nothing. Any
+deployment that opens more than one process against the same root must run
+recover() to completion before any cascade is opened against that root
+anywhere, under an exclusive interprocess lock - a shared lock is not
+enough, because recover() must never run concurrently with an open
+cascade. Violating this can delete a live cascade's staged files out from
+under it: the cascade then durably marks itself ready over an emptied
+directory and commits nothing, while its caller sees no exception and
+believes the write landed.
 """
 
 from __future__ import annotations
@@ -49,6 +82,7 @@ import tempfile
 import threading
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
@@ -67,6 +101,7 @@ from app.storage.persistence import _fsync_directory
 CASCADE_SCHEMA_VERSION = "imported-hand-cascade/v1"
 
 _CASCADE_DIRNAME = ".cascade"
+_QUARANTINE_DIRNAME = "corrupt"
 _STAGED_DIRNAME = "staged"
 _INTENT_FILENAME = "intent.json"
 _READY_FILENAME = "ready"
@@ -80,7 +115,38 @@ class CascadeCorruptionError(RuntimeError):
     Raised instead of silently discarding or silently no-oping, because
     once the ready marker exists, guessing wrong in either direction can
     strand a record that a caller believes was already applied.
+
+    Out of begin(), this reaches the caller: their write did not land and
+    they must know. Out of recover(), it does not - recover() contains it
+    per cascade and quarantines the directory, because a startup sweep
+    that aborts on one bad directory strands every other half-applied
+    cascade and fails identically on every subsequent boot.
     """
+
+
+class CascadeReentryError(RuntimeError):
+    """A cascade journal call was made from inside another one.
+
+    The journal's lock is held for the caller's whole begin() block and is
+    not reentrant, so a nested begin() - or a recover() called from within
+    a block - would otherwise block forever on an untimed acquire. Raising
+    turns a silent hang into a stack trace pointing at the nesting.
+    """
+
+
+@dataclass(frozen=True)
+class CascadeRecoveryReport:
+    """What one recover() sweep did.
+
+    completed and quarantined are deliberately separate: a completed
+    cascade was finished and its directory removed, while a quarantined
+    one was moved to <root>/.cascade/corrupt/<cascade_id> untouched and
+    still needs a human. Conflating them would let a boot report success
+    over a cascade nobody has looked at.
+    """
+
+    completed: tuple[str, ...] = ()
+    quarantined: tuple[str, ...] = ()
 
 
 class CascadeIntent(BaseModel):
@@ -175,14 +241,41 @@ class CascadeJournal:
         self._root = Path(root)
         self._cascade_root = self._root / _CASCADE_DIRNAME
         # Serialises begin() against recover() within this process - see
-        # the module docstring for what this does and does not guarantee.
+        # the module docstring for what this does and does not guarantee,
+        # and for why it is a non-reentrant leaf lock.
         self._lock = threading.Lock()
+        self._lock_owner: int | None = None
+
+    @contextmanager
+    def _exclusive(self, call: str) -> Iterator[None]:
+        """Hold the journal lock, refusing re-entry instead of deadlocking.
+
+        Reading _lock_owner outside the lock is safe: it is only ever
+        non-None while its owning thread is alive and inside this block, so
+        a thread can never see its own ident there unless it really is
+        re-entering, and never misses its own ident when it is.
+        """
+        this_thread = threading.get_ident()
+        if self._lock_owner == this_thread:
+            raise CascadeReentryError(
+                f"{call}() was called from a thread that is already inside a "
+                "cascade journal block; the journal lock is held for the whole "
+                "of that block and is not reentrant. Finish the open cascade "
+                "first - see the module docstring on treating this as a leaf "
+                "lock."
+            )
+        with self._lock:
+            self._lock_owner = this_thread
+            try:
+                yield
+            finally:
+                self._lock_owner = None
 
     @contextmanager
     def begin(
         self, *, operation: str, record_keys: Sequence[str]
     ) -> Iterator["CascadeStaging"]:
-        with self._lock:
+        with self._exclusive("begin"):
             cascade_id = self._prepare(operation=operation, record_keys=record_keys)
             cascade_dir = self._cascade_root / cascade_id
             intent = self._read_intent(cascade_dir)
@@ -201,13 +294,21 @@ class CascadeJournal:
                 self._mark_ready(cascade_id)
                 self._commit(cascade_dir)
 
-    def recover(self) -> list[str]:
-        with self._lock:
+    def recover(self) -> CascadeRecoveryReport:
+        with self._exclusive("recover"):
             if not self._cascade_root.is_dir():
-                return []
+                return CascadeRecoveryReport()
             completed: list[str] = []
+            quarantined: list[str] = []
             cascade_dirs = sorted(
-                (path for path in self._cascade_root.iterdir() if path.is_dir()),
+                (
+                    path
+                    for path in self._cascade_root.iterdir()
+                    # The quarantine directory holds evidence, not cascades.
+                    # Sweeping it would see a directory with no ready marker
+                    # and rmtree exactly what quarantine exists to preserve.
+                    if path.is_dir() and path.name != _QUARANTINE_DIRNAME
+                ),
                 key=lambda path: path.name,
             )
             for cascade_dir in cascade_dirs:
@@ -230,9 +331,42 @@ class CascadeJournal:
                 # record-key validation stage() does at write time, not
                 # for recovery. Do not reintroduce an intent.json check
                 # on this branch.
-                self._commit(cascade_dir)
+                try:
+                    self._commit(cascade_dir)
+                except CascadeCorruptionError:
+                    # Contain it to this cascade. Letting it out of the
+                    # loop would abort the sweep, leave this directory in
+                    # place to abort every future sweep the same way, and
+                    # strand the very half-applied cascades recovery
+                    # exists to finish - a permanent boot failure needing
+                    # manual filesystem surgery.
+                    quarantined.append(self._quarantine(cascade_dir))
+                    continue
                 completed.append(cascade_dir.name)
-            return completed
+            return CascadeRecoveryReport(
+                completed=tuple(completed), quarantined=tuple(quarantined)
+            )
+
+    def _quarantine(self, cascade_dir: Path) -> str:
+        """Move an untrustworthy cascade aside and return its id.
+
+        Renamed rather than deleted: this directory is the only record of
+        what went wrong, and unlike the pre-marker discard branch there is
+        no proof here that commit never began, so its staged tree may be
+        the only surviving copy of a half-applied write.
+        """
+        quarantine_root = self._cascade_root / _QUARANTINE_DIRNAME
+        quarantine_root.mkdir(parents=True, exist_ok=True)
+        destination = quarantine_root / cascade_dir.name
+        if destination.exists():
+            # Only reachable if an id was quarantined twice, which uuid4
+            # makes vanishingly unlikely - but silently clobbering earlier
+            # evidence would be the one thing quarantine must not do.
+            destination = quarantine_root / f"{cascade_dir.name}.{uuid4().hex}"
+        os.rename(cascade_dir, destination)
+        _fsync_directory(quarantine_root)
+        _fsync_directory(self._cascade_root)
+        return cascade_dir.name
 
     def _prepare(self, *, operation: str, record_keys: Sequence[str]) -> str:
         cascade_id = uuid4().hex
@@ -252,12 +386,24 @@ class CascadeJournal:
         return cascade_id
 
     def _mark_ready(self, cascade_id: str) -> None:
-        # ready is only trustworthy after a crash if its own entry inside
-        # .cascade survives too. fsync that *before* writing the marker,
-        # so by the time the marker's own fsync (inside _durable_replace)
-        # completes, the whole path down to it is already durable.
-        _fsync_directory(self._cascade_root)
+        # The marker promises that this cascade's staged tree will be
+        # replayed, so everything that replay reads has to be durable
+        # before the promise is. _durable_replace only ever fsyncs the one
+        # directory holding the file it wrote, which leaves staged/<key>'s
+        # entry in staged/, and content/ and deletes/'s entries in
+        # staged/<key>, non-durable - yet all three are read *after* the
+        # marker. A crash could then leave the marker durable over a
+        # staged tree that is gone, and _commit cannot tell the difference
+        # because an empty staged/ is a legitimate cascade. So fsync the
+        # whole staged chain first, deepest first, then .cascade (so the
+        # marker's own directory entry survives), then root (so .cascade's
+        # entry survives the first live rename) - and only then write the
+        # marker, whose own fsync inside _durable_replace closes the
+        # sequence.
         cascade_dir = self._cascade_root / cascade_id
+        _fsync_directory_tree(cascade_dir)
+        _fsync_directory(self._cascade_root)
+        _fsync_directory(self._root)
         _durable_replace(cascade_dir / _READY_FILENAME, b"")
 
     def _read_intent(self, cascade_dir: Path) -> CascadeIntent:
@@ -322,14 +468,20 @@ class CascadeJournal:
 
 
 def _ensure_record_key_is_safe(record_key: str) -> None:
+    # A leading dot is rejected outright, not just "." and "..". A record
+    # key becomes a directory name directly under root, so a key of
+    # ".cascade" writes into the journal's own scratch namespace: staging
+    # ".cascade/<32 hex>/ready" publishes a marker for a cascade that never
+    # existed and poisons every later recover().
     if (
         not record_key
-        or record_key in {".", ".."}
+        or record_key.startswith(".")
         or Path(record_key).name != record_key
     ):
         raise ValueError(
-            f"record key {record_key!r} must be a single path segment: no "
-            "separator, and not empty, '.', or '..'"
+            f"record key {record_key!r} must be a single path segment that "
+            "does not begin with '.': no separator, not empty, and never "
+            f"'.', '..', or the journal's own {_CASCADE_DIRNAME!r} directory"
         )
 
 
@@ -338,11 +490,27 @@ def _ensure_relative_path_is_safe(relative_path: str) -> None:
         raise ValueError(
             f"relative path {relative_path!r} must not be empty, '.', or '..'"
         )
+    # Reject '..' anywhere, including paths that normalise back inside.
+    # "x/.." resolves to the namespace directory itself, and staging it
+    # renames a temp file *onto* staged/<key>/content - a file where a
+    # directory belongs - after which _commit_record silently skips the
+    # whole record and the cascade commits nothing while reporting success.
+    if ".." in Path(relative_path).parts:
+        raise ValueError(
+            f"relative path {relative_path!r} must stay inside its record: "
+            "'..' components are never allowed, not even ones that normalise "
+            "back inside"
+        )
 
 
 def _resolve_under(base_dir: Path, candidate: Path) -> Path:
     base = base_dir.resolve()
     resolved = candidate.resolve(strict=False)
+    if resolved == base:
+        raise ValueError(
+            f"{candidate} must stay inside {base_dir}: it normalises to that "
+            "directory itself, which is not a file within it"
+        )
     try:
         resolved.relative_to(base)
     except ValueError as exc:
@@ -367,6 +535,23 @@ def _fsync_directory_chain(leaf: Path, *, stop_at: Path) -> None:
         if current == stop_at:
             return
         current = current.parent
+
+
+def _fsync_directory_tree(root_dir: Path) -> None:
+    """fsync every directory in root_dir's subtree, deepest first.
+
+    _durable_replace fsyncs only the single directory holding the file it
+    just wrote, so building staged/<key>/content/a/b.json leaves b.json's
+    entry durable while content/'s entry in staged/<key>, and
+    staged/<key>'s entry in staged/, are not. Walking bottom-up makes each
+    directory durable before the parent whose entry names it.
+    """
+    if not root_dir.is_dir():
+        return
+    for parent, dirnames, _filenames in os.walk(root_dir, topdown=False):
+        for dirname in dirnames:
+            _fsync_directory(Path(parent) / dirname)
+    _fsync_directory(root_dir)
 
 
 def _durable_replace(target: Path, payload: bytes) -> None:
