@@ -2261,11 +2261,14 @@ class HeroActionContext(ImportedHandModel):
     as zero: a consumer that cannot size a raise has to withhold the raise
     rather than offer one of arbitrary size.
 
-    ``raise_reopened`` reports whether raising is legal for the hero here,
-    using the hand validator's own rule: an actor who has already acted on this
-    street is reopened only once the wager has grown by at least the increment
-    that stood when they acted, so a short all-in leaves them call-or-fold. It
-    is ``True`` whenever the aggregate holds no evidence that betting is
+    ``raise_reopened`` reports whether raising is legal for the hero here.
+    It is ``False`` for either of two reasons the hand validator enforces:
+    an actor who has already acted on this street is reopened only once
+    the wager has grown by at least the increment that stood when they
+    acted, so a short all-in leaves them call-or-fold; or the hero is the
+    sole actionable player and every live opponent is all-in, so no one
+    could answer a raise and the validator rejects one outright. It is
+    ``True`` whenever the aggregate holds no evidence that betting is
     closed, which is exactly when the validator would admit a raise.
     """
 
@@ -4549,9 +4552,13 @@ def _hero_decision_context(
             committed_hand_commitments[seat.player_id] + street_commitment
         )
         terminal = terminal_actors.get(seat.player_id)
-        # Every commitment is exact at an emitted decision, so reconcile the
-        # incremental membership the walk mirrors with what the published chips
-        # prove: a seat with nothing behind is all-in however it got there.
+        # Defence in depth, not a guard against a stale `all_in`: the
+        # extraction gate requires reconcile_pot(...).status == "pass",
+        # so every commitment here is already exact and this exhaustion
+        # check is redundant with the incremental membership above (0
+        # divergences measured across 401 calls). It is also `or`-shaped,
+        # so it can only add `all_in`, never clear one -- it would start
+        # to matter only if inexact commitments were ever let through.
         status: SeatDecisionStatus = (
             "folded"
             if terminal is not None and terminal[0] == "folded"

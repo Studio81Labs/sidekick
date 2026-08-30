@@ -89,9 +89,11 @@ class HeroDecisionState(ImportedHandModel):
     The wager fields alone do not describe the legal action set. A consumer
     must read both raise-legality fields before offering a raise:
 
-    ``raise_reopened`` is ``False`` when the hero may only call or fold --
-    typically after an opponent's short all-in that did not raise by a full
-    increment. Offering a raise there grades against an action the hand
+    ``raise_reopened`` is ``False`` when the hero may only call or fold,
+    for either of two reasons: an opponent's short all-in did not raise
+    the wager by a full increment, or the hero is the sole actionable
+    player and every live opponent is all-in, so no one could answer a
+    raise. Offering a raise there grades against an action the hand
     validator itself would reject.
 
     ``last_full_wager_increment`` is the yardstick a minimum legal raise is

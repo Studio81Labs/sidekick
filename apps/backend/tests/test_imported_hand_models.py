@@ -17756,6 +17756,12 @@ def test_hero_decision_context_restores_an_inferred_all_in_after_a_return() -> N
     uncalled return -- betting is closed once the only actionable player has
     matched the wager -- so the reversal is exercised through the rule both the
     validator and the extraction walk now run.
+
+    This is a unit test of the shared ``_apply_terminal_transition`` rule, not
+    a record-level regression guard: a record-level version cannot exist
+    because the gate requires exact commitments, so the validator's
+    uncalled-return guard always applies and ``betting_closed_by_all_ins``
+    rejects any later table decision.
     """
 
     from app.domain.imported_hands.models import _apply_terminal_transition
