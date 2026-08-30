@@ -2252,6 +2252,18 @@ class SeatDecisionState(ImportedHandModel):
     status: SeatDecisionStatus
 
 
+class StreetActionSlice(ImportedHandModel):
+    """The ordered actions of one street as the extraction walk saw them.
+
+    Completed streets carry every action; the street the hero is acting on is
+    truncated immediately before the hero's own action, so the slice is exactly
+    what the hero could have observed when deciding.
+    """
+
+    street: StreetName
+    actions: list[ImportedAction]
+
+
 class HeroActionContext(ImportedHandModel):
     """Exact chip state the aggregate computed for one voluntary hero action.
 
@@ -2270,12 +2282,18 @@ class HeroActionContext(ImportedHandModel):
     could answer a raise and the validator rejects one outright. It is
     ``True`` whenever the aggregate holds no evidence that betting is
     closed, which is exactly when the validator would admit a raise.
+
+    ``action_history`` is the ordered betting line: every street from preflop
+    through this one, with this street truncated before the hero's own action.
+    Distinct lines reach identical pots, wagers, and commitments, so the chip
+    snapshot alone cannot identify the spot a line-sensitive consumer needs.
     """
 
     street: StreetName
     action_sequence: NonNegativeInteger
     action: ImportedAction
     board_cards: list[Card]
+    action_history: list[StreetActionSlice]
     committed_pot_before_street: NonNegativeDecimal
     pot_before_action: NonNegativeDecimal
     current_wager: NonNegativeDecimal
@@ -4227,6 +4245,7 @@ def _hero_decision_contexts_for_extraction(
     }
     actionable_players = set(live_players)
     inferred_stack_exhausted_players: set[str] = set()
+    completed_street_slices: list[StreetActionSlice] = []
     starting_stacks = {seat.player_id: seat.starting_stack for seat in state.seats}
     enforce_full_raise_increment = state.game.betting_limit in {
         "no_limit",
@@ -4259,7 +4278,7 @@ def _hero_decision_contexts_for_extraction(
         acted_wager_by_player: dict[str, Decimal | None] = {}
         reopen_increment_by_player: dict[str, Decimal | None] = {}
 
-        for action in street.actions:
+        for action_index, action in enumerate(street.actions):
             prior_commitment = street_commitments[action.actor_id]
             prior_live_commitment = live_commitments[action.actor_id]
             effective_prior_commitment = _action_implied_prior_commitment(
@@ -4312,6 +4331,13 @@ def _hero_decision_contexts_for_extraction(
                         street_commitments=street_commitments,
                         live_commitments=live_commitments,
                         actor_street_commitment=effective_prior_commitment,
+                        action_history=[
+                            *completed_street_slices,
+                            StreetActionSlice(
+                                street=street.street,
+                                actions=list(street.actions[:action_index]),
+                            ),
+                        ],
                         committed_pot_before_street=committed_pot_before_street,
                         current_wager=current_wager,
                         last_full_wager_increment=(
@@ -4445,6 +4471,12 @@ def _hero_decision_contexts_for_extraction(
                     last_full_wager_increment if increment_is_established else None
                 )
 
+        completed_street_slices.append(
+            StreetActionSlice(
+                street=street.street,
+                actions=list(street.actions),
+            )
+        )
         if committed_pot_before_street is not None and all(
             commitment is not None for commitment in street_commitments.values()
         ):
@@ -4519,6 +4551,7 @@ def _hero_decision_context(
     street_commitments: dict[str, Decimal | None],
     live_commitments: dict[str, Decimal | None],
     actor_street_commitment: Decimal,
+    action_history: list[StreetActionSlice],
     committed_pot_before_street: Decimal,
     current_wager: Decimal,
     last_full_wager_increment: Decimal | None,
@@ -4585,6 +4618,7 @@ def _hero_decision_context(
         action_sequence=action.sequence,
         action=action,
         board_cards=list(street.board_cards),
+        action_history=action_history,
         committed_pot_before_street=committed_pot_before_street,
         pot_before_action=committed_pot_before_street
         + sum(resolved_street_commitments.values(), Decimal(0)),

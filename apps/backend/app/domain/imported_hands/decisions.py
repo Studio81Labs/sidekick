@@ -19,6 +19,7 @@ from app.domain.imported_hands.models import (
     Economics,
     GameVariant,
     HeroActionContext,
+    Identifier,
     ImportedAction,
     ImportedHandModel,
     ImportedHandRecord,
@@ -41,6 +42,7 @@ from app.domain.imported_hands.models import (
     _economics_ready_for_extraction,
     _hero_decision_contexts_for_extraction,
     _known_action_orders,
+    _STREET_ORDER,
     _terminal_hand_ready_for_extraction,
 )
 from app.domain.poker import Card
@@ -83,6 +85,30 @@ class HeroTableAction(ImportedHandModel):
     evidence: list[SourceEvidence]
 
 
+class DecisionActionRecord(ImportedHandModel):
+    """One table action in the betting line, as a grader needs to read it.
+
+    Origin and evidence are deliberately absent: a betting line is defined by
+    what happened at the table, not by why the source believes it happened.
+    The hero's own action keeps its origin on ``HeroTableAction``.
+    """
+
+    sequence: NonNegativeInteger
+    player_id: Identifier
+    position: StructuralPosition
+    action_type: ActionType
+    amount: PositiveDecimal | None
+    total_committed: NonNegativeDecimal | None
+    all_in: bool
+
+
+class StreetActionHistory(ImportedHandModel):
+    """Every action taken on one street, in the order they were taken."""
+
+    street: StreetName
+    actions: list[DecisionActionRecord]
+
+
 class HeroDecisionState(ImportedHandModel):
     """Everything a grading route needs about the spot, exactly.
 
@@ -100,6 +126,13 @@ class HeroDecisionState(ImportedHandModel):
     measured against. ``None`` means the aggregate could not establish it and
     must never be read as zero; a consumer that cannot size a raise has to
     withhold it rather than offer one of arbitrary size.
+
+    ``action_history`` is the ordered betting line: every street from preflop
+    through ``street``, the current one truncated immediately before the hero's
+    own action. Compare an entry's ``street`` against ``street`` to tell the
+    completed prefix from the street in progress. It is not redundant with the
+    chip fields -- distinct lines reach identical pots, wagers, and
+    commitments, so a line-sensitive route cannot identify the spot without it.
     """
 
     street: StreetName
@@ -120,6 +153,27 @@ class HeroDecisionState(ImportedHandModel):
     raise_reopened: bool
     hero_stack_before_action: NonNegativeDecimal
     seats: list[SeatDecisionState]
+    action_history: list[StreetActionHistory]
+
+    @model_validator(mode="after")
+    def validate_action_history(self) -> Self:
+        streets = [entry.street for entry in self.action_history]
+        if not streets:
+            raise ValueError("a decision state requires its betting line")
+        expected = [
+            street
+            for street, order in sorted(
+                _STREET_ORDER.items(),
+                key=lambda item: item[1],
+            )
+            if order <= _STREET_ORDER[self.street]
+        ]
+        if streets != expected:
+            raise ValueError(
+                "action_history must run in street order from preflop through"
+                f" {self.street} without gaps or duplicates"
+            )
+        return self
 
 
 class HeroDecisionPoint(ImportedHandModel):
@@ -135,6 +189,20 @@ class HeroDecisionPoint(ImportedHandModel):
     action_sequence: NonNegativeInteger
     state: HeroDecisionState
     table_action: HeroTableAction
+
+    @model_validator(mode="after")
+    def validate_decision_binding(self) -> Self:
+        if self.state.street != self.street:
+            raise ValueError("decision state street must match the decision")
+        current = self.state.action_history[-1]
+        if any(
+            record.sequence >= self.action_sequence for record in current.actions
+        ):
+            raise ValueError(
+                "the current street's action history must stop before the"
+                " hero's own action"
+            )
+        return self
 
 
 class ExcludedHeroAction(ImportedHandModel):
@@ -385,6 +453,30 @@ def _active_provenance(
     )
 
 
+def _action_history(context: HeroActionContext) -> list[StreetActionHistory]:
+    """Project the walk's ordered line into its grading-relevant shape."""
+
+    positions = {seat.player_id: seat.position for seat in context.seats}
+    return [
+        StreetActionHistory(
+            street=slice_.street,
+            actions=[
+                DecisionActionRecord(
+                    sequence=action.sequence,
+                    player_id=action.actor_id,
+                    position=positions[action.actor_id],
+                    action_type=action.action_type,
+                    amount=action.amount,
+                    total_committed=action.total_committed,
+                    all_in=action.all_in,
+                )
+                for action in slice_.actions
+            ],
+        )
+        for slice_ in context.action_history
+    ]
+
+
 def _decision_point(
     context: HeroActionContext,
     *,
@@ -429,6 +521,7 @@ def _decision_point(
             raise_reopened=context.raise_reopened,
             hero_stack_before_action=context.hero_stack_before_action,
             seats=list(context.seats),
+            action_history=_action_history(context),
         ),
         table_action=HeroTableAction(
             action_type=action.action_type,

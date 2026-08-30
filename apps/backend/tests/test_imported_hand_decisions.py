@@ -1157,3 +1157,229 @@ def test_hand_decision_extraction_binds_its_outcome_to_its_contents(
 
     with pytest.raises(ValidationError, match=expected_error):
         HandDecisionExtraction.model_validate(payload)
+
+
+def identical_chips_different_line_records() -> (
+    tuple[ImportedHandRecord, ImportedHandRecord]
+):
+    """Build two hands whose turn decision is chip-identical but line-distinct.
+
+    Both flops put two chips in from each player and leave the same stacks; one
+    gets there with a hero bet that villain calls, the other with a villain bet
+    that the hero calls.
+    """
+
+    board = decision_context_board()
+    preflop = {
+        "street": "preflop",
+        "actions": [
+            wager_action(
+                0,
+                "hero",
+                "post_small_blind",
+                amount=Decimal("0.5"),
+                total=Decimal("0.5"),
+            ),
+            wager_action(
+                1,
+                "villain",
+                "post_big_blind",
+                amount=Decimal("1"),
+                total=Decimal("1"),
+            ),
+            wager_action(
+                2, "hero", "call", amount=Decimal("0.5"), total=Decimal("1")
+            ),
+            wager_action(3, "villain", "check", total=Decimal("1")),
+        ],
+    }
+    hero_led_flop = {
+        "street": "flop",
+        "board_cards": board[:3],
+        "actions": [
+            wager_action(0, "villain", "check", total=Decimal(0)),
+            wager_action(1, "hero", "bet", amount=Decimal("2"), total=Decimal("2")),
+            wager_action(
+                2, "villain", "call", amount=Decimal("2"), total=Decimal("2")
+            ),
+        ],
+    }
+    villain_led_flop = {
+        "street": "flop",
+        "board_cards": board[:3],
+        "actions": [
+            wager_action(
+                0, "villain", "bet", amount=Decimal("2"), total=Decimal("2")
+            ),
+            wager_action(1, "hero", "call", amount=Decimal("2"), total=Decimal("2")),
+        ],
+    }
+    turn = {
+        "street": "turn",
+        "board_cards": board[:4],
+        "actions": [
+            wager_action(0, "villain", "check", total=Decimal(0)),
+            wager_action(1, "hero", "bet", amount=Decimal("2"), total=Decimal("2")),
+            wager_action(
+                2, "villain", "call", amount=Decimal("2"), total=Decimal("2")
+            ),
+        ],
+    }
+    river = {
+        "street": "river",
+        "board_cards": board,
+        "actions": [
+            wager_action(0, "villain", "check", total=Decimal(0)),
+            wager_action(1, "hero", "check", total=Decimal(0)),
+        ],
+    }
+    return tuple(  # type: ignore[return-value]
+        extraction_record_for_streets(
+            [preflop, flop, turn, river],
+            button_seat=1,
+            configured_blinds=True,
+            stated_gross=Decimal("10"),
+        )
+        for flop in (hero_led_flop, villain_led_flop)
+    )
+
+
+def test_extraction_carries_the_completed_postflop_prefix() -> None:
+    result = extract_hero_decision_points(multi_street_decision_record())
+
+    histories = {
+        point.street: [entry.street for entry in point.state.action_history]
+        for point in result.decision_points
+    }
+
+    assert histories == {
+        "preflop": ["preflop"],
+        "flop": ["preflop", "flop"],
+        "turn": ["preflop", "flop", "turn"],
+        "river": ["preflop", "flop", "turn", "river"],
+    }
+
+    turn = next(
+        point for point in result.decision_points if point.street == "turn"
+    )
+    flop_prefix = turn.state.action_history[1]
+    assert flop_prefix.street == "flop"
+    assert [
+        (record.sequence, record.action_type) for record in flop_prefix.actions
+    ] == [(0, "check"), (1, "bet"), (2, "call")]
+
+    river = next(
+        point for point in result.decision_points if point.street == "river"
+    )
+    assert [
+        [(record.sequence, record.action_type) for record in entry.actions]
+        for entry in river.state.action_history[1:3]
+    ] == [
+        [(0, "check"), (1, "bet"), (2, "call")],
+        [(0, "check"), (1, "bet"), (2, "call")],
+    ]
+
+
+def test_extraction_history_stops_before_the_hero_action() -> None:
+    result = extract_hero_decision_points(multi_street_decision_record())
+
+    for point in result.decision_points:
+        current = point.state.action_history[-1]
+        assert current.street == point.street
+        assert all(
+            record.sequence < point.action_sequence for record in current.actions
+        )
+        assert len(current.actions) == point.action_sequence
+
+
+def test_extraction_preflop_history_holds_only_the_truncated_prefix() -> None:
+    result = extract_hero_decision_points(baseline_decision_record())
+
+    (point,) = result.decision_points
+
+    assert point.street == "preflop"
+    assert [entry.street for entry in point.state.action_history] == ["preflop"]
+    (preflop,) = point.state.action_history
+    assert [
+        (record.sequence, record.player_id, record.action_type)
+        for record in preflop.actions
+    ] == [
+        (0, "hero", "post_small_blind"),
+        (1, "villain", "post_big_blind"),
+    ]
+    assert all(record.action_type != "call" for record in preflop.actions)
+
+
+def test_extraction_history_separates_identical_chip_states() -> None:
+    hero_led, villain_led = identical_chips_different_line_records()
+
+    hero_led_turn = extract_hero_decision_points(hero_led).decision_points[2]
+    villain_led_turn = extract_hero_decision_points(villain_led).decision_points[2]
+
+    assert hero_led_turn.street == villain_led_turn.street == "turn"
+    assert (
+        hero_led_turn.action_sequence == villain_led_turn.action_sequence == 1
+    )
+    hero_state = hero_led_turn.state
+    villain_state = villain_led_turn.state
+    for field_name in (
+        "board_cards",
+        "committed_pot_before_street",
+        "pot_before_action",
+        "current_wager",
+        "amount_to_call",
+        "last_full_wager_increment",
+        "raise_reopened",
+        "hero_stack_before_action",
+        "seats",
+    ):
+        assert getattr(hero_state, field_name) == getattr(
+            villain_state, field_name
+        ), field_name
+
+    # Every aggregate chip value matches; only the ordered line tells the two
+    # spots apart, which is the whole reason it is carried.
+    assert hero_state.action_history != villain_state.action_history
+    assert hero_state.action_history[0] == villain_state.action_history[0]
+    assert [
+        (record.player_id, record.action_type)
+        for record in hero_state.action_history[1].actions
+    ] == [("villain", "check"), ("hero", "bet"), ("villain", "call")]
+    assert [
+        (record.player_id, record.action_type)
+        for record in villain_state.action_history[1].actions
+    ] == [("villain", "bet"), ("hero", "call")]
+
+
+def test_decision_state_rejects_a_broken_action_history() -> None:
+    point = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[2]
+    payload = point.state.model_dump(mode="python")
+
+    with pytest.raises(ValidationError, match="without gaps or duplicates"):
+        decisions.HeroDecisionState.model_validate(
+            {**payload, "action_history": payload["action_history"][:1]}
+        )
+
+    reordered = [
+        payload["action_history"][1],
+        payload["action_history"][0],
+        payload["action_history"][2],
+    ]
+    with pytest.raises(ValidationError, match="without gaps or duplicates"):
+        decisions.HeroDecisionState.model_validate(
+            {**payload, "action_history": reordered}
+        )
+
+
+def test_decision_point_rejects_a_history_covering_its_own_action() -> None:
+    point = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[2]
+    payload = point.model_dump(mode="python")
+    current = payload["state"]["action_history"][-1]
+    current["actions"] = [*current["actions"], {**current["actions"][0], "sequence": 1}]
+
+    with pytest.raises(ValidationError, match="stop before the"):
+        HeroDecisionPoint.model_validate(payload)
