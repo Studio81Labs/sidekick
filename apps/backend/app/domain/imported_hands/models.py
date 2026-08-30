@@ -3415,16 +3415,30 @@ def _record_lifecycle_audit_chronology_is_valid(
     return True
 
 
-def imported_hand_state_sha256(state: ImportedHandState) -> str:
-    """Return the canonical checksum used to identify detected-state content."""
+def imported_hand_canonical_json(payload: Any) -> bytes:
+    """Serialize a JSON-mode payload into the one canonical digest form.
 
-    payload = json.dumps(
-        _state_payload_for_hash(state),
+    Every imported-hand digest -- detected state, the semantic
+    fingerprint, and the record store's identity-derived record key --
+    must hash the same bytes for the same content, so the serialization
+    lives here once rather than being restated at each call site where
+    the two forms could silently drift apart.
+    """
+
+    return json.dumps(
+        payload,
         ensure_ascii=False,
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    return sha256(payload).hexdigest()
+
+
+def imported_hand_state_sha256(state: ImportedHandState) -> str:
+    """Return the canonical checksum used to identify detected-state content."""
+
+    return sha256(
+        imported_hand_canonical_json(_state_payload_for_hash(state))
+    ).hexdigest()
 
 
 def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
@@ -3436,13 +3450,7 @@ def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
     chronology = normalized["chronology"]
     for field_name in ("source_file_id", "source_session_id", "hand_ordinal"):
         chronology.pop(field_name, None)
-    payload = json.dumps(
-        normalized,
-        ensure_ascii=False,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return sha256(payload).hexdigest()
+    return sha256(imported_hand_canonical_json(normalized)).hexdigest()
 
 
 def _state_payload_for_hash(state: ImportedHandState) -> dict[str, Any]:

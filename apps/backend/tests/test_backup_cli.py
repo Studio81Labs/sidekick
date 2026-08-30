@@ -251,9 +251,14 @@ def test_export_waits_for_active_data_mutation(
         lock: InterprocessDataLock,
         *,
         exclusive: bool,
+        timeout_seconds: int | None = None,
     ) -> int:
         lock_attempted.set()
-        return original_acquire(lock, exclusive=exclusive)
+        return original_acquire(
+            lock,
+            exclusive=exclusive,
+            timeout_seconds=timeout_seconds,
+        )
 
     def run_export() -> None:
         try:

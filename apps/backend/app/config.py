@@ -9,6 +9,11 @@ import idna
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.data_lock import (
+    DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+)
 from app.ocr_layouts import OCR_CV_LAYOUT_PROFILE_IDS
 
 Threshold = Annotated[float, Field(ge=0, le=1)]
@@ -81,6 +86,32 @@ class Settings(BaseSettings):
     )
 
     data_dir: Path = Field(default=Path("data"))
+    # Startup's two data-lock acquires are bounded separately, because
+    # they fail in different ways. See app/data_lock.py for why one is
+    # tight and the other is not; both are tunable because they run
+    # before uvicorn binds, where a wrong bound is a failed deploy.
+    #
+    # The exclusive acquire the imported-hand recovery sweep needs. It is
+    # skipped entirely unless a write was actually interrupted, so on a
+    # healthy volume this is never reached.
+    data_lock_recovery_timeout_seconds: int = Field(
+        default=DEFAULT_DATA_LOCK_TIMEOUT_SECONDS, gt=0
+    )
+    # The shared acquire the rest of startup takes. Only an exclusive
+    # holder blocks it - in practice a backup export building an archive -
+    # and waiting one out is the correct behaviour, so this is generous;
+    # it exists to bound a stuck system, not a slow export.
+    data_lock_startup_timeout_seconds: int = Field(
+        default=DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS, gt=0
+    )
+    # The shared acquire each imported-hand write takes. Separate from
+    # both of the above: it runs on a request path, where failing fast is
+    # the right answer rather than a hazard, so it must not move when
+    # someone tunes a startup bound. Equal to the recovery default today
+    # by coincidence, not by connection.
+    data_lock_write_timeout_seconds: int = Field(
+        default=DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS, gt=0
+    )
     deployment_environment: Literal["local", "staging", "production"] = "local"
     data_volume_id: str | None = Field(
         default=None,

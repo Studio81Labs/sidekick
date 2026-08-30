@@ -244,6 +244,43 @@ including background work. Browser and operational exports take the exclusive
 side of that lock while building an archive, so they wait for active mutations
 and prevent a partial restore or import from becoming a scheduled backup.
 
+Startup also participates in that lock, on both sides, and the two behave
+differently.
+
+The backend always takes the **shared** side for the rest of its startup,
+including recovery of interrupted parsing jobs. Only an exclusive holder blocks
+that, so **a boot that overlaps a running export waits for the export to
+finish**, then proceeds. That wait is expected and is not a fault: the export
+drains, and startup continues. It is bounded by
+`POKER_DATA_LOCK_STARTUP_TIMEOUT_SECONDS` (default 600), which is set well clear
+of a normal archive build so that a legitimate export never fails a deploy; the
+bound exists only so a genuinely stuck volume produces a message instead of a
+container hanging forever with no log line.
+
+The backend takes the **exclusive** side only when the imported-hand store has a
+write journal entry left behind by an interrupted write - the state a crash
+leaves, not the state a healthy volume is in. When there is nothing to recover
+that acquire is skipped entirely, so a normal boot never requests exclusivity at
+all. When it is needed it is bounded by
+`POKER_DATA_LOCK_RECOVERY_TIMEOUT_SECONDS` (default 30), deliberately much
+tighter: `flock` gives no preference to waiters, so an exclusive acquire can be
+starved indefinitely by overlapping shared holders rather than merely delayed,
+and no length of wait fixes that. The recovery sweep is never skipped to get past
+its timeout, because an unrecovered half-applied write must not be served around.
+
+Either bound expiring makes the backend **fail to start** with a
+`DataLockTimeoutError` naming the lock file and which side it wanted, because
+startup happens before the server binds and a silent wait would leave a container
+that never turns healthy.
+
+**Diagnosing a restart loop after a failed deploy.** If the backend exits at
+startup with `DataLockTimeoutError`, another process is holding the data volume
+lock; this is not data corruption and the volume needs no repair. The usual cause
+is the scheduled export below, which holds the exclusive side unbounded for the
+whole archive build. Check whether an export is running, let it finish, and
+redeploy - or raise the corresponding timeout above for a volume where exports
+routinely run longer than the default window.
+
 Schedule a daily Coolify task against the backend image or run this inside a
 one-off backend container:
 

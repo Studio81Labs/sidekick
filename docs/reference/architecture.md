@@ -220,9 +220,40 @@ nested audit collections remain mutable while a transition is assembled, every
 aggregate serialization, extraction, and restore comparison first rebuilds and
 validates a complete snapshot; an invalid graph cannot be persisted or exposed
 as learning evidence. Conflict resolutions are retained audit events, so a
-deletion request must be ordered after them before deletion can proceed. These
-contracts are not yet connected to V1 routes or file-backed storage, so they do
-not make the hosted screenshot workflow a V2 player-data path.
+deletion request must be ordered after them before deletion can proceed.
+
+These contracts are now backed by a player-local file store, and are still not
+reachable over HTTP. `app/storage/imported_hand_store.py` persists each record
+at `<data>/imported-hands/<record_key>/record.json`, keyed by a SHA-256 of the
+hand's stable identity, with derived decision artifacts beside it under
+`decisions/`. Because a purged record's tombstone keeps neither its identity nor
+its audit collections, that key is derived once when the record is first written
+and the directory name is afterwards the only way to reach the record - which is
+what lets a re-import find the tombstone of the hand it replaces.
+
+Writes that touch more than one file go through the cascade journal in
+`app/storage/cascade_journal.py`, which stages them under
+`<data>/imported-hands/.cascade/` and publishes them as one durable unit, so a
+record and the decision artifacts derived from it can never disagree about which
+canonical revision is current. `WorkspaceCoordinator.open` recovers an
+interrupted cascade at startup: it finishes one whose commit had begun,
+discards one whose commit had not, and
+sets aside a structurally unusable one under `.cascade/corrupt/` for a human
+rather than deleting the evidence. That sweep needs the exclusive data-volume
+lock, so it is skipped entirely when the journal holds nothing to recover - see
+`docs/process/deployment.md`.
+
+`app/application/imported_hand_lifecycle.py` is the single boundary every
+lifecycle transition crosses (approve, reapprove, withdraw, reject), publishing
+each record's new state and the artifacts derived from it in one cascade.
+
+What is deliberately not wired yet: there are no V2 routes and no HTTP surface,
+so none of this is reachable by a client, and the hosted screenshot workflow is
+not a V2 player-data path. Outside tests, the only production-reachable code
+here is the store's construction and its startup recovery - no writer, no
+lifecycle transition, and no re-import resolution has a non-test caller. The
+authentication and authorization boundary for player data is still to come.
+
 Hero decision-point extraction lives in
 `app/domain/imported_hands/decisions.py` and consumes the aggregate's
 per-action decision contexts instead of recomputing pot, wager, call, or

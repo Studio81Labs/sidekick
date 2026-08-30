@@ -52,6 +52,7 @@ def test_coordinator_rejects_empty_job_lock_pool(tmp_path: Path) -> None:
         WorkspaceCoordinator(
             jobs=workspace.jobs,
             benchmarks=workspace.benchmarks,
+            imported_hands=workspace.imported_hands,
             data_lock=workspace.data_lock,
             job_lock_stripes=0,
         )
