@@ -627,3 +627,62 @@ def test_an_empty_recovery_report_is_falsy(tmp_path: Path) -> None:
     with journal.begin(operation="approve", record_keys=["aa"]) as staging:
         staging.stage("aa", "record.json", b'{"a": 1}')
     assert not journal.recover()
+
+
+def test_recover_distinguishes_corruption_from_transient_failure(
+    tmp_path: Path,
+) -> None:
+    """Corruption is quarantined; anything else is left in place - and the
+    sweep must tell them apart in the same pass.
+
+    This pins the ordering of recover()'s except clauses.
+    CascadeCorruptionError subclasses Exception, so hoisting the broad
+    `except Exception` above the specific clause makes the specific one
+    unreachable: nothing is ever quarantined again, every corrupt cascade
+    is silently downgraded to `failed` and retried forever, and the sweep
+    still completes so every other test still passes. The symptom is the
+    absence of an action rather than an error, which is why it needs a
+    test that asserts the discrimination itself.
+    """
+    journal = CascadeJournal(tmp_path)
+    corrupt_id, failing_id, healthy_id = "0" * 32, "5" * 32, "f" * 32
+    cascade_root = tmp_path / ".cascade"
+
+    # Structurally corrupt: ready marker, no staged/ at all. Must be
+    # quarantined - it is proven unusable, so moving it aside is safe.
+    corrupt_dir = cascade_root / corrupt_id
+    corrupt_dir.mkdir(parents=True)
+    (corrupt_dir / "ready").write_bytes(b"")
+
+    # Structurally perfect, but commit raises for an external reason:
+    # <root>/bb is a regular file, so _commit_replace's mkdir raises
+    # FileExistsError. Must be left exactly where it is - it may be
+    # half-applied, and moving it aside would strand it.
+    (tmp_path / "bb").write_bytes(b"not a directory")
+    failing_dir = cascade_root / failing_id
+    (failing_dir / "staged" / "bb" / "content").mkdir(parents=True)
+    (failing_dir / "staged" / "bb" / "content" / "record.json").write_bytes(b'{"b": 2}')
+    (failing_dir / "ready").write_bytes(b"")
+
+    # Healthy, to prove the sweep still finishes past both of them.
+    healthy_dir = cascade_root / healthy_id
+    (healthy_dir / "staged" / "cc" / "content").mkdir(parents=True)
+    (healthy_dir / "staged" / "cc" / "content" / "record.json").write_bytes(b'{"c": 3}')
+    (healthy_dir / "ready").write_bytes(b"")
+
+    report = journal.recover()
+
+    assert report == CascadeRecoveryReport(
+        completed=(healthy_id,), quarantined=(corrupt_id,), failed=(failing_id,)
+    )
+    # The corrupt one was moved out of the replay path, evidence intact.
+    assert not corrupt_dir.exists()
+    assert (cascade_root / "corrupt" / corrupt_id / "ready").is_file()
+    # The failing one was not moved - it stays for the next sweep to retry.
+    assert not (cascade_root / "corrupt" / failing_id).exists()
+    assert (failing_dir / "ready").is_file()
+    assert (
+        failing_dir / "staged" / "bb" / "content" / "record.json"
+    ).read_bytes() == b'{"b": 2}'
+    # And the sweep still got past both to finish the healthy cascade.
+    assert (tmp_path / "cc" / "record.json").read_bytes() == b'{"c": 3}'
