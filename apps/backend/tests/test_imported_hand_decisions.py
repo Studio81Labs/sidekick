@@ -25,18 +25,21 @@ from test_imported_hand_models import (
     NOW,
     ante_decision_record,
     automatic_action,
+    contested_decision_record,
     decision_context_board,
     extraction_ready_state_payload,
     extraction_record_for_state,
     extraction_record_for_streets,
     forced_post,
     full_raise_decision_record,
+    heads_up_shove_and_call_decision_record,
     multi_street_decision_record,
     origin_confirmation_record,
     raw_source,
     reapproval_extraction_record,
     short_all_in_raise_decision_record,
     state_with_reviewed_action_origin,
+    unmarked_all_in_blind_decision_record,
     user_confirmed_origin_corrections,
     wager_action,
 )
@@ -1595,3 +1598,99 @@ def test_extraction_history_publishes_the_resolved_chip_values() -> None:
         assert point.state.committed_pot_before_street == Decimal("6")
 
     assert amount_turn.state.action_history == total_turn.state.action_history
+
+
+def test_extraction_history_publishes_the_resolved_all_in_verdict() -> None:
+    """A stack-exhausting post is all-in in the line even without a marker."""
+
+    record = unmarked_all_in_blind_decision_record()
+    state = record.active_state_for_extraction
+
+    (point,) = extract_hero_decision_points(record).decision_points
+
+    assert state is not None
+    blind_post = state.streets[0].actions[0]
+    assert (blind_post.actor_id, blind_post.all_in) == ("villain", False)
+
+    published = point.state.action_history[0].actions[0]
+    seat = next(
+        item for item in point.state.seats if item.player_id == "villain"
+    )
+    assert (published.player_id, published.action_type) == (
+        "villain",
+        "post_small_blind",
+    )
+    assert published.total_committed == seat.starting_stack == Decimal("0.5")
+    assert seat.status == "all_in"
+    assert seat.stack_before_action == Decimal(0)
+    # The post took villain's whole stack, so the line says so too rather than
+    # contradicting the seat beside it.
+    assert published.all_in is True
+
+
+def cumulative_commitment(
+    history: list[decisions.StreetActionHistory],
+    entry: decisions.StreetActionHistory,
+    record: decisions.DecisionActionRecord,
+) -> Decimal | None:
+    """Total what a record says its actor has committed across the hand."""
+
+    if record.total_committed is None:
+        return None
+    total = record.total_committed
+    for earlier in history:
+        if earlier.street == entry.street:
+            break
+        street_total = {
+            item.player_id: item.total_committed for item in earlier.actions
+        }.get(record.player_id)
+        if street_total is None:
+            continue
+        total += street_total
+    return total
+
+
+def test_extraction_history_all_in_never_contradicts_the_seats() -> None:
+    records = [
+        unmarked_all_in_blind_decision_record(),
+        heads_up_shove_and_call_decision_record(),
+        short_all_in_raise_decision_record(),
+        contested_decision_record(),
+        full_raise_decision_record(),
+        multi_street_decision_record(),
+        ante_decision_record(),
+    ]
+
+    inspected = 0
+    marked = 0
+    for record in records:
+        extraction = extract_hero_decision_points(record)
+        assert extraction.outcome == "decisions"
+        for point in extraction.decision_points:
+            seats = {item.player_id: item for item in point.state.seats}
+            for entry in point.state.action_history:
+                for item in entry.actions:
+                    inspected += 1
+                    seat = seats[item.player_id]
+                    if item.all_in:
+                        marked += 1
+                        # Whoever the line says is all-in must be all-in now:
+                        # nothing can give those chips back.
+                        assert seat.status == "all_in", (
+                            entry.street,
+                            item.player_id,
+                        )
+                    committed = cumulative_commitment(
+                        point.state.action_history, entry, item
+                    )
+                    if committed is not None and committed == seat.starting_stack:
+                        # An action that took the actor's last chip is all-in
+                        # however the source labelled it.
+                        assert item.all_in is True, (
+                            entry.street,
+                            item.sequence,
+                            item.player_id,
+                        )
+
+    assert inspected > 0
+    assert marked > 0

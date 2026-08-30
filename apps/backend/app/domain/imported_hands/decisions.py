@@ -93,11 +93,13 @@ class DecisionActionRecord(ImportedHandModel):
     what happened at the table, not by why the source believes it happened.
     The hero's own action keeps its origin on ``HeroTableAction``.
 
-    ``amount`` and ``total_committed`` are the values the extraction walk
-    resolved, not whichever of the two the adapter happened to state, so a
-    consumer sizing against the line reads the same chips the pot and seat
-    fields were built from. Either stays ``None`` only when the walk could not
-    establish it exactly.
+    ``amount``, ``total_committed`` and ``all_in`` are the values the
+    extraction walk resolved, not whichever the adapter happened to state, so a
+    consumer sizing against the line reads the same chips -- and the same
+    all-in verdict -- that the pot and seat fields were built from. An action
+    exhausting a known stack is published as all-in even when the source omits
+    the marker, matching the seat status beside it. A chip value stays ``None``
+    only when the walk could not establish it exactly.
     """
 
     sequence: NonNegativeInteger
@@ -529,7 +531,7 @@ def _action_history(context: HeroActionContext) -> list[StreetActionHistory]:
                     action_type=resolved.action.action_type,
                     amount=resolved.amount,
                     total_committed=resolved.total_committed,
-                    all_in=resolved.action.all_in,
+                    all_in=resolved.all_in,
                 )
                 for resolved in slice_.actions
             ],

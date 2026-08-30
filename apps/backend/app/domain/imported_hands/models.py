@@ -2260,11 +2260,18 @@ class ResolvedAction(ImportedHandModel):
     ordered stream, so consumers read the resolved values rather than whichever
     field the adapter happened to fill. A value stays ``None`` only when the
     walk could not establish it exactly.
+
+    ``all_in`` is likewise the verdict the walk reached, read back from the
+    terminal state its own transition produced -- not the source's marker. A
+    source that omits the marker on an action which exhausts a known stack
+    still leaves its actor all-in, and the seat status published beside this
+    record says so, so the two must be decided by the same rule.
     """
 
     action: ImportedAction
     amount: PositiveDecimal | None
     total_committed: NonNegativeDecimal | None
+    all_in: bool
 
 
 class StreetActionSlice(ImportedHandModel):
@@ -4437,18 +4444,6 @@ def _hero_decision_contexts_for_extraction(
 
             street_commitments[action.actor_id] = resolved_commitment
             live_commitments[action.actor_id] = resolved_live_commitment
-            street_resolved_actions.append(
-                ResolvedAction(
-                    action=action,
-                    amount=_resolved_action_amount(
-                        action,
-                        prior_commitment=effective_prior_commitment,
-                        resolved_commitment=resolved_commitment,
-                    ),
-                    total_committed=resolved_commitment,
-                )
-            )
-
             actor_starting_stack = starting_stacks[action.actor_id]
             actor_cumulative_commitment = (
                 committed_hand_commitments[action.actor_id] + resolved_commitment
@@ -4476,6 +4471,23 @@ def _hero_decision_contexts_for_extraction(
                 live_players=live_players,
                 actionable_players=actionable_players,
                 inferred_stack_exhausted_players=inferred_stack_exhausted_players,
+            )
+            # Read the verdict back out of the state the shared transition just
+            # wrote, so the record and the seat status it sits beside can never
+            # be decided by different rules.
+            actor_terminal = terminal_actors.get(action.actor_id)
+            street_resolved_actions.append(
+                ResolvedAction(
+                    action=action,
+                    amount=_resolved_action_amount(
+                        action,
+                        prior_commitment=effective_prior_commitment,
+                        resolved_commitment=resolved_commitment,
+                    ),
+                    total_committed=resolved_commitment,
+                    all_in=actor_terminal is not None
+                    and actor_terminal[0] == "all_in",
+                )
             )
 
             posted_amount = _posted_forced_amount(
