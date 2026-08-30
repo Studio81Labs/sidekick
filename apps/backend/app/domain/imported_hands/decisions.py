@@ -305,9 +305,19 @@ class ExcludedHeroAction(ImportedHandModel):
 
 
 class HandDecisionExtraction(ImportedHandModel):
-    """The complete extraction result for one imported hand."""
+    """The complete extraction result for one imported hand.
+
+    ``chronology`` and ``provenance`` are hand-level facts, carried here rather
+    than only on the decision points, because a valid hand can have no
+    decisions at all -- a big-blind walk is retained with its provenance and an
+    explicit ``no_decision`` outcome, and points alone would leave it with
+    none. They follow ``canonical_revision``: present for every extracted hand,
+    absent for a rejected one, which binds no canonical artifact.
+    """
 
     identity: StableHandIdentity | None
+    chronology: SourceChronology | None
+    provenance: ImportProvenance | None
     canonical_revision: PositiveInteger | None
     deletion_generation: NonNegativeInteger
     outcome: DecisionOutcome
@@ -328,6 +338,7 @@ class HandDecisionExtraction(ImportedHandModel):
                 raise ValueError(
                     "a decisions outcome requires its canonical revision"
                 )
+            self._require_hand_provenance("decisions")
         elif self.outcome == "no_decision":
             if self.decision_points:
                 raise ValueError(
@@ -339,6 +350,7 @@ class HandDecisionExtraction(ImportedHandModel):
                 raise ValueError(
                     "a no_decision outcome requires its canonical revision"
                 )
+            self._require_hand_provenance("no_decision")
         else:
             if self.rejection is None:
                 raise ValueError(
@@ -356,9 +368,23 @@ class HandDecisionExtraction(ImportedHandModel):
                 raise ValueError(
                     "a not_extractable outcome cannot bind a canonical revision"
                 )
+            if self.chronology is not None or self.provenance is not None:
+                raise ValueError(
+                    "a not_extractable outcome cannot bind hand provenance"
+                )
         if self.identity is None and self.outcome != "not_extractable":
             raise ValueError("an extracted hand requires its stable identity")
         return self
+
+    def _require_hand_provenance(self, outcome: str) -> None:
+        if self.chronology is None:
+            raise ValueError(
+                f"a {outcome} outcome requires its source chronology"
+            )
+        if self.provenance is None:
+            raise ValueError(
+                f"a {outcome} outcome requires its import provenance"
+            )
 
     @model_validator(mode="after")
     def validate_point_binding(self) -> Self:
@@ -374,14 +400,13 @@ class HandDecisionExtraction(ImportedHandModel):
         or reorder what the hand actually did, and supersede or deletion logic
         would treat stale decisions as current.
 
-        ``chronology`` and ``provenance`` are hand-level facts rather than
-        envelope fields, so they are bound by requiring the points to agree with
-        each other: every point in one envelope came from one hand, and points
-        that disagree can only have been assembled by hand or corrupted.
+        ``chronology`` and ``provenance`` are bound the same way, against the
+        envelope's own copies: every point in one envelope came from one hand,
+        so a point that disagrees can only have been assembled by hand or
+        corrupted.
         """
 
         for point in self.decision_points:
-            reference = self.decision_points[0]
             if point.identity != self.identity:
                 raise ValueError(
                     "decision point identity does not match the extracted hand"
@@ -396,13 +421,15 @@ class HandDecisionExtraction(ImportedHandModel):
                     "decision point deletion generation does not match the"
                     " extracted hand"
                 )
-            if point.chronology != reference.chronology:
+            if point.chronology != self.chronology:
                 raise ValueError(
-                    "decision points must agree on the hand's source chronology"
+                    "decision point source chronology does not match the"
+                    " extracted hand"
                 )
-            if point.provenance != reference.provenance:
+            if point.provenance != self.provenance:
                 raise ValueError(
-                    "decision points must agree on the hand's import provenance"
+                    "decision point import provenance does not match the"
+                    " extracted hand"
                 )
         indexes = [point.decision_index for point in self.decision_points]
         if indexes != list(range(len(indexes))):
@@ -445,6 +472,8 @@ def extract_hero_decision_points(
     if rejection is not None:
         return HandDecisionExtraction(
             identity=record.identity,
+            chronology=None,
+            provenance=None,
             canonical_revision=None,
             deletion_generation=deletion_generation,
             outcome="not_extractable",
@@ -482,6 +511,8 @@ def extract_hero_decision_points(
     ]
     return HandDecisionExtraction(
         identity=record.identity,
+        chronology=state.chronology,
+        provenance=provenance,
         canonical_revision=canonical_revision,
         deletion_generation=deletion_generation,
         outcome="decisions" if decision_points else "no_decision",

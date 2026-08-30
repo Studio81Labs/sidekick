@@ -1181,13 +1181,16 @@ def test_hand_decision_extraction_binds_its_outcome_to_its_contents(
     overrides: dict[str, object],
     expected_error: str,
 ) -> None:
+    point = sample_decision_point()
     payload: dict[str, object] = {
         "identity": IDENTITY,
+        "chronology": point.chronology,
+        "provenance": point.provenance,
         "canonical_revision": 1,
         "deletion_generation": 0,
         "outcome": "decisions",
         "rejection": None,
-        "decision_points": [sample_decision_point()],
+        "decision_points": [point],
         "excluded_actions": [],
         **overrides,
     }
@@ -1843,6 +1846,14 @@ def unresolved_table_action(payload: dict[str, object]) -> None:
     }
 
 
+def envelope_without_chronology(payload: dict[str, object]) -> None:
+    payload["chronology"] = None
+
+
+def envelope_without_provenance(payload: dict[str, object]) -> None:
+    payload["provenance"] = None
+
+
 def divergent_chronology(payload: dict[str, object]) -> None:
     payload["decision_points"][1]["chronology"]["hand_ordinal"] = 99
 
@@ -1883,8 +1894,22 @@ def excluded_action_shadowing_a_decision(payload: dict[str, object]) -> None:
             unresolved_table_action,
             "requires a player-selected table action, not a unknown",
         ),
-        (divergent_chronology, "must agree on the hand's source chronology"),
-        (divergent_provenance, "must agree on the hand's import provenance"),
+        (
+            divergent_chronology,
+            "source chronology does not match the extracted hand",
+        ),
+        (
+            divergent_provenance,
+            "import provenance does not match the extracted hand",
+        ),
+        (
+            envelope_without_chronology,
+            "a decisions outcome requires its source chronology",
+        ),
+        (
+            envelope_without_provenance,
+            "a decisions outcome requires its import provenance",
+        ),
         (gapped_decision_indexes, "contiguous and ordered from zero"),
         (duplicated_decision_index, "contiguous and ordered from zero"),
         (
@@ -2017,3 +2042,72 @@ def test_extraction_keeps_a_user_confirmed_origin_gradeable() -> None:
         for action in extraction.excluded_actions
         if action.origin.basis == "user_confirmed"
     ]
+
+
+def test_extraction_retains_hand_provenance_without_any_decision() -> None:
+    """A big-blind walk is retained with its provenance, not just its identity."""
+
+    record = big_blind_walk_record()
+    state = record.active_state_for_extraction
+
+    extraction = extract_hero_decision_points(record)
+
+    assert state is not None
+    assert extraction.outcome == "no_decision"
+    assert extraction.decision_points == []
+    # No decision point carries them here, so the envelope has to.
+    assert extraction.chronology == state.chronology
+    assert extraction.provenance == record.raw_sources[0].provenance
+    assert extraction.identity == record.identity
+    assert extraction.canonical_revision == 1
+
+
+def test_extraction_binds_hand_provenance_to_every_decision() -> None:
+    extraction = extract_hero_decision_points(multi_street_decision_record())
+
+    assert extraction.outcome == "decisions"
+    assert extraction.chronology is not None
+    assert extraction.provenance is not None
+    for point in extraction.decision_points:
+        assert point.chronology == extraction.chronology
+        assert point.provenance == extraction.provenance
+
+
+def test_extraction_rejection_binds_no_hand_provenance() -> None:
+    record = big_blind_walk_record().model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(status="withdrawn", changed_at=NOW)
+        }
+    )
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "not_extractable"
+    # A rejected hand binds no canonical artifact, provenance included.
+    assert extraction.chronology is None
+    assert extraction.provenance is None
+    assert extraction.canonical_revision is None
+
+
+@pytest.mark.parametrize(
+    "outcome",
+    ["decisions", "no_decision"],
+)
+def test_hand_decision_extraction_requires_hand_provenance(outcome: str) -> None:
+    source = (
+        multi_street_decision_record()
+        if outcome == "decisions"
+        else big_blind_walk_record()
+    )
+    payload = extract_hero_decision_points(source).model_dump(mode="python")
+
+    assert payload["outcome"] == outcome
+    assert HandDecisionExtraction.model_validate(payload) is not None
+
+    for field_name, expected in (
+        ("chronology", "requires its source chronology"),
+        ("provenance", "requires its import provenance"),
+    ):
+        with pytest.raises(ValidationError, match=f"a {outcome} outcome {expected}"):
+            HandDecisionExtraction.model_validate({**payload, field_name: None})
+
