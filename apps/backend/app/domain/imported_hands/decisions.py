@@ -76,7 +76,17 @@ _EXCLUSION_REASONS: dict[OriginKind, HeroActionExclusion] = {
 
 
 class HeroTableAction(ImportedHandModel):
-    """What the player actually did, from the ordered imported history."""
+    """What the player actually did, from the ordered imported history.
+
+    ``amount``, ``total_committed`` and ``all_in`` are the aggregate's resolved
+    values, exactly as in the betting line -- the hero's own action is the one
+    the line excludes, and it must not be the one action a grader reads from
+    raw source fields. A shove that exhausts the hero's stack is published
+    all-in even when the source omits the marker, and a sizing stays ``None``
+    only where the walk could not establish it.
+
+    ``origin`` and ``evidence`` stay raw: they are this action's audit trail.
+    """
 
     action_type: ActionType
     amount: PositiveDecimal | None
@@ -556,6 +566,7 @@ def _decision_point(
         seat for seat in context.seats if seat.player_id == state.hero_player_id
     )
     action = context.action
+    resolved = context.resolved_action
     return HeroDecisionPoint(
         identity=identity,
         chronology=state.chronology,
@@ -588,9 +599,9 @@ def _decision_point(
         ),
         table_action=HeroTableAction(
             action_type=action.action_type,
-            amount=action.amount,
-            total_committed=action.total_committed,
-            all_in=action.all_in,
+            amount=resolved.amount,
+            total_committed=resolved.total_committed,
+            all_in=resolved.all_in,
             origin=action.origin,
             evidence=list(action.evidence),
         ),

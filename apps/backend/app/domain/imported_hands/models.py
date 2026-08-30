@@ -2309,11 +2309,25 @@ class HeroActionContext(ImportedHandModel):
     through this one, with this street truncated before the hero's own action.
     Distinct lines reach identical pots, wagers, and commitments, so the chip
     snapshot alone cannot identify the spot a line-sensitive consumer needs.
+
+    ``action`` is the hero's action exactly as approved, and ``resolved_action``
+    wraps that same object with the chips and all-in verdict the walk resolved
+    for it -- the treatment every opponent action already gets in the line. The
+    raw field stays because ``active_hero_actions_for_extraction`` returns it.
     """
+
+    @model_validator(mode="after")
+    def validate_resolved_action(self) -> Self:
+        if self.resolved_action.action != self.action:
+            raise ValueError(
+                "resolved_action must resolve this context's own hero action"
+            )
+        return self
 
     street: StreetName
     action_sequence: NonNegativeInteger
     action: ImportedAction
+    resolved_action: ResolvedAction
     board_cards: list[Card]
     action_history: list[StreetActionSlice]
     committed_pot_before_street: NonNegativeDecimal
@@ -4359,6 +4373,63 @@ def _hero_decision_contexts_for_extraction(
                 and action.amount is None
                 and action.total_committed is None
             )
+            resolved_commitment = _known_action_total(
+                action,
+                effective_prior_commitment,
+            )
+            resolved_live_commitment = _known_live_action_total(
+                action,
+                effective_prior_commitment,
+                resolved_commitment,
+                prior_live_commitment,
+            )
+            if (
+                action.action_type == "call"
+                and not action.all_in
+                and current_wager is not None
+                and prior_live_commitment is not None
+                and effective_prior_commitment is not None
+            ):
+                call_amount = current_wager - prior_live_commitment
+                if call_amount >= 0:
+                    if resolved_commitment is None:
+                        resolved_commitment = (
+                            effective_prior_commitment + call_amount
+                        )
+                    if resolved_live_commitment is None:
+                        resolved_live_commitment = current_wager
+
+            actor_starting_stack = starting_stacks[action.actor_id]
+            actor_cumulative_commitment = (
+                committed_hand_commitments[action.actor_id] + resolved_commitment
+                if committed_pot_before_street is not None
+                and resolved_commitment is not None
+                else None
+            )
+            stack_is_exhausted = _stack_is_exhausted(
+                actor_starting_stack,
+                actor_cumulative_commitment,
+            )
+            confirmed_all_in = action.all_in and (
+                actor_starting_stack is None or stack_is_exhausted
+            )
+            # Resolve the action once, before the emit that may publish it:
+            # the hero's own decision carries it as its table action, and every
+            # later decision reads the same record in the betting line.
+            resolved_action = ResolvedAction(
+                action=action,
+                amount=_resolved_action_amount(
+                    action,
+                    prior_commitment=effective_prior_commitment,
+                    resolved_commitment=resolved_commitment,
+                ),
+                total_committed=resolved_commitment,
+                all_in=_action_leaves_actor_all_in(
+                    action,
+                    confirmed_all_in=confirmed_all_in,
+                    known_stack_exhausted=stack_is_exhausted,
+                ),
+            )
             if (
                 action.actor_id == state.hero_player_id
                 and action.is_player_decision
@@ -4380,6 +4451,7 @@ def _hero_decision_contexts_for_extraction(
                         street_commitments=street_commitments,
                         live_commitments=live_commitments,
                         actor_street_commitment=effective_prior_commitment,
+                        resolved_action=resolved_action,
                         action_history=[
                             *completed_street_slices,
                             StreetActionSlice(
@@ -4416,48 +4488,8 @@ def _hero_decision_contexts_for_extraction(
                     )
                 )
 
-            resolved_commitment = _known_action_total(
-                action,
-                effective_prior_commitment,
-            )
-            resolved_live_commitment = _known_live_action_total(
-                action,
-                effective_prior_commitment,
-                resolved_commitment,
-                prior_live_commitment,
-            )
-            if (
-                action.action_type == "call"
-                and not action.all_in
-                and current_wager is not None
-                and prior_live_commitment is not None
-                and effective_prior_commitment is not None
-            ):
-                call_amount = current_wager - prior_live_commitment
-                if call_amount >= 0:
-                    if resolved_commitment is None:
-                        resolved_commitment = (
-                            effective_prior_commitment + call_amount
-                        )
-                    if resolved_live_commitment is None:
-                        resolved_live_commitment = current_wager
-
             street_commitments[action.actor_id] = resolved_commitment
             live_commitments[action.actor_id] = resolved_live_commitment
-            actor_starting_stack = starting_stacks[action.actor_id]
-            actor_cumulative_commitment = (
-                committed_hand_commitments[action.actor_id] + resolved_commitment
-                if committed_pot_before_street is not None
-                and resolved_commitment is not None
-                else None
-            )
-            stack_is_exhausted = _stack_is_exhausted(
-                actor_starting_stack,
-                actor_cumulative_commitment,
-            )
-            confirmed_all_in = action.all_in and (
-                actor_starting_stack is None or stack_is_exhausted
-            )
             # The same transition the hand validator applies: a commitment that
             # exhausts a known stack is terminal even without the source's
             # all-in marker, and a later return that restores those chips makes
@@ -4472,23 +4504,7 @@ def _hero_decision_contexts_for_extraction(
                 actionable_players=actionable_players,
                 inferred_stack_exhausted_players=inferred_stack_exhausted_players,
             )
-            # Read the verdict back out of the state the shared transition just
-            # wrote, so the record and the seat status it sits beside can never
-            # be decided by different rules.
-            actor_terminal = terminal_actors.get(action.actor_id)
-            street_resolved_actions.append(
-                ResolvedAction(
-                    action=action,
-                    amount=_resolved_action_amount(
-                        action,
-                        prior_commitment=effective_prior_commitment,
-                        resolved_commitment=resolved_commitment,
-                    ),
-                    total_committed=resolved_commitment,
-                    all_in=actor_terminal is not None
-                    and actor_terminal[0] == "all_in",
-                )
-            )
+            street_resolved_actions.append(resolved_action)
 
             posted_amount = _posted_forced_amount(
                 action,
@@ -4616,6 +4632,7 @@ def _hero_decision_context(
     street_commitments: dict[str, Decimal | None],
     live_commitments: dict[str, Decimal | None],
     actor_street_commitment: Decimal,
+    resolved_action: ResolvedAction,
     action_history: list[StreetActionSlice],
     committed_pot_before_street: Decimal,
     current_wager: Decimal,
@@ -4682,6 +4699,7 @@ def _hero_decision_context(
         street=street.street,
         action_sequence=action.sequence,
         action=action,
+        resolved_action=resolved_action,
         board_cards=list(street.board_cards),
         action_history=action_history,
         committed_pot_before_street=committed_pot_before_street,
@@ -4726,6 +4744,24 @@ def _action_implied_prior_commitment(
     return None
 
 
+def _action_leaves_actor_all_in(
+    action: ImportedAction,
+    *,
+    confirmed_all_in: bool,
+    known_stack_exhausted: bool,
+) -> bool:
+    """Report whether this action leaves its actor with no chips to act again.
+
+    A commitment that exhausts a known stack is terminal even when the source
+    omits its all-in marker. Folding is terminal for a different reason and is
+    never all-in.
+    """
+
+    return action.action_type != "fold" and (
+        confirmed_all_in or known_stack_exhausted
+    )
+
+
 def _apply_terminal_transition(
     action: ImportedAction,
     street: StreetName,
@@ -4751,14 +4787,16 @@ def _apply_terminal_transition(
         live_players.discard(action.actor_id)
         actionable_players.discard(action.actor_id)
         return False
-    if confirmed_all_in:
+    if _action_leaves_actor_all_in(
+        action,
+        confirmed_all_in=confirmed_all_in,
+        known_stack_exhausted=known_stack_exhausted,
+    ):
         terminal_actors[action.actor_id] = ("all_in", street)
-        inferred_stack_exhausted_players.discard(action.actor_id)
-        actionable_players.discard(action.actor_id)
-        return False
-    if known_stack_exhausted:
-        terminal_actors[action.actor_id] = ("all_in", street)
-        inferred_stack_exhausted_players.add(action.actor_id)
+        if confirmed_all_in:
+            inferred_stack_exhausted_players.discard(action.actor_id)
+        else:
+            inferred_stack_exhausted_players.add(action.actor_id)
         actionable_players.discard(action.actor_id)
         return False
     if action.actor_id in inferred_stack_exhausted_players:

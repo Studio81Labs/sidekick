@@ -38,6 +38,7 @@ from test_imported_hand_models import (
     raw_source,
     reapproval_extraction_record,
     short_all_in_raise_decision_record,
+    short_stacked_hero_decision_record,
     state_with_reviewed_action_origin,
     unmarked_all_in_blind_decision_record,
     user_confirmed_origin_corrections,
@@ -1694,3 +1695,83 @@ def test_extraction_history_all_in_never_contradicts_the_seats() -> None:
 
     assert inspected > 0
     assert marked > 0
+
+
+def test_extraction_table_action_publishes_resolved_chips_and_all_in() -> None:
+    record = short_stacked_hero_decision_record()
+    state = record.active_state_for_extraction
+
+    points = extract_hero_decision_points(record).decision_points
+
+    assert state is not None
+    assert [(point.street, point.action_sequence) for point in points] == [
+        ("preflop", 2),
+        ("flop", 1),
+        ("turn", 1),
+    ]
+
+    # The source states this bet's street total but never its amount.
+    flop_source = state.streets[1].actions[1]
+    assert (flop_source.actor_id, flop_source.amount) == ("hero", None)
+    assert points[1].table_action.amount == Decimal("2")
+    assert points[1].table_action.total_committed == Decimal("2")
+
+    # The source never marks this bet all-in, but it is the hero's last chips.
+    turn_source = state.streets[2].actions[1]
+    assert (turn_source.actor_id, turn_source.all_in) == ("hero", False)
+    turn = points[2]
+    hero_seat = next(
+        seat
+        for seat in turn.state.seats
+        if seat.position == turn.state.hero_position
+    )
+    assert turn.table_action.amount == hero_seat.stack_before_action == Decimal("2")
+    assert hero_seat.hand_commitment + turn.table_action.amount == (
+        hero_seat.starting_stack
+    )
+    assert turn.table_action.all_in is True
+
+    # The audit trail is untouched by the resolution.
+    assert turn.table_action.origin == turn_source.origin
+    assert turn.table_action.evidence == list(turn_source.evidence)
+
+
+def test_extraction_table_action_never_contradicts_the_hero_seat() -> None:
+    records = [
+        short_stacked_hero_decision_record(),
+        heads_up_shove_and_call_decision_record(),
+        short_all_in_raise_decision_record(),
+        unmarked_all_in_blind_decision_record(),
+        contested_decision_record(),
+        full_raise_decision_record(),
+        multi_street_decision_record(),
+        ante_decision_record(),
+    ]
+
+    inspected = 0
+    shoves = 0
+    for record in records:
+        extraction = extract_hero_decision_points(record)
+        assert extraction.outcome == "decisions"
+        for point in extraction.decision_points:
+            inspected += 1
+            action = point.table_action
+            hero_seat = next(
+                seat
+                for seat in point.state.seats
+                if seat.position == point.state.hero_position
+            )
+            if action.action_type in {"bet", "call", "raise"}:
+                # The walk resolved both halves for every wager it emitted.
+                assert action.amount is not None
+                assert action.total_committed is not None
+                if action.amount == hero_seat.stack_before_action:
+                    shoves += 1
+                    # Committing the last chip is all-in however it was
+                    # labelled, exactly as in the betting line.
+                    assert action.all_in is True
+            if action.all_in:
+                assert action.amount == hero_seat.stack_before_action
+
+    assert inspected > 0
+    assert shoves > 0

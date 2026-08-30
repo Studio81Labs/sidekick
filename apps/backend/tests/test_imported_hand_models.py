@@ -17837,3 +17837,69 @@ def test_hero_decision_context_never_publishes_a_stale_all_in_seat() -> None:
         or status == "folded"
         for status, stack_before_action in published
     )
+
+
+def short_stacked_hero_decision_record() -> ImportedHandRecord:
+    """Build a hand whose hero shoves without a marker and bets without an amount.
+
+    The hero's turn bet of 2 is their last 2 chips, and the source never marks
+    it all-in; the flop bet states only its street total. Both are the values
+    the walk resolves rather than the ones the adapter wrote down.
+    """
+
+    board = decision_context_board()
+    payload = extraction_ready_state_payload()
+    payload["seats"][0]["starting_stack"] = Decimal("5")
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("0.5"),
+                    total=Decimal("0.5"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    2, "hero", "call", amount=Decimal("0.5"), total=Decimal("1")
+                ),
+                wager_action(3, "villain", "check", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "board_cards": board[:3],
+            "actions": [
+                wager_action(0, "villain", "check", total=Decimal(0)),
+                wager_action(1, "hero", "bet", total=Decimal("2")),
+                wager_action(
+                    2, "villain", "call", amount=Decimal("2"), total=Decimal("2")
+                ),
+            ],
+        },
+        {
+            "street": "turn",
+            "board_cards": board[:4],
+            "actions": [
+                wager_action(0, "villain", "check", total=Decimal(0)),
+                wager_action(
+                    1, "hero", "bet", amount=Decimal("2"), total=Decimal("2")
+                ),
+                wager_action(
+                    2, "villain", "call", amount=Decimal("2"), total=Decimal("2")
+                ),
+            ],
+        },
+        {"street": "river", "board_cards": board, "actions": []},
+    ]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("10")}}
+    state = ImportedHandState.model_validate(payload)
+    return extraction_record_for_state(state)
