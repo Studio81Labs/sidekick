@@ -2252,6 +2252,21 @@ class SeatDecisionState(ImportedHandModel):
     status: SeatDecisionStatus
 
 
+class ResolvedAction(ImportedHandModel):
+    """One imported action with the chips the extraction walk resolved for it.
+
+    A source may state an action's incremental ``amount``, its street-cumulative
+    ``total_committed``, or only one of the two. The walk resolves both from the
+    ordered stream, so consumers read the resolved values rather than whichever
+    field the adapter happened to fill. A value stays ``None`` only when the
+    walk could not establish it exactly.
+    """
+
+    action: ImportedAction
+    amount: PositiveDecimal | None
+    total_committed: NonNegativeDecimal | None
+
+
 class StreetActionSlice(ImportedHandModel):
     """The ordered actions of one street as the extraction walk saw them.
 
@@ -2261,7 +2276,7 @@ class StreetActionSlice(ImportedHandModel):
     """
 
     street: StreetName
-    actions: list[ImportedAction]
+    actions: list[ResolvedAction]
 
 
 class HeroActionContext(ImportedHandModel):
@@ -3798,6 +3813,32 @@ def _known_live_action_total(
     return prior_live_commitment + action.amount
 
 
+def _resolved_action_amount(
+    action: ImportedAction,
+    *,
+    prior_commitment: Decimal | None,
+    resolved_commitment: Decimal | None,
+) -> Decimal | None:
+    """Return the chips this action moved, from the walk's own resolution.
+
+    A stated amount is authoritative -- ``_known_action_total`` has already
+    rejected one that contradicts the commitment stream. Otherwise the movement
+    is the difference the walk resolved, which is zero for an action that only
+    matches what the actor already had in.
+    """
+
+    if action.amount is not None:
+        return action.amount
+    if prior_commitment is None or resolved_commitment is None:
+        return None
+    moved = (
+        prior_commitment - resolved_commitment
+        if action.action_type == "uncalled_return"
+        else resolved_commitment - prior_commitment
+    )
+    return moved if moved > 0 else None
+
+
 def _stack_is_exhausted(
     starting_stack: Decimal | None,
     cumulative_commitment: Decimal | None,
@@ -4277,8 +4318,9 @@ def _hero_decision_contexts_for_extraction(
         increment_is_established = True
         acted_wager_by_player: dict[str, Decimal | None] = {}
         reopen_increment_by_player: dict[str, Decimal | None] = {}
+        street_resolved_actions: list[ResolvedAction] = []
 
-        for action_index, action in enumerate(street.actions):
+        for action in street.actions:
             prior_commitment = street_commitments[action.actor_id]
             prior_live_commitment = live_commitments[action.actor_id]
             effective_prior_commitment = _action_implied_prior_commitment(
@@ -4335,7 +4377,7 @@ def _hero_decision_contexts_for_extraction(
                             *completed_street_slices,
                             StreetActionSlice(
                                 street=street.street,
-                                actions=list(street.actions[:action_index]),
+                                actions=list(street_resolved_actions),
                             ),
                         ],
                         committed_pot_before_street=committed_pot_before_street,
@@ -4395,6 +4437,17 @@ def _hero_decision_contexts_for_extraction(
 
             street_commitments[action.actor_id] = resolved_commitment
             live_commitments[action.actor_id] = resolved_live_commitment
+            street_resolved_actions.append(
+                ResolvedAction(
+                    action=action,
+                    amount=_resolved_action_amount(
+                        action,
+                        prior_commitment=effective_prior_commitment,
+                        resolved_commitment=resolved_commitment,
+                    ),
+                    total_committed=resolved_commitment,
+                )
+            )
 
             actor_starting_stack = starting_stacks[action.actor_id]
             actor_cumulative_commitment = (
@@ -4474,7 +4527,7 @@ def _hero_decision_contexts_for_extraction(
         completed_street_slices.append(
             StreetActionSlice(
                 street=street.street,
-                actions=list(street.actions),
+                actions=list(street_resolved_actions),
             )
         )
         if committed_pot_before_street is not None and all(

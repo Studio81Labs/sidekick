@@ -491,6 +491,39 @@ def test_extraction_copies_the_aggregate_chip_context_without_recomputing_it(
             context.hero_stack_before_action
         )
         assert point.state.seats == context.seats
+        assert [
+            (
+                entry.street,
+                [
+                    (
+                        item.sequence,
+                        item.player_id,
+                        item.action_type,
+                        item.amount,
+                        item.total_committed,
+                        item.all_in,
+                    )
+                    for item in entry.actions
+                ],
+            )
+            for entry in point.state.action_history
+        ] == [
+            (
+                slice_.street,
+                [
+                    (
+                        resolved.action.sequence,
+                        resolved.action.actor_id,
+                        resolved.action.action_type,
+                        resolved.amount,
+                        resolved.total_committed,
+                        resolved.action.all_in,
+                    )
+                    for resolved in slice_.actions
+                ],
+            )
+            for slice_ in context.action_history
+        ]
     first = extraction.decision_points[0]
     assert first.state.hero_cards == state.hero_cards
     assert first.state.hero_position.display_label == "BTN/SB"
@@ -1381,5 +1414,184 @@ def test_decision_point_rejects_a_history_covering_its_own_action() -> None:
     current = payload["state"]["action_history"][-1]
     current["actions"] = [*current["actions"], {**current["actions"][0], "sequence": 1}]
 
-    with pytest.raises(ValidationError, match="stop before the"):
+    with pytest.raises(ValidationError, match="stop there"):
         HeroDecisionPoint.model_validate(payload)
+
+
+def multi_street_decision_payload(index: int) -> dict[str, object]:
+    """Round-trip one decision of the shared four-street hand as a payload."""
+
+    point = extract_hero_decision_points(
+        multi_street_decision_record()
+    ).decision_points[index]
+    return point.model_dump(mode="python")
+
+
+def empty_current_street(payload: dict[str, object]) -> None:
+    payload["state"]["action_history"][-1]["actions"] = []
+
+
+def truncate_completed_turn(payload: dict[str, object]) -> None:
+    turn = payload["state"]["action_history"][2]
+    turn["actions"] = turn["actions"][:1]
+
+
+def reverse_completed_flop(payload: dict[str, object]) -> None:
+    flop = payload["state"]["action_history"][1]
+    flop["actions"] = list(reversed(flop["actions"]))
+
+
+def claim_a_later_action_sequence(payload: dict[str, object]) -> None:
+    payload["action_sequence"] = 3
+    payload["state"]["action_history"][-1]["actions"] = []
+
+
+def rename_an_actor(payload: dict[str, object]) -> None:
+    payload["state"]["action_history"][1]["actions"][0]["player_id"] = "ghost"
+
+
+def swap_an_actor_position(payload: dict[str, object]) -> None:
+    seats = payload["state"]["seats"]
+    record = payload["state"]["action_history"][1]["actions"][0]
+    other = next(
+        seat for seat in seats if seat["player_id"] != record["player_id"]
+    )
+    record["position"] = other["position"]
+
+
+def duplicate_a_completed_sequence(payload: dict[str, object]) -> None:
+    flop = payload["state"]["action_history"][1]
+    flop["actions"] = [*flop["actions"], dict(flop["actions"][-1])]
+
+
+@pytest.mark.parametrize(
+    ("index", "mutate", "expected_error"),
+    [
+        (2, empty_current_street, "stop there"),
+        (3, truncate_completed_turn, "contradicts committed_pot_before_street"),
+        (3, reverse_completed_flop, "contiguous and ordered"),
+        (3, claim_a_later_action_sequence, "stop there"),
+        (3, rename_an_actor, "is not a dealt-in seat"),
+        (3, swap_an_actor_position, "does not match its seat"),
+        (3, duplicate_a_completed_sequence, "contiguous and ordered"),
+    ],
+)
+def test_decision_point_rejects_a_corrupted_betting_history(
+    index: int,
+    mutate: object,
+    expected_error: str,
+) -> None:
+    payload = multi_street_decision_payload(index)
+
+    assert HeroDecisionPoint.model_validate(payload) is not None
+    mutate(payload)  # type: ignore[operator]
+
+    with pytest.raises(ValidationError, match=expected_error):
+        HeroDecisionPoint.model_validate(payload)
+
+
+def half_stated_chip_records() -> tuple[ImportedHandRecord, ImportedHandRecord]:
+    """Build one hand stating only a call's amount and one only its total."""
+
+    board = decision_context_board()
+
+    def hand(*, amount: Decimal | None, total: Decimal | None) -> ImportedHandRecord:
+        return extraction_record_for_streets(
+            [
+                {
+                    "street": "preflop",
+                    "actions": [
+                        wager_action(
+                            0,
+                            "hero",
+                            "post_small_blind",
+                            amount=Decimal("0.5"),
+                            total=Decimal("0.5"),
+                        ),
+                        wager_action(
+                            1,
+                            "villain",
+                            "post_big_blind",
+                            amount=Decimal("1"),
+                            total=Decimal("1"),
+                        ),
+                        wager_action(
+                            2,
+                            "hero",
+                            "call",
+                            amount=Decimal("0.5"),
+                            total=Decimal("1"),
+                        ),
+                        wager_action(3, "villain", "check", total=Decimal("1")),
+                    ],
+                },
+                {
+                    "street": "flop",
+                    "board_cards": board[:3],
+                    "actions": [
+                        wager_action(0, "villain", "check", total=Decimal(0)),
+                        wager_action(
+                            1,
+                            "hero",
+                            "bet",
+                            amount=Decimal("2"),
+                            total=Decimal("2"),
+                        ),
+                        wager_action(
+                            2, "villain", "call", amount=amount, total=total
+                        ),
+                    ],
+                },
+                {
+                    "street": "turn",
+                    "board_cards": board[:4],
+                    "actions": [
+                        wager_action(0, "villain", "check", total=Decimal(0)),
+                        wager_action(
+                            1,
+                            "hero",
+                            "check",
+                            total=Decimal(0),
+                        ),
+                    ],
+                },
+                {
+                    "street": "river",
+                    "board_cards": board,
+                    "actions": [
+                        wager_action(0, "villain", "check", total=Decimal(0)),
+                        wager_action(1, "hero", "check", total=Decimal(0)),
+                    ],
+                },
+            ],
+            button_seat=1,
+            configured_blinds=True,
+            stated_gross=Decimal("6"),
+        )
+
+    return (
+        hand(amount=Decimal("2"), total=None),
+        hand(amount=None, total=Decimal("2")),
+    )
+
+
+def test_extraction_history_publishes_the_resolved_chip_values() -> None:
+    amount_only, total_only = half_stated_chip_records()
+
+    amount_turn = extract_hero_decision_points(amount_only).decision_points[2]
+    total_turn = extract_hero_decision_points(total_only).decision_points[2]
+
+    assert amount_turn.street == total_turn.street == "turn"
+    for point in (amount_turn, total_turn):
+        villain_call = point.state.action_history[1].actions[2]
+        assert (villain_call.player_id, villain_call.action_type) == (
+            "villain",
+            "call",
+        )
+        # The walk resolved both halves; the line publishes them whichever one
+        # the adapter stated, so it agrees with the pot and seat fields.
+        assert villain_call.amount == Decimal("2")
+        assert villain_call.total_committed == Decimal("2")
+        assert point.state.committed_pot_before_street == Decimal("6")
+
+    assert amount_turn.state.action_history == total_turn.state.action_history

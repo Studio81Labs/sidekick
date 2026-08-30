@@ -7,6 +7,7 @@ A hand that cannot be extracted reports why instead of failing silently.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Literal, Self
 
 from pydantic import model_validator
@@ -91,6 +92,12 @@ class DecisionActionRecord(ImportedHandModel):
     Origin and evidence are deliberately absent: a betting line is defined by
     what happened at the table, not by why the source believes it happened.
     The hero's own action keeps its origin on ``HeroTableAction``.
+
+    ``amount`` and ``total_committed`` are the values the extraction walk
+    resolved, not whichever of the two the adapter happened to state, so a
+    consumer sizing against the line reads the same chips the pot and seat
+    fields were built from. Either stays ``None`` only when the walk could not
+    establish it exactly.
     """
 
     sequence: NonNegativeInteger
@@ -107,6 +114,16 @@ class StreetActionHistory(ImportedHandModel):
 
     street: StreetName
     actions: list[DecisionActionRecord]
+
+    @model_validator(mode="after")
+    def validate_action_order(self) -> Self:
+        sequences = [record.sequence for record in self.actions]
+        if sequences != list(range(len(sequences))):
+            raise ValueError(
+                f"{self.street} action history must be contiguous and ordered"
+                " from zero"
+            )
+        return self
 
 
 class HeroDecisionState(ImportedHandModel):
@@ -173,6 +190,30 @@ class HeroDecisionState(ImportedHandModel):
                 "action_history must run in street order from preflop through"
                 f" {self.street} without gaps or duplicates"
             )
+        positions = {seat.player_id: seat.position for seat in self.seats}
+        for entry in self.action_history:
+            for record in entry.actions:
+                seat_position = positions.get(record.player_id)
+                if seat_position is None:
+                    raise ValueError(
+                        f"action history actor {record.player_id} is not a"
+                        " dealt-in seat of this decision"
+                    )
+                if record.position != seat_position:
+                    raise ValueError(
+                        f"action history position for {record.player_id} does"
+                        " not match its seat"
+                    )
+        completed_total = _completed_street_commitment(self.action_history[:-1])
+        if (
+            completed_total is not None
+            and completed_total != self.committed_pot_before_street
+        ):
+            raise ValueError(
+                "completed action history commits"
+                f" {completed_total}, which contradicts"
+                f" committed_pot_before_street {self.committed_pot_before_street}"
+            )
         return self
 
 
@@ -195,12 +236,10 @@ class HeroDecisionPoint(ImportedHandModel):
         if self.state.street != self.street:
             raise ValueError("decision state street must match the decision")
         current = self.state.action_history[-1]
-        if any(
-            record.sequence >= self.action_sequence for record in current.actions
-        ):
+        if len(current.actions) != self.action_sequence:
             raise ValueError(
-                "the current street's action history must stop before the"
-                " hero's own action"
+                "the current street's action history must hold every action"
+                " before the hero's own and stop there"
             )
         return self
 
@@ -453,6 +492,28 @@ def _active_provenance(
     )
 
 
+def _completed_street_commitment(
+    completed: list[StreetActionHistory],
+) -> NonNegativeDecimal | None:
+    """Total the chips the completed streets say every player has committed.
+
+    A player's commitment on a finished street is the cumulative total of their
+    last action on it, so the line and ``committed_pot_before_street`` must
+    agree. Returns ``None`` when any of those totals is unresolved, which the
+    walk allows and this contract must not treat as zero.
+    """
+
+    total = Decimal(0)
+    for entry in completed:
+        street_totals: dict[str, Decimal] = {}
+        for record in entry.actions:
+            if record.total_committed is None:
+                return None
+            street_totals[record.player_id] = record.total_committed
+        total += sum(street_totals.values(), Decimal(0))
+    return total
+
+
 def _action_history(context: HeroActionContext) -> list[StreetActionHistory]:
     """Project the walk's ordered line into its grading-relevant shape."""
 
@@ -462,15 +523,15 @@ def _action_history(context: HeroActionContext) -> list[StreetActionHistory]:
             street=slice_.street,
             actions=[
                 DecisionActionRecord(
-                    sequence=action.sequence,
-                    player_id=action.actor_id,
-                    position=positions[action.actor_id],
-                    action_type=action.action_type,
-                    amount=action.amount,
-                    total_committed=action.total_committed,
-                    all_in=action.all_in,
+                    sequence=resolved.action.sequence,
+                    player_id=resolved.action.actor_id,
+                    position=positions[resolved.action.actor_id],
+                    action_type=resolved.action.action_type,
+                    amount=resolved.amount,
+                    total_committed=resolved.total_committed,
+                    all_in=resolved.action.all_in,
                 )
-                for action in slice_.actions
+                for resolved in slice_.actions
             ],
         )
         for slice_ in context.action_history
