@@ -42,7 +42,11 @@ from app.player_workspace import (
     PlayerDataDirectoryError,
     _macos_extended_acl_has_entries,
 )
-from app.storage.imported_hand_store import FileImportedHandStore
+from app.storage.imported_hand_store import (
+    FileImportedHandStore,
+    imported_hand_record_key,
+)
+from test_imported_hand_store import RAW_TEXT, pending_review_record
 
 
 TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
@@ -636,6 +640,105 @@ def test_player_storage_reports_when_a_stable_snapshot_times_out(
 
     assert response.status_code == 409
     assert "waiting for a shared hold" in response.json()["detail"]
+
+
+def test_player_hand_routes_require_auth_and_return_safe_review_projections(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+
+    assert client.get("/api/player/hands").status_code == 401
+    session = exchange_session(client, runtime)
+    authorization = {"Authorization": f"Bearer {session['session_token']}"}
+
+    listing = client.get("/api/player/hands?limit=1", headers=authorization)
+    detail = client.get(f"/api/player/hands/{key}", headers=authorization)
+
+    assert listing.status_code == 200
+    assert listing.json()["items"] == [detail.json()["summary"]]
+    assert listing.json()["next_cursor"] is None
+    assert detail.status_code == 200
+    assert detail.json()["summary"]["learning_eligible"] is False
+    assert detail.json()["detections"][0]["warnings"] == [
+        "Review hero identity"
+    ]
+    assert RAW_TEXT not in listing.text
+    assert RAW_TEXT not in detail.text
+    assert "raw_text" not in listing.text
+    assert "raw_text" not in detail.text
+    assert "PokerStars Hand #123456789" not in detail.text
+    assert "excerpt" not in detail.text
+
+
+def test_player_hand_routes_validate_pagination_and_missing_keys(tmp_path: Path) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    authorization = {"Authorization": f"Bearer {session['session_token']}"}
+
+    invalid_limit = client.get(
+        "/api/player/hands?limit=0",
+        headers=authorization,
+    )
+    assert (
+        client.get(
+            "/api/player/hands?cursor=not-a-key",
+            headers=authorization,
+        ).status_code
+        == 422
+    )
+    missing = client.get(f"/api/player/hands/{'a' * 64}", headers=authorization)
+    malformed = client.get("/api/player/hands/not-a-key", headers=authorization)
+
+    assert invalid_limit.status_code == 422
+    assert missing.status_code == 404
+    assert malformed.status_code == 404
+    assert missing.json() == {"detail": "Imported hand record not found"}
+
+
+def test_player_hand_routes_report_a_stable_snapshot_timeout(tmp_path: Path) -> None:
+    client, runtime = player_client(tmp_path, status_lock_timeout_seconds=0)
+    session = exchange_session(client, runtime)
+    descriptor = runtime.workspace.data_lock.acquire(exclusive=True)
+    try:
+        listing = client.get(
+            "/api/player/hands",
+            headers={"Authorization": f"Bearer {session['session_token']}"},
+        )
+        detail = client.get(
+            f"/api/player/hands/{'a' * 64}",
+            headers={"Authorization": f"Bearer {session['session_token']}"},
+        )
+    finally:
+        runtime.workspace.data_lock.release(descriptor)
+
+    assert listing.status_code == 409
+    assert detail.status_code == 409
+
+
+def test_player_hand_routes_report_corrupt_records_explicitly(tmp_path: Path) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    record_file = runtime.workspace.imported_hands.records_dir / key / "record.json"
+    record_file.write_text("{not-json", encoding="utf-8")
+    session = exchange_session(client, runtime)
+    authorization = {"Authorization": f"Bearer {session['session_token']}"}
+
+    listing = client.get("/api/player/hands", headers=authorization)
+    detail = client.get(f"/api/player/hands/{key}", headers=authorization)
+
+    assert listing.status_code == 500
+    assert listing.json() == {
+        "detail": "Stored imported hand records could not be read safely"
+    }
+    assert detail.status_code == 500
+    assert detail.json() == {
+        "detail": "Stored imported hand record could not be read safely"
+    }
 
 
 def test_player_storage_status_preserves_quarantine_across_restarts(

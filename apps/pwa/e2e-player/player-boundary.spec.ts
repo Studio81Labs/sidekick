@@ -78,6 +78,24 @@ test("runs the authenticated player recovery flow only on loopback", async ({
   }, launchTicket!);
   expect(replayResponse).toEqual({ cacheControl: "no-store", status: 401 });
 
+  const handListResponse = await page.evaluate(async () => {
+    const session = sessionStorage.getItem("poker-hero-player-session-v1");
+    const response = await fetch("/api/player/hands?limit=1", {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${session}` },
+    });
+    return {
+      body: await response.json(),
+      cacheControl: response.headers.get("cache-control"),
+      status: response.status,
+    };
+  });
+  expect(handListResponse).toEqual({
+    body: { items: [], next_cursor: null },
+    cacheControl: "no-store",
+    status: 200,
+  });
+
   await page.evaluate(async () => {
     await navigator.serviceWorker.ready;
     if (navigator.serviceWorker.controller) return;
@@ -151,7 +169,7 @@ test("runs the authenticated player recovery flow only on loopback", async ({
     expect(
       await page.evaluate(async () => {
         try {
-          await fetch("/api/player/storage", { cache: "no-store" });
+          await fetch("/api/player/hands?limit=1", { cache: "no-store" });
           return "resolved";
         } catch {
           return "rejected";
@@ -206,6 +224,18 @@ test("the hosted Worker denies direct and encoded player paths before proxying",
       data: sentinel,
       headers: { "Content-Type": "text/plain" },
     });
+    expect(response.status(), path).toBe(404);
+    expect(response.headers()["cache-control"], path).toBe("no-store");
+    expect(await response.json(), path).toEqual({ detail: "Not Found" });
+  }
+
+  for (const path of [
+    "/api/player/hands",
+    "/api%2Fplayer%2Fhands",
+    "/%61pi/%70layer/hands",
+    "/%2561pi%252Fplayer%252Fhands",
+  ]) {
+    const response = await request.get(`${WORKER_ORIGIN}${path}`);
     expect(response.status(), path).toBe(404);
     expect(response.headers()["cache-control"], path).toBe("no-store");
     expect(await response.json(), path).toEqual({ detail: "Not Found" });

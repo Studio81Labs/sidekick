@@ -23,6 +23,65 @@ const readyStorage = {
   recovery: { completed: [], quarantined: [], failed: [] },
 };
 
+const pendingHand = {
+  record_key: "a".repeat(64),
+  identity: { site: "pokerstars", source_hand_id: "123456789" },
+  played_at: null,
+  lifecycle_status: "pending_review",
+  lifecycle_changed_at: "2026-08-30T12:00:00Z",
+  active_canonical_revision: null,
+  learning_eligible: false,
+  deletion_generation: 0,
+  raw_source_count: 1,
+  detection_count: 1,
+  warning_count: 2,
+  unresolved_conflict_count: 0,
+  canonical_revision_count: 0,
+};
+
+const pendingHandDetail = {
+  summary: pendingHand,
+  lifecycle: {
+    status: "pending_review",
+    active_canonical_revision: null,
+    deletion_generation: 0,
+    changed_at: "2026-08-30T12:00:00Z",
+    reason: null,
+  },
+  raw_sources: [
+    {
+      raw_source_id: "file-1",
+      chronology: { played_at: null },
+      provenance: {
+        imported_at: "2026-08-30T12:00:00Z",
+        adapter_id: "pokerstars",
+        adapter_version: "1.0.0",
+        format_revision: "pokerstars-text/v1",
+        source_filename: "HH20260830.txt",
+      },
+      content_sha256: "b".repeat(64),
+    },
+  ],
+  detections: [
+    {
+      detection_id: "detection-1",
+      detector_id: "pokerstars",
+      detector_version: "1.0.0",
+      detected_at: "2026-08-30T12:00:00Z",
+      field_evidence: {
+        "/hero_player_id": {
+          confidence: "0.4",
+          warnings: ["Hero line was absent"],
+        },
+      },
+      warnings: ["Review hero identity"],
+    },
+  ],
+  conflicts: [],
+  canonical_revisions: [],
+  deletion_receipt: null,
+};
+
 describe("PlayerApp", () => {
   afterEach(() => {
     cleanup();
@@ -117,6 +176,64 @@ describe("PlayerApp", () => {
     ).toBe("Bearer player-session");
   });
 
+  it("loads retained hand summaries and audit detail without mutation credentials", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [pendingHand], next_cursor: null }),
+      )
+      .mockResolvedValueOnce(jsonResponse(pendingHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    expect(
+      await screen.findByText("pokerstars #123456789"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Not used for learning")).toBeInTheDocument();
+
+    const listRequest = fetchMock.mock.calls[2];
+    expect(listRequest?.[0]).toBe("/api/player/hands?limit=25");
+    expect(new Headers(listRequest?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer player-session",
+    );
+    expect(
+      new Headers(listRequest?.[1]?.headers).has("X-Poker-CSRF-Token"),
+    ).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "View audit detail" }));
+    expect(
+      await screen.findByText("Read-only audit detail"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/This record is not approved for learning/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Review hero identity")).toBeInTheDocument();
+    expect(screen.getByText("Hero line was absent")).toBeInTheDocument();
+    expect(screen.getByText(/HH20260830.txt/)).toBeInTheDocument();
+
+    const detailRequest = fetchMock.mock.calls[3];
+    expect(detailRequest?.[0]).toBe(
+      `/api/player/hands/${pendingHand.record_key}`,
+    );
+    expect(
+      new Headers(detailRequest?.[1]?.headers).has("X-Poker-CSRF-Token"),
+    ).toBe(false);
+    expect(document.body).not.toHaveTextContent("PokerStars Hand #123456789");
+  });
+
   it("restores with session and CSRF headers, then refreshes storage", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
@@ -192,7 +309,7 @@ describe("PlayerApp", () => {
     expect(screen.getByText("2", { selector: "dd" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Hand-history import, review, and learning are not enabled/,
+        /Direct hand-history import, correction, approval, and learning are not enabled/,
       ),
     ).toBeInTheDocument();
   });

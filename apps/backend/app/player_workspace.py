@@ -16,6 +16,12 @@ from app.data_lock import (
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     InterprocessDataLock,
 )
+from app.player_hands import (
+    PlayerHandDetail,
+    PlayerHandList,
+    get_player_hand,
+    list_player_hands,
+)
 from app.storage.imported_hand_store import (
     IMPORTED_HANDS_DIRNAME,
     FileImportedHandStore,
@@ -223,3 +229,36 @@ class PlayerWorkspace:
                     "failed": list(recovery.failed),
                 },
             }
+
+    def list_hand_records(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> PlayerHandList:
+        """Read one stable page while backup or recovery publication is excluded."""
+
+        with self.data_lock.hold(
+            exclusive=False,
+            timeout_seconds=lock_timeout_seconds,
+        ):
+            return list_player_hands(
+                self.imported_hands,
+                limit=limit,
+                cursor=cursor,
+            )
+
+    def get_hand_record(
+        self,
+        record_key: str,
+        *,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> PlayerHandDetail:
+        """Read one validated record projection under the shared volume lock."""
+
+        with self.data_lock.hold(
+            exclusive=False,
+            timeout_seconds=lock_timeout_seconds,
+        ):
+            return get_player_hand(self.imported_hands, record_key)
