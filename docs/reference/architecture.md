@@ -28,6 +28,11 @@ attaches only the imported-hand store to that runtime, enforces a private
 player-owned data directory, performs interrupted-write recovery before
 startup, and exposes authenticated read-only storage status. It still adds no
 player-record or mutation route.
+[ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md) replaces
+the inline readiness document with a separately built local recovery PWA. It
+exposes storage/recovery status and the existing player backup/restore workflow
+without importing the hosted administrative application or adding player
+import, lifecycle, or learning routes.
 The retirement of the V1 screenshot-bound learning surface (recommendation
 requests, training decisions, training review, progress, and lessons) is
 defined by
@@ -264,6 +269,16 @@ before the loopback listener starts. Authenticated `/api/player/storage`
 reports the data location, record count, and distinct recovery buckets without
 exposing record contents. V1 screenshot and benchmark stores are neither
 constructed nor reachable from this composition.
+
+The loopback backend serves the verified `apps/pwa/dist-player` build from the
+same local origin. Only its document, manifest, service worker,
+content-addressed assets, and icons are public; player data remains behind the
+authenticated API. The player service worker precaches only the static shell
+and treats `/api` and encoded equivalents as network-only. `pnpm player:start`
+builds this dedicated entry before launching the backend, which refuses missing
+or symlinked asset roots rather than falling back to an inline shell. Startup
+snapshots every served asset into process memory before the workspace opens, so
+later filesystem replacement cannot change code on the authenticated origin.
 
 The local runtime's imported-hand backup contract is a separate V2-only
 `poker-hero-player-backup` ZIP, not the hosted application's V1 job/benchmark
@@ -752,9 +767,15 @@ recorded in
 
 ### PWA
 
-`apps/pwa` owns administrator-only screenshot upload and capture, queue
-navigation, review and approval, parser benchmarking, and history. It
-is organized into application, page, feature, and shared layers. `src/app`
+`apps/pwa` owns two intentionally separate builds. The default hosted build owns
+administrator-only screenshot upload and capture, queue navigation, review and
+approval, parser benchmarking, and history. The `player/` entry owns only the
+loopback session bootstrap, local storage/recovery presentation, and player
+backup/restore controls. It imports no hosted application routes, API adapters,
+browser projections, administrative controls, or error-reporting integrations.
+
+The hosted build is organized into application, page, feature, and shared
+layers. `src/app`
 contains the browser-router shell, route registry, top-level error monitoring,
 and other application-wide concerns. `src/pages/analyzer/AnalyzerPage.tsx` is a
 route-scoped provider wrapper. `useAnalyzerWorkspaceController.ts` retains the

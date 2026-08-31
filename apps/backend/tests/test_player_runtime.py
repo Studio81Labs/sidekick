@@ -4,6 +4,7 @@ import errno
 from ipaddress import ip_address
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
@@ -25,12 +26,11 @@ from app.player_namespace import (
 )
 from app.player_runtime import (
     PLAYER_AUTHORITY,
-    PLAYER_CSRF_STORAGE_KEY,
     PLAYER_HOST,
     PLAYER_ORIGIN,
     PLAYER_PORT,
     PLAYER_SECRET_FILENAME,
-    PLAYER_SESSION_STORAGE_KEY,
+    PlayerAssetError,
     PlayerCredentialError,
     PlayerRuntime,
     PlayerSessionAuthority,
@@ -44,8 +44,19 @@ from app.player_workspace import (
 from app.storage.imported_hand_store import FileImportedHandStore
 
 
+TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
+
+
+def _create_player_runtime(data_dir: Path, **kwargs) -> PlayerRuntime:
+    return create_player_runtime(
+        data_dir,
+        player_assets_dir=TEST_PLAYER_ASSETS_DIR,
+        **kwargs,
+    )
+
+
 def player_client(tmp_path: Path, **kwargs) -> tuple[TestClient, PlayerRuntime]:
-    runtime = create_player_runtime(tmp_path, **kwargs)
+    runtime = _create_player_runtime(tmp_path, **kwargs)
     client = TestClient(
         runtime.app,
         base_url=PLAYER_ORIGIN,
@@ -104,7 +115,7 @@ def test_player_runtime_rejects_a_shared_data_directory(tmp_path: Path) -> None:
     data_dir.chmod(0o755)
 
     with pytest.raises(PlayerDataDirectoryError, match="only by its owner"):
-        create_player_runtime(data_dir)
+        _create_player_runtime(data_dir)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin extended ACL test")
@@ -117,7 +128,7 @@ def test_player_runtime_rejects_a_data_directory_acl(tmp_path: Path) -> None:
     )
 
     with pytest.raises(PlayerDataDirectoryError, match="extended ACL"):
-        create_player_runtime(data_dir)
+        _create_player_runtime(data_dir)
 
 
 def test_allocated_empty_macos_acl_is_not_rejected(tmp_path: Path) -> None:
@@ -148,7 +159,7 @@ def test_allocated_empty_macos_acl_is_not_rejected(tmp_path: Path) -> None:
 
 
 def test_player_runtime_opens_only_the_player_store(tmp_path: Path) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
 
     assert runtime.workspace.data_dir == tmp_path.resolve()
     assert runtime.workspace.imported_hands.list_keys() == []
@@ -169,7 +180,7 @@ def test_player_runtime_rejects_an_imported_hand_store_symlink(
     (data_dir / "imported-hands").symlink_to(target, target_is_directory=True)
 
     with pytest.raises(PlayerDataDirectoryError, match="must be a directory inside"):
-        create_player_runtime(data_dir)
+        _create_player_runtime(data_dir)
 
 
 def test_bootstrap_ticket_is_single_use_and_session_requires_csrf() -> None:
@@ -209,27 +220,118 @@ def test_expired_bootstrap_ticket_cannot_create_a_session() -> None:
     assert authority.exchange_bootstrap_ticket(ticket) is None
 
 
-def test_player_shell_bootstraps_from_fragment_into_session_storage(
+def test_player_runtime_serves_the_dedicated_pwa_and_launch_fragment(
     tmp_path: Path,
 ) -> None:
     client, runtime = player_client(tmp_path)
 
     shell = client.get("/")
-    script = client.get("/player-bootstrap.js")
+    manifest = client.get("/manifest.webmanifest")
+    service_worker = client.get("/sw.js")
+    application = client.get("/assets/player-test-12345678.js")
+    icon = client.get("/icons/test-icon.svg")
     launch_url = runtime.issue_launch_url()
 
     assert shell.status_code == 200
-    assert "V2 hand-import workflow is not enabled" in shell.text
+    assert "Dedicated local player PWA" in shell.text
+    assert "/assets/player-test-12345678.js" in shell.text
     assert shell.headers["Cache-Control"] == "no-store"
+    assert manifest.status_code == 200
+    assert manifest.headers["Content-Type"].startswith(
+        "application/manifest+json"
+    )
+    assert manifest.json()["name"] == "Poker Hero Local Player Test PWA"
+    assert service_worker.status_code == 200
+    assert service_worker.headers["Content-Type"].startswith("text/javascript")
+    assert application.status_code == 200
+    assert icon.status_code == 200
+    assert icon.headers["Content-Type"].startswith("image/svg+xml")
+    assert client.get("/assets/missing.js").status_code == 404
+    assert client.get("/icons/missing.png").status_code == 404
+    assert client.get("/assets/%2e%2e/manifest.webmanifest").status_code == 404
+    assert client.get("/player-bootstrap.js").status_code == 404
     assert "#ticket=" in launch_url
     assert "?ticket=" not in launch_url
-    assert PLAYER_SESSION_STORAGE_KEY in script.text
-    assert PLAYER_CSRF_STORAGE_KEY in script.text
-    assert "history.replaceState" in script.text
-    assert "location.hash" in script.text
-    assert "/api/player/storage" in script.text
-    assert 'id="data-location"' in shell.text
     assert "script-src 'self'" in shell.headers["Content-Security-Policy"]
+
+
+def test_player_runtime_serves_an_immutable_startup_asset_snapshot(
+    tmp_path: Path,
+) -> None:
+    assets = tmp_path / "player-pwa"
+    shutil.copytree(TEST_PLAYER_ASSETS_DIR, assets)
+    runtime = create_player_runtime(
+        tmp_path / "player-data",
+        player_assets_dir=assets,
+    )
+    client = TestClient(
+        runtime.app,
+        base_url=PLAYER_ORIGIN,
+        client=("127.0.0.1", 50000),
+    )
+
+    (assets / "index.html").write_text("<script>window.compromised = true</script>")
+    (assets / "assets" / "player-test-12345678.js").write_text(
+        "window.compromised = true;"
+    )
+
+    shell = client.get("/")
+    application = client.get("/assets/player-test-12345678.js")
+
+    assert "Dedicated local player PWA" in shell.text
+    assert "compromised" not in shell.text
+    assert "__POKER_HERO_PLAYER_TEST_PWA__" in application.text
+    assert "compromised" not in application.text
+
+
+def test_player_runtime_rejects_missing_or_symlinked_pwa_assets(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing-player-pwa"
+    with pytest.raises(PlayerAssetError, match="has not been built"):
+        create_player_runtime(
+            tmp_path / "missing-data",
+            player_assets_dir=missing,
+        )
+    assert not (tmp_path / "missing-data").exists()
+
+    symlink = tmp_path / "player-pwa-link"
+    symlink.symlink_to(TEST_PLAYER_ASSETS_DIR, target_is_directory=True)
+    with pytest.raises(PlayerAssetError, match="must not be a symlink"):
+        create_player_runtime(
+            tmp_path / "symlink-data",
+            player_assets_dir=symlink,
+        )
+
+
+@pytest.mark.parametrize(
+    "missing_path",
+    [
+        "index.html",
+        "manifest.webmanifest",
+        "sw.js",
+        "assets",
+        "icons",
+    ],
+)
+def test_player_runtime_rejects_an_incomplete_pwa_build(
+    tmp_path: Path,
+    missing_path: str,
+) -> None:
+    assets = tmp_path / "incomplete-player-pwa"
+    shutil.copytree(TEST_PLAYER_ASSETS_DIR, assets)
+    missing = assets / missing_path
+    if missing.is_dir():
+        shutil.rmtree(missing)
+    else:
+        missing.unlink()
+
+    with pytest.raises(PlayerAssetError, match="missing"):
+        create_player_runtime(
+            tmp_path / "player-data",
+            player_assets_dir=assets,
+        )
+    assert not (tmp_path / "player-data").exists()
 
 
 def test_player_api_requires_a_session_and_one_use_launch_ticket(
@@ -327,13 +429,13 @@ def test_player_storage_status_preserves_quarantine_across_restarts(
     interrupted.mkdir(parents=True)
     (interrupted / "ready").write_bytes(b"")
 
-    first = create_player_runtime(tmp_path)
+    first = _create_player_runtime(tmp_path)
     assert first.workspace.imported_hand_recovery.quarantined == (
         "interrupted-cascade",
     )
     assert first.workspace.status_payload()["status"] == "attention_required"
 
-    second = create_player_runtime(tmp_path)
+    second = _create_player_runtime(tmp_path)
     assert second.workspace.imported_hand_recovery == ImportedHandRecoveryReport()
     assert second.workspace.status_payload()["status"] == "attention_required"
     assert second.workspace.status_payload()["recovery"]["quarantined"] == [
@@ -391,7 +493,7 @@ def test_player_api_enforces_origin_and_csrf(tmp_path: Path) -> None:
 def test_future_player_routes_inherit_session_and_csrf_enforcement(
     tmp_path: Path,
 ) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
 
     @runtime.api_application.post("/api/player/future-write")
     async def future_write() -> dict[str, bool]:
@@ -455,7 +557,7 @@ def test_player_runtime_rejects_network_boundary_bypasses(
     headers: dict[str, str],
     status_code: int,
 ) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
     client = TestClient(
         runtime.app,
         base_url=base_url,
@@ -469,7 +571,7 @@ def test_player_runtime_rejects_network_boundary_bypasses(
 
 
 def test_player_launcher_has_a_fixed_loopback_transport(tmp_path: Path) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
     server = build_player_server(runtime)
 
     assert server.config.host == PLAYER_HOST == "127.0.0.1"
@@ -519,7 +621,7 @@ def _non_loopback_ipv4() -> str | None:
 def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
     tmp_path: Path,
 ) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
     server = build_player_server(runtime)
     server_thread = Thread(target=server.run, daemon=True)
     server_thread.start()
@@ -580,7 +682,7 @@ def test_local_player_auth_denies_malformed_encoded_path_before_body(
 ) -> None:
     body_read = False
     sent: list[dict[str, object]] = []
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
 
     async def receive() -> dict[str, object]:
         nonlocal body_read

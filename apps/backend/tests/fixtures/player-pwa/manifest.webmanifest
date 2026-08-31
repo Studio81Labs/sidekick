@@ -1,0 +1,7 @@
+{
+  "id": "/",
+  "name": "Poker Hero Local Player Test PWA",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone"
+}

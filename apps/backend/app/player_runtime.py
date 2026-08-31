@@ -1,21 +1,23 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import hmac
 from ipaddress import ip_address
-import json
+from mimetypes import guess_type
 import os
 from pathlib import Path
 import secrets
 from stat import S_ISREG
 from threading import Lock
 from time import monotonic
+from types import MappingProxyType
 from typing import Callable
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -45,6 +47,15 @@ PLAYER_PORT = 8765
 PLAYER_AUTHORITY = f"{PLAYER_HOST}:{PLAYER_PORT}"
 PLAYER_ORIGIN = f"http://{PLAYER_AUTHORITY}"
 PLAYER_SECRET_FILENAME = ".player-runtime-key"
+DEFAULT_PLAYER_ASSETS_DIR = (
+    Path(__file__).resolve().parents[2] / "pwa" / "dist-player"
+)
+REQUIRED_PLAYER_ASSETS = (
+    "index.html",
+    "manifest.webmanifest",
+    "sw.js",
+)
+REQUIRED_PLAYER_ASSET_DIRECTORIES = ("assets", "icons")
 BOOTSTRAP_TTL_SECONDS = 120
 SESSION_TTL_SECONDS = 24 * 60 * 60
 MUTATING_METHODS = frozenset({"DELETE", "PATCH", "POST", "PUT"})
@@ -57,96 +68,104 @@ PROXY_HEADERS = frozenset(
         b"x-forwarded-proto",
     }
 )
-PLAYER_SESSION_STORAGE_KEY = "poker-hero-player-session-v1"
-PLAYER_CSRF_STORAGE_KEY = "poker-hero-player-csrf-v1"
-
-
-PLAYER_SHELL = """<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#1f2937" />
-    <meta name="application-name" content="Poker Hero Player" />
-    <title>Poker Hero · Local Player Runtime</title>
-  </head>
-  <body>
-    <main>
-      <h1>Poker Hero</h1>
-      <p id="runtime-status" role="status">Starting the local player runtime…</p>
-      <p>Player data location: <code id="data-location">authentication required</code></p>
-      <p>The V2 hand-import workflow is not enabled in this foundation release.</p>
-    </main>
-    <script type="module" src="/player-bootstrap.js"></script>
-  </body>
-</html>
-"""
-
-PLAYER_BOOTSTRAP_SCRIPT = f"""const sessionKey = {json.dumps(PLAYER_SESSION_STORAGE_KEY)};
-const csrfKey = {json.dumps(PLAYER_CSRF_STORAGE_KEY)};
-const status = document.getElementById("runtime-status");
-
-function setStatus(message) {{
-  status.textContent = message;
-}}
-
-async function exchangeTicket(ticket) {{
-  const response = await fetch("/api/player/session", {{
-    method: "POST",
-    credentials: "same-origin",
-    headers: {{ Authorization: `Bearer ${{ticket}}` }},
-  }});
-  if (!response.ok) throw new Error("The one-use launch ticket was rejected.");
-  const session = await response.json();
-  sessionStorage.setItem(sessionKey, session.session_token);
-  sessionStorage.setItem(csrfKey, session.csrf_token);
-  return session.session_token;
-}}
-
-async function verifySession(token) {{
-  const response = await fetch("/api/player/health", {{
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: {{ Authorization: `Bearer ${{token}}` }},
-  }});
-  if (!response.ok) throw new Error("The local player session is unavailable.");
-}}
-
-async function loadStorageStatus(token) {{
-  const response = await fetch("/api/player/storage", {{
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: {{ Authorization: `Bearer ${{token}}` }},
-  }});
-  if (!response.ok) throw new Error("The local player store is unavailable.");
-  return response.json();
-}}
-
-async function bootstrap() {{
-  const fragment = new URLSearchParams(location.hash.slice(1));
-  const ticket = fragment.get("ticket");
-  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
-  let token = sessionStorage.getItem(sessionKey);
-  if (ticket) token = await exchangeTicket(ticket);
-  if (!token) throw new Error("Start the player runtime again to create a session.");
-  await verifySession(token);
-  const storage = await loadStorageStatus(token);
-  document.getElementById("data-location").textContent = storage.data_directory;
-  setStatus(storage.status === "ready"
-    ? "The authenticated loopback runtime and player store are ready."
-    : "The player store needs recovery attention before import is enabled.");
-}}
-
-bootstrap().catch((error) => {{
-  sessionStorage.removeItem(sessionKey);
-  sessionStorage.removeItem(csrfKey);
-  setStatus(error instanceof Error ? error.message : "Player runtime startup failed.");
-}});
-"""
 
 
 class PlayerCredentialError(RuntimeError):
     pass
+
+
+class PlayerAssetError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class PlayerAssetBundle:
+    document: bytes
+    manifest: bytes
+    service_worker: bytes
+    public_files: Mapping[str, bytes]
+
+
+def _read_player_asset(root: Path, asset: Path, relative_path: str) -> bytes:
+    if asset.is_symlink():
+        raise PlayerAssetError(
+            f"The player PWA asset {relative_path} must not be a symlink"
+        )
+    try:
+        resolved_asset = asset.resolve(strict=True)
+    except OSError as exc:
+        raise PlayerAssetError(
+            f"The player PWA is missing {relative_path}; run pnpm player:build"
+        ) from exc
+    if not resolved_asset.is_relative_to(root) or not resolved_asset.is_file():
+        raise PlayerAssetError(
+            f"The player PWA asset {relative_path} must be a regular file"
+        )
+    try:
+        return resolved_asset.read_bytes()
+    except OSError as exc:
+        raise PlayerAssetError(
+            f"The player PWA asset {relative_path} could not be read"
+        ) from exc
+
+
+def _load_player_asset_directory(
+    root: Path,
+    directory: Path,
+    relative_directory: str,
+) -> dict[str, bytes]:
+    if directory.is_symlink() or not directory.is_dir():
+        raise PlayerAssetError(
+            f"The player PWA is missing its {relative_directory} directory; "
+            "run pnpm player:build"
+        )
+    loaded: dict[str, bytes] = {}
+    try:
+        entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+    except OSError as exc:
+        raise PlayerAssetError(
+            f"The player PWA {relative_directory} directory could not be read"
+        ) from exc
+    for entry in entries:
+        relative_path = entry.relative_to(root).as_posix()
+        if entry.is_symlink():
+            raise PlayerAssetError(
+                f"The player PWA asset {relative_path} must not be a symlink"
+            )
+        if entry.is_dir():
+            loaded.update(_load_player_asset_directory(root, entry, relative_path))
+            continue
+        loaded[relative_path] = _read_player_asset(root, entry, relative_path)
+    return loaded
+
+
+def validate_player_assets(player_assets_dir: Path) -> PlayerAssetBundle:
+    candidate_root = Path(player_assets_dir)
+    if candidate_root.is_symlink():
+        raise PlayerAssetError("The player PWA directory must not be a symlink")
+    try:
+        root = candidate_root.resolve(strict=True)
+    except OSError as exc:
+        raise PlayerAssetError(
+            "The player PWA has not been built; run pnpm player:build"
+        ) from exc
+    if not root.is_dir():
+        raise PlayerAssetError("The player PWA path must be a directory")
+    root_files = {
+        relative_path: _read_player_asset(root, root / relative_path, relative_path)
+        for relative_path in REQUIRED_PLAYER_ASSETS
+    }
+    public_files: dict[str, bytes] = {}
+    for relative_path in REQUIRED_PLAYER_ASSET_DIRECTORIES:
+        public_files.update(
+            _load_player_asset_directory(root, root / relative_path, relative_path)
+        )
+    return PlayerAssetBundle(
+        document=root_files["index.html"],
+        manifest=root_files["manifest.webmanifest"],
+        service_worker=root_files["sw.js"],
+        public_files=MappingProxyType(public_files),
+    )
 
 
 def load_or_create_installation_secret(data_dir: Path) -> bytes:
@@ -517,9 +536,25 @@ class PlayerRuntime:
         return f"{self.origin}/#ticket={ticket}"
 
 
+def _player_public_asset_response(
+    bundle: PlayerAssetBundle,
+    namespace: str,
+    asset_path: str,
+) -> Response:
+    content = bundle.public_files.get(f"{namespace}/{asset_path}")
+    if content is None:
+        return Response(status_code=404)
+    media_type, _encoding = guess_type(asset_path)
+    return Response(
+        content,
+        media_type=media_type or "application/octet-stream",
+    )
+
+
 def create_player_runtime(
     data_dir: Path,
     *,
+    player_assets_dir: Path = DEFAULT_PLAYER_ASSETS_DIR,
     authority: str = PLAYER_AUTHORITY,
     origin: str = PLAYER_ORIGIN,
     clock: Callable[[], float] = monotonic,
@@ -529,6 +564,7 @@ def create_player_runtime(
     backup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
     max_player_backup_bytes: int = DEFAULT_MAX_PLAYER_BACKUP_BYTES,
 ) -> PlayerRuntime:
+    player_assets = validate_player_assets(player_assets_dir)
     workspace = PlayerWorkspace.open(
         data_dir,
         recovery_lock_timeout_seconds=recovery_lock_timeout_seconds,
@@ -546,13 +582,23 @@ def create_player_runtime(
         openapi_url=None,
     )
 
-    @app.get("/", response_class=HTMLResponse)
-    async def player_shell() -> str:
-        return PLAYER_SHELL
+    @app.get("/")
+    async def player_shell() -> Response:
+        return Response(player_assets.document, media_type="text/html")
 
-    @app.get("/player-bootstrap.js")
-    async def player_bootstrap_script() -> Response:
-        return Response(PLAYER_BOOTSTRAP_SCRIPT, media_type="text/javascript")
+    @app.get("/manifest.webmanifest")
+    async def player_manifest() -> Response:
+        return Response(
+            player_assets.manifest,
+            media_type="application/manifest+json",
+        )
+
+    @app.get("/sw.js")
+    async def player_service_worker() -> Response:
+        return Response(
+            player_assets.service_worker,
+            media_type="text/javascript",
+        )
 
     @app.post(f"{PLAYER_API_PREFIX}/session")
     async def exchange_session(request: Request) -> JSONResponse:
@@ -633,6 +679,14 @@ def create_player_runtime(
         session_token = request.state.player_session_token
         sessions.revoke(session_token)
         return Response(status_code=204)
+
+    @app.get("/assets/{asset_path:path}")
+    async def player_application_asset(asset_path: str) -> Response:
+        return _player_public_asset_response(player_assets, "assets", asset_path)
+
+    @app.get("/icons/{asset_path:path}")
+    async def player_icon(asset_path: str) -> Response:
+        return _player_public_asset_response(player_assets, "icons", asset_path)
 
     secured_app: ASGIApp = PlayerApiSessionMiddleware(app, sessions)
     secured_app = PlayerNetworkBoundaryMiddleware(
