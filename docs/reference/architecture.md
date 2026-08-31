@@ -23,6 +23,11 @@ application, one-use browser bootstrap, process-local authenticated session,
 CSRF boundary, and reserved hosted namespace. Its readiness shell has no V2
 import, lifecycle, learning, backup, or player-data routes, so this reference
 still describes V1 as the deployed product and the Phase 1 gate remains closed.
+[ADR 0051](../decisions/0051-isolate-the-local-player-store-composition.md)
+attaches only the imported-hand store to that runtime, enforces a private
+player-owned data directory, performs interrupted-write recovery before
+startup, and exposes authenticated read-only storage status. It still adds no
+player-record or mutation route.
 The retirement of the V1 screenshot-bound learning surface (recommendation
 requests, training decisions, training review, progress, and lessons) is
 defined by
@@ -228,14 +233,15 @@ validates a complete snapshot; an invalid graph cannot be persisted or exposed
 as learning evidence. Conflict resolutions are retained audit events, so a
 deletion request must be ordered after them before deletion can proceed.
 
-These contracts are now backed by a player-local file store, and are still not
-reachable over HTTP. `app/storage/imported_hand_store.py` persists each record
-at `<data>/imported-hands/<record_key>/record.json`, keyed by a SHA-256 of the
-hand's stable identity, with derived decision artifacts beside it under
-`decisions/`. Because a purged record's tombstone keeps neither its identity nor
-its audit collections, that key is derived once when the record is first written
-and the directory name is afterwards the only way to reach the record - which is
-what lets a re-import find the tombstone of the hand it replaces.
+These contracts are now backed by a player-local file store, and player records
+are still not reachable over HTTP. `app/storage/imported_hand_store.py` persists
+each record at `<data>/imported-hands/<record_key>/record.json`, keyed by a
+SHA-256 of the hand's stable identity, with derived decision artifacts beside
+it under `decisions/`. Because a purged record's tombstone keeps neither its
+identity nor its audit collections, that key is derived once when the record is
+first written and the directory name is afterwards the only way to reach the
+record - which is what lets a re-import find the tombstone of the hand it
+replaces.
 
 Writes that touch more than one file go through the cascade journal in
 `app/storage/cascade_journal.py`, which stages them under
@@ -248,6 +254,16 @@ sets aside a structurally unusable one under `.cascade/corrupt/` for a human
 rather than deleting the evidence. That sweep needs the exclusive data-volume
 lock, so it is skipped entirely when the journal holds nothing to recover - see
 `docs/process/deployment.md`.
+
+The local runtime uses the narrower `PlayerWorkspace` composition instead of
+the hosted `WorkspaceCoordinator`. It opens only the imported-hand repository,
+requires the resolved data directory to be current-user-owned and inaccessible
+to group/world users through mode bits or Darwin extended ACLs, rejects a
+symlinked imported-hand root, and runs the same interrupted-cascade recovery
+before the loopback listener starts. Authenticated `/api/player/storage`
+reports the data location, record count, and distinct recovery buckets without
+exposing record contents. V1 screenshot and benchmark stores are neither
+constructed nor reachable from this composition.
 
 `app/application/imported_hand_lifecycle.py` is the single boundary every
 lifecycle transition crosses (approve, reapprove, withdraw, reject, deletion
@@ -279,12 +295,13 @@ Retries of the published request or completed purge are idempotent. Older
 backups remain subject to `classify_restore`, so they cannot reactivate a
 purged generation without an explicit authorized reimport.
 
-What is deliberately not wired yet: there are no V2 routes and no HTTP surface,
-so none of this is reachable by a client, and the hosted screenshot workflow is
-not a V2 player-data path. Outside tests, the only production-reachable code
-here is the store's construction and its startup recovery - no writer, no
-lifecycle transition, and no re-import resolution has a non-test caller. The
-authentication and authorization boundary for player data is still to come.
+What is deliberately not wired yet: there is no imported-hand or lifecycle HTTP
+surface, so no player record is reachable by a client, and the hosted screenshot
+workflow is not a V2 player-data path. The local runtime constructs and recovers
+the player store and exposes only authenticated storage metadata. No writer,
+lifecycle transition, or re-import resolution has a non-test caller. Future
+record routes inherit the session, Host/Origin, and CSRF boundary established by
+ADR 0050.
 
 Hero decision-point extraction lives in
 `app/domain/imported_hands/decisions.py` and consumes the aggregate's

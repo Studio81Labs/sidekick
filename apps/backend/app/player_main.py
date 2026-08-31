@@ -32,11 +32,15 @@ def configured_player_runtime(settings: Settings) -> PlayerRuntime:
         raise RuntimeError(
             "The player runtime is available only in the local deployment environment"
         )
-    return create_player_runtime(settings.data_dir)
+    return create_player_runtime(
+        settings.data_dir,
+        recovery_lock_timeout_seconds=settings.data_lock_recovery_timeout_seconds,
+        startup_lock_timeout_seconds=settings.data_lock_startup_timeout_seconds,
+        write_lock_timeout_seconds=settings.data_lock_write_timeout_seconds,
+    )
 
 
-async def serve_player_runtime() -> None:
-    runtime = configured_player_runtime(get_settings())
+async def serve_player_runtime(runtime: PlayerRuntime) -> None:
     launch_url = runtime.issue_launch_url()
     server = build_player_server(runtime)
     server_task = asyncio.create_task(server.serve())
@@ -53,7 +57,11 @@ async def serve_player_runtime() -> None:
 
 
 def main() -> None:
-    asyncio.run(serve_player_runtime())
+    # Filesystem validation, lock acquisition, and crash recovery are blocking
+    # startup work. Keep them on the main thread before the async server loop
+    # exists so they cannot stall Uvicorn's event loop.
+    runtime = configured_player_runtime(get_settings())
+    asyncio.run(serve_player_runtime(runtime))
 
 
 if __name__ == "__main__":
