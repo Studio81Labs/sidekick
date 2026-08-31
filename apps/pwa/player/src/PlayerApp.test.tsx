@@ -26,7 +26,7 @@ const readyStorage = {
 const pendingHand = {
   record_key: "a".repeat(64),
   identity: { site: "pokerstars", source_hand_id: "123456789" },
-  played_at: null,
+  played_at: "2026-08-30T11:00:00Z",
   lifecycle_status: "pending_review",
   lifecycle_changed_at: "2026-08-30T12:00:00Z",
   active_canonical_revision: null,
@@ -52,7 +52,13 @@ const pendingHandDetail = {
   raw_sources: [
     {
       raw_source_id: "file-1",
-      chronology: { played_at: null },
+      chronology: {
+        played_at: "2026-08-30T11:00:00Z",
+        source_timezone: "Europe/Prague",
+        source_session_id: "session-1",
+        source_file_id: "file-1",
+        hand_ordinal: 7,
+      },
       provenance: {
         imported_at: "2026-08-30T12:00:00Z",
         adapter_id: "pokerstars",
@@ -64,7 +70,13 @@ const pendingHandDetail = {
     },
     {
       raw_source_id: "file-2",
-      chronology: { played_at: null },
+      chronology: {
+        played_at: null,
+        source_timezone: null,
+        source_session_id: "session-1",
+        source_file_id: "file-2",
+        hand_ordinal: 8,
+      },
       provenance: {
         imported_at: "2026-08-30T12:15:00Z",
         adapter_id: "pokerstars",
@@ -400,6 +412,13 @@ describe("PlayerApp", () => {
     expect(screen.getByText(/resolved use source/)).toBeInTheDocument();
     expect(screen.getByText(/Selected source: file-2/)).toBeInTheDocument();
     expect(screen.getByText(/HH20260830.txt/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/source timezone Europe\/Prague/),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/source session session-1/)).toHaveLength(2);
+    expect(screen.getByText(/source file file-1/)).toBeInTheDocument();
+    expect(screen.getByText(/hand ordinal 7/)).toBeInTheDocument();
+    expect(screen.getByText(/2026-08-30T11:00:00Z/)).toBeInTheDocument();
 
     const detailRequest = fetchMock.mock.calls[3];
     expect(detailRequest?.[0]).toBe(

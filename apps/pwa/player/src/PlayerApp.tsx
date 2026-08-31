@@ -216,8 +216,12 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
                 {" · "}
                 {new Date(source.provenance.imported_at).toLocaleString()}
                 {source.chronology.played_at
-                  ? ` · played ${new Date(source.chronology.played_at).toLocaleString()}`
-                  : ""}
+                  ? ` · played ${new Date(source.chronology.played_at).toLocaleString()} (${source.chronology.played_at})`
+                  : " · played time not retained"}
+                {` · source timezone ${source.chronology.source_timezone ?? "not retained"}`}
+                {` · source session ${source.chronology.source_session_id ?? "not retained"}`}
+                {` · source file ${source.chronology.source_file_id}`}
+                {` · hand ordinal ${source.chronology.hand_ordinal ?? "not retained"}`}
               </li>
             ))}
           </ul>

@@ -75,7 +75,13 @@ export interface PlayerHandDetail {
   };
   raw_sources: Array<{
     raw_source_id: string;
-    chronology: { played_at: string | null };
+    chronology: {
+      played_at: string | null;
+      source_timezone: string | null;
+      source_session_id: string | null;
+      source_file_id: string;
+      hand_ordinal: number | null;
+    };
     provenance: {
       imported_at: string;
       adapter_id: string;
