@@ -189,26 +189,37 @@ class PlayerWorkspace:
             imported_hand_recovery=recovery,
         )
 
-    def status_payload(self) -> dict[str, object]:
-        recovery = self.imported_hand_recovery
-        quarantined = tuple(
-            sorted(
-                set(recovery.quarantined)
-                | set(self.imported_hands.list_quarantined_cascades())
+    def status_payload(
+        self,
+        *,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> dict[str, object]:
+        # A restore publishes several files under an exclusive hold. Status
+        # must take the shared side so it can never report an intermediate
+        # filesystem view from another process.
+        with self.data_lock.hold(
+            exclusive=False,
+            timeout_seconds=lock_timeout_seconds,
+        ):
+            recovery = self.imported_hand_recovery
+            quarantined = tuple(
+                sorted(
+                    set(recovery.quarantined)
+                    | set(self.imported_hands.list_quarantined_cascades())
+                )
             )
-        )
-        return {
-            "status": (
-                "attention_required"
-                if quarantined or recovery.failed
-                else "ready"
-            ),
-            "storage": "player-local-file",
-            "data_directory": str(self.data_dir),
-            "imported_hand_record_count": len(self.imported_hands.list_keys()),
-            "recovery": {
-                "completed": list(recovery.completed),
-                "quarantined": list(quarantined),
-                "failed": list(recovery.failed),
-            },
-        }
+            return {
+                "status": (
+                    "attention_required"
+                    if quarantined or recovery.failed
+                    else "ready"
+                ),
+                "storage": "player-local-file",
+                "data_directory": str(self.data_dir),
+                "imported_hand_record_count": len(self.imported_hands.list_keys()),
+                "recovery": {
+                    "completed": list(recovery.completed),
+                    "quarantined": list(quarantined),
+                    "failed": list(recovery.failed),
+                },
+            }

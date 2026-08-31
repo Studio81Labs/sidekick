@@ -23,7 +23,7 @@ from app.player_backup import (
     parse_player_backup_archive,
     restore_player_backup,
 )
-from app.player_runtime import PLAYER_ORIGIN
+from app.player_runtime import PLAYER_ORIGIN, PlayerCredentialError
 from app.player_workspace import PlayerWorkspace
 from app.storage.cascade_journal import CascadeJournal
 from app.storage.imported_hand_store import (
@@ -641,6 +641,70 @@ def test_player_restore_route_rejects_malformed_zip_without_writes(
 
     assert response.status_code == 400
     assert runtime.workspace.imported_hands.backup_snapshot() == expected
+
+
+def test_player_restore_storage_failure_disables_every_session_until_restart(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    other_session = exchange_session(client, runtime)
+    pending_ticket = runtime.issue_launch_url().split("#ticket=", 1)[1]
+
+    def fail_after_partial_publication(*_args: object, **_kwargs: object) -> None:
+        raise PlayerBackupStorageError(
+            "Player backup restore did not complete; restart the local runtime "
+            "before retrying so journal recovery can finish"
+        )
+
+    monkeypatch.setattr(
+        "app.player_runtime.restore_player_backup",
+        fail_after_partial_publication,
+    )
+    authorization = f"Bearer {session['session_token']}"
+
+    response = client.post(
+        "/api/player/backups/restore",
+        content=b"player backup archive",
+        headers={
+            "Authorization": authorization,
+            "Origin": PLAYER_ORIGIN,
+            "X-Poker-CSRF-Token": str(session["csrf_token"]),
+            "Content-Type": "application/zip",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "restart the local runtime" in response.json()["detail"]
+    assert client.get(
+        "/api/player/storage",
+        headers={"Authorization": authorization},
+    ).status_code == 401
+    other_authorization = f"Bearer {other_session['session_token']}"
+    assert client.get(
+        "/api/player/backups/export",
+        headers={"Authorization": other_authorization},
+    ).status_code == 401
+    assert client.post(
+        "/api/player/backups/restore",
+        content=b"another player backup archive",
+        headers={
+            "Authorization": other_authorization,
+            "Origin": PLAYER_ORIGIN,
+            "X-Poker-CSRF-Token": str(other_session["csrf_token"]),
+            "Content-Type": "application/zip",
+        },
+    ).status_code == 401
+    assert client.post(
+        "/api/player/session",
+        headers={
+            "Authorization": f"Bearer {pending_ticket}",
+            "Origin": PLAYER_ORIGIN,
+        },
+    ).status_code == 401
+    with pytest.raises(PlayerCredentialError, match="requires a local runtime restart"):
+        runtime.issue_launch_url()
 
 
 def test_player_backup_export_reports_an_exclusive_lock_timeout(

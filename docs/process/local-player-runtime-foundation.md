@@ -1,9 +1,11 @@
-# Local Player Runtime and Store Foundation
+# Local Player Runtime and Recovery PWA
 
 The local player command starts the isolated security substrate defined by
 [ADR 0050](../decisions/0050-establish-local-player-runtime-security-substrate.md).
-It is a development checkpoint for the V2 runtime boundary, not the completed
-V2 player product.
+The dedicated local player PWA delivery is defined by
+[ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md). It remains
+a development checkpoint for the V2 runtime boundary, not the completed V2
+player product.
 
 ## Prerequisites
 
@@ -36,9 +38,11 @@ Run:
 pnpm player:start
 ```
 
-The command binds only to `127.0.0.1:8765`, starts with proxy-header handling
-disabled, and opens the default browser with a short-lived ticket in the URL
-fragment. The page removes the fragment, creates a process-local authenticated
+The command first builds and verifies the dedicated player PWA, then binds only
+to `127.0.0.1:8765`, starts with proxy-header handling disabled, and opens the
+default browser with a short-lived ticket in the URL fragment. Use
+`pnpm player:build` when only the player assets need rebuilding. The PWA removes
+the fragment before exchanging it, creates a process-local authenticated
 session, and reports whether the boundary and player store are ready. The
 authenticated page displays the resolved data location. Stop the service with
 `Ctrl-C`; all browser sessions expire when the process exits.
@@ -56,7 +60,21 @@ checksummed `poker-hero-player-backup` ZIP from
 `GET /api/player/backups/export`. Restore accepts that ZIP at
 `POST /api/player/backups/restore`; like every player mutation, it requires the
 exact local Origin, the process-local bearer session, and its matching CSRF
-token. The current readiness shell does not yet expose these controls.
+token. The local recovery PWA exposes both controls. **Download backup** streams
+the archive to the browser. **Restore backup** sends the selected ZIP only to
+the same-origin loopback API, blocks page unload while the non-replayable request
+is active, and refreshes storage status after success. A lost or incomplete
+response is potentially committed: the PWA clears the selected archive, blocks
+an immediate retry, and refreshes only after the runtime finishes the in-flight
+restore. Storage status takes the shared data-volume lock; if that bounded wait
+cannot produce a stable snapshot, the UI keeps the restore outcome explicitly
+unresolved, hides stale totals and backup controls, and requires restart before
+export or retry. Status waits behind the restore asynchronously before it uses
+the shared worker pool, so queued refreshes cannot prevent restore completion. A
+`503` restore storage failure is also unresolved because journal
+intent or some files may already be durable. The PWA hides the pre-restore
+status and requires a local runtime restart so startup recovery finishes before
+export or another restore attempt.
 
 Export includes each record and every retained decision artifact, including
 inactive audit history. Restore validates the complete archive before writing,
@@ -74,11 +92,12 @@ TLS plus its own server-enforced authorization design.
 
 ## Current limit
 
-This foundation exposes authenticated session lifecycle, health, store status,
-and imported-hand backup/restore under `/api/player`. The imported-hand store is
-opened and recovered, but there is no hand-history import, record read,
-approval, learning, migration, remote lookup, packaged player PWA, or complete
-player workflow. Future grade, mastery, drill, and proof stores do not yet
-exist, so they are not part of the version 1 archive. The hosted Worker and V1
-FastAPI deployment deny the namespace. Do not use this command as evidence that
-the Phase 1 gate or issue #432 is complete.
+This checkpoint exposes authenticated session lifecycle, health, store status,
+and imported-hand backup/restore under `/api/player`, with an installable local
+recovery PWA. The imported-hand store is opened and recovered, but there is no
+hand-history import, record read, approval, learning, migration, remote lookup,
+operating-system installer/uninstaller, or complete player workflow. Future
+grade, mastery, drill, and proof stores do not yet exist, so they are not part
+of the version 1 archive. The hosted Worker and V1 FastAPI deployment deny the
+namespace. Do not use this command as evidence that the Phase 1 gate or issue
+#432 is complete.

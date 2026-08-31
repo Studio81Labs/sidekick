@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host localhost",
-    "build": "tsc -b && vite build && node scripts/verify-pwa-build.mjs",
+    "build": "tsc -b && pnpm build:hosted && pnpm build:player:assets",
+    "build:hosted": "vite build && node scripts/verify-pwa-build.mjs",
+    "build:player": "tsc -b && pnpm build:player:assets",
+    "build:player:assets": "vite build --config vite.player.config.ts && node scripts/verify-player-pwa-build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test --project=chromium && playwright test --project=mobile-chromium"

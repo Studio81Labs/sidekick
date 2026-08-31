@@ -4,6 +4,7 @@ import errno
 from ipaddress import ip_address
 import os
 from pathlib import Path
+import shutil
 import socket
 import subprocess
 import sys
@@ -18,6 +19,7 @@ from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
 from app.player_main import build_player_server, configured_player_runtime
+from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
 from app.player_namespace import (
     DenyHostedPlayerNamespaceMiddleware,
     is_player_api_path,
@@ -25,12 +27,11 @@ from app.player_namespace import (
 )
 from app.player_runtime import (
     PLAYER_AUTHORITY,
-    PLAYER_CSRF_STORAGE_KEY,
     PLAYER_HOST,
     PLAYER_ORIGIN,
     PLAYER_PORT,
     PLAYER_SECRET_FILENAME,
-    PLAYER_SESSION_STORAGE_KEY,
+    PlayerAssetError,
     PlayerCredentialError,
     PlayerRuntime,
     PlayerSessionAuthority,
@@ -44,8 +45,19 @@ from app.player_workspace import (
 from app.storage.imported_hand_store import FileImportedHandStore
 
 
+TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
+
+
+def _create_player_runtime(data_dir: Path, **kwargs) -> PlayerRuntime:
+    return create_player_runtime(
+        data_dir,
+        player_assets_dir=TEST_PLAYER_ASSETS_DIR,
+        **kwargs,
+    )
+
+
 def player_client(tmp_path: Path, **kwargs) -> tuple[TestClient, PlayerRuntime]:
-    runtime = create_player_runtime(tmp_path, **kwargs)
+    runtime = _create_player_runtime(tmp_path, **kwargs)
     client = TestClient(
         runtime.app,
         base_url=PLAYER_ORIGIN,
@@ -104,7 +116,7 @@ def test_player_runtime_rejects_a_shared_data_directory(tmp_path: Path) -> None:
     data_dir.chmod(0o755)
 
     with pytest.raises(PlayerDataDirectoryError, match="only by its owner"):
-        create_player_runtime(data_dir)
+        _create_player_runtime(data_dir)
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="Darwin extended ACL test")
@@ -117,7 +129,7 @@ def test_player_runtime_rejects_a_data_directory_acl(tmp_path: Path) -> None:
     )
 
     with pytest.raises(PlayerDataDirectoryError, match="extended ACL"):
-        create_player_runtime(data_dir)
+        _create_player_runtime(data_dir)
 
 
 def test_allocated_empty_macos_acl_is_not_rejected(tmp_path: Path) -> None:
@@ -148,7 +160,7 @@ def test_allocated_empty_macos_acl_is_not_rejected(tmp_path: Path) -> None:
 
 
 def test_player_runtime_opens_only_the_player_store(tmp_path: Path) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
 
     assert runtime.workspace.data_dir == tmp_path.resolve()
     assert runtime.workspace.imported_hands.list_keys() == []
@@ -169,7 +181,7 @@ def test_player_runtime_rejects_an_imported_hand_store_symlink(
     (data_dir / "imported-hands").symlink_to(target, target_is_directory=True)
 
     with pytest.raises(PlayerDataDirectoryError, match="must be a directory inside"):
-        create_player_runtime(data_dir)
+        _create_player_runtime(data_dir)
 
 
 def test_bootstrap_ticket_is_single_use_and_session_requires_csrf() -> None:
@@ -209,27 +221,118 @@ def test_expired_bootstrap_ticket_cannot_create_a_session() -> None:
     assert authority.exchange_bootstrap_ticket(ticket) is None
 
 
-def test_player_shell_bootstraps_from_fragment_into_session_storage(
+def test_player_runtime_serves_the_dedicated_pwa_and_launch_fragment(
     tmp_path: Path,
 ) -> None:
     client, runtime = player_client(tmp_path)
 
     shell = client.get("/")
-    script = client.get("/player-bootstrap.js")
+    manifest = client.get("/manifest.webmanifest")
+    service_worker = client.get("/sw.js")
+    application = client.get("/assets/player-test-12345678.js")
+    icon = client.get("/icons/test-icon.svg")
     launch_url = runtime.issue_launch_url()
 
     assert shell.status_code == 200
-    assert "V2 hand-import workflow is not enabled" in shell.text
+    assert "Dedicated local player PWA" in shell.text
+    assert "/assets/player-test-12345678.js" in shell.text
     assert shell.headers["Cache-Control"] == "no-store"
+    assert manifest.status_code == 200
+    assert manifest.headers["Content-Type"].startswith(
+        "application/manifest+json"
+    )
+    assert manifest.json()["name"] == "Poker Hero Local Player Test PWA"
+    assert service_worker.status_code == 200
+    assert service_worker.headers["Content-Type"].startswith("text/javascript")
+    assert application.status_code == 200
+    assert icon.status_code == 200
+    assert icon.headers["Content-Type"].startswith("image/svg+xml")
+    assert client.get("/assets/missing.js").status_code == 404
+    assert client.get("/icons/missing.png").status_code == 404
+    assert client.get("/assets/%2e%2e/manifest.webmanifest").status_code == 404
+    assert client.get("/player-bootstrap.js").status_code == 404
     assert "#ticket=" in launch_url
     assert "?ticket=" not in launch_url
-    assert PLAYER_SESSION_STORAGE_KEY in script.text
-    assert PLAYER_CSRF_STORAGE_KEY in script.text
-    assert "history.replaceState" in script.text
-    assert "location.hash" in script.text
-    assert "/api/player/storage" in script.text
-    assert 'id="data-location"' in shell.text
     assert "script-src 'self'" in shell.headers["Content-Security-Policy"]
+
+
+def test_player_runtime_serves_an_immutable_startup_asset_snapshot(
+    tmp_path: Path,
+) -> None:
+    assets = tmp_path / "player-pwa"
+    shutil.copytree(TEST_PLAYER_ASSETS_DIR, assets)
+    runtime = create_player_runtime(
+        tmp_path / "player-data",
+        player_assets_dir=assets,
+    )
+    client = TestClient(
+        runtime.app,
+        base_url=PLAYER_ORIGIN,
+        client=("127.0.0.1", 50000),
+    )
+
+    (assets / "index.html").write_text("<script>window.compromised = true</script>")
+    (assets / "assets" / "player-test-12345678.js").write_text(
+        "window.compromised = true;"
+    )
+
+    shell = client.get("/")
+    application = client.get("/assets/player-test-12345678.js")
+
+    assert "Dedicated local player PWA" in shell.text
+    assert "compromised" not in shell.text
+    assert "__POKER_HERO_PLAYER_TEST_PWA__" in application.text
+    assert "compromised" not in application.text
+
+
+def test_player_runtime_rejects_missing_or_symlinked_pwa_assets(
+    tmp_path: Path,
+) -> None:
+    missing = tmp_path / "missing-player-pwa"
+    with pytest.raises(PlayerAssetError, match="has not been built"):
+        create_player_runtime(
+            tmp_path / "missing-data",
+            player_assets_dir=missing,
+        )
+    assert not (tmp_path / "missing-data").exists()
+
+    symlink = tmp_path / "player-pwa-link"
+    symlink.symlink_to(TEST_PLAYER_ASSETS_DIR, target_is_directory=True)
+    with pytest.raises(PlayerAssetError, match="must not be a symlink"):
+        create_player_runtime(
+            tmp_path / "symlink-data",
+            player_assets_dir=symlink,
+        )
+
+
+@pytest.mark.parametrize(
+    "missing_path",
+    [
+        "index.html",
+        "manifest.webmanifest",
+        "sw.js",
+        "assets",
+        "icons",
+    ],
+)
+def test_player_runtime_rejects_an_incomplete_pwa_build(
+    tmp_path: Path,
+    missing_path: str,
+) -> None:
+    assets = tmp_path / "incomplete-player-pwa"
+    shutil.copytree(TEST_PLAYER_ASSETS_DIR, assets)
+    missing = assets / missing_path
+    if missing.is_dir():
+        shutil.rmtree(missing)
+    else:
+        missing.unlink()
+
+    with pytest.raises(PlayerAssetError, match="missing"):
+        create_player_runtime(
+            tmp_path / "player-data",
+            player_assets_dir=assets,
+        )
+    assert not (tmp_path / "player-data").exists()
 
 
 def test_player_api_requires_a_session_and_one_use_launch_ticket(
@@ -318,6 +421,223 @@ def test_player_storage_status_preserves_recovery_attention(
     }
 
 
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_player_storage_waits_without_exhausting_restore_workers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    anyio_backend: str,
+) -> None:
+    assert anyio_backend == "asyncio"
+    runtime = _create_player_runtime(tmp_path)
+    upload_started = asyncio.Event()
+    allow_upload_to_finish = asyncio.Event()
+
+    def complete_restore(*_args, **_kwargs) -> PlayerBackupRestoreResult:
+        return PlayerBackupRestoreResult(
+            imported_records=0,
+            reused_records=0,
+            skipped_stale_records=0,
+            imported_decision_artifacts=0,
+            reused_decision_artifacts=0,
+            removed_decision_artifacts=0,
+            total_records=0,
+        )
+
+    monkeypatch.setattr(
+        "app.player_runtime.restore_player_backup",
+        complete_restore,
+    )
+
+    async def slow_upload():
+        upload_started.set()
+        yield b"restore "
+        await allow_upload_to_finish.wait()
+        yield b"archive"
+
+    transport = httpx.ASGITransport(
+        app=runtime.app,
+        client=("127.0.0.1", 50000),
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url=PLAYER_ORIGIN,
+    ) as client:
+        ticket = runtime.issue_launch_url().split("#ticket=", 1)[1]
+        session_response = await client.post(
+            "/api/player/session",
+            headers={
+                "Authorization": f"Bearer {ticket}",
+                "Origin": PLAYER_ORIGIN,
+            },
+        )
+        assert session_response.status_code == 200
+        session = session_response.json()
+        authorization = f"Bearer {session['session_token']}"
+        restore_headers = {
+            "Authorization": authorization,
+            "Origin": PLAYER_ORIGIN,
+            "X-Poker-CSRF-Token": str(session["csrf_token"]),
+            "Content-Type": "application/zip",
+        }
+        restore_task = asyncio.create_task(
+            client.post(
+                "/api/player/backups/restore",
+                content=slow_upload(),
+                headers=restore_headers,
+            )
+        )
+        await asyncio.wait_for(upload_started.wait(), 2)
+
+        concurrent_restore = await client.post(
+            "/api/player/backups/restore",
+            content=b"second restore archive",
+            headers=restore_headers,
+        )
+        assert concurrent_restore.status_code == 409
+        assert concurrent_restore.json()["detail"] == (
+            "Another player restore is already in progress"
+        )
+
+        # More waiters than AnyIO's default worker limit prove that storage
+        # waits on the async gate before it asks the pool for filesystem work.
+        storage_tasks = [
+            asyncio.create_task(
+                client.get(
+                    "/api/player/storage",
+                    headers={"Authorization": authorization},
+                )
+            )
+            for _ in range(50)
+        ]
+        await asyncio.sleep(0.1)
+        assert all(not task.done() for task in storage_tasks)
+
+        allow_upload_to_finish.set()
+        restore_response = await asyncio.wait_for(restore_task, 5)
+        storage_responses = await asyncio.wait_for(
+            asyncio.gather(*storage_tasks),
+            5,
+        )
+
+    assert restore_response.status_code == 200
+    assert all(response.status_code == 200 for response in storage_responses)
+    assert all(
+        response.json()["imported_hand_record_count"] == 0
+        for response in storage_responses
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_restore_storage_failure_rejects_requests_already_waiting_on_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    anyio_backend: str,
+) -> None:
+    assert anyio_backend == "asyncio"
+    runtime = _create_player_runtime(tmp_path)
+    upload_started = asyncio.Event()
+    allow_upload_to_finish = asyncio.Event()
+
+    def fail_after_partial_publication(*_args: object, **_kwargs: object) -> None:
+        raise PlayerBackupStorageError(
+            "Player backup restore did not complete; restart the local runtime "
+            "before retrying so journal recovery can finish"
+        )
+
+    monkeypatch.setattr(
+        "app.player_runtime.restore_player_backup",
+        fail_after_partial_publication,
+    )
+
+    async def slow_upload():
+        upload_started.set()
+        yield b"restore "
+        await allow_upload_to_finish.wait()
+        yield b"archive"
+
+    transport = httpx.ASGITransport(
+        app=runtime.app,
+        client=("127.0.0.1", 50000),
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url=PLAYER_ORIGIN,
+    ) as client:
+        ticket = runtime.issue_launch_url().split("#ticket=", 1)[1]
+        session_response = await client.post(
+            "/api/player/session",
+            headers={
+                "Authorization": f"Bearer {ticket}",
+                "Origin": PLAYER_ORIGIN,
+            },
+        )
+        assert session_response.status_code == 200
+        session = session_response.json()
+        authorization = f"Bearer {session['session_token']}"
+        restore_task = asyncio.create_task(
+            client.post(
+                "/api/player/backups/restore",
+                content=slow_upload(),
+                headers={
+                    "Authorization": authorization,
+                    "Origin": PLAYER_ORIGIN,
+                    "X-Poker-CSRF-Token": str(session["csrf_token"]),
+                    "Content-Type": "application/zip",
+                },
+            )
+        )
+        await asyncio.wait_for(upload_started.wait(), 2)
+
+        storage_task = asyncio.create_task(
+            client.get(
+                "/api/player/storage",
+                headers={"Authorization": authorization},
+            )
+        )
+        export_task = asyncio.create_task(
+            client.get(
+                "/api/player/backups/export",
+                headers={"Authorization": authorization},
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert not storage_task.done()
+        assert not export_task.done()
+
+        allow_upload_to_finish.set()
+        restore_response = await asyncio.wait_for(restore_task, 5)
+        storage_response, export_response = await asyncio.wait_for(
+            asyncio.gather(storage_task, export_task),
+            5,
+        )
+
+    assert restore_response.status_code == 503
+    assert storage_response.status_code == 401
+    assert export_response.status_code == 401
+
+
+def test_player_storage_reports_when_a_stable_snapshot_times_out(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path, status_lock_timeout_seconds=0)
+    session = exchange_session(client, runtime)
+    descriptor = runtime.workspace.data_lock.acquire(exclusive=True)
+    try:
+        response = client.get(
+            "/api/player/storage",
+            headers={
+                "Authorization": f"Bearer {session['session_token']}",
+            },
+        )
+    finally:
+        runtime.workspace.data_lock.release(descriptor)
+
+    assert response.status_code == 409
+    assert "waiting for a shared hold" in response.json()["detail"]
+
+
 def test_player_storage_status_preserves_quarantine_across_restarts(
     tmp_path: Path,
 ) -> None:
@@ -327,13 +647,13 @@ def test_player_storage_status_preserves_quarantine_across_restarts(
     interrupted.mkdir(parents=True)
     (interrupted / "ready").write_bytes(b"")
 
-    first = create_player_runtime(tmp_path)
+    first = _create_player_runtime(tmp_path)
     assert first.workspace.imported_hand_recovery.quarantined == (
         "interrupted-cascade",
     )
     assert first.workspace.status_payload()["status"] == "attention_required"
 
-    second = create_player_runtime(tmp_path)
+    second = _create_player_runtime(tmp_path)
     assert second.workspace.imported_hand_recovery == ImportedHandRecoveryReport()
     assert second.workspace.status_payload()["status"] == "attention_required"
     assert second.workspace.status_payload()["recovery"]["quarantined"] == [
@@ -391,7 +711,7 @@ def test_player_api_enforces_origin_and_csrf(tmp_path: Path) -> None:
 def test_future_player_routes_inherit_session_and_csrf_enforcement(
     tmp_path: Path,
 ) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
 
     @runtime.api_application.post("/api/player/future-write")
     async def future_write() -> dict[str, bool]:
@@ -455,7 +775,7 @@ def test_player_runtime_rejects_network_boundary_bypasses(
     headers: dict[str, str],
     status_code: int,
 ) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
     client = TestClient(
         runtime.app,
         base_url=base_url,
@@ -469,7 +789,7 @@ def test_player_runtime_rejects_network_boundary_bypasses(
 
 
 def test_player_launcher_has_a_fixed_loopback_transport(tmp_path: Path) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
     server = build_player_server(runtime)
 
     assert server.config.host == PLAYER_HOST == "127.0.0.1"
@@ -519,7 +839,7 @@ def _non_loopback_ipv4() -> str | None:
 def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
     tmp_path: Path,
 ) -> None:
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
     server = build_player_server(runtime)
     server_thread = Thread(target=server.run, daemon=True)
     server_thread.start()
@@ -580,7 +900,7 @@ def test_local_player_auth_denies_malformed_encoded_path_before_body(
 ) -> None:
     body_read = False
     sent: list[dict[str, object]] = []
-    runtime = create_player_runtime(tmp_path)
+    runtime = _create_player_runtime(tmp_path)
 
     async def receive() -> dict[str, object]:
         nonlocal body_read

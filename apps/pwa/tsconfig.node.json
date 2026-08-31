@@ -9,5 +9,9 @@
     "outDir": "./node_modules/.cache/tsconfig-node",
     "tsBuildInfoFile": "./node_modules/.cache/tsconfig.node.tsbuildinfo"
   },
-  "include": ["vite.config.ts"]
+  "include": [
+    "vite.config.ts",
+    "vite.player.config.ts",
+    "vite.service-worker.ts"
+  ]
 }

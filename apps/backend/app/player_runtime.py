@@ -1,21 +1,24 @@
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import hmac
 from ipaddress import ip_address
-import json
+from mimetypes import guess_type
 import os
 from pathlib import Path
 import secrets
 from stat import S_ISREG
 from threading import Lock
 from time import monotonic
+from types import MappingProxyType
 from typing import Callable
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -29,6 +32,7 @@ from app.data_lock import (
 from app.player_backup import (
     DEFAULT_MAX_PLAYER_BACKUP_BYTES,
     PlayerBackupError,
+    PlayerBackupStorageError,
     build_player_backup_archive,
     restore_player_backup,
     stream_player_backup,
@@ -45,6 +49,15 @@ PLAYER_PORT = 8765
 PLAYER_AUTHORITY = f"{PLAYER_HOST}:{PLAYER_PORT}"
 PLAYER_ORIGIN = f"http://{PLAYER_AUTHORITY}"
 PLAYER_SECRET_FILENAME = ".player-runtime-key"
+DEFAULT_PLAYER_ASSETS_DIR = (
+    Path(__file__).resolve().parents[2] / "pwa" / "dist-player"
+)
+REQUIRED_PLAYER_ASSETS = (
+    "index.html",
+    "manifest.webmanifest",
+    "sw.js",
+)
+REQUIRED_PLAYER_ASSET_DIRECTORIES = ("assets", "icons")
 BOOTSTRAP_TTL_SECONDS = 120
 SESSION_TTL_SECONDS = 24 * 60 * 60
 MUTATING_METHODS = frozenset({"DELETE", "PATCH", "POST", "PUT"})
@@ -57,96 +70,104 @@ PROXY_HEADERS = frozenset(
         b"x-forwarded-proto",
     }
 )
-PLAYER_SESSION_STORAGE_KEY = "poker-hero-player-session-v1"
-PLAYER_CSRF_STORAGE_KEY = "poker-hero-player-csrf-v1"
-
-
-PLAYER_SHELL = """<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#1f2937" />
-    <meta name="application-name" content="Poker Hero Player" />
-    <title>Poker Hero · Local Player Runtime</title>
-  </head>
-  <body>
-    <main>
-      <h1>Poker Hero</h1>
-      <p id="runtime-status" role="status">Starting the local player runtime…</p>
-      <p>Player data location: <code id="data-location">authentication required</code></p>
-      <p>The V2 hand-import workflow is not enabled in this foundation release.</p>
-    </main>
-    <script type="module" src="/player-bootstrap.js"></script>
-  </body>
-</html>
-"""
-
-PLAYER_BOOTSTRAP_SCRIPT = f"""const sessionKey = {json.dumps(PLAYER_SESSION_STORAGE_KEY)};
-const csrfKey = {json.dumps(PLAYER_CSRF_STORAGE_KEY)};
-const status = document.getElementById("runtime-status");
-
-function setStatus(message) {{
-  status.textContent = message;
-}}
-
-async function exchangeTicket(ticket) {{
-  const response = await fetch("/api/player/session", {{
-    method: "POST",
-    credentials: "same-origin",
-    headers: {{ Authorization: `Bearer ${{ticket}}` }},
-  }});
-  if (!response.ok) throw new Error("The one-use launch ticket was rejected.");
-  const session = await response.json();
-  sessionStorage.setItem(sessionKey, session.session_token);
-  sessionStorage.setItem(csrfKey, session.csrf_token);
-  return session.session_token;
-}}
-
-async function verifySession(token) {{
-  const response = await fetch("/api/player/health", {{
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: {{ Authorization: `Bearer ${{token}}` }},
-  }});
-  if (!response.ok) throw new Error("The local player session is unavailable.");
-}}
-
-async function loadStorageStatus(token) {{
-  const response = await fetch("/api/player/storage", {{
-    cache: "no-store",
-    credentials: "same-origin",
-    headers: {{ Authorization: `Bearer ${{token}}` }},
-  }});
-  if (!response.ok) throw new Error("The local player store is unavailable.");
-  return response.json();
-}}
-
-async function bootstrap() {{
-  const fragment = new URLSearchParams(location.hash.slice(1));
-  const ticket = fragment.get("ticket");
-  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
-  let token = sessionStorage.getItem(sessionKey);
-  if (ticket) token = await exchangeTicket(ticket);
-  if (!token) throw new Error("Start the player runtime again to create a session.");
-  await verifySession(token);
-  const storage = await loadStorageStatus(token);
-  document.getElementById("data-location").textContent = storage.data_directory;
-  setStatus(storage.status === "ready"
-    ? "The authenticated loopback runtime and player store are ready."
-    : "The player store needs recovery attention before import is enabled.");
-}}
-
-bootstrap().catch((error) => {{
-  sessionStorage.removeItem(sessionKey);
-  sessionStorage.removeItem(csrfKey);
-  setStatus(error instanceof Error ? error.message : "Player runtime startup failed.");
-}});
-"""
 
 
 class PlayerCredentialError(RuntimeError):
     pass
+
+
+class PlayerAssetError(RuntimeError):
+    pass
+
+
+@dataclass(frozen=True)
+class PlayerAssetBundle:
+    document: bytes
+    manifest: bytes
+    service_worker: bytes
+    public_files: Mapping[str, bytes]
+
+
+def _read_player_asset(root: Path, asset: Path, relative_path: str) -> bytes:
+    if asset.is_symlink():
+        raise PlayerAssetError(
+            f"The player PWA asset {relative_path} must not be a symlink"
+        )
+    try:
+        resolved_asset = asset.resolve(strict=True)
+    except OSError as exc:
+        raise PlayerAssetError(
+            f"The player PWA is missing {relative_path}; run pnpm player:build"
+        ) from exc
+    if not resolved_asset.is_relative_to(root) or not resolved_asset.is_file():
+        raise PlayerAssetError(
+            f"The player PWA asset {relative_path} must be a regular file"
+        )
+    try:
+        return resolved_asset.read_bytes()
+    except OSError as exc:
+        raise PlayerAssetError(
+            f"The player PWA asset {relative_path} could not be read"
+        ) from exc
+
+
+def _load_player_asset_directory(
+    root: Path,
+    directory: Path,
+    relative_directory: str,
+) -> dict[str, bytes]:
+    if directory.is_symlink() or not directory.is_dir():
+        raise PlayerAssetError(
+            f"The player PWA is missing its {relative_directory} directory; "
+            "run pnpm player:build"
+        )
+    loaded: dict[str, bytes] = {}
+    try:
+        entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+    except OSError as exc:
+        raise PlayerAssetError(
+            f"The player PWA {relative_directory} directory could not be read"
+        ) from exc
+    for entry in entries:
+        relative_path = entry.relative_to(root).as_posix()
+        if entry.is_symlink():
+            raise PlayerAssetError(
+                f"The player PWA asset {relative_path} must not be a symlink"
+            )
+        if entry.is_dir():
+            loaded.update(_load_player_asset_directory(root, entry, relative_path))
+            continue
+        loaded[relative_path] = _read_player_asset(root, entry, relative_path)
+    return loaded
+
+
+def validate_player_assets(player_assets_dir: Path) -> PlayerAssetBundle:
+    candidate_root = Path(player_assets_dir)
+    if candidate_root.is_symlink():
+        raise PlayerAssetError("The player PWA directory must not be a symlink")
+    try:
+        root = candidate_root.resolve(strict=True)
+    except OSError as exc:
+        raise PlayerAssetError(
+            "The player PWA has not been built; run pnpm player:build"
+        ) from exc
+    if not root.is_dir():
+        raise PlayerAssetError("The player PWA path must be a directory")
+    root_files = {
+        relative_path: _read_player_asset(root, root / relative_path, relative_path)
+        for relative_path in REQUIRED_PLAYER_ASSETS
+    }
+    public_files: dict[str, bytes] = {}
+    for relative_path in REQUIRED_PLAYER_ASSET_DIRECTORIES:
+        public_files.update(
+            _load_player_asset_directory(root, root / relative_path, relative_path)
+        )
+    return PlayerAssetBundle(
+        document=root_files["index.html"],
+        manifest=root_files["manifest.webmanifest"],
+        service_worker=root_files["sw.js"],
+        public_files=MappingProxyType(public_files),
+    )
 
 
 def load_or_create_installation_secret(data_dir: Path) -> bytes:
@@ -227,6 +248,7 @@ class PlayerSessionAuthority:
         self._session_ttl_seconds = session_ttl_seconds
         self._bootstrap_tickets: dict[bytes, float] = {}
         self._sessions: dict[bytes, tuple[bytes, float]] = {}
+        self._disabled_until_restart = False
         self._lock = Lock()
 
     def _digest(self, kind: str, token: str) -> bytes:
@@ -239,6 +261,10 @@ class PlayerSessionAuthority:
     def issue_bootstrap_ticket(self) -> str:
         ticket = secrets.token_urlsafe(32)
         with self._lock:
+            if self._disabled_until_restart:
+                raise PlayerCredentialError(
+                    "Player recovery requires a local runtime restart"
+                )
             self._bootstrap_tickets[self._digest("bootstrap", ticket)] = (
                 self._clock() + self._bootstrap_ttl_seconds
             )
@@ -247,6 +273,8 @@ class PlayerSessionAuthority:
     def exchange_bootstrap_ticket(self, ticket: str) -> PlayerSession | None:
         now = self._clock()
         with self._lock:
+            if self._disabled_until_restart:
+                return None
             expires_at = self._bootstrap_tickets.pop(
                 self._digest("bootstrap", ticket),
                 None,
@@ -268,6 +296,8 @@ class PlayerSessionAuthority:
     def authorize(self, session_token: str) -> bool:
         digest = self._digest("session", session_token)
         with self._lock:
+            if self._disabled_until_restart:
+                return False
             session = self._sessions.get(digest)
             if session is None:
                 return False
@@ -280,6 +310,8 @@ class PlayerSessionAuthority:
     def authorize_mutation(self, session_token: str, csrf_token: str) -> bool:
         session_digest = self._digest("session", session_token)
         with self._lock:
+            if self._disabled_until_restart:
+                return False
             session = self._sessions.get(session_digest)
             if session is None:
                 return False
@@ -298,6 +330,12 @@ class PlayerSessionAuthority:
                 self._digest("session", session_token),
                 None,
             ) is not None
+
+    def disable_until_restart(self) -> None:
+        with self._lock:
+            self._disabled_until_restart = True
+            self._bootstrap_tickets.clear()
+            self._sessions.clear()
 
 
 def _header_values(scope: Scope, name: bytes) -> list[str]:
@@ -517,9 +555,25 @@ class PlayerRuntime:
         return f"{self.origin}/#ticket={ticket}"
 
 
+def _player_public_asset_response(
+    bundle: PlayerAssetBundle,
+    namespace: str,
+    asset_path: str,
+) -> Response:
+    content = bundle.public_files.get(f"{namespace}/{asset_path}")
+    if content is None:
+        return Response(status_code=404)
+    media_type, _encoding = guess_type(asset_path)
+    return Response(
+        content,
+        media_type=media_type or "application/octet-stream",
+    )
+
+
 def create_player_runtime(
     data_dir: Path,
     *,
+    player_assets_dir: Path = DEFAULT_PLAYER_ASSETS_DIR,
     authority: str = PLAYER_AUTHORITY,
     origin: str = PLAYER_ORIGIN,
     clock: Callable[[], float] = monotonic,
@@ -527,8 +581,10 @@ def create_player_runtime(
     startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     backup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
+    status_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     max_player_backup_bytes: int = DEFAULT_MAX_PLAYER_BACKUP_BYTES,
 ) -> PlayerRuntime:
+    player_assets = validate_player_assets(player_assets_dir)
     workspace = PlayerWorkspace.open(
         data_dir,
         recovery_lock_timeout_seconds=recovery_lock_timeout_seconds,
@@ -539,6 +595,8 @@ def create_player_runtime(
         load_or_create_installation_secret(workspace.data_dir),
         clock=clock,
     )
+    restore_access_gate = asyncio.Lock()
+    restore_in_progress = False
     app = FastAPI(
         title="Poker Hero Local Player Runtime",
         docs_url=None,
@@ -546,13 +604,23 @@ def create_player_runtime(
         openapi_url=None,
     )
 
-    @app.get("/", response_class=HTMLResponse)
-    async def player_shell() -> str:
-        return PLAYER_SHELL
+    @app.get("/")
+    async def player_shell() -> Response:
+        return Response(player_assets.document, media_type="text/html")
 
-    @app.get("/player-bootstrap.js")
-    async def player_bootstrap_script() -> Response:
-        return Response(PLAYER_BOOTSTRAP_SCRIPT, media_type="text/javascript")
+    @app.get("/manifest.webmanifest")
+    async def player_manifest() -> Response:
+        return Response(
+            player_assets.manifest,
+            media_type="application/manifest+json",
+        )
+
+    @app.get("/sw.js")
+    async def player_service_worker() -> Response:
+        return Response(
+            player_assets.service_worker,
+            media_type="text/javascript",
+        )
 
     @app.post(f"{PLAYER_API_PREFIX}/session")
     async def exchange_session(request: Request) -> JSONResponse:
@@ -574,22 +642,37 @@ def create_player_runtime(
         return JSONResponse({"status": "ok", "runtime": "local-player"})
 
     @app.get(f"{PLAYER_API_PREFIX}/storage")
-    async def player_storage() -> JSONResponse:
-        return JSONResponse(await run_in_threadpool(workspace.status_payload))
+    async def player_storage(request: Request) -> JSONResponse:
+        # Wait without occupying the shared AnyIO thread pool: the restore
+        # needs a worker after it finishes reading and parsing the upload.
+        async with restore_access_gate:
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.status_payload,
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+        return JSONResponse(payload)
 
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
-    async def export_player_backup() -> Response:
-        try:
-            archive_file = await run_in_threadpool(
-                build_player_backup_archive,
-                workspace,
-                max_archive_bytes=max_player_backup_bytes,
-                lock_timeout_seconds=backup_lock_timeout_seconds,
-            )
-        except PlayerBackupError as exc:
-            return _json_denial(exc.status_code, str(exc))
-        except DataLockTimeoutError as exc:
-            return _json_denial(409, str(exc))
+    async def export_player_backup(request: Request) -> Response:
+        async with restore_access_gate:
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                archive_file = await run_in_threadpool(
+                    build_player_backup_archive,
+                    workspace,
+                    max_archive_bytes=max_player_backup_bytes,
+                    lock_timeout_seconds=backup_lock_timeout_seconds,
+                )
+            except PlayerBackupError as exc:
+                return _json_denial(exc.status_code, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return StreamingResponse(
             stream_player_backup(archive_file),
@@ -604,35 +687,61 @@ def create_player_runtime(
 
     @app.post(f"{PLAYER_API_PREFIX}/backups/restore")
     async def restore_uploaded_player_backup(request: Request) -> JSONResponse:
-        media_type = request.headers.get("content-type", "").partition(";")[0]
-        if media_type.strip().lower() not in {
-            "application/zip",
-            "application/octet-stream",
-        }:
-            return _json_denial(415, "Upload must be a player backup ZIP")
+        nonlocal restore_in_progress
+        # Claim the restore slot before the first await. A status request that
+        # follows a lost response will then wait from the start of body
+        # handling until the restore has either committed or failed.
+        if restore_in_progress:
+            return _json_denial(409, "Another player restore is already in progress")
+        restore_in_progress = True
         try:
-            archive_bytes = await _read_bounded_body(
-                request,
-                limit=max_player_backup_bytes,
-            )
-            result = await run_in_threadpool(
-                restore_player_backup,
-                workspace,
-                archive_bytes,
-                max_archive_bytes=max_player_backup_bytes,
-                lock_timeout_seconds=backup_lock_timeout_seconds,
-            )
-        except PlayerBackupError as exc:
-            return _json_denial(exc.status_code, str(exc))
-        except DataLockTimeoutError as exc:
-            return _json_denial(409, str(exc))
-        return JSONResponse(result.model_dump(mode="json"))
+            async with restore_access_gate:
+                media_type = request.headers.get("content-type", "").partition(";")[0]
+                if media_type.strip().lower() not in {
+                    "application/zip",
+                    "application/octet-stream",
+                }:
+                    return _json_denial(415, "Upload must be a player backup ZIP")
+                try:
+                    archive_bytes = await _read_bounded_body(
+                        request,
+                        limit=max_player_backup_bytes,
+                    )
+                    result = await run_in_threadpool(
+                        restore_player_backup,
+                        workspace,
+                        archive_bytes,
+                        max_archive_bytes=max_player_backup_bytes,
+                        lock_timeout_seconds=backup_lock_timeout_seconds,
+                    )
+                except PlayerBackupStorageError as exc:
+                    # Storage failures can follow durable journal intent or
+                    # partial publication. Disable every session and ticket so
+                    # no browser can resume ordinary work before process-start
+                    # recovery has run.
+                    sessions.disable_until_restart()
+                    return _json_denial(exc.status_code, str(exc))
+                except PlayerBackupError as exc:
+                    return _json_denial(exc.status_code, str(exc))
+                except DataLockTimeoutError as exc:
+                    return _json_denial(409, str(exc))
+                return JSONResponse(result.model_dump(mode="json"))
+        finally:
+            restore_in_progress = False
 
     @app.delete(f"{PLAYER_API_PREFIX}/session")
     async def revoke_session(request: Request) -> Response:
         session_token = request.state.player_session_token
         sessions.revoke(session_token)
         return Response(status_code=204)
+
+    @app.get("/assets/{asset_path:path}")
+    async def player_application_asset(asset_path: str) -> Response:
+        return _player_public_asset_response(player_assets, "assets", asset_path)
+
+    @app.get("/icons/{asset_path:path}")
+    async def player_icon(asset_path: str) -> Response:
+        return _player_public_asset_response(player_assets, "icons", asset_path)
 
     secured_app: ASGIApp = PlayerApiSessionMiddleware(app, sessions)
     secured_app = PlayerNetworkBoundaryMiddleware(

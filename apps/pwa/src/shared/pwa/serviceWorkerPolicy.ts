@@ -1,4 +1,5 @@
 export const POKER_HERO_CACHE_PREFIX = "poker-hero-shell-";
+export const POKER_HERO_PLAYER_CACHE_PREFIX = "poker-hero-player-shell-";
 
 function matchesPrivatePath(pathname: string): boolean {
   return (
