@@ -32,8 +32,8 @@ const pendingHand = {
   active_canonical_revision: null,
   learning_eligible: false,
   deletion_generation: 0,
-  raw_source_count: 1,
-  detection_count: 1,
+  raw_source_count: 2,
+  detection_count: 2,
   warning_count: 2,
   unresolved_conflict_count: 0,
   canonical_revision_count: 0,
@@ -62,10 +62,23 @@ const pendingHandDetail = {
       },
       content_sha256: "b".repeat(64),
     },
+    {
+      raw_source_id: "file-2",
+      chronology: { played_at: null },
+      provenance: {
+        imported_at: "2026-08-30T12:15:00Z",
+        adapter_id: "pokerstars",
+        adapter_version: "2.0.0",
+        format_revision: "pokerstars-text/v1",
+        source_filename: "HH20260830-corrected.txt",
+      },
+      content_sha256: "c".repeat(64),
+    },
   ],
   detections: [
     {
       detection_id: "detection-1",
+      raw_source_id: "file-1",
       detector_id: "pokerstars",
       detector_version: "1.0.0",
       detected_at: "2026-08-30T12:00:00Z",
@@ -82,8 +95,34 @@ const pendingHandDetail = {
       },
       warnings: ["Review hero identity"],
     },
+    {
+      detection_id: "detection-2",
+      raw_source_id: "file-2",
+      detector_id: "pokerstars",
+      detector_version: "2.0.0",
+      detected_at: "2026-08-30T12:15:00Z",
+      state: {
+        identity: { site: "pokerstars", source_hand_id: "123456789" },
+        hero_player_id: "hero",
+        hero_cards: [],
+      },
+      field_evidence: {
+        "/hero_player_id": { confidence: "0.95", warnings: [] },
+      },
+      warnings: [],
+    },
   ],
-  conflicts: [],
+  conflicts: [
+    {
+      conflict_id: "conflict-1",
+      raw_source_ids: ["file-1", "file-2"],
+      detected_ids: ["detection-1", "detection-2"],
+      active_canonical_revision_at_creation: 1,
+      status: "resolved_use_source",
+      selected_raw_source_id: "file-2",
+      resolved_at: "2026-08-30T12:30:00Z",
+    },
+  ],
   canonical_revisions: [],
   deletion_receipt: null,
 };
@@ -94,6 +133,8 @@ const activeHand = {
   active_canonical_revision: 1,
   learning_eligible: true,
   canonical_revision_count: 1,
+  raw_source_count: 1,
+  detection_count: 1,
 };
 
 const activeHandDetail = {
@@ -104,6 +145,9 @@ const activeHandDetail = {
     status: "active",
     active_canonical_revision: 1,
   },
+  raw_sources: pendingHandDetail.raw_sources.slice(0, 1),
+  detections: pendingHandDetail.detections.slice(0, 1),
+  conflicts: [],
   canonical_revisions: [
     {
       revision: 1,
@@ -281,10 +325,20 @@ describe("PlayerApp", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Review hero identity")).toBeInTheDocument();
     expect(screen.getByText("Hero line was absent")).toBeInTheDocument();
-    expect(screen.getByText("/hero_player_id")).toBeInTheDocument();
+    expect(screen.getAllByText("/hero_player_id")).toHaveLength(2);
     expect(screen.getByText(/40% confidence/)).toBeInTheDocument();
     expect(screen.getByText("Detected proposals")).toBeInTheDocument();
     expect(screen.getByText(/"hero_player_id": null/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Detection detection-1/).length).toBeGreaterThan(
+      1,
+    );
+    expect(screen.getAllByText(/Detection detection-2/).length).toBeGreaterThan(
+      1,
+    );
+    expect(screen.getByText(/95% confidence/)).toBeInTheDocument();
+    expect(screen.getByText("Import conflict history")).toBeInTheDocument();
+    expect(screen.getByText(/resolved use source/)).toBeInTheDocument();
+    expect(screen.getByText(/Selected source: file-2/)).toBeInTheDocument();
     expect(screen.getByText(/HH20260830.txt/)).toBeInTheDocument();
 
     const detailRequest = fetchMock.mock.calls[3];
@@ -326,7 +380,9 @@ describe("PlayerApp", () => {
     expect(
       await screen.findByText(/Canonical revision 1 is active/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Revision 1 · approved/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Revision 1 · detection detection-1/),
+    ).toBeInTheDocument();
     expect(screen.getByText(/"hero_player_id": "hero"/)).toBeInTheDocument();
   });
 

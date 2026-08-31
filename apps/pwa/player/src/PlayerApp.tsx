@@ -41,7 +41,7 @@ function recoveryCount(storage: PlayerStorageStatus): number {
   return storage.recovery.quarantined.length + storage.recovery.failed.length;
 }
 
-function lifecycleLabel(status: PlayerHandSummary["lifecycle_status"]): string {
+function lifecycleLabel(status: string): string {
   return status.replace(/_/g, " ");
 }
 
@@ -137,7 +137,9 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
           {detail.detections.map((detection) => (
             <details key={detection.detection_id}>
               <summary>
-                {detection.detector_id} {detection.detector_version} · detected{" "}
+                Detection {detection.detection_id} · source{" "}
+                {detection.raw_source_id} · {detection.detector_id}{" "}
+                {detection.detector_version} · detected{" "}
                 {new Date(detection.detected_at).toLocaleString()}
               </summary>
               <pre>{JSON.stringify(detection.state, null, 2)}</pre>
@@ -151,7 +153,8 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
           <ul>
             {fieldConfidence.map((field) => (
               <li key={`${field.detectionId}-${field.field}`}>
-                <code>{field.field}</code> · {confidenceLabel(field.confidence)}
+                Detection {field.detectionId} · <code>{field.field}</code> ·{" "}
+                {confidenceLabel(field.confidence)}
               </li>
             ))}
           </ul>
@@ -163,6 +166,7 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
           <ul>
             {detail.raw_sources.map((source) => (
               <li key={source.raw_source_id}>
+                Source <code>{source.raw_source_id}</code> ·{" "}
                 {source.provenance.source_filename ?? "Unnamed source"} ·{" "}
                 {source.provenance.adapter_id}{" "}
                 {source.provenance.adapter_version}
@@ -183,14 +187,51 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
           </ul>
         </div>
       ) : null}
+      {detail.conflicts.length > 0 ? (
+        <div className="audit-block conflict-block">
+          <h4>Import conflict history</h4>
+          <ul>
+            {detail.conflicts.map((conflict) => (
+              <li key={conflict.conflict_id}>
+                <span>
+                  <strong>{lifecycleLabel(conflict.status)}</strong> · conflict{" "}
+                  <code>{conflict.conflict_id}</code>
+                </span>
+                <span>
+                  Sources: {conflict.raw_source_ids.join(", ")}. Detections:{" "}
+                  {conflict.detected_ids.length > 0
+                    ? conflict.detected_ids.join(", ")
+                    : "none retained at creation"}
+                  .
+                </span>
+                {conflict.active_canonical_revision_at_creation !== null ? (
+                  <span>
+                    Active revision at creation:{" "}
+                    {conflict.active_canonical_revision_at_creation}.
+                  </span>
+                ) : null}
+                {conflict.selected_raw_source_id ? (
+                  <span>
+                    Selected source: {conflict.selected_raw_source_id}
+                    {conflict.resolved_at
+                      ? ` · resolved ${new Date(conflict.resolved_at).toLocaleString()}`
+                      : ""}
+                    .
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {detail.canonical_revisions.length > 0 ? (
         <div className="audit-block state-block">
           <h4>Approved canonical revisions</h4>
           {detail.canonical_revisions.map((revision) => (
             <details key={revision.revision}>
               <summary>
-                Revision {revision.revision} · approved{" "}
-                {new Date(revision.approved_at).toLocaleString()}
+                Revision {revision.revision} · detection {revision.detection_id}{" "}
+                · approved {new Date(revision.approved_at).toLocaleString()}
               </summary>
               <pre>{JSON.stringify(revision.state, null, 2)}</pre>
             </details>

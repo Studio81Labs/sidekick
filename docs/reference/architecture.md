@@ -285,11 +285,11 @@ state including deletion-cleanup failures, and deletion receipts. Collection
 responses omit source content; detail responses also omit raw text and evidence
 excerpts, including scalar correction values whose JSON pointer directly names
 an excerpt. The player renders parser proposals, approved revisions,
-field-level confidence, and cleanup failures rather than collapsing uncertain
-or failed records into generic inactive copy. Both reads serialize behind
-restore and take the shared data-volume lock before opening records. V1
-screenshot and benchmark stores are neither constructed nor reachable from
-this composition.
+field-level confidence, retained conflict resolutions, and cleanup failures
+with source/detection/revision lineage rather than collapsing uncertain or
+failed records into generic inactive copy. Both reads serialize behind restore
+and take the shared data-volume lock before opening records. V1 screenshot and
+benchmark stores are neither constructed nor reachable from this composition.
 
 The loopback backend serves the verified `apps/pwa/dist-player` build from the
 same local origin. Only its document, manifest, service worker,

@@ -86,6 +86,7 @@ export interface PlayerHandDetail {
   }>;
   detections: Array<{
     detection_id: string;
+    raw_source_id: string;
     detector_id: string;
     detector_version: string;
     detected_at: string;
@@ -96,7 +97,15 @@ export interface PlayerHandDetail {
     >;
     warnings: string[];
   }>;
-  conflicts: Array<{ conflict_id: string; status: string }>;
+  conflicts: Array<{
+    conflict_id: string;
+    raw_source_ids: string[];
+    detected_ids: string[];
+    active_canonical_revision_at_creation: number | null;
+    status: "unresolved" | "resolved_keep_active" | "resolved_use_source";
+    selected_raw_source_id: string | null;
+    resolved_at: string | null;
+  }>;
   canonical_revisions: Array<{
     revision: number;
     detection_id: string;

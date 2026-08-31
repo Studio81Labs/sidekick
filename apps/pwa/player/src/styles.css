@@ -330,6 +330,23 @@ code {
   color: #7b4325;
 }
 
+.conflict-block li {
+  display: grid;
+  gap: 4px;
+}
+
+.conflict-block span {
+  display: block;
+}
+
+.conflict-block li + li {
+  margin-top: 12px;
+}
+
+.conflict-block code {
+  display: inline;
+}
+
 .confidence-block code {
   display: inline;
 }
