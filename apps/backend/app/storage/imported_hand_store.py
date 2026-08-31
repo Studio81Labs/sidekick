@@ -140,6 +140,7 @@ from app.domain.imported_hands import (
     RawHandHistory,
     StableHandIdentity,
     classify_reimport,
+    extract_hero_decision_points,
     imported_hand_canonical_json,
 )
 from app.storage.cascade_journal import CascadeJournal, CascadeStaging
@@ -187,6 +188,19 @@ class DecisionArtifactRetentionError(RuntimeError):
     artifact written by an older model version can compare unequal to a
     semantically identical one and be refused. That is the safe
     direction: it fails loudly rather than losing the older bytes.
+    """
+
+
+class DecisionArtifactIntegrityError(RuntimeError):
+    """An active artifact no longer matches its canonical hand record.
+
+    Persisted decisions are derived learning state, never an independent source
+    of truth. A payload can satisfy its own schema while still carrying a legal
+    but different action size, betting line, or provenance from the canonical
+    record. Active reads therefore re-extract the expected artifact and refuse
+    a mismatch instead of serving contradictory learning evidence. Historical
+    artifacts remain schema-validated audit snapshots because the current
+    aggregate extractor deliberately targets only the active revision.
     """
 
 
@@ -459,22 +473,18 @@ class FileImportedHandStore:
         decisions at all, even while a prior revision's artifact is still
         sitting on disk, retained for audit.
 
-        **This is weaker than extractability, by design, and the gap is
-        not this store's to close.** ``learning_eligible`` is
-        ``status == "active" and active_canonical_revision is not None`` --
-        strictly weaker than ``extract_hero_decision_points``'s own gate.
-        A record can stay active at revision 1, gain an unresolved
-        ``ImportConflict`` afterward, and this method keeps serving the
-        pre-conflict artifact unchanged, because neither the revision nor
-        the generation moved even though the hand would no longer extract
-        if re-run today. Closing that here would mean re-implementing a
-        domain rule (``_rejection_reason``'s ``unresolved_conflict`` check)
-        that this store has no business owning. It is the job of whatever
-        cascade later writes such a conflict onto the record to stage a
-        superseding rejection in the same unit, through ``begin_cascade``;
-        until some future task does that, a caller of this method inherits
-        the gap as a known, documented obligation, not an assumption this
-        store has verified away.
+        The filename is only the first currentness gate. A stored artifact is
+        derived state and can be internally valid while still disagreeing with
+        the canonical record, so an active read re-extracts the expected value
+        through the domain boundary and compares the complete result. This also
+        closes the case where a record gains an unresolved conflict without a
+        revision or generation change: the old artifact is refused rather than
+        served as current learning evidence. No poker rule is duplicated here;
+        the store delegates the derivation to ``extract_hero_decision_points``.
+
+        ``get_decisions`` remains the historical audit reader. It schema-checks
+        retained bytes but does not claim that an inactive revision can be
+        re-derived by the active-revision extractor.
         """
         try:
             record = self.get(record_key)
@@ -484,11 +494,20 @@ class FileImportedHandStore:
             return None
         active_revision = record.lifecycle.active_canonical_revision
         assert active_revision is not None  # guaranteed by learning_eligible
-        return self.get_decisions(
+        stored = self.get_decisions(
             record_key,
             revision=active_revision,
             generation=record.lifecycle.deletion_generation,
         )
+        if stored is None:
+            return None
+        expected = extract_hero_decision_points(record)
+        if stored != expected:
+            raise DecisionArtifactIntegrityError(
+                f"active decision artifact for record {record_key} does not"
+                " match the freshly derived canonical decision state"
+            )
+        return stored
 
     def list_decision_artifacts(self, record_key: str) -> list[tuple[int, int, str]]:
         """Return every retained ``(revision, generation, filename)`` triple.

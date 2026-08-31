@@ -432,6 +432,20 @@ an unknown origin during approval only by explicitly confirming the action was
 player-selected; the detected value and correction remain auditable. A real
 voluntary decision point is the atomic unit for grading, mastery, and drilling.
 
+The approved canonical hand is the authority for persisted decision points.
+Before an active artifact is served to grading or learning, the local runtime
+re-derives the complete extraction from a freshly validated canonical record and
+requires exact equality with the stored artifact. A mismatch fails closed and
+does not overwrite the retained bytes. Superseded artifacts remain
+schema-validated audit snapshots but are never trusted as active learning state.
+Each decision retains its own chronology and import provenance so the atomic
+grading unit remains self-contained; the extraction envelope also retains those
+hand-level facts because a valid hand can have no decision points. Historical
+wager and full-increment scalars used to decide whether a short all-in reopened
+betting are persisted with the decision and rechecked through the aggregate's
+single shared rule rather than by replaying a second betting implementation.
+ADR 0049 records this rehydration boundary.
+
 ### 3.4 Administrative OCR test path — screenshot upload and live capture
 
 The V1 OCR pipeline, screenshot upload, and live window/screen/tab capture are

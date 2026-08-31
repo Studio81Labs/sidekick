@@ -495,6 +495,8 @@ def test_extraction_copies_the_aggregate_chip_context_without_recomputing_it(
         assert point.state.last_full_wager_increment == (
             context.last_full_wager_increment
         )
+        assert point.state.acted_wager == context.acted_wager
+        assert point.state.reopen_increment == context.reopen_increment
         assert point.state.raise_reopened == context.raise_reopened
         assert point.state.hero_stack_before_action == (
             context.hero_stack_before_action
@@ -583,6 +585,8 @@ def test_extraction_closes_raising_after_a_short_all_in() -> None:
     assert facing_all_in.state.current_wager == Decimal("4")
     assert facing_all_in.state.amount_to_call == Decimal("1")
     assert facing_all_in.state.last_full_wager_increment == Decimal("2")
+    assert facing_all_in.state.acted_wager == Decimal("3")
+    assert facing_all_in.state.reopen_increment == Decimal("2")
     assert facing_all_in.state.raise_reopened is False
     assert [
         (point.state.last_full_wager_increment, point.state.raise_reopened)
@@ -611,6 +615,14 @@ def test_extraction_reopens_raising_after_a_full_raise() -> None:
     assert [
         point.state.raise_reopened for point in extraction.decision_points
     ] == [True] * 5
+
+    with pytest.raises(ValidationError, match="published closed"):
+        decisions.HeroDecisionState.model_validate(
+            {
+                **facing_raise.state.model_dump(mode="python"),
+                "raise_reopened": False,
+            }
+        )
 
 
 def test_extraction_publishes_an_unestablished_increment_as_none(
@@ -2565,13 +2577,8 @@ def test_decision_state_rejects_a_flipped_raise_verdict(
         )
 
 
-def test_decision_state_cannot_rederive_a_short_all_in_raise_verdict() -> None:
-    """Pin the one closed verdict the published state cannot prove.
-
-    Neither reason a decision state can check applies here, so a flipped
-    verdict on this point is not caught. Closing it needs the increment that
-    stood when the hero acted, which the state does not carry.
-    """
+def test_decision_state_rederives_a_short_all_in_raise_verdict() -> None:
+    """The walk's historical scalars close the short-all-in validation gap."""
 
     point = extract_hero_decision_points(
         short_all_in_with_live_caller_decision_record()
@@ -2582,11 +2589,22 @@ def test_decision_state_cannot_rederive_a_short_all_in_raise_verdict() -> None:
     )
 
     assert (point.street, point.action_sequence) == ("preflop", 5)
+    assert state.acted_wager == Decimal("3")
+    assert state.reopen_increment == Decimal("2")
+    assert state.current_wager == Decimal("4")
     assert state.raise_reopened is False
     # The hero has chips behind ...
     assert hero.stack_before_action > state.amount_to_call
     # ... and an opponent who can still answer a raise.
     assert [seat.status for seat in state.seats] == ["live", "all_in", "live"]
+
+    with pytest.raises(ValidationError, match="full increment"):
+        decisions.HeroDecisionState.model_validate(
+            {
+                **state.model_dump(mode="python"),
+                "raise_reopened": True,
+            }
+        )
 
 
 def test_hero_table_action_requires_its_evidence() -> None:
