@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.domain.imported_hands import decisions
+from app.domain.imported_hands import models as imported_hand_models
 from app.domain.imported_hands import (
     DeletionReceipt,
     DeletionRequest,
@@ -630,9 +631,9 @@ def test_extraction_publishes_an_unestablished_increment_as_none(
     ]
     assert len(unestablished) == 4
     monkeypatch.setattr(
-        decisions,
+        imported_hand_models,
         "_hero_decision_contexts_for_extraction",
-        lambda state: unestablished,
+        lambda state, *, positions=None: unestablished,
     )
 
     extraction = extract_hero_decision_points(record)
@@ -892,6 +893,24 @@ def test_extraction_rejects_broken_canonical_revision_lineage() -> None:
     assert extraction.canonical_revision is None
 
 
+def test_unresolved_conflict_precedes_invalid_revision_lineage() -> None:
+    record = unresolved_conflict_record()
+    broken = record.model_copy(
+        update={
+            "canonical_revisions": [
+                record.canonical_revisions[0].model_copy(
+                    update={"revision": 2}
+                )
+            ]
+        }
+    )
+
+    extraction = extract_hero_decision_points(broken)
+
+    assert extraction.outcome == "not_extractable"
+    assert extraction.rejection == "unresolved_conflict"
+
+
 @pytest.mark.parametrize("gap", ["hero_cards", "unknown_participation"])
 def test_extraction_rejects_incomplete_hand_state(gap: str) -> None:
     payload = extraction_ready_state_payload()
@@ -959,6 +978,36 @@ def test_extraction_rejects_an_unreconciled_pot(pot_evidence: str) -> None:
     assert extraction.canonical_revision is None
 
 
+@pytest.mark.parametrize(
+    ("incomplete_hand", "expected_rejection"),
+    [
+        (True, "incomplete_hand_state"),
+        (False, "incomplete_economics"),
+    ],
+)
+def test_extraction_preserves_rejection_precedence(
+    incomplete_hand: bool,
+    expected_rejection: str,
+) -> None:
+    payload = extraction_ready_state_payload()
+    if incomplete_hand:
+        payload["hero_cards"] = []
+    payload["game"]["economics"] = {
+        "kind": "cash",
+        "currency": "USD",
+        "rake": None,
+    }
+    payload["results"] = None
+    record = extraction_record_for_state(
+        ImportedHandState.model_validate(payload)
+    )
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "not_extractable"
+    assert extraction.rejection == expected_rejection
+
+
 def test_extraction_emits_from_the_walk_it_proved_complete(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -981,6 +1030,54 @@ def test_extraction_emits_from_the_walk_it_proved_complete(
     assert extraction.outcome == "decisions"
     assert len(extraction.decision_points) == 4
     assert extraction == expected
+
+
+def test_extraction_revalidates_the_aggregate_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = multi_street_decision_record()
+    original = ImportedHandRecord.revalidated_snapshot
+    calls = 0
+
+    def counted_revalidation(self: ImportedHandRecord) -> ImportedHandRecord:
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(
+        ImportedHandRecord,
+        "revalidated_snapshot",
+        counted_revalidation,
+    )
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    assert calls == 1
+
+
+def test_extraction_passes_gate_structural_positions_to_the_walk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record = multi_street_decision_record()
+    original = imported_hand_models._hero_decision_contexts_for_extraction
+    supplied_positions: list[object] = []
+
+    def observed_walk(state: ImportedHandState, *, positions=None):
+        supplied_positions.append(positions)
+        return original(state, positions=positions)
+
+    monkeypatch.setattr(
+        imported_hand_models,
+        "_hero_decision_contexts_for_extraction",
+        observed_walk,
+    )
+
+    extraction = extract_hero_decision_points(record)
+
+    assert extraction.outcome == "decisions"
+    assert len(supplied_positions) == 1
+    assert supplied_positions[0] is not None
 
 
 def test_extraction_is_deterministic_for_the_same_record() -> None:
