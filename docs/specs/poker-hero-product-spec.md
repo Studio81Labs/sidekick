@@ -375,9 +375,20 @@ previously approved hand atomically supersedes every downstream artifact derived
 from the old revision: decision points, grades, concept tags, mastery inputs and
 aggregates, scheduled drill entries/attempt outcomes, and proof-of-learning
 metrics. Superseded artifacts remain auditable but never active. If rebuilding
-the new revision fails, the hand is visibly pending/failed and no stale artifact
-from the prior revision may remain in learning state; unrelated hands continue
-independently.
+fails before the replacement revision and its derived artifacts form a durable
+publish intent, the attempted reapproval rolls back: the prior approved revision
+and its matching learning artifacts remain active. Those artifacts are not stale
+because their canonical revision was never superseded. A failed call reports
+only that reapproval did not complete, preserves the proposed correction, and
+requires refreshed lifecycle state before retry; the exception does not prove
+which side of the durability boundary failed. A recoverable durable intent
+refuses newer per-hand lifecycle writes until roll-forward recovery completes
+it, while a structurally unusable intent is quarantined with its evidence for
+explicit repair. Neither the original failed response nor quarantine is
+presented as a successful reapproval; refreshed state after recovery may show
+that the replacement became active. No failure may expose an active canonical
+revision with learning artifacts from a different revision, and unrelated hands
+continue independently. ADR 0048 records this durability boundary.
 
 Approval withdrawal, rejection after approval, and deletion use the same
 invalidation boundary. One atomic logical transition removes the active

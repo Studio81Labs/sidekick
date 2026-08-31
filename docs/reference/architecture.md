@@ -246,6 +246,17 @@ lock, so it is skipped entirely when the journal holds nothing to recover - see
 `app/application/imported_hand_lifecycle.py` is the single boundary every
 lifecycle transition crosses (approve, reapprove, withdraw, reject), publishing
 each record's new state and the artifacts derived from it in one cascade.
+Reapproval extraction and validation happen before the cascade opens. A failure
+there rejects the attempted correction without superseding the prior approved
+revision, so its matching decision artifact remains current and the caller can
+retry after refreshing lifecycle state. The raised storage error does not expose
+whether durable intent exists, so callers report only that reapproval did not
+complete and never infer that the correction was saved. After the journal
+records durable publish intent, a recoverable pending cascade closes the affected
+hand to newer lifecycle writes until replay finishes. Structurally unusable
+intent is instead quarantined with its evidence for explicit repair; the
+matching-revision read gate continues to prevent mismatched learning artifacts
+from being served (ADR 0048).
 
 What is deliberately not wired yet: there are no V2 routes and no HTTP surface,
 so none of this is reachable by a client, and the hosted screenshot workflow is

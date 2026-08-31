@@ -21,6 +21,17 @@ For a withdrawal or a rejection the same rule needs no second stage at
 all, because the record ceasing to be learning eligible is itself what
 deactivates every artifact it had.
 
+A reapproval attempt does not supersede its outgoing revision merely by
+reaching this service. Extraction and validation run before the cascade
+opens; if either fails, no durable intent exists and the prior revision and
+its matching artifact remain active. The raised storage error does not reveal
+whether the journal reached durable intent, so callers must report only that
+reapproval did not complete and refresh lifecycle state before retrying. A
+recoverable pending intent closes the hand to newer writes until replay
+finishes; a structurally unusable one is quarantined for explicit repair. The
+boundary is therefore atomic at publication without inventing a second,
+partially accepted failed-rebuild lifecycle state.
+
 Three things this service deliberately does not do.
 
 It does not undo a pending deletion. A ``deletion_request`` may only be
@@ -340,8 +351,13 @@ class ImportedHandLifecycleService:
 
         The extraction is computed before the cascade opens, so a failure
         there costs nothing and holds no lock: there is no half-written
-        state to unwind because nothing has been staged. Once the cascade
-        is open, both stages go through the one handle.
+        state to unwind because nothing has been staged. The attempted
+        reapproval is not accepted, the prior approved revision remains
+        current, and the caller may retry. Once the cascade is open, both
+        stages go through the one handle; after its publish intent becomes
+        durable, recovery owns the outcome rather than rolling it back. A
+        recoverable intent rolls forward; a structurally unusable one is
+        quarantined with its evidence.
 
         Whether to derive anything at all is decided from the record
         being published, never from which verb asked. That is what makes
