@@ -5,8 +5,9 @@ from __future__ import annotations
 from bisect import bisect_right
 from datetime import datetime
 from decimal import Decimal
+from typing import cast
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, JsonValue
 
 from app.domain.imported_hands import (
     DeletionReceipt,
@@ -91,6 +92,7 @@ class PlayerCanonicalRevisionAudit(PlayerHandProjection):
     revision: int
     detection_id: str
     approved_at: datetime
+    state: dict[str, JsonValue]
     corrections: list[UserCorrection]
 
 
@@ -143,6 +145,20 @@ def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:
         ),
         canonical_revision_count=len(record.canonical_revisions),
     )
+
+
+def _without_evidence_excerpts(value: JsonValue) -> JsonValue:
+    """Copy a validated JSON graph without raw source excerpt fields."""
+
+    if isinstance(value, dict):
+        return {
+            key: _without_evidence_excerpts(item)
+            for key, item in value.items()
+            if key != "excerpt"
+        }
+    if isinstance(value, list):
+        return [_without_evidence_excerpts(item) for item in value]
+    return value
 
 
 def list_player_hands(
@@ -218,6 +234,12 @@ def get_player_hand(
                 revision=revision.revision,
                 detection_id=revision.detection_id,
                 approved_at=revision.approved_at,
+                state=cast(
+                    dict[str, JsonValue],
+                    _without_evidence_excerpts(
+                        cast(JsonValue, revision.state.model_dump(mode="json"))
+                    ),
+                ),
                 corrections=revision.corrections,
             )
             for revision in record.canonical_revisions

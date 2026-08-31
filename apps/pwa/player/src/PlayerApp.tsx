@@ -51,6 +51,14 @@ function handLabel(hand: PlayerHandSummary): string {
     : `Deleted record · generation ${hand.deletion_generation}`;
 }
 
+function confidenceLabel(confidence: string | null): string {
+  if (confidence === null) return "confidence not scored";
+  const value = Number(confidence);
+  return Number.isFinite(value)
+    ? `${Math.round(value * 100)}% confidence`
+    : "confidence unavailable";
+}
+
 function HandDetail({ detail }: { detail: PlayerHandDetail }) {
   const { summary } = detail;
   const evidenceWarnings = detail.detections.flatMap((detection) => [
@@ -59,6 +67,14 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
       (evidence) => evidence.warnings,
     ),
   ]);
+  const fieldConfidence = detail.detections.flatMap((detection) =>
+    Object.entries(detection.field_evidence).map(([field, evidence]) => ({
+      confidence: evidence.confidence,
+      detectionId: detection.detection_id,
+      field,
+    })),
+  );
+  const deletionRequest = detail.lifecycle.deletion_request;
   return (
     <article className="hand-detail" aria-labelledby="hand-detail-heading">
       <div>
@@ -73,6 +89,18 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
             The tombstone retains only deletion generation and receipt evidence;
             hand-linked content is gone.
           </p>
+        ) : summary.lifecycle_status === "deletion_pending" ? (
+          deletionRequest?.cleanup_status === "failed" ? (
+            <p className="deletion-failure" role="alert">
+              Deletion cleanup failed: {deletionRequest.last_error}. This record
+              remains inactive and needs repair before cleanup can finish.
+            </p>
+          ) : (
+            <p>
+              Deletion cleanup is pending. This record is inactive and is not
+              used for learning.
+            </p>
+          )
         ) : summary.learning_eligible ? (
           <p>
             Canonical revision {summary.active_canonical_revision} is active and
@@ -103,6 +131,18 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
           <dd>{summary.unresolved_conflict_count}</dd>
         </div>
       </dl>
+      {fieldConfidence.length > 0 ? (
+        <div className="audit-block confidence-block">
+          <h4>Detected field confidence</h4>
+          <ul>
+            {fieldConfidence.map((field) => (
+              <li key={`${field.detectionId}-${field.field}`}>
+                <code>{field.field}</code> · {confidenceLabel(field.confidence)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       {detail.raw_sources.length > 0 ? (
         <div className="audit-block">
           <h4>Import provenance</h4>
@@ -127,6 +167,20 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
               <li key={`${index}-${warning}`}>{warning}</li>
             ))}
           </ul>
+        </div>
+      ) : null}
+      {detail.canonical_revisions.length > 0 ? (
+        <div className="audit-block canonical-block">
+          <h4>Approved canonical revisions</h4>
+          {detail.canonical_revisions.map((revision) => (
+            <details key={revision.revision}>
+              <summary>
+                Revision {revision.revision} · approved{" "}
+                {new Date(revision.approved_at).toLocaleString()}
+              </summary>
+              <pre>{JSON.stringify(revision.state, null, 2)}</pre>
+            </details>
+          ))}
         </div>
       ) : null}
       {detail.deletion_receipt ? (

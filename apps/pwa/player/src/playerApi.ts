@@ -65,6 +65,12 @@ export interface PlayerHandDetail {
     deletion_generation: number;
     changed_at: string;
     reason: string | null;
+    deletion_request: {
+      generation: number;
+      requested_at: string;
+      cleanup_status: "pending" | "failed";
+      last_error: string | null;
+    } | null;
   };
   raw_sources: Array<{
     raw_source_id: string;
@@ -94,6 +100,7 @@ export interface PlayerHandDetail {
     revision: number;
     detection_id: string;
     approved_at: string;
+    state: Record<string, unknown>;
     corrections: unknown[];
   }>;
   deletion_receipt: {

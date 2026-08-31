@@ -1,4 +1,8 @@
-from app.player_hands import get_player_hand, list_player_hands
+from app.player_hands import (
+    _without_evidence_excerpts,
+    get_player_hand,
+    list_player_hands,
+)
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
     imported_hand_record_key,
@@ -91,3 +95,35 @@ def test_player_hand_detail_identifies_the_active_approved_revision(tmp_path) ->
     assert detail.summary.learning_eligible is True
     assert detail.summary.canonical_revision_count == 1
     assert [revision.revision for revision in detail.canonical_revisions] == [1]
+    approved_state = detail.canonical_revisions[0].state
+    assert approved_state["hero_player_id"] == "hero"
+    assert approved_state["identity"] == {
+        "namespace": "site-hand-id/v1",
+        "site": "pokerstars",
+        "source_hand_id": "123456701",
+    }
+
+
+def test_player_hand_state_projection_removes_nested_evidence_excerpts() -> None:
+    payload = {
+        "identity": {"site": "pokerstars"},
+        "evidence": [
+            {
+                "raw_source_id": "file-1",
+                "line_start": 1,
+                "excerpt": "private source text",
+                "marker": "hero-line",
+            }
+        ],
+    }
+
+    assert _without_evidence_excerpts(payload) == {
+        "identity": {"site": "pokerstars"},
+        "evidence": [
+            {
+                "raw_source_id": "file-1",
+                "line_start": 1,
+                "marker": "hero-line",
+            }
+        ],
+    }

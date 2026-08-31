@@ -47,6 +47,7 @@ const pendingHandDetail = {
     deletion_generation: 0,
     changed_at: "2026-08-30T12:00:00Z",
     reason: null,
+    deletion_request: null,
   },
   raw_sources: [
     {
@@ -80,6 +81,59 @@ const pendingHandDetail = {
   conflicts: [],
   canonical_revisions: [],
   deletion_receipt: null,
+};
+
+const activeHand = {
+  ...pendingHand,
+  lifecycle_status: "active",
+  active_canonical_revision: 1,
+  learning_eligible: true,
+  canonical_revision_count: 1,
+};
+
+const activeHandDetail = {
+  ...pendingHandDetail,
+  summary: activeHand,
+  lifecycle: {
+    ...pendingHandDetail.lifecycle,
+    status: "active",
+    active_canonical_revision: 1,
+  },
+  canonical_revisions: [
+    {
+      revision: 1,
+      detection_id: "detection-1",
+      approved_at: "2026-08-30T12:00:00Z",
+      state: {
+        identity: { site: "pokerstars", source_hand_id: "123456789" },
+        hero_player_id: "hero",
+        hero_cards: ["As", "Kh"],
+      },
+      corrections: [],
+    },
+  ],
+};
+
+const failedDeletionHand = {
+  ...pendingHand,
+  lifecycle_status: "deletion_pending",
+  deletion_generation: 2,
+};
+
+const failedDeletionHandDetail = {
+  ...pendingHandDetail,
+  summary: failedDeletionHand,
+  lifecycle: {
+    ...pendingHandDetail.lifecycle,
+    status: "deletion_pending",
+    deletion_generation: 2,
+    deletion_request: {
+      generation: 2,
+      requested_at: "2026-08-30T12:00:00Z",
+      cleanup_status: "failed",
+      last_error: "retained artifact cleanup failed",
+    },
+  },
 };
 
 describe("PlayerApp", () => {
@@ -222,6 +276,8 @@ describe("PlayerApp", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Review hero identity")).toBeInTheDocument();
     expect(screen.getByText("Hero line was absent")).toBeInTheDocument();
+    expect(screen.getByText("/hero_player_id")).toBeInTheDocument();
+    expect(screen.getByText(/40% confidence/)).toBeInTheDocument();
     expect(screen.getByText(/HH20260830.txt/)).toBeInTheDocument();
 
     const detailRequest = fetchMock.mock.calls[3];
@@ -232,6 +288,73 @@ describe("PlayerApp", () => {
       new Headers(detailRequest?.[1]?.headers).has("X-Poker-CSRF-Token"),
     ).toBe(false);
     expect(document.body).not.toHaveTextContent("PokerStars Hand #123456789");
+  });
+
+  it("renders the approved canonical state retained by an active revision", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [activeHand], next_cursor: null }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    expect(
+      await screen.findByText(/Canonical revision 1 is active/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Revision 1 · approved/)).toBeInTheDocument();
+    expect(screen.getByText(/"hero_player_id": "hero"/)).toBeInTheDocument();
+  });
+
+  it("surfaces a failed deletion cleanup instead of generic inactive copy", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({ items: [failedDeletionHand], next_cursor: null }),
+      )
+      .mockResolvedValueOnce(jsonResponse(failedDeletionHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /Deletion cleanup failed: retained artifact cleanup failed/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("needs repair");
   });
 
   it("restores with session and CSRF headers, then refreshes storage", async () => {

@@ -330,6 +330,35 @@ code {
   color: #7b4325;
 }
 
+.confidence-block code {
+  display: inline;
+}
+
+.canonical-block details {
+  margin-top: 10px;
+}
+
+.canonical-block summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.canonical-block pre {
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 12px;
+  color: #2c4940;
+  background: rgb(255 255 255 / 75%);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+}
+
+.deletion-failure {
+  color: #762f25 !important;
+  font-weight: 650;
+}
+
 .receipt-line {
   margin-bottom: 0;
   font-size: 0.84rem;
