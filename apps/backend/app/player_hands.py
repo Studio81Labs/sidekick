@@ -22,6 +22,7 @@ from app.storage.imported_hand_store import FileImportedHandStore
 
 DEFAULT_PLAYER_HAND_PAGE_SIZE = 25
 MAX_PLAYER_HAND_PAGE_SIZE = 100
+REDACTED_SOURCE_EXCERPT = "[redacted source excerpt]"
 
 
 class PlayerHandProjection(BaseModel):
@@ -82,6 +83,7 @@ class PlayerDetectionAudit(PlayerHandProjection):
     detector_id: str
     detector_version: str
     detected_at: datetime
+    state: dict[str, JsonValue]
     field_evidence: dict[str, PlayerDetectedFieldEvidenceAudit]
     warnings: list[str]
     content_sha256: str
@@ -168,6 +170,19 @@ def _without_evidence_excerpts(value: JsonValue) -> JsonValue:
     return value
 
 
+def _sanitized_correction_value(
+    field_pointer: str,
+    value: JsonValue,
+) -> JsonValue:
+    """Redact a scalar correction when its validated pointer names an excerpt."""
+
+    pointer_token = field_pointer.rsplit("/", 1)[-1]
+    decoded_token = pointer_token.replace("~1", "/").replace("~0", "~")
+    if decoded_token == "excerpt":
+        return REDACTED_SOURCE_EXCERPT
+    return _without_evidence_excerpts(value)
+
+
 def list_player_hands(
     store: FileImportedHandStore,
     *,
@@ -214,6 +229,12 @@ def get_player_hand(
                 detector_id=detection.detector_id,
                 detector_version=detection.detector_version,
                 detected_at=detection.detected_at,
+                state=cast(
+                    dict[str, JsonValue],
+                    _without_evidence_excerpts(
+                        cast(JsonValue, detection.state.model_dump(mode="json"))
+                    ),
+                ),
                 field_evidence={
                     pointer: PlayerDetectedFieldEvidenceAudit(
                         confidence=field.confidence,
@@ -250,11 +271,13 @@ def get_player_hand(
                 corrections=[
                     PlayerUserCorrectionAudit(
                         field_pointer=correction.field_pointer,
-                        detected_value=_without_evidence_excerpts(
-                            correction.detected_value
+                        detected_value=_sanitized_correction_value(
+                            correction.field_pointer,
+                            correction.detected_value,
                         ),
-                        approved_value=_without_evidence_excerpts(
-                            correction.approved_value
+                        approved_value=_sanitized_correction_value(
+                            correction.field_pointer,
+                            correction.approved_value,
                         ),
                         corrected_at=correction.corrected_at,
                         reason=correction.reason,

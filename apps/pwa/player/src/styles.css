@@ -334,16 +334,16 @@ code {
   display: inline;
 }
 
-.canonical-block details {
+.state-block details {
   margin-top: 10px;
 }
 
-.canonical-block summary {
+.state-block summary {
   cursor: pointer;
   font-weight: 700;
 }
 
-.canonical-block pre {
+.state-block pre {
   max-height: 360px;
   overflow: auto;
   padding: 14px;

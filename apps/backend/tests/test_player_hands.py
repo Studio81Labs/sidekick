@@ -1,4 +1,6 @@
 from app.player_hands import (
+    REDACTED_SOURCE_EXCERPT,
+    _sanitized_correction_value,
     _without_evidence_excerpts,
     get_player_hand,
     list_player_hands,
@@ -50,6 +52,12 @@ def test_player_hand_detail_preserves_review_metadata_without_raw_text(tmp_path)
     assert detail.summary.learning_eligible is False
     assert detail.summary.warning_count == 2
     assert detail.raw_sources[0].provenance.adapter_id == "pokerstars"
+    assert detail.detections[0].state["identity"] == {
+        "namespace": "site-hand-id/v1",
+        "site": "pokerstars",
+        "source_hand_id": "123456701",
+    }
+    assert detail.detections[0].state["hero_player_id"] is None
     assert (
         detail.detections[0].field_evidence["/hero_player_id"].confidence
         is not None
@@ -128,3 +136,16 @@ def test_player_hand_state_projection_removes_nested_evidence_excerpts() -> None
             }
         ],
     }
+
+
+def test_player_hand_correction_redacts_a_direct_excerpt_pointer() -> None:
+    pointer = "/streets/0/actions/0/evidence/0/excerpt"
+
+    assert (
+        _sanitized_correction_value(pointer, "private source text")
+        == REDACTED_SOURCE_EXCERPT
+    )
+    assert _sanitized_correction_value(
+        "/streets/0/actions/0/evidence/0/marker",
+        "hero-line",
+    ) == "hero-line"

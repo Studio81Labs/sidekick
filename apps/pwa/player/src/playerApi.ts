@@ -89,6 +89,7 @@ export interface PlayerHandDetail {
     detector_id: string;
     detector_version: string;
     detected_at: string;
+    state: Record<string, unknown>;
     field_evidence: Record<
       string,
       { confidence: string | null; warnings: string[] }

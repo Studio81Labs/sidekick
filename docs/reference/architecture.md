@@ -280,14 +280,16 @@ before the loopback listener starts. Authenticated `/api/player/storage`
 reports the data location, record count, and distinct recovery buckets without
 exposing record contents. `GET /api/player/hands` pages opaque-key summaries,
 and `GET /api/player/hands/{record_key}` returns provenance, confidence and
-warning metadata, conflicts, sanitized approved canonical state, lifecycle
+warning metadata, conflicts, sanitized detected and approved state, lifecycle
 state including deletion-cleanup failures, and deletion receipts. Collection
 responses omit source content; detail responses also omit raw text and evidence
-excerpts. The player renders field-level confidence and cleanup failures rather
-than collapsing uncertain or failed records into generic inactive copy. Both
-reads serialize behind restore and take the shared data-volume lock before
-opening records. V1 screenshot and benchmark stores are neither constructed nor
-reachable from this composition.
+excerpts, including scalar correction values whose JSON pointer directly names
+an excerpt. The player renders parser proposals, approved revisions,
+field-level confidence, and cleanup failures rather than collapsing uncertain
+or failed records into generic inactive copy. Both reads serialize behind
+restore and take the shared data-volume lock before opening records. V1
+screenshot and benchmark stores are neither constructed nor reachable from
+this composition.
 
 The loopback backend serves the verified `apps/pwa/dist-player` build from the
 same local origin. Only its document, manifest, service worker,

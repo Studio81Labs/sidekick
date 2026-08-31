@@ -69,6 +69,11 @@ const pendingHandDetail = {
       detector_id: "pokerstars",
       detector_version: "1.0.0",
       detected_at: "2026-08-30T12:00:00Z",
+      state: {
+        identity: { site: "pokerstars", source_hand_id: "123456789" },
+        hero_player_id: null,
+        hero_cards: [],
+      },
       field_evidence: {
         "/hero_player_id": {
           confidence: "0.4",
@@ -278,6 +283,8 @@ describe("PlayerApp", () => {
     expect(screen.getByText("Hero line was absent")).toBeInTheDocument();
     expect(screen.getByText("/hero_player_id")).toBeInTheDocument();
     expect(screen.getByText(/40% confidence/)).toBeInTheDocument();
+    expect(screen.getByText("Detected proposals")).toBeInTheDocument();
+    expect(screen.getByText(/"hero_player_id": null/)).toBeInTheDocument();
     expect(screen.getByText(/HH20260830.txt/)).toBeInTheDocument();
 
     const detailRequest = fetchMock.mock.calls[3];

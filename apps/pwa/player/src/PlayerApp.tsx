@@ -131,6 +131,20 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
           <dd>{summary.unresolved_conflict_count}</dd>
         </div>
       </dl>
+      {detail.detections.length > 0 ? (
+        <div className="audit-block state-block">
+          <h4>Detected proposals</h4>
+          {detail.detections.map((detection) => (
+            <details key={detection.detection_id}>
+              <summary>
+                {detection.detector_id} {detection.detector_version} · detected{" "}
+                {new Date(detection.detected_at).toLocaleString()}
+              </summary>
+              <pre>{JSON.stringify(detection.state, null, 2)}</pre>
+            </details>
+          ))}
+        </div>
+      ) : null}
       {fieldConfidence.length > 0 ? (
         <div className="audit-block confidence-block">
           <h4>Detected field confidence</h4>
@@ -170,7 +184,7 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
         </div>
       ) : null}
       {detail.canonical_revisions.length > 0 ? (
-        <div className="audit-block canonical-block">
+        <div className="audit-block state-block">
           <h4>Approved canonical revisions</h4>
           {detail.canonical_revisions.map((revision) => (
             <details key={revision.revision}>
