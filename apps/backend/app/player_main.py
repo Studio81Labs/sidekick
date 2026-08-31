@@ -37,6 +37,8 @@ def configured_player_runtime(settings: Settings) -> PlayerRuntime:
         recovery_lock_timeout_seconds=settings.data_lock_recovery_timeout_seconds,
         startup_lock_timeout_seconds=settings.data_lock_startup_timeout_seconds,
         write_lock_timeout_seconds=settings.data_lock_write_timeout_seconds,
+        backup_lock_timeout_seconds=settings.data_lock_export_timeout_seconds,
+        max_player_backup_bytes=settings.max_backup_upload_bytes,
     )
 
 

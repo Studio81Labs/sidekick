@@ -265,6 +265,20 @@ reports the data location, record count, and distinct recovery buckets without
 exposing record contents. V1 screenshot and benchmark stores are neither
 constructed nor reachable from this composition.
 
+The local runtime's imported-hand backup contract is a separate V2-only
+`poker-hero-player-backup` ZIP, not the hosted application's V1 job/benchmark
+archive. Export holds the data volume exclusively while validating and
+checksumming exact record and retained decision-artifact bytes. Restore verifies
+the whole archive before taking that exclusive hold, then classifies every
+candidate against live deletion generation and lifecycle state. Active
+artifacts are re-derived from their canonical record, not trusted from checksum
+validity alone. Stale evidence is skipped; merge requirements, tombstone
+reactivation, and a tombstone not bound to the same deletion-pending generation
+reject the request before writes. Accepted records and missing artifacts publish
+through one multi-record cascade, preserving local audit artifacts the archive
+does not contain. A bound tombstone removes every retained artifact in that same
+cascade (ADR 0052).
+
 `app/application/imported_hand_lifecycle.py` is the single boundary every
 lifecycle transition crosses (approve, reapprove, withdraw, reject, deletion
 request, permanent purge), publishing each record's new state and the artifacts
@@ -295,13 +309,13 @@ Retries of the published request or completed purge are idempotent. Older
 backups remain subject to `classify_restore`, so they cannot reactivate a
 purged generation without an explicit authorized reimport.
 
-What is deliberately not wired yet: there is no imported-hand or lifecycle HTTP
-surface, so no player record is reachable by a client, and the hosted screenshot
-workflow is not a V2 player-data path. The local runtime constructs and recovers
-the player store and exposes only authenticated storage metadata. No writer,
-lifecycle transition, or re-import resolution has a non-test caller. Future
-record routes inherit the session, Host/Origin, and CSRF boundary established by
-ADR 0050.
+What is deliberately not wired yet: there is no imported-hand import,
+per-record, or lifecycle HTTP surface, and the hosted screenshot workflow is
+not a V2 player-data path. The local runtime constructs and recovers the player
+store and exposes authenticated storage metadata plus whole-store V2
+backup/restore. No import writer, lifecycle transition, or re-import resolution
+has a non-test caller. Future record routes inherit the session, Host/Origin,
+and CSRF boundary established by ADR 0050.
 
 Hero decision-point extraction lives in
 `app/domain/imported_hands/decisions.py` and consumes the aggregate's

@@ -114,9 +114,9 @@ class Settings(BaseSettings):
     data_lock_write_timeout_seconds: int = Field(
         default=DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS, gt=0
     )
-    # The exclusive acquire used by browser backup export. It can be starved
-    # by ordinary shared request holders, so an HTTP caller must not wait
-    # forever. This stays independent from every startup and write budget.
+    # The exclusive acquire used by browser backup export and restore. It can
+    # be starved by ordinary shared request holders, so an HTTP caller must not
+    # wait forever. This stays independent from every startup and write budget.
     data_lock_export_timeout_seconds: int = Field(
         default=DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS, gt=0
     )

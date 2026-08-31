@@ -118,11 +118,17 @@ called on the event-loop thread of the FastAPI process.
 
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from stat import S_ISREG
+from typing import Sequence
+
+from pydantic import ValidationError
 
 from app.application.imported_hand_ports import (
     ImportedHandRecoveryReport,
@@ -220,6 +226,33 @@ class ClosedCascadeError(RuntimeError):
     silently -- reported in none of its three buckets, because pre-marker
     discard is not surfaced. This exists so that mistake is loud instead.
     """
+
+
+class ImportedHandSnapshotError(RuntimeError):
+    """The store cannot produce or apply a trustworthy backup snapshot."""
+
+
+@dataclass(frozen=True)
+class ImportedHandSnapshotArtifact:
+    filename: str
+    payload: bytes
+    extraction: HandDecisionExtraction
+
+
+@dataclass(frozen=True)
+class ImportedHandStoredSnapshot:
+    record_key: str
+    record_payload: bytes
+    record: ImportedHandRecord
+    decision_artifacts: tuple[ImportedHandSnapshotArtifact, ...]
+
+
+@dataclass(frozen=True)
+class ImportedHandRestoreWrite:
+    snapshot: ImportedHandStoredSnapshot
+    write_record: bool
+    decision_artifacts: tuple[ImportedHandSnapshotArtifact, ...]
+    delete_decision_artifacts: tuple[str, ...]
 
 
 def imported_hand_record_key(identity: StableHandIdentity) -> str:
@@ -545,6 +578,331 @@ class FileImportedHandStore:
                     )
                 )
         return sorted(artifacts)
+
+    def backup_snapshot(self) -> tuple[ImportedHandStoredSnapshot, ...]:
+        """Read a validated, byte-preserving snapshot for player backup.
+
+        The caller must hold the data lock exclusively for the entire read and
+        archive build. Exact bytes are retained so a restore can distinguish an
+        idempotent artifact from a same-name replacement without normalising
+        older serialisation formats.
+        """
+
+        snapshots: list[ImportedHandStoredSnapshot] = []
+        for record_key in self.list_keys():
+            record_payload = self._read_snapshot_file(
+                self._record_path(record_key),
+                subject=f"record {record_key}",
+            )
+            try:
+                record = ImportedHandRecord.model_validate_json(record_payload)
+            except ValidationError as exc:
+                raise ImportedHandSnapshotError(
+                    f"Stored record {record_key} is invalid"
+                ) from exc
+            try:
+                self._require_matching_identity(
+                    record_key,
+                    record.identity,
+                    subject="record",
+                )
+            except ValueError as exc:
+                raise ImportedHandSnapshotError(
+                    f"Stored record {record_key} has a mismatched identity"
+                ) from exc
+            artifacts: list[ImportedHandSnapshotArtifact] = []
+            for _revision, _generation, filename in self.list_decision_artifacts(
+                record_key
+            ):
+                payload = self._read_snapshot_file(
+                    self._decisions_dir(record_key) / filename,
+                    subject=f"decision artifact {record_key}/{filename}",
+                )
+                try:
+                    extraction = HandDecisionExtraction.model_validate_json(payload)
+                except ValidationError as exc:
+                    raise ImportedHandSnapshotError(
+                        f"Stored decision artifact {record_key}/{filename} is invalid"
+                    ) from exc
+                self._validate_snapshot_artifact(
+                    record_key,
+                    filename,
+                    extraction,
+                    record=record,
+                )
+                artifacts.append(
+                    ImportedHandSnapshotArtifact(
+                        filename=filename,
+                        payload=payload,
+                        extraction=extraction,
+                    )
+                )
+            if record.lifecycle.status == "deleted" and artifacts:
+                raise ImportedHandSnapshotError(
+                    f"Deleted record {record_key} still has decision artifacts"
+                )
+            self._validate_active_snapshot_artifact(
+                record_key,
+                record,
+                artifacts,
+            )
+            snapshots.append(
+                ImportedHandStoredSnapshot(
+                    record_key=record_key,
+                    record_payload=record_payload,
+                    record=record,
+                    decision_artifacts=tuple(artifacts),
+                )
+            )
+        return tuple(snapshots)
+
+    def apply_backup_restore(
+        self,
+        writes: Sequence[ImportedHandRestoreWrite],
+    ) -> None:
+        """Atomically publish pre-classified backup writes.
+
+        The caller must hold the data lock exclusively and must classify every
+        candidate against the current store while holding that same lock. This
+        primitive deliberately does not acquire the store's ordinary shared
+        write hold, which would self-block under the exclusive restore hold.
+        """
+
+        if not writes:
+            return
+        record_keys = [write.snapshot.record_key for write in writes]
+        if record_keys != sorted(set(record_keys)):
+            raise ImportedHandSnapshotError(
+                "Backup restore record keys must be unique and sorted"
+            )
+        for write in writes:
+            snapshot = write.snapshot
+            self._require_well_formed_key(snapshot.record_key)
+            try:
+                self._require_matching_identity(
+                    snapshot.record_key,
+                    snapshot.record.identity,
+                    subject="record",
+                )
+            except ValueError as exc:
+                raise ImportedHandSnapshotError(
+                    f"Backup record {snapshot.record_key} has a mismatched identity"
+                ) from exc
+            try:
+                parsed_record = ImportedHandRecord.model_validate_json(
+                    snapshot.record_payload
+                )
+            except ValidationError as exc:
+                raise ImportedHandSnapshotError(
+                    f"Backup record {snapshot.record_key} is invalid"
+                ) from exc
+            if parsed_record != snapshot.record:
+                raise ImportedHandSnapshotError(
+                    f"Backup record {snapshot.record_key} changed after validation"
+                )
+            self._validate_active_snapshot_artifact(
+                snapshot.record_key,
+                snapshot.record,
+                snapshot.decision_artifacts,
+            )
+            for artifact in write.decision_artifacts:
+                self._validate_snapshot_artifact(
+                    snapshot.record_key,
+                    artifact.filename,
+                    artifact.extraction,
+                    record=snapshot.record,
+                )
+                try:
+                    parsed_extraction = HandDecisionExtraction.model_validate_json(
+                        artifact.payload
+                    )
+                except ValidationError as exc:
+                    raise ImportedHandSnapshotError(
+                        "Backup decision artifact "
+                        f"{snapshot.record_key}/{artifact.filename} is invalid"
+                    ) from exc
+                if parsed_extraction != artifact.extraction:
+                    raise ImportedHandSnapshotError(
+                        "Backup decision artifact "
+                        f"{snapshot.record_key}/{artifact.filename} changed after validation"
+                    )
+            delete_filenames = write.delete_decision_artifacts
+            if len(delete_filenames) != len(set(delete_filenames)):
+                raise ImportedHandSnapshotError(
+                    "Backup restore decision-artifact deletions must be unique"
+                )
+            staged_filenames = {
+                artifact.filename for artifact in write.decision_artifacts
+            }
+            for filename in delete_filenames:
+                if DECISION_ARTIFACT_PATTERN.fullmatch(filename) is None:
+                    raise ImportedHandSnapshotError(
+                        f"{filename!r} is not a decision artifact filename"
+                    )
+                if filename in staged_filenames:
+                    raise ImportedHandSnapshotError(
+                        f"Backup restore cannot write and delete {filename!r}"
+                    )
+
+        with self._journal.begin(
+            operation="restore",
+            record_keys=record_keys,
+        ) as staging:
+            for write in writes:
+                snapshot = write.snapshot
+                if write.write_record:
+                    staging.stage(
+                        snapshot.record_key,
+                        RECORD_FILENAME,
+                        snapshot.record_payload,
+                    )
+                for artifact in write.decision_artifacts:
+                    staging.stage(
+                        snapshot.record_key,
+                        f"{DECISIONS_DIRNAME}/{artifact.filename}",
+                        artifact.payload,
+                    )
+                for filename in write.delete_decision_artifacts:
+                    staging.stage_delete(
+                        snapshot.record_key,
+                        f"{DECISIONS_DIRNAME}/{filename}",
+                    )
+
+    def existing_decision_artifact_payload(
+        self,
+        record_key: str,
+        filename: str,
+    ) -> bytes | None:
+        if DECISION_ARTIFACT_PATTERN.fullmatch(filename) is None:
+            raise ImportedHandSnapshotError(
+                f"{filename!r} is not a decision artifact filename"
+            )
+        path = self._decisions_dir(record_key) / filename
+        try:
+            return self._read_snapshot_file(
+                path,
+                subject=f"decision artifact {record_key}/{filename}",
+            )
+        except FileNotFoundError:
+            return None
+
+    @staticmethod
+    def _read_snapshot_file(path: Path, *, subject: str) -> bytes:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(path, flags)
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            raise ImportedHandSnapshotError(
+                f"Cannot safely read {subject}"
+            ) from exc
+        try:
+            if not S_ISREG(os.fstat(descriptor).st_mode):
+                raise ImportedHandSnapshotError(f"{subject} is not a regular file")
+            chunks: list[bytes] = []
+            while chunk := os.read(descriptor, 1024 * 1024):
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
+
+    def _validate_snapshot_artifact(
+        self,
+        record_key: str,
+        filename: str,
+        extraction: HandDecisionExtraction,
+        *,
+        record: ImportedHandRecord,
+    ) -> None:
+        match = DECISION_ARTIFACT_PATTERN.fullmatch(filename)
+        if match is None:
+            raise ImportedHandSnapshotError(
+                f"{filename!r} is not a decision artifact filename"
+            )
+        try:
+            self._require_matching_identity(
+                record_key,
+                extraction.identity,
+                subject="extraction",
+            )
+        except ValueError as exc:
+            raise ImportedHandSnapshotError(
+                f"Decision artifact {record_key}/{filename} has a mismatched identity"
+            ) from exc
+        if extraction.identity != record.identity:
+            raise ImportedHandSnapshotError(
+                f"Decision artifact {record_key}/{filename} does not match its record"
+            )
+        revision = int(match.group("revision"))
+        generation = int(match.group("generation"))
+        if generation != extraction.deletion_generation:
+            raise ImportedHandSnapshotError(
+                f"Decision artifact {record_key}/{filename} has a mismatched generation"
+            )
+        if generation > record.lifecycle.deletion_generation:
+            raise ImportedHandSnapshotError(
+                f"Decision artifact {record_key}/{filename} is from a future generation"
+            )
+        if (
+            extraction.canonical_revision is not None
+            and revision != extraction.canonical_revision
+        ):
+            raise ImportedHandSnapshotError(
+                f"Decision artifact {record_key}/{filename} has a mismatched revision"
+            )
+        if extraction.rejection == "not_active" and revision != NO_CANONICAL_REVISION:
+            raise ImportedHandSnapshotError(
+                f"Decision artifact {record_key}/{filename} must use revision 0"
+            )
+        retained_revisions = {
+            retained.revision for retained in record.canonical_revisions
+        }
+        if (
+            revision != NO_CANONICAL_REVISION
+            and revision not in retained_revisions
+        ):
+            raise ImportedHandSnapshotError(
+                f"Decision artifact {record_key}/{filename} names an unknown revision"
+            )
+        if record.lifecycle.status == "deleted":
+            raise ImportedHandSnapshotError(
+                f"Deleted record {record_key} cannot retain decision artifacts"
+            )
+
+    @staticmethod
+    def _validate_active_snapshot_artifact(
+        record_key: str,
+        record: ImportedHandRecord,
+        artifacts: Sequence[ImportedHandSnapshotArtifact],
+    ) -> None:
+        if not record.lifecycle.learning_eligible:
+            return
+        active_revision = record.lifecycle.active_canonical_revision
+        assert active_revision is not None
+        active_filename = (
+            f"r{active_revision}-g{record.lifecycle.deletion_generation}.json"
+        )
+        active = next(
+            (
+                artifact.extraction
+                for artifact in artifacts
+                if artifact.filename == active_filename
+            ),
+            None,
+        )
+        if active is None:
+            raise ImportedHandSnapshotError(
+                f"Active record {record_key} is missing {active_filename}"
+            )
+        expected = extract_hero_decision_points(record)
+        if active != expected:
+            raise ImportedHandSnapshotError(
+                f"Active decision artifact {record_key}/{active_filename} "
+                "does not match its canonical record"
+            )
 
     def has_interrupted_writes(self) -> bool:
         """Whether ``recover`` would find anything to finish or set aside.
