@@ -226,7 +226,9 @@ def test_reapproval_publishes_the_new_revision_and_its_decisions_together(
     assert sorted(artifact_keys(store, key)) == [(1, 0), (2, 0)]
 
 
-def test_a_failure_mid_cascade_leaves_the_record_untouched(tmp_path: Path) -> None:
+def test_failed_reapproval_extraction_keeps_prior_approval_and_can_retry(
+    tmp_path: Path,
+) -> None:
     service, store, key = lifecycle_fixture(tmp_path)
     service.approve(key, revision_one())
     before = store.get(key)
@@ -240,6 +242,14 @@ def test_a_failure_mid_cascade_leaves_the_record_untouched(tmp_path: Path) -> No
     assert active is not None
     assert active.canonical_revision == 1
     assert artifact_keys(store, key) == [(1, 0)]
+
+    retried = service.reapprove(key, revision_two())
+
+    assert retried.lifecycle.active_canonical_revision == 2
+    active = store.active_decisions(key)
+    assert active is not None
+    assert active.canonical_revision == 2
+    assert sorted(artifact_keys(store, key)) == [(1, 0), (2, 0)]
 
 
 def test_withdrawal_deactivates_derived_decisions(tmp_path: Path) -> None:

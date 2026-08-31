@@ -375,9 +375,15 @@ previously approved hand atomically supersedes every downstream artifact derived
 from the old revision: decision points, grades, concept tags, mastery inputs and
 aggregates, scheduled drill entries/attempt outcomes, and proof-of-learning
 metrics. Superseded artifacts remain auditable but never active. If rebuilding
-the new revision fails, the hand is visibly pending/failed and no stale artifact
-from the prior revision may remain in learning state; unrelated hands continue
-independently.
+fails before the replacement revision and its derived artifacts form a durable
+publish intent, the attempted reapproval rolls back: the prior approved revision
+and its matching learning artifacts remain active, the caller reports that the
+correction was not accepted, and the player can retry. Those artifacts are not
+stale because their canonical revision was never superseded. Once the publish
+intent is durable, the per-hand key refuses newer lifecycle writes until
+roll-forward recovery completes it. No failure may expose an active canonical
+revision with learning artifacts from a different revision, and unrelated hands
+continue independently. ADR 0048 records this durability boundary.
 
 Approval withdrawal, rejection after approval, and deletion use the same
 invalidation boundary. One atomic logical transition removes the active

@@ -246,6 +246,12 @@ lock, so it is skipped entirely when the journal holds nothing to recover - see
 `app/application/imported_hand_lifecycle.py` is the single boundary every
 lifecycle transition crosses (approve, reapprove, withdraw, reject), publishing
 each record's new state and the artifacts derived from it in one cascade.
+Reapproval extraction and validation happen before the cascade opens. A failure
+there rejects the attempted correction without superseding the prior approved
+revision, so its matching decision artifact remains current and the caller can
+retry. After the journal records durable publish intent, recovery rolls that
+intent forward and the affected hand refuses newer lifecycle writes until the
+replay finishes (ADR 0048).
 
 What is deliberately not wired yet: there are no V2 routes and no HTTP surface,
 so none of this is reachable by a client, and the hosted screenshot workflow is
