@@ -435,6 +435,7 @@ export default function PlayerApp() {
         append && current
           ? {
               items: [...current.items, ...page.items],
+              unreadable: [...current.unreadable, ...page.unreadable],
               next_cursor: page.next_cursor,
             }
           : page,
@@ -623,97 +624,109 @@ export default function PlayerApp() {
             ) : null}
           </section>
 
-          {storage.status === "ready" ? (
-            <section
-              className="panel records-panel"
-              aria-labelledby="records-heading"
-            >
-              <div className="records-heading-row">
-                <div>
-                  <p className="eyebrow">Retained evidence</p>
-                  <h2 id="records-heading">Local hand records</h2>
-                  <p>
-                    Inspect lifecycle and provenance without exposing raw hand
-                    histories in the collection response.
-                  </p>
-                </div>
-                {storage.imported_hand_record_count > 0 ? (
+          <section
+            className="panel records-panel"
+            aria-labelledby="records-heading"
+          >
+            <div className="records-heading-row">
+              <div>
+                <p className="eyebrow">Retained evidence</p>
+                <h2 id="records-heading">Local hand records</h2>
+                <p>
+                  Inspect lifecycle and provenance without exposing raw hand
+                  histories in the collection response.
+                </p>
+              </div>
+              {storage.imported_hand_record_count > 0 ? (
+                <button
+                  className="secondary-button records-load-button"
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void loadHands(false)}
+                >
+                  {busy === "records" && handPage === null
+                    ? "Loading records…"
+                    : handPage
+                      ? "Refresh records"
+                      : "Load hand records"}
+                </button>
+              ) : null}
+            </div>
+            {storage.imported_hand_record_count === 0 ? (
+              <p className="empty-records">
+                No imported hand records are retained yet.
+              </p>
+            ) : handPage ? (
+              <>
+                <ul className="hand-list">
+                  {handPage.items.map((hand) => (
+                    <li key={hand.record_key}>
+                      <div>
+                        <strong>{handLabel(hand)}</strong>
+                        <span>
+                          {lifecycleLabel(hand.lifecycle_status)} ·{" "}
+                          {hand.warning_count} warnings
+                          {" · "}
+                          {hand.unresolved_conflict_count} open conflicts
+                        </span>
+                        <span>
+                          {hand.learning_eligible
+                            ? `Active revision ${hand.active_canonical_revision} · learning eligible`
+                            : "Not used for learning"}
+                        </span>
+                        {hand.played_at ? (
+                          <span>
+                            Played {new Date(hand.played_at).toLocaleString()}
+                          </span>
+                        ) : null}
+                      </div>
+                      <button
+                        className="quiet-button"
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => void inspectHand(hand.record_key)}
+                      >
+                        {busy === "detail" && loadingHandKey === hand.record_key
+                          ? "Loading…"
+                          : "View audit detail"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {handPage.unreadable.length > 0 ? (
+                  <div className="notice error" role="alert">
+                    <p>
+                      Some retained records could not be read safely. Their keys
+                      remain visible so later records stay reachable.
+                    </p>
+                    <ul>
+                      {handPage.unreadable.map((failure) => (
+                        <li key={failure.record_key}>
+                          <code>{failure.record_key}</code> · {failure.detail}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {handPage.next_cursor ? (
                   <button
-                    className="secondary-button records-load-button"
+                    className="secondary-button"
                     type="button"
                     disabled={busy !== null}
-                    onClick={() => void loadHands(false)}
+                    onClick={() => void loadHands(true)}
                   >
-                    {busy === "records" && handPage === null
-                      ? "Loading records…"
-                      : handPage
-                        ? "Refresh records"
-                        : "Load hand records"}
+                    {busy === "records" ? "Loading more…" : "Load more"}
                   </button>
                 ) : null}
-              </div>
-              {storage.imported_hand_record_count === 0 ? (
-                <p className="empty-records">
-                  No imported hand records are retained yet.
-                </p>
-              ) : handPage ? (
-                <>
-                  <ul className="hand-list">
-                    {handPage.items.map((hand) => (
-                      <li key={hand.record_key}>
-                        <div>
-                          <strong>{handLabel(hand)}</strong>
-                          <span>
-                            {lifecycleLabel(hand.lifecycle_status)} ·{" "}
-                            {hand.warning_count} warnings
-                            {" · "}
-                            {hand.unresolved_conflict_count} open conflicts
-                          </span>
-                          <span>
-                            {hand.learning_eligible
-                              ? `Active revision ${hand.active_canonical_revision} · learning eligible`
-                              : "Not used for learning"}
-                          </span>
-                          {hand.played_at ? (
-                            <span>
-                              Played {new Date(hand.played_at).toLocaleString()}
-                            </span>
-                          ) : null}
-                        </div>
-                        <button
-                          className="quiet-button"
-                          type="button"
-                          disabled={busy !== null}
-                          onClick={() => void inspectHand(hand.record_key)}
-                        >
-                          {busy === "detail" &&
-                          loadingHandKey === hand.record_key
-                            ? "Loading…"
-                            : "View audit detail"}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                  {handPage.next_cursor ? (
-                    <button
-                      className="secondary-button"
-                      type="button"
-                      disabled={busy !== null}
-                      onClick={() => void loadHands(true)}
-                    >
-                      {busy === "records" ? "Loading more…" : "Load more"}
-                    </button>
-                  ) : null}
-                </>
-              ) : (
-                <p className="empty-records">
-                  {storage.imported_hand_record_count} retained records are
-                  ready for authenticated, read-only inspection.
-                </p>
-              )}
-              {handDetail ? <HandDetail detail={handDetail} /> : null}
-            </section>
-          ) : null}
+              </>
+            ) : (
+              <p className="empty-records">
+                {storage.imported_hand_record_count} retained records are ready
+                for authenticated, read-only inspection.
+              </p>
+            )}
+            {handDetail ? <HandDetail detail={handDetail} /> : null}
+          </section>
 
           <section className="backup-grid" aria-label="Backup and restore">
             <article className="panel action-card">

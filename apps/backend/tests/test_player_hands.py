@@ -39,6 +39,7 @@ def test_player_hand_pages_are_bounded_sorted_and_omit_raw_text(tmp_path) -> Non
     second = list_player_hands(store, limit=1, cursor=first.next_cursor)
 
     assert [item.record_key for item in first.items] == keys[:1]
+    assert first.unreadable == []
     assert first.next_cursor == keys[0]
     assert [item.record_key for item in second.items] == keys[1:]
     assert second.next_cursor is None
@@ -120,7 +121,7 @@ def test_player_hand_detail_identifies_the_active_approved_revision(tmp_path) ->
     assert detail.canonical_revisions[0].corrections[0].approved_value == "hero"
 
 
-def test_player_hand_summary_prefers_approved_chronology_over_raw_proposal(
+def test_player_hand_summary_prefers_retained_approved_chronology_over_raw_proposal(
     tmp_path,
 ) -> None:
     store = FileImportedHandStore(tmp_path)
@@ -175,11 +176,55 @@ def test_player_hand_summary_prefers_approved_chronology_over_raw_proposal(
     key = imported_hand_record_key(corrected_record.identity)
     store.save(key, corrected_record)
 
-    page = list_player_hands(store)
-    detail = get_player_hand(store, key)
+    active_page = list_player_hands(store)
+    active_detail = get_player_hand(store, key)
 
-    assert page.items[0].played_at == approved_played_at
-    assert detail.summary.played_at == approved_played_at
+    inactive_store = FileImportedHandStore(tmp_path / "inactive")
+    inactive_record = ImportedHandRecord(
+        identity=corrected_record.identity,
+        raw_sources=corrected_record.raw_sources,
+        detections=corrected_record.detections,
+        canonical_revisions=corrected_record.canonical_revisions,
+        lifecycle=corrected_record.lifecycle.model_copy(
+            update={"status": "withdrawn", "active_canonical_revision": None}
+        ),
+    )
+    inactive_store.save(key, inactive_record)
+    inactive_page = list_player_hands(inactive_store)
+    inactive_detail = get_player_hand(inactive_store, key)
+
+    assert active_page.items[0].played_at == approved_played_at
+    assert active_detail.summary.played_at == approved_played_at
+    assert inactive_page.items[0].played_at == approved_played_at
+    assert inactive_detail.summary.played_at == approved_played_at
+
+
+def test_player_hand_pages_skip_corrupt_records_without_losing_the_cursor(
+    tmp_path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    records = [
+        pending_review_record(sample_identity(hand_ordinal=index))
+        for index in (1, 2, 3)
+    ]
+    keys = sorted(imported_hand_record_key(record.identity) for record in records)
+    for record in records:
+        store.save(imported_hand_record_key(record.identity), record)
+    corrupt_key = keys[1]
+    (store.records_dir / corrupt_key / "record.json").write_text(
+        "{not-json",
+        encoding="utf-8",
+    )
+
+    first = list_player_hands(store, limit=2)
+    second = list_player_hands(store, limit=2, cursor=first.next_cursor)
+
+    assert [item.record_key for item in first.items] == [keys[0]]
+    assert [error.record_key for error in first.unreadable] == [corrupt_key]
+    assert first.next_cursor == corrupt_key
+    assert [item.record_key for item in second.items] == [keys[2]]
+    assert second.unreadable == []
+    assert second.next_cursor is None
 
 
 def test_player_hand_state_projection_removes_nested_evidence_excerpts() -> None:

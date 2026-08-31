@@ -342,7 +342,11 @@ describe("PlayerApp", () => {
       )
       .mockResolvedValueOnce(jsonResponse(readyStorage))
       .mockResolvedValueOnce(
-        jsonResponse({ items: [pendingHand], next_cursor: null }),
+        jsonResponse({
+          items: [pendingHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
       )
       .mockResolvedValueOnce(jsonResponse(pendingHandDetail));
     vi.stubGlobal("fetch", fetchMock);
@@ -421,7 +425,11 @@ describe("PlayerApp", () => {
       )
       .mockResolvedValueOnce(jsonResponse(readyStorage))
       .mockResolvedValueOnce(
-        jsonResponse({ items: [activeHand], next_cursor: null }),
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
       )
       .mockResolvedValueOnce(jsonResponse(activeHandDetail));
     vi.stubGlobal("fetch", fetchMock);
@@ -466,7 +474,11 @@ describe("PlayerApp", () => {
         )
         .mockResolvedValueOnce(jsonResponse(readyStorage))
         .mockResolvedValueOnce(
-          jsonResponse({ items: [detail.summary], next_cursor: null }),
+          jsonResponse({
+            items: [detail.summary],
+            unreadable: [],
+            next_cursor: null,
+          }),
         )
         .mockResolvedValueOnce(jsonResponse(detail));
       vi.stubGlobal("fetch", fetchMock);
@@ -506,7 +518,11 @@ describe("PlayerApp", () => {
       )
       .mockResolvedValueOnce(jsonResponse(readyStorage))
       .mockResolvedValueOnce(
-        jsonResponse({ items: [failedDeletionHand], next_cursor: null }),
+        jsonResponse({
+          items: [failedDeletionHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
       )
       .mockResolvedValueOnce(jsonResponse(failedDeletionHandDetail));
     vi.stubGlobal("fetch", fetchMock);
@@ -581,9 +597,10 @@ describe("PlayerApp", () => {
   it("surfaces quarantined recovery evidence without enabling import", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>().mockResolvedValueOnce(
+    const unreadableKey = "d".repeat(64);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
         jsonResponse({
           ...readyStorage,
           status: "attention_required",
@@ -593,8 +610,21 @@ describe("PlayerApp", () => {
             failed: ["cascade-two"],
           },
         }),
-      ),
-    );
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [pendingHand],
+          unreadable: [
+            {
+              record_key: unreadableKey,
+              detail: "Stored imported hand record could not be read safely",
+            },
+          ],
+          next_cursor: null,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
 
     render(<PlayerApp />);
 
@@ -607,6 +637,13 @@ describe("PlayerApp", () => {
         /Direct hand-history import, correction, approval, and learning are not enabled/,
       ),
     ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    expect(
+      await screen.findByText("pokerstars #123456789"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(unreadableKey).closest("li")).toHaveTextContent(
+      "Stored imported hand record could not be read safely",
+    );
   });
 
   it("clears an expired stored session when storage bootstrap is unauthorized", async () => {

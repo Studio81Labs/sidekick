@@ -96,7 +96,7 @@ test("runs the authenticated player recovery flow only on loopback", async ({
     };
   });
   expect(handListResponse).toEqual({
-    body: { items: [], next_cursor: null },
+    body: { items: [], unreadable: [], next_cursor: null },
     cacheControl: "no-store",
     status: 200,
   });

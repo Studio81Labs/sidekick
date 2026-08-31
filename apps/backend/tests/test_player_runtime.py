@@ -659,6 +659,7 @@ def test_player_hand_routes_require_auth_and_return_safe_review_projections(
 
     assert listing.status_code == 200
     assert listing.json()["items"] == [detail.json()["summary"]]
+    assert listing.json()["unreadable"] == []
     assert listing.json()["next_cursor"] is None
     assert detail.status_code == 200
     assert detail.json()["summary"]["learning_eligible"] is False
@@ -731,9 +732,16 @@ def test_player_hand_routes_report_corrupt_records_explicitly(tmp_path: Path) ->
     listing = client.get("/api/player/hands", headers=authorization)
     detail = client.get(f"/api/player/hands/{key}", headers=authorization)
 
-    assert listing.status_code == 500
+    assert listing.status_code == 200
     assert listing.json() == {
-        "detail": "Stored imported hand records could not be read safely"
+        "items": [],
+        "unreadable": [
+            {
+                "record_key": key,
+                "detail": "Stored imported hand record could not be read safely",
+            }
+        ],
+        "next_cursor": None,
     }
     assert detail.status_code == 500
     assert detail.json() == {

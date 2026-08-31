@@ -54,6 +54,7 @@ export interface PlayerHandSummary {
 
 export interface PlayerHandList {
   items: PlayerHandSummary[];
+  unreadable: Array<{ record_key: string; detail: string }>;
   next_cursor: string | null;
 }
 

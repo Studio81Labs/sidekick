@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import cast
 
-from pydantic import BaseModel, ConfigDict, JsonValue
+from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
 
 from app.domain.imported_hands import (
     DeletionReceipt,
@@ -17,12 +17,16 @@ from app.domain.imported_hands import (
     ImportProvenance,
     SourceChronology,
 )
-from app.storage.imported_hand_store import FileImportedHandStore
+from app.storage.imported_hand_store import (
+    FileImportedHandStore,
+    ImportedHandNotFoundError,
+)
 
 
 DEFAULT_PLAYER_HAND_PAGE_SIZE = 25
 MAX_PLAYER_HAND_PAGE_SIZE = 100
 REDACTED_SOURCE_EXCERPT = "[redacted source excerpt]"
+UNREADABLE_HAND_DETAIL = "Stored imported hand record could not be read safely"
 
 
 class PlayerHandProjection(BaseModel):
@@ -52,8 +56,14 @@ class PlayerHandSummary(PlayerHandProjection):
     canonical_revision_count: int
 
 
+class PlayerHandReadError(PlayerHandProjection):
+    record_key: str
+    detail: str = UNREADABLE_HAND_DETAIL
+
+
 class PlayerHandList(PlayerHandProjection):
     items: list[PlayerHandSummary]
+    unreadable: list[PlayerHandReadError]
     next_cursor: str | None
 
 
@@ -116,10 +126,12 @@ class PlayerHandDetail(PlayerHandProjection):
 
 
 def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:
-    active_revision = record.lifecycle.active_canonical_revision
+    retained_revision = (
+        record.canonical_revisions[-1] if record.canonical_revisions else None
+    )
     played_at = (
-        record.canonical_revisions[active_revision - 1].state.chronology.played_at
-        if active_revision is not None
+        retained_revision.state.chronology.played_at
+        if retained_revision is not None
         else max(
             (
                 raw.chronology.played_at
@@ -201,9 +213,16 @@ def list_player_hands(
     page_keys = keys[start : start + limit + 1]
     has_more = len(page_keys) > limit
     visible_keys = page_keys[:limit]
-    items = [_summary(record_key, store.get(record_key)) for record_key in visible_keys]
+    items: list[PlayerHandSummary] = []
+    unreadable: list[PlayerHandReadError] = []
+    for record_key in visible_keys:
+        try:
+            items.append(_summary(record_key, store.get(record_key)))
+        except (ImportedHandNotFoundError, OSError, ValidationError):
+            unreadable.append(PlayerHandReadError(record_key=record_key))
     return PlayerHandList(
         items=items,
+        unreadable=unreadable,
         next_cursor=visible_keys[-1] if has_more else None,
     )
 
