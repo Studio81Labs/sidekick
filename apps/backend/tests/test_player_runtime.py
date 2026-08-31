@@ -1,4 +1,6 @@
 import asyncio
+import ctypes
+import errno
 from ipaddress import ip_address
 import os
 from pathlib import Path
@@ -35,7 +37,10 @@ from app.player_runtime import (
     create_player_runtime,
     load_or_create_installation_secret,
 )
-from app.player_workspace import PlayerDataDirectoryError
+from app.player_workspace import (
+    PlayerDataDirectoryError,
+    _macos_extended_acl_has_entries,
+)
 from app.storage.imported_hand_store import FileImportedHandStore
 
 
@@ -113,6 +118,33 @@ def test_player_runtime_rejects_a_data_directory_acl(tmp_path: Path) -> None:
 
     with pytest.raises(PlayerDataDirectoryError, match="extended ACL"):
         create_player_runtime(data_dir)
+
+
+def test_allocated_empty_macos_acl_is_not_rejected(tmp_path: Path) -> None:
+    class FakeFunction:
+        def __init__(self, result) -> None:
+            self._result = result
+            self.argtypes = None
+            self.restype = None
+
+        def __call__(self, *_args):
+            if callable(self._result):
+                return self._result()
+            return self._result
+
+    def no_first_entry() -> int:
+        ctypes.set_errno(errno.EINVAL)
+        return -1
+
+    class FakeAclLibrary:
+        acl_get_file = FakeFunction(1)
+        acl_get_entry = FakeFunction(no_first_entry)
+        acl_free = FakeFunction(0)
+
+    assert not _macos_extended_acl_has_entries(
+        tmp_path,
+        library=FakeAclLibrary(),
+    )
 
 
 def test_player_runtime_opens_only_the_player_store(tmp_path: Path) -> None:

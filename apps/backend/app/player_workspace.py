@@ -26,30 +26,57 @@ class PlayerDataDirectoryError(RuntimeError):
     """The configured player data directory is not private local storage."""
 
 
-def _reject_macos_extended_acl(path: Path) -> None:
-    if sys.platform != "darwin":
-        return
-
+def _macos_extended_acl_has_entries(path: Path, *, library=None) -> bool:
     # Darwin ACLs can grant access that is not reflected in POSIX mode bits.
     # Python exposes no ACL API, so query libc directly and fail closed on any
     # extended entry. ACL_TYPE_EXTENDED is the public Darwin sys/acl.h value.
     import ctypes
 
-    libc = ctypes.CDLL(None, use_errno=True)
+    libc = library or ctypes.CDLL(None, use_errno=True)
     libc.acl_get_file.argtypes = (ctypes.c_char_p, ctypes.c_int)
     libc.acl_get_file.restype = ctypes.c_void_p
+    libc.acl_get_entry.argtypes = (
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.POINTER(ctypes.c_void_p),
+    )
+    libc.acl_get_entry.restype = ctypes.c_int
     libc.acl_free.argtypes = (ctypes.c_void_p,)
     libc.acl_free.restype = ctypes.c_int
     acl = libc.acl_get_file(os.fsencode(path), 0x00000100)
-    if acl:
-        libc.acl_free(acl)
-        raise PlayerDataDirectoryError(
-            f"{path} must not grant access through an extended ACL"
-        )
-    acl_errno = ctypes.get_errno()
-    if acl_errno != errno.ENOENT:
+    if not acl:
+        acl_errno = ctypes.get_errno()
+        if acl_errno == errno.ENOENT:
+            return False
         raise PlayerDataDirectoryError(
             f"Cannot verify the extended ACL on {path}: errno {acl_errno}"
+        )
+
+    try:
+        entry = ctypes.c_void_p()
+        ctypes.set_errno(0)
+        entry_result = libc.acl_get_entry(acl, 0, ctypes.byref(entry))
+        if entry_result == 0:
+            return True
+        entry_errno = ctypes.get_errno()
+        if entry_errno == errno.EINVAL:
+            # Some filesystems allocate an empty extended ACL rather than
+            # returning ENOENT from acl_get_file. A valid first-entry request
+            # reporting no entry is still an ordinary private directory.
+            return False
+        raise PlayerDataDirectoryError(
+            f"Cannot inspect the extended ACL on {path}: errno {entry_errno}"
+        )
+    finally:
+        libc.acl_free(acl)
+
+
+def _reject_macos_extended_acl(path: Path) -> None:
+    if sys.platform != "darwin":
+        return
+    if _macos_extended_acl_has_entries(path):
+        raise PlayerDataDirectoryError(
+            f"{path} must not grant access through an extended ACL"
         )
 
 
