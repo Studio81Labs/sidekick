@@ -209,7 +209,7 @@ describe("PlayerApp", () => {
     expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
   });
 
-  it("preserves committed restore evidence when its status refresh expires", async () => {
+  it("preserves committed evidence but hides stale controls when refresh fails", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
     vi.stubGlobal(
@@ -228,7 +228,9 @@ describe("PlayerApp", () => {
             total_records: 5,
           }),
         )
-        .mockResolvedValueOnce(jsonResponse({ detail: "Expired" }, 401)),
+        .mockResolvedValueOnce(
+          jsonResponse({ detail: "Stable status unavailable" }, 409),
+        ),
     );
     const user = userEvent.setup();
 
@@ -251,8 +253,16 @@ describe("PlayerApp", () => {
         /Restore committed, but storage status could not be refreshed/,
       ),
     ).toBeInTheDocument();
-    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBe(
+      "stored-session",
+    );
     expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Download backup" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Restore backup" }),
+    ).not.toBeInTheDocument();
   });
 
   it("treats an incomplete successful restore response as ambiguous", async () => {

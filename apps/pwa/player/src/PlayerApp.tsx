@@ -126,6 +126,7 @@ export default function PlayerApp() {
       try {
         setStorage(await loadPlayerStorage(credentials));
       } catch (reason) {
+        setStorage(null);
         handleRequestError(
           reason,
           "Restore committed, but storage status could not be refreshed.",
