@@ -145,6 +145,7 @@ class PlayerWorkspace:
     """
 
     data_dir: Path
+    data_lock: InterprocessDataLock
     imported_hands: FileImportedHandStore
     imported_hand_recovery: ImportedHandRecoveryReport
 
@@ -183,6 +184,7 @@ class PlayerWorkspace:
             pass
         return cls(
             data_dir=private_data_dir,
+            data_lock=data_lock,
             imported_hands=imported_hands,
             imported_hand_recovery=recovery,
         )

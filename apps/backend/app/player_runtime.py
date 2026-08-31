@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
 import hmac
 from ipaddress import ip_address
@@ -14,14 +15,23 @@ from time import monotonic
 from typing import Callable
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.data_lock import (
+    DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    DataLockTimeoutError,
+)
+from app.player_backup import (
+    DEFAULT_MAX_PLAYER_BACKUP_BYTES,
+    PlayerBackupError,
+    build_player_backup_archive,
+    restore_player_backup,
+    stream_player_backup,
 )
 from app.player_namespace import (
     PLAYER_API_PREFIX,
@@ -310,6 +320,27 @@ def _json_denial(status_code: int, detail: str) -> JSONResponse:
     )
 
 
+async def _read_bounded_body(request: Request, *, limit: int) -> bytes:
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise PlayerBackupError("Content-Length must be a decimal integer") from exc
+        if declared_length < 0 or declared_length > limit:
+            raise PlayerBackupError(
+                f"Player backup exceeds the configured {limit}-byte limit"
+            )
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > limit:
+            raise PlayerBackupError(
+                f"Player backup exceeds the configured {limit}-byte limit"
+            )
+    return bytes(body)
+
+
 class PlayerNetworkBoundaryMiddleware:
     def __init__(
         self,
@@ -495,6 +526,8 @@ def create_player_runtime(
     recovery_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    backup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
+    max_player_backup_bytes: int = DEFAULT_MAX_PLAYER_BACKUP_BYTES,
 ) -> PlayerRuntime:
     workspace = PlayerWorkspace.open(
         data_dir,
@@ -543,6 +576,57 @@ def create_player_runtime(
     @app.get(f"{PLAYER_API_PREFIX}/storage")
     async def player_storage() -> JSONResponse:
         return JSONResponse(await run_in_threadpool(workspace.status_payload))
+
+    @app.get(f"{PLAYER_API_PREFIX}/backups/export")
+    async def export_player_backup() -> Response:
+        try:
+            archive_file = await run_in_threadpool(
+                build_player_backup_archive,
+                workspace,
+                max_archive_bytes=max_player_backup_bytes,
+                lock_timeout_seconds=backup_lock_timeout_seconds,
+            )
+        except PlayerBackupError as exc:
+            return _json_denial(exc.status_code, str(exc))
+        except DataLockTimeoutError as exc:
+            return _json_denial(409, str(exc))
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        return StreamingResponse(
+            stream_player_backup(archive_file),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": (
+                    "attachment; filename=\"poker-hero-player-backup-"
+                    f"{timestamp}.zip\""
+                )
+            },
+        )
+
+    @app.post(f"{PLAYER_API_PREFIX}/backups/restore")
+    async def restore_uploaded_player_backup(request: Request) -> JSONResponse:
+        media_type = request.headers.get("content-type", "").partition(";")[0]
+        if media_type.strip().lower() not in {
+            "application/zip",
+            "application/octet-stream",
+        }:
+            return _json_denial(415, "Upload must be a player backup ZIP")
+        try:
+            archive_bytes = await _read_bounded_body(
+                request,
+                limit=max_player_backup_bytes,
+            )
+            result = await run_in_threadpool(
+                restore_player_backup,
+                workspace,
+                archive_bytes,
+                max_archive_bytes=max_player_backup_bytes,
+                lock_timeout_seconds=backup_lock_timeout_seconds,
+            )
+        except PlayerBackupError as exc:
+            return _json_denial(exc.status_code, str(exc))
+        except DataLockTimeoutError as exc:
+            return _json_denial(409, str(exc))
+        return JSONResponse(result.model_dump(mode="json"))
 
     @app.delete(f"{PLAYER_API_PREFIX}/session")
     async def revoke_session(request: Request) -> Response:

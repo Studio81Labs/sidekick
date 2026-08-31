@@ -41,7 +41,8 @@ DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS = 600
 # coincidence, not by connection.
 DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS = 30
 
-# BACKUP EXPORT acquire. This is the exclusive side on an HTTP request path.
+# BACKUP TRANSFER acquire (export or restore). This is the exclusive side on an
+# HTTP request path.
 # Like startup recovery it can be starved by overlapping shared holders, but
 # operators must be able to tune a browser-facing request deadline without
 # changing whether a deployment can recover persisted state.
@@ -151,10 +152,10 @@ class InterprocessDataLock:
         blocker = (
             "another process holds it, either shared (an in-flight mutating "
             "request, or startup workspace construction) or exclusively "
-            "(startup recovery, or a backup export)"
+            "(startup recovery, or a backup export/restore)"
             if exclusive
             else "another process holds it exclusively (a startup recovery "
-            "sweep, or a backup export)"
+            "sweep, or a backup export/restore)"
         )
         return (
             f"Timed out after {timeout_seconds}s waiting for {wanted} hold of "

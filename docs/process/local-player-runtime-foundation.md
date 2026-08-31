@@ -49,15 +49,36 @@ completed, quarantined, and failed recovery identifiers separately. A
 quarantined or failed recovery is shown as requiring attention; completed
 roll-forward recovery alone remains ready.
 
+## Imported-hand backup and restore
+
+The authenticated player API can export the current V2 imported-hand store as a
+checksummed `poker-hero-player-backup` ZIP from
+`GET /api/player/backups/export`. Restore accepts that ZIP at
+`POST /api/player/backups/restore`; like every player mutation, it requires the
+exact local Origin, the process-local bearer session, and its matching CSRF
+token. The current readiness shell does not yet expose these controls.
+
+Export includes each record and every retained decision artifact, including
+inactive audit history. Restore validates the complete archive before writing,
+skips stale record and deletion generations, and rejects conflicts, an attempt
+to reactivate a tombstone, or an unbound tombstone targeting a live record. An
+active record must carry the exact decision artifact re-derived from its
+canonical state. Accepted changes are published through one recoverable
+multi-record cascade; a tombstone bound to the same deletion-pending generation
+removes retained decision artifacts in that unit. The format deliberately
+excludes V1 screenshot jobs, parser benchmarks, and any hosted data.
+
 There is intentionally no player-runtime host or port flag. A non-loopback
 operator development service would be a different runtime and would require
 TLS plus its own server-enforced authorization design.
 
 ## Current limit
 
-This foundation exposes authenticated session lifecycle, health, and read-only
-store status under `/api/player`. The imported-hand store is opened and
-recovered, but there is no hand-history import, record read, approval, learning,
-backup, restore, migration, remote lookup, or player workflow. The hosted
-Worker and V1 FastAPI deployment deny the namespace. Do not use this command as
-evidence that the Phase 1 gate or issue #432 is complete.
+This foundation exposes authenticated session lifecycle, health, store status,
+and imported-hand backup/restore under `/api/player`. The imported-hand store is
+opened and recovered, but there is no hand-history import, record read,
+approval, learning, migration, remote lookup, packaged player PWA, or complete
+player workflow. Future grade, mastery, drill, and proof stores do not yet
+exist, so they are not part of the version 1 archive. The hosted Worker and V1
+FastAPI deployment deny the namespace. Do not use this command as evidence that
+the Phase 1 gate or issue #432 is complete.
