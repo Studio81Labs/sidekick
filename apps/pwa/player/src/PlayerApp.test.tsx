@@ -25,7 +25,11 @@ const readyStorage = {
 
 const pendingHand = {
   record_key: "a".repeat(64),
-  identity: { site: "pokerstars", source_hand_id: "123456789" },
+  identity: {
+    namespace: "site-hand-id/v1",
+    site: "pokerstars",
+    source_hand_id: "123456789",
+  },
   played_at: "2026-08-30T11:00:00Z",
   lifecycle_status: "pending_review",
   lifecycle_changed_at: "2026-08-30T12:00:00Z",
@@ -60,6 +64,8 @@ const pendingHandDetail = {
         hand_ordinal: 7,
       },
       provenance: {
+        source_kind: "hand_history",
+        import_id: "import-file-1",
         imported_at: "2026-08-30T12:00:00Z",
         adapter_id: "pokerstars",
         adapter_version: "1.0.0",
@@ -78,6 +84,8 @@ const pendingHandDetail = {
         hand_ordinal: 8,
       },
       provenance: {
+        source_kind: "hand_history",
+        import_id: "import-file-2",
         imported_at: "2026-08-30T12:15:00Z",
         adapter_id: "pokerstars",
         adapter_version: "2.0.0",
@@ -95,7 +103,11 @@ const pendingHandDetail = {
       detector_version: "1.0.0",
       detected_at: "2026-08-30T12:00:00Z",
       state: {
-        identity: { site: "pokerstars", source_hand_id: "123456789" },
+        identity: {
+          namespace: "site-hand-id/v1",
+          site: "pokerstars",
+          source_hand_id: "123456789",
+        },
         hero_player_id: null,
         hero_cards: [],
       },
@@ -109,11 +121,18 @@ const pendingHandDetail = {
               line_end: 1,
               marker: "hero-line",
             },
+            {
+              raw_source_id: "file-1",
+              line_start: null,
+              line_end: null,
+              marker: null,
+            },
           ],
           warnings: ["Hero line was absent"],
         },
       },
       warnings: ["Review hero identity"],
+      content_sha256: "d".repeat(64),
     },
     {
       detection_id: "detection-2",
@@ -122,7 +141,11 @@ const pendingHandDetail = {
       detector_version: "2.0.0",
       detected_at: "2026-08-30T12:15:00Z",
       state: {
-        identity: { site: "pokerstars", source_hand_id: "123456789" },
+        identity: {
+          namespace: "site-hand-id/v1",
+          site: "pokerstars",
+          source_hand_id: "123456789",
+        },
         hero_player_id: "hero",
         hero_cards: [],
       },
@@ -141,6 +164,7 @@ const pendingHandDetail = {
         },
       },
       warnings: [],
+      content_sha256: "e".repeat(64),
     },
   ],
   conflicts: [
@@ -185,7 +209,11 @@ const activeHandDetail = {
       detection_id: "detection-1",
       approved_at: "2026-08-30T12:00:00Z",
       state: {
-        identity: { site: "pokerstars", source_hand_id: "123456789" },
+        identity: {
+          namespace: "site-hand-id/v1",
+          site: "pokerstars",
+          source_hand_id: "123456789",
+        },
         hero_player_id: "hero",
         hero_cards: ["As", "Kh"],
       },
@@ -243,6 +271,39 @@ const failedDeletionHandDetail = {
       cleanup_status: "failed",
       last_error: "retained artifact cleanup failed",
     },
+  },
+};
+
+const deletedHand = {
+  ...pendingHand,
+  identity: null,
+  played_at: null,
+  lifecycle_status: "deleted",
+  deletion_generation: 3,
+  raw_source_count: 0,
+  detection_count: 0,
+  warning_count: 0,
+};
+
+const deletedHandDetail = {
+  summary: deletedHand,
+  lifecycle: {
+    status: "deleted",
+    active_canonical_revision: null,
+    deletion_generation: 3,
+    changed_at: "2026-08-30T13:00:00Z",
+    reason: "purged",
+    deletion_request: null,
+  },
+  raw_sources: [],
+  detections: [],
+  conflicts: [],
+  canonical_revisions: [],
+  deletion_receipt: {
+    receipt_id: "receipt-3",
+    generation: 3,
+    deleted_at: "2026-08-30T13:00:00Z",
+    tombstone_sha256: "f".repeat(64),
   },
 };
 
@@ -368,7 +429,7 @@ describe("PlayerApp", () => {
     await screen.findByText("Ready on this machine");
     await user.click(screen.getByRole("button", { name: "Load hand records" }));
     expect(
-      await screen.findByText("pokerstars #123456789"),
+      await screen.findByText("site-hand-id/v1 · pokerstars #123456789"),
     ).toBeInTheDocument();
     expect(screen.getByText("Not used for learning")).toBeInTheDocument();
 
@@ -419,6 +480,12 @@ describe("PlayerApp", () => {
     expect(screen.getByText(/source file file-1/)).toBeInTheDocument();
     expect(screen.getByText(/hand ordinal 7/)).toBeInTheDocument();
     expect(screen.getByText(/2026-08-30T11:00:00Z/)).toBeInTheDocument();
+    expect(screen.getByText(/import-file-1/)).toBeInTheDocument();
+    expect(screen.getAllByText(/format pokerstars-text\/v1/)).toHaveLength(2);
+    expect(screen.getByText(/source excerpt redacted/)).toBeInTheDocument();
+    expect(screen.getByText("d".repeat(64))).toBeInTheDocument();
+    expect(screen.getByText("b".repeat(64))).toBeInTheDocument();
+    expect(screen.getAllByText("a".repeat(64))).toHaveLength(2);
 
     const detailRequest = fetchMock.mock.calls[3];
     expect(detailRequest?.[0]).toBe(
@@ -564,6 +631,42 @@ describe("PlayerApp", () => {
     ).toBeInTheDocument();
   });
 
+  it("renders the complete retained deletion receipt", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [deletedHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(deletedHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    expect(
+      await screen.findByText(/Deletion receipt receipt-3/),
+    ).toHaveTextContent("generation 3");
+    expect(screen.getByText("f".repeat(64))).toBeInTheDocument();
+  });
+
   it("restores with session and CSRF headers, then refreshes storage", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
@@ -658,7 +761,7 @@ describe("PlayerApp", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load hand records" }));
     expect(
-      await screen.findByText("pokerstars #123456789"),
+      await screen.findByText("site-hand-id/v1 · pokerstars #123456789"),
     ).toBeInTheDocument();
     expect(screen.getByText(unreadableKey).closest("li")).toHaveTextContent(
       "Stored imported hand record could not be read safely",

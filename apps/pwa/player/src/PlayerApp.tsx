@@ -47,7 +47,7 @@ function lifecycleLabel(status: string): string {
 
 function handLabel(hand: PlayerHandSummary): string {
   return hand.identity
-    ? `${hand.identity.site} #${hand.identity.source_hand_id}`
+    ? `${hand.identity.namespace} · ${hand.identity.site} #${hand.identity.source_hand_id}`
     : `Deleted record · generation ${hand.deletion_generation}`;
 }
 
@@ -62,14 +62,19 @@ function confidenceLabel(confidence: string | null): string {
 function evidenceLocation(
   evidence: PlayerHandDetail["detections"][number]["field_evidence"][string]["evidence"][number],
 ): string {
-  const lines = evidence.line_start
-    ? evidence.line_end && evidence.line_end !== evidence.line_start
-      ? `lines ${evidence.line_start}-${evidence.line_end}`
-      : `line ${evidence.line_start}`
-    : "source location retained";
-  return `source ${evidence.raw_source_id} · ${lines}${
-    evidence.marker ? ` · marker ${evidence.marker}` : ""
-  }`;
+  const locators: string[] = [];
+  if (evidence.line_start) {
+    locators.push(
+      evidence.line_end && evidence.line_end !== evidence.line_start
+        ? `lines ${evidence.line_start}-${evidence.line_end}`
+        : `line ${evidence.line_start}`,
+    );
+  }
+  if (evidence.marker) locators.push(`marker ${evidence.marker}`);
+  if (locators.length === 0) {
+    locators.push("source excerpt redacted; no visible locator retained");
+  }
+  return `source ${evidence.raw_source_id} · ${locators.join(" · ")}`;
 }
 
 function HandDetail({ detail }: { detail: PlayerHandDetail }) {
@@ -102,6 +107,9 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
       <div>
         <p className="eyebrow">Read-only audit detail</p>
         <h3 id="hand-detail-heading">{handLabel(summary)}</h3>
+        <p>
+          Record key <code>{summary.record_key}</code>
+        </p>
         <p>
           Lifecycle: <strong>{lifecycleLabel(summary.lifecycle_status)}</strong>
           . Changed {new Date(summary.lifecycle_changed_at).toLocaleString()}.
@@ -181,6 +189,10 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
                 {new Date(detection.detected_at).toLocaleString()}
               </summary>
               <pre>{JSON.stringify(detection.state, null, 2)}</pre>
+              <p className="receipt-line">
+                Normalized proposal checksum{" "}
+                <code>{detection.content_sha256}</code>
+              </p>
             </details>
           ))}
         </div>
@@ -211,6 +223,9 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
               <li key={source.raw_source_id}>
                 Source <code>{source.raw_source_id}</code> ·{" "}
                 {source.provenance.source_filename ?? "Unnamed source"} ·{" "}
+                {source.provenance.source_kind} import{" "}
+                <code>{source.provenance.import_id}</code> · format{" "}
+                {source.provenance.format_revision} ·{" "}
                 {source.provenance.adapter_id}{" "}
                 {source.provenance.adapter_version}
                 {" · "}
@@ -222,6 +237,8 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
                 {` · source session ${source.chronology.source_session_id ?? "not retained"}`}
                 {` · source file ${source.chronology.source_file_id}`}
                 {` · hand ordinal ${source.chronology.hand_ordinal ?? "not retained"}`}
+                {" · raw source checksum "}
+                <code>{source.content_sha256}</code>
               </li>
             ))}
           </ul>
@@ -328,8 +345,11 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
       ) : null}
       {detail.deletion_receipt ? (
         <p className="receipt-line">
-          Deletion receipt {detail.deletion_receipt.receipt_id} ·{" "}
-          {new Date(detail.deletion_receipt.deleted_at).toLocaleString()}
+          Deletion receipt {detail.deletion_receipt.receipt_id} · generation{" "}
+          {detail.deletion_receipt.generation} ·{" "}
+          {new Date(detail.deletion_receipt.deleted_at).toLocaleString()} ·
+          tombstone checksum{" "}
+          <code>{detail.deletion_receipt.tombstone_sha256}</code>
         </p>
       ) : null}
     </article>
@@ -667,6 +687,9 @@ export default function PlayerApp() {
                     <li key={hand.record_key}>
                       <div>
                         <strong>{handLabel(hand)}</strong>
+                        <span>
+                          Record key <code>{hand.record_key}</code>
+                        </span>
                         <span>
                           {lifecycleLabel(hand.lifecycle_status)} ·{" "}
                           {hand.warning_count} warnings

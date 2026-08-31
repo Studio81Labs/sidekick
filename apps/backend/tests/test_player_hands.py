@@ -107,6 +107,8 @@ def test_player_hand_detail_identifies_the_active_approved_revision(tmp_path) ->
     detail = get_player_hand(store, key)
 
     assert detail.summary.lifecycle_status == "active"
+    assert detail.summary.identity is not None
+    assert detail.summary.identity.namespace == "site-hand-id/v1"
     assert detail.summary.active_canonical_revision == 1
     assert detail.summary.learning_eligible is True
     assert detail.summary.canonical_revision_count == 1

@@ -38,7 +38,11 @@ export type PlayerHandLifecycleStatus =
 
 export interface PlayerHandSummary {
   record_key: string;
-  identity: { site: string; source_hand_id: string } | null;
+  identity: {
+    namespace: string;
+    site: string;
+    source_hand_id: string;
+  } | null;
   played_at: string | null;
   lifecycle_status: PlayerHandLifecycleStatus;
   lifecycle_changed_at: string;
@@ -83,6 +87,8 @@ export interface PlayerHandDetail {
       hand_ordinal: number | null;
     };
     provenance: {
+      source_kind: "hand_history";
+      import_id: string;
       imported_at: string;
       adapter_id: string;
       adapter_version: string;
@@ -112,6 +118,7 @@ export interface PlayerHandDetail {
       }
     >;
     warnings: string[];
+    content_sha256: string;
   }>;
   conflicts: Array<{
     conflict_id: string;
@@ -139,6 +146,7 @@ export interface PlayerHandDetail {
     receipt_id: string;
     generation: number;
     deleted_at: string;
+    tombstone_sha256: string;
   } | null;
 }
 

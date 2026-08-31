@@ -36,6 +36,7 @@ class PlayerHandProjection(BaseModel):
 
 
 class PlayerHandIdentity(PlayerHandProjection):
+    namespace: str
     site: str
     source_hand_id: str
 
@@ -148,6 +149,7 @@ def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:
     )
     identity = (
         PlayerHandIdentity(
+            namespace=record.identity.namespace,
             site=record.identity.site,
             source_hand_id=record.identity.source_hand_id,
         )
