@@ -16,6 +16,7 @@ from app.player_main import build_player_server, configured_player_runtime
 from app.player_namespace import (
     DenyHostedPlayerNamespaceMiddleware,
     is_player_api_path,
+    is_player_api_scope,
 )
 from app.player_runtime import (
     PLAYER_AUTHORITY,
@@ -406,6 +407,50 @@ def test_player_namespace_matches_direct_and_encoded_paths(path: str) -> None:
     assert is_player_api_path(path)
 
 
+def test_player_namespace_uses_decoded_path_when_raw_utf8_is_malformed() -> None:
+    assert is_player_api_scope(
+        {
+            "type": "http",
+            "path": "/api/player/�",
+            "raw_path": b"/api%2Fplayer/%FF",
+        }
+    )
+
+
+def test_local_player_auth_denies_malformed_encoded_path_before_body(
+    tmp_path: Path,
+) -> None:
+    body_read = False
+    sent: list[dict[str, object]] = []
+    runtime = create_player_runtime(tmp_path)
+
+    async def receive() -> dict[str, object]:
+        nonlocal body_read
+        body_read = True
+        return {"type": "http.request", "body": b"player hand history"}
+
+    async def send(message) -> None:
+        sent.append(message)
+
+    asyncio.run(
+        runtime.app(
+            {
+                "type": "http",
+                "method": "GET",
+                "path": "/api/player/�",
+                "raw_path": b"/api%2Fplayer/%FF",
+                "headers": [(b"host", PLAYER_AUTHORITY.encode("ascii"))],
+                "client": ("127.0.0.1", 50000),
+            },
+            receive,
+            send,
+        )
+    )
+
+    assert not body_read
+    assert sent[0]["status"] == 401
+
+
 def test_hosted_player_denial_does_not_read_the_request_body() -> None:
     inner_called = False
     body_read = False
@@ -517,6 +562,39 @@ def test_final_hosted_composition_denies_before_observability_reads_body(
                 "method": "POST",
                 "path": "/api/player/imports",
                 "raw_path": b"/api%2Fplayer%2Fimports",
+                "headers": [],
+            },
+            receive,
+            send,
+        )
+    )
+
+    assert not body_read
+    assert sent[0]["status"] == 404
+
+
+def test_final_hosted_composition_denies_malformed_player_path_before_body(
+    tmp_path: Path,
+) -> None:
+    body_read = False
+    sent: list[dict[str, object]] = []
+    hosted_app = create_app(Settings(data_dir=tmp_path))
+
+    async def receive() -> dict[str, object]:
+        nonlocal body_read
+        body_read = True
+        return {"type": "http.request", "body": b"player hand history"}
+
+    async def send(message) -> None:
+        sent.append(message)
+
+    asyncio.run(
+        hosted_app(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/api/player/�",
+                "raw_path": b"/api%2Fplayer/%FF",
                 "headers": [],
             },
             receive,

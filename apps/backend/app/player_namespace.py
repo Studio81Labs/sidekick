@@ -40,6 +40,14 @@ def scope_request_path(scope: Scope) -> str:
     return str(scope.get("path", ""))
 
 
+def is_player_api_scope(scope: Scope) -> bool:
+    """Reserve the namespace when either raw or server-decoded path matches."""
+
+    return is_player_api_path(scope_request_path(scope)) or is_player_api_path(
+        str(scope.get("path", ""))
+    )
+
+
 class DenyHostedPlayerNamespaceMiddleware:
     """Keep player-only routes outside the broad hosted V1 application."""
 
@@ -58,8 +66,8 @@ class DenyHostedPlayerNamespaceMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
-        if scope["type"] not in {"http", "websocket"} or not is_player_api_path(
-            scope_request_path(scope)
+        if scope["type"] not in {"http", "websocket"} or not is_player_api_scope(
+            scope
         ):
             await self.app(scope, receive, send)
             return

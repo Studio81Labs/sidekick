@@ -19,8 +19,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.player_namespace import (
     PLAYER_API_PREFIX,
-    is_player_api_path,
-    scope_request_path,
+    is_player_api_scope,
 )
 
 
@@ -425,9 +424,7 @@ class PlayerApiSessionMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
-        if scope["type"] != "http" or not is_player_api_path(
-            scope_request_path(scope)
-        ):
+        if scope["type"] != "http" or not is_player_api_scope(scope):
             await self.app(scope, receive, send)
             return
         method = scope.get("method", "").upper()
