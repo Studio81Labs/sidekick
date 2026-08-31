@@ -280,11 +280,27 @@ a hand that cannot be extracted reports one rejection reason
 `incomplete_hand_state`, `incomplete_economics`, or `unreconciled_pot`)
 instead of failing silently. The amount to call and the current wager
 exclude dead antes; a seat's street and hand commitments include them.
+The state also carries the wager and full-increment yardstick from the hero's
+prior action, allowing rehydration to verify the short-all-in reopening verdict
+through the aggregate's shared rule without replaying the betting line.
 Decision points are `Decimal`-native and N-player rather than reusing
 `app/domain/poker`'s `float`-typed, single-opponent `CanonicalState`. No
 concept tag is attached until the versioned taxonomy lands in #417, and
 the atomic supersede/deactivate/rebuild lifecycle for this derived
 learning state lands with the local store in #432.
+
+The canonical `ImportedHandRecord` is the trust authority for active decision
+artifacts. `FileImportedHandStore.active_decisions` first selects the artifact
+whose filename matches the record's active revision and deletion generation,
+then re-runs `extract_hero_decision_points` against that freshly validated
+record and requires full equality. A structurally valid but canonically
+different payload raises `DecisionArtifactIntegrityError`; it is never served
+or silently rewritten. `get_decisions` is the lower-level retained-audit reader:
+it schema-validates historical bytes but makes no derivation claim for an
+inactive revision. Chronology and provenance intentionally remain on both the
+envelope and every point: the envelope preserves no-decision provenance, while
+each point stays a self-contained grading/audit unit. ADR 0049 records the
+boundary and the remaining structural choices.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, and benchmarks

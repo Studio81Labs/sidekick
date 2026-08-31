@@ -2349,6 +2349,13 @@ class HeroActionContext(ImportedHandModel):
     ``True`` whenever the aggregate holds no evidence that betting is
     closed, which is exactly when the validator would admit a raise.
 
+    ``acted_wager`` and ``reopen_increment`` are the two historical scalars
+    the aggregate used for that verdict. They are copied from the walk rather
+    than reconstructed from ``action_history`` so a persisted decision can
+    re-run the same shared reopening rule without introducing a second betting
+    implementation. ``None`` preserves the aggregate's explicit unknown/no
+    prior action semantics.
+
     ``action_history`` is the ordered betting line: every street from preflop
     through this one, with this street truncated before the hero's own action.
     Distinct lines reach identical pots, wagers, and commitments, so the chip
@@ -2379,6 +2386,8 @@ class HeroActionContext(ImportedHandModel):
     current_wager: NonNegativeDecimal
     amount_to_call: NonNegativeDecimal
     last_full_wager_increment: PositiveDecimal | None
+    acted_wager: NonNegativeDecimal | None
+    reopen_increment: PositiveDecimal | None
     raise_reopened: bool
     hero_stack_before_action: NonNegativeDecimal
     seats: list[SeatDecisionState]
@@ -4586,6 +4595,10 @@ def _hero_decision_contexts_for_extraction(
                             if increment_is_established
                             else None
                         ),
+                        acted_wager=acted_wager_by_player.get(action.actor_id),
+                        reopen_increment=reopen_increment_by_player.get(
+                            action.actor_id
+                        ),
                         raise_reopened=(
                             _sole_actionable_player_with_only_all_in_opponents(
                                 live_players,
@@ -4757,6 +4770,8 @@ def _hero_decision_context(
     committed_pot_before_street: Decimal,
     current_wager: Decimal,
     last_full_wager_increment: Decimal | None,
+    acted_wager: Decimal | None,
+    reopen_increment: Decimal | None,
     raise_reopened: bool,
     terminal_actors: dict[str, tuple[Literal["folded", "all_in"], StreetName]],
 ) -> HeroActionContext:
@@ -4829,6 +4844,8 @@ def _hero_decision_context(
         current_wager=current_wager,
         amount_to_call=amount_to_call,
         last_full_wager_increment=last_full_wager_increment,
+        acted_wager=acted_wager,
+        reopen_increment=reopen_increment,
         # Raising also takes chips the hero may not have: holding exactly the
         # call leaves an all-in call as the only way to put them in, so the
         # table may have reopened betting while this hero still cannot raise.

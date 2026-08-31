@@ -40,6 +40,7 @@ from app.domain.imported_hands.models import (
     StructuralPosition,
     TableSize,
     _CHIP_ACTIONS,
+    _raise_is_reopened,
     _sole_actionable_player_with_only_all_in_opponents,
     _stack_is_exhausted,
     _STREET_BOARD_CARDS,
@@ -169,10 +170,10 @@ class HeroDecisionState(ImportedHandModel):
     Offering a raise there grades against an action the hand validator itself
     would reject, or one the hero cannot afford.
 
-    Rehydration re-checks only the first and third of those; the short all-in
-    rule needs the increment that stood when the hero last acted, which this
-    state does not carry. See ``_validate_raise_legality`` for what that leaves
-    unguarded and for the fixture that reproduces it.
+    ``acted_wager`` and ``reopen_increment`` retain the historical inputs the
+    aggregate used for the short-all-in rule. Rehydration passes those scalars
+    through the aggregate's shared reopening helper instead of replaying the
+    betting line, so all three closure reasons remain independently checkable.
 
     ``last_full_wager_increment`` is the yardstick a minimum legal raise is
     measured against. ``None`` means the aggregate could not establish
@@ -203,6 +204,8 @@ class HeroDecisionState(ImportedHandModel):
     current_wager: NonNegativeDecimal
     amount_to_call: NonNegativeDecimal
     last_full_wager_increment: PositiveDecimal | None
+    acted_wager: NonNegativeDecimal | None
+    reopen_increment: PositiveDecimal | None
     raise_reopened: bool
     hero_stack_before_action: NonNegativeDecimal
     seats: list[SeatDecisionState]
@@ -270,57 +273,57 @@ class HeroDecisionState(ImportedHandModel):
         return hero
 
     def _validate_raise_legality(self) -> None:
-        """Re-check the raise verdict against the reasons this state can prove.
+        """Re-derive the raise verdict from the aggregate-owned rules.
 
-        **This check is incomplete by design, and a reader must not take it for
-        a total one.** The aggregate closes raising for three reasons. Two are
-        covered here, both evaluated through the aggregate's own rules rather
-        than a restatement of them:
-
-        * *hero affordability* -- the hero holds no chips beyond
-          ``amount_to_call``, so an all-in call is the most they can put in;
-        * *opponent actionability* -- the hero is the only actionable player and
-          every live opponent is all-in, so nobody could answer a raise, checked
-          with ``_sole_actionable_player_with_only_all_in_opponents``.
-
-        The third is **not covered**: an opponent's short all-in reopens betting
-        only if the wager has since grown by at least the full increment that
-        stood *when the hero last acted*, and this state publishes only the
-        increment standing *now*. Recovering the earlier one means replaying the
-        wager machinery over the betting line, which would be a second
-        implementation of rules the walk already owns, so nothing is checked
-        about it rather than approximating a verdict that could disagree.
-
-        A rehydrated point closed for that third reason alone therefore passes
-        this check even if its verdict was flipped. The fixture
-        ``short_all_in_with_live_caller_decision_record`` isolates exactly that
-        spot -- villain's short all-in does not reopen betting for the hero,
-        while villain-2 calls and stays actionable, so neither covered reason
-        applies -- and is pinned by
-        ``test_decision_state_cannot_rederive_a_short_all_in_raise_verdict``.
-        Closing the gap belongs with the stored shape in #432, and needs the
-        hero's own ``acted_wager`` and reopening increment published alongside
-        the verdict.
+        The historical wager inputs are scalars copied from the extraction
+        walk. Passing them through ``_raise_is_reopened`` keeps the short-all-in
+        rule in one implementation; the action history is evidence for grading,
+        not a second state machine for validation.
         """
 
-        if not self.raise_reopened:
-            return
         hero = self._hero_seat()
-        if hero.stack_before_action <= self.amount_to_call:
+        affordable = hero.stack_before_action > self.amount_to_call
+        sole_actionable = _sole_actionable_player_with_only_all_in_opponents(
+            {seat.player_id for seat in self.seats if seat.status != "folded"},
+            {seat.player_id for seat in self.seats if seat.status == "live"},
+        )
+        increment_reopened = _raise_is_reopened(
+            hero.player_id,
+            enforce_full_raise_increment=(
+                self.betting_limit in {"no_limit", "pot_limit"}
+            ),
+            current_wager=self.current_wager,
+            acted_wager_by_player={hero.player_id: self.acted_wager},
+            reopen_increment_by_player={hero.player_id: self.reopen_increment},
+        )
+        expected = (
+            affordable
+            and sole_actionable != hero.player_id
+            and increment_reopened
+        )
+        if self.raise_reopened == expected:
+            return
+        if self.raise_reopened and not affordable:
             raise ValueError(
                 f"raising is published open, but the hero's"
                 f" {hero.stack_before_action} behind cannot beat the"
                 f" {self.amount_to_call} call"
             )
-        sole_actionable = _sole_actionable_player_with_only_all_in_opponents(
-            {seat.player_id for seat in self.seats if seat.status != "folded"},
-            {seat.player_id for seat in self.seats if seat.status == "live"},
-        )
-        if sole_actionable == hero.player_id:
+        if self.raise_reopened and sole_actionable == hero.player_id:
             raise ValueError(
                 "raising is published open, but every live opponent is all-in"
                 " and no one could answer a raise"
             )
+        if self.raise_reopened:
+            raise ValueError(
+                "raising is published open, but the wager has not grown by"
+                " the full increment that stood when the hero last acted"
+            )
+        raise ValueError(
+            "raising is published closed, but affordability, opponent"
+            " actionability, and the prior full-wager increment all leave it"
+            " open"
+        )
 
     def _validate_seat_ring(self) -> None:
         """Require the seats to be one complete ring of the declared size.
@@ -951,6 +954,8 @@ def _decision_point(
             current_wager=context.current_wager,
             amount_to_call=context.amount_to_call,
             last_full_wager_increment=context.last_full_wager_increment,
+            acted_wager=context.acted_wager,
+            reopen_increment=context.reopen_increment,
             raise_reopened=context.raise_reopened,
             hero_stack_before_action=context.hero_stack_before_action,
             seats=list(context.seats),

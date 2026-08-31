@@ -62,6 +62,7 @@ from app.storage.cascade_journal import (
 from app.storage.imported_hand_store import (
     NO_CANONICAL_REVISION,
     ClosedCascadeError,
+    DecisionArtifactIntegrityError,
     DecisionArtifactRetentionError,
     FileImportedHandStore,
     ImportedHandCascade,
@@ -1671,10 +1672,10 @@ def test_coordinator_rejects_an_empty_imported_hand_lock_pool(tmp_path: Path) ->
 
 def test_active_decisions_ignores_a_superseded_revision(tmp_path: Path) -> None:
     store = FileImportedHandStore(tmp_path)
-    record = approved_record()  # active revision 1, generation 0
+    record = hero_fold_decision_record()  # active revision 1, generation 0
     key = imported_hand_record_key(record.identity)
     store.save(key, record)
-    extraction = extraction_for(record)
+    extraction = extract_hero_decision_points(record)
     store.save_decisions(key, extraction)
 
     active = store.active_decisions(key)
@@ -1683,7 +1684,7 @@ def test_active_decisions_ignores_a_superseded_revision(tmp_path: Path) -> None:
     # or altered a field would still pass an `is not None` check.
     assert active == extraction
 
-    store.save(key, reapproved_record())  # active revision 2
+    store.save(key, reapproved_record(identity=record.identity))  # active revision 2
     assert store.active_decisions(key) is None  # r1 artifact is stale
     assert store.list_decision_artifacts(key) == [
         (1, 0, "r1-g0.json")
@@ -1742,15 +1743,21 @@ def test_decision_artifacts_are_keyed_by_revision_and_generation(
 ) -> None:
     """r1-g0 and r1-g1 coexist and are independently retrievable."""
     store = FileImportedHandStore(tmp_path)
-    record = approved_record()
+    record = hero_fold_decision_record()
     key = imported_hand_record_key(record.identity)
     store.save(key, record)
-    extraction_g0 = extraction_for(record)
+    extraction_g0 = extract_hero_decision_points(record)
     store.save_decisions(key, extraction_g0)
 
-    record_g1 = approved_record(deletion_generation=1)
+    record_g1 = record.model_copy(
+        update={
+            "lifecycle": record.lifecycle.model_copy(
+                update={"deletion_generation": 1}
+            )
+        }
+    )
     store.save(key, record_g1)
-    extraction_g1 = extraction_for(record_g1)
+    extraction_g1 = extract_hero_decision_points(record_g1)
     store.save_decisions(key, extraction_g1)
 
     at_g0 = store.get_decisions(key, revision=1, generation=0)
@@ -1999,13 +2006,44 @@ def test_save_decisions_round_trips_a_real_decisions_outcome_losslessly(
     assert store.active_decisions(key) == extraction
 
 
+def test_active_decisions_refuses_a_self_valid_but_canonically_different_artifact(
+    tmp_path: Path,
+) -> None:
+    """Active learning state is re-derived, not trusted after schema parsing."""
+
+    store = FileImportedHandStore(tmp_path)
+    record = hero_fold_decision_record()
+    key = imported_hand_record_key(record.identity)
+    extraction = extract_hero_decision_points(record)
+    store.save(key, record)
+    store.save_decisions(key, extraction)
+
+    artifact_path = (
+        store.records_dir / key / "decisions" / "r1-g0.json"
+    )
+    payload = json.loads(artifact_path.read_text())
+    payload["decision_points"][0]["state"][
+        "last_full_wager_increment"
+    ] = "13"
+    artifact_path.write_text(json.dumps(payload))
+
+    # The payload remains a structurally valid historical audit snapshot, but
+    # it is not the state the canonical record derives for active learning.
+    assert store.get_decisions(key, revision=1, generation=0) is not None
+    with pytest.raises(
+        DecisionArtifactIntegrityError,
+        match="does not match the freshly derived canonical decision state",
+    ):
+        store.active_decisions(key)
+
+
 def test_begin_cascade_stages_a_record_and_its_decisions_as_one_unit(
     tmp_path: Path,
 ) -> None:
     store = FileImportedHandStore(tmp_path)
-    record = approved_record()
+    record = hero_fold_decision_record()
     key = imported_hand_record_key(record.identity)
-    extraction = extraction_for(record)
+    extraction = extract_hero_decision_points(record)
 
     with store.begin_cascade(key, operation="approve") as cascade:
         cascade.stage_record(record)
@@ -2205,10 +2243,10 @@ def test_save_decisions_publishes_through_the_journal(tmp_path: Path) -> None:
     literal to spend.
     """
     store = FileImportedHandStore(tmp_path)
-    record = approved_record()
+    record = hero_fold_decision_record()
     key = imported_hand_record_key(record.identity)
     store.save(key, record)
-    extraction = extraction_for(record)
+    extraction = extract_hero_decision_points(record)
     opened: list[tuple[str, list[str]]] = []
     real_begin = CascadeJournal.begin
 
