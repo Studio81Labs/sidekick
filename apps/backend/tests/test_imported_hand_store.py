@@ -915,6 +915,7 @@ def test_the_file_store_satisfies_every_call_the_repository_protocol_declares() 
         "find",
         "get",
         "has_interrupted_writes",
+        "list_decision_artifacts",
         "list_keys",
         "recover",
         "save",
@@ -936,15 +937,19 @@ def test_the_cascade_satisfies_every_call_the_handle_protocol_declares() -> None
     ``begin_cascade`` is only usable from the application layer if what
     it yields is declared as well: an undeclared ``stage_*`` method would
     be reached through an annotation that never mentioned it. The
-    Protocol deliberately declares less than ``ImportedHandCascade``
-    offers -- ``stage_decisions_delete`` belongs to a purge no
-    application-layer caller performs yet -- so this checks that every
-    declared member exists, not that the two sets are equal.
+    Protocol deliberately declares only the operations the application
+    lifecycle uses, including the exact-filename deletion permanent purge
+    requires, so this checks that every declared member exists without
+    requiring adapter-only implementation details.
     """
     declared = sorted(
         name for name in vars(ImportedHandCascadeHandle) if not name.startswith("_")
     )
-    assert declared == ["stage_decisions", "stage_record"]
+    assert declared == [
+        "stage_decisions",
+        "stage_decisions_delete",
+        "stage_record",
+    ]
 
     for name in declared:
         implementation = getattr(ImportedHandCascade, name, None)

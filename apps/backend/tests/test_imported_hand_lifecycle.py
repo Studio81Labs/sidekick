@@ -35,6 +35,7 @@ from app.application.imported_hand_ports import (
 )
 from app.domain.imported_hands import (
     CanonicalHandRevision,
+    DeletionReceipt,
     DeletionRequest,
     HandDecisionExtraction,
     ImportedHandLifecycle,
@@ -63,6 +64,18 @@ from test_imported_hand_store import sample_identity as bare_identity
 APPROVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 CLOSED_AT = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
 REAPPROVED_AT = datetime(2026, 9, 3, 12, 0, tzinfo=timezone.utc)
+PURGED_AT = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+
+
+def deletion_receipt(
+    *, generation: int = 1, deleted_at: datetime = PURGED_AT
+) -> DeletionReceipt:
+    return DeletionReceipt(
+        receipt_id=f"deletion-{generation}",
+        generation=generation,
+        deleted_at=deleted_at,
+        tombstone_sha256="b" * 64,
+    )
 
 
 def playable_pending_record() -> ImportedHandRecord:
@@ -284,6 +297,241 @@ def test_rejection_after_approval_deactivates_derived_decisions(
     assert store.active_decisions(key) is None
     assert artifact_keys(store, key) == [(1, 0)]  # audit retained
     assert store.get_decisions(key, revision=1, generation=0) is not None
+
+
+def test_deletion_request_deactivates_decisions_and_retains_audit(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    opened: list[str] = []
+
+    with recorded_cascades(opened):
+        pending = service.request_deletion(
+            key,
+            reason="player requested permanent deletion",
+            at=CLOSED_AT,
+        )
+
+    assert opened == ["request_deletion"]
+    assert pending.lifecycle.status == "deletion_pending"
+    assert pending.lifecycle.active_canonical_revision is None
+    assert pending.lifecycle.deletion_generation == 1
+    assert pending.lifecycle.changed_at == CLOSED_AT
+    assert pending.lifecycle.reason == "player requested permanent deletion"
+    assert pending.lifecycle.deletion_request == DeletionRequest(
+        generation=1,
+        requested_at=CLOSED_AT,
+    )
+    assert store.active_decisions(key) is None
+    assert store.list_decision_artifacts(key) == [(1, 0, "r1-g0.json")]
+    assert store.get(key) == pending
+
+
+def test_retrying_a_published_deletion_request_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    first = service.request_deletion(
+        key,
+        reason="player requested permanent deletion",
+        at=CLOSED_AT,
+    )
+    opened: list[str] = []
+
+    with recorded_cascades(opened):
+        retried = service.request_deletion(
+            key,
+            reason="a retry must not replace retained audit",
+            at=REAPPROVED_AT,
+        )
+
+    assert opened == []
+    assert retried == first
+    assert retried.lifecycle.deletion_generation == 1
+    assert retried.lifecycle.changed_at == CLOSED_AT
+    assert store.get(key) == first
+
+
+def test_purge_replaces_the_hand_with_a_receipt_and_deletes_exact_artifacts(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    # Prove the application boundary uses the exact names returned by storage,
+    # rather than reconstructing just the canonical spelling from (1, 0).
+    extraction = store.get_decisions(key, revision=1, generation=0)
+    assert extraction is not None
+    decisions_dir = store.records_dir / key / "decisions"
+    (decisions_dir / "r01-g0.json").write_bytes(
+        extraction.model_dump_json(indent=2).encode("utf-8")
+    )
+    service.request_deletion(
+        key,
+        reason="player requested permanent deletion",
+        at=CLOSED_AT,
+    )
+    receipt = deletion_receipt()
+    opened: list[str] = []
+
+    with recorded_cascades(opened):
+        deleted = service.purge(key, receipt=receipt)
+
+    assert opened == ["purge"]
+    assert deleted.identity is None
+    assert deleted.raw_sources == []
+    assert deleted.detections == []
+    assert deleted.conflicts == []
+    assert deleted.canonical_revisions == []
+    assert deleted.lifecycle.status == "deleted"
+    assert deleted.lifecycle.deletion_generation == 1
+    assert deleted.lifecycle.changed_at == PURGED_AT
+    assert deleted.deletion_receipt == receipt
+    assert store.get(key) == deleted
+    assert store.active_decisions(key) is None
+    assert store.list_decision_artifacts(key) == []
+
+
+def test_retrying_a_completed_purge_with_its_receipt_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.request_deletion(
+        key,
+        reason="player requested permanent deletion",
+        at=CLOSED_AT,
+    )
+    receipt = deletion_receipt()
+    first = service.purge(key, receipt=receipt)
+    opened: list[str] = []
+
+    with recorded_cascades(opened):
+        retried = service.purge(key, receipt=receipt)
+
+    assert opened == []
+    assert retried == first
+    assert store.get(key) == first
+
+
+def test_purge_requires_matching_pending_generation_and_chronology(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.request_deletion(
+        key,
+        reason="player requested permanent deletion",
+        at=CLOSED_AT,
+    )
+    before = store.get(key)
+
+    with pytest.raises(ValidationError, match="generation"):
+        service.purge(key, receipt=deletion_receipt(generation=2))
+    with pytest.raises(LifecycleCascadeError, match="backwards"):
+        service.purge(
+            key,
+            receipt=deletion_receipt(
+                deleted_at=CLOSED_AT - timedelta(seconds=1)
+            ),
+        )
+
+    assert store.get(key) == before
+    assert store.get(key).lifecycle.status == "deletion_pending"
+
+
+def test_purge_refuses_a_hand_that_was_not_logically_deactivated(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    before = store.get(key)
+    opened: list[str] = []
+
+    with recorded_cascades(opened):
+        with pytest.raises(LifecycleCascadeError, match="logical deactivation"):
+            service.purge(key, receipt=deletion_receipt())
+
+    assert opened == []
+    assert store.get(key) == before
+    assert store.active_decisions(key) is not None
+
+
+def test_failed_purge_staging_leaves_the_complete_pending_hand_and_audit(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    pending = service.request_deletion(
+        key,
+        reason="player requested permanent deletion",
+        at=CLOSED_AT,
+    )
+
+    with mock.patch.object(
+        ImportedHandCascade,
+        "stage_decisions_delete",
+        side_effect=OSError("simulated cleanup failure"),
+    ):
+        with pytest.raises(OSError, match="cleanup failure"):
+            service.purge(key, receipt=deletion_receipt())
+
+    assert store.get(key) == pending
+    assert store.get(key).lifecycle.status == "deletion_pending"
+    assert store.active_decisions(key) is None
+    assert store.list_decision_artifacts(key) == [(1, 0, "r1-g0.json")]
+
+
+def test_interrupted_purge_stays_ineligible_and_recovery_finishes_cleanup(
+    tmp_path: Path,
+) -> None:
+    service, store, key = lifecycle_fixture(tmp_path)
+    service.approve(key, revision_one())
+    service.request_deletion(
+        key,
+        reason="player requested permanent deletion",
+        at=CLOSED_AT,
+    )
+    fail_once = [True]
+    real_commit_delete = CascadeJournal._commit_delete
+
+    def flaky_delete(
+        journal: CascadeJournal, record_key: str, relative: Any
+    ) -> None:
+        if fail_once:
+            fail_once.clear()
+            raise OSError("simulated disk failure during artifact cleanup")
+        real_commit_delete(journal, record_key, relative)
+
+    with mock.patch.object(CascadeJournal, "_commit_delete", flaky_delete):
+        with pytest.raises(OSError, match="artifact cleanup"):
+            service.purge(key, receipt=deletion_receipt())
+
+    # Content publishes before deletion markers. Even in that torn state the
+    # record is already a tombstone, so no retained artifact can become active.
+    assert store.get(key).lifecycle.status == "deleted"
+    assert store.active_decisions(key) is None
+    assert store.list_decision_artifacts(key) == [(1, 0, "r1-g0.json")]
+
+    with pytest.raises(PendingCascadeError, match="restart"):
+        service.purge(key, receipt=deletion_receipt())
+
+    # The stranded cascade closes only its own key. A different imported hand
+    # can still be persisted and approved while cleanup waits for recovery.
+    other_identity = bare_identity(hand_ordinal=2)
+    other_key = imported_hand_record_key(other_identity)
+    store.save(other_key, bare_pending_record(other_identity))
+    other = service.approve(other_key, bare_revision_one(other_identity))
+    assert other.lifecycle.status == "active"
+    assert store.active_decisions(other_key) is not None
+
+    report = store.recover()
+
+    assert len(report.completed) == 1
+    assert report.quarantined == () and report.failed == ()
+    assert store.get(key).lifecycle.status == "deleted"
+    assert store.list_decision_artifacts(key) == []
+    assert store.get(other_key) == other
+    assert store.active_decisions(other_key) is not None
 
 
 def test_never_publishes_a_record_whose_active_revision_has_no_decisions(
@@ -595,7 +843,7 @@ def test_a_still_unextractable_reapproval_supersedes_without_deleting(
 ) -> None:
     """Reapproving a hand that still will not extract keeps both verdicts.
 
-    Superseded artifacts are retained for audit; only Task 6's purge may
+    Superseded artifacts are retained for audit; only permanent purge may
     remove one. Two rejections that both carry no canonical revision must
     therefore land under different names, which is what the store's
     fallback to the *cascade's own* record gives them.
@@ -628,13 +876,11 @@ def test_a_still_unextractable_reapproval_supersedes_without_deleting(
 class PortOnlyCascade:
     """Exposes exactly the members ``ImportedHandCascadeHandle`` declares.
 
-    Restricting the repository alone leaves a hole: ``begin_cascade``
-    hands back the adapter's own concrete cascade, so every method the
-    port never declared -- ``stage_decisions_delete`` above all -- is
-    reachable from inside the ``with`` block through an annotation that
-    is never evaluated under ``from __future__ import annotations``. The
-    handle is where Task 6's purge will operate, so it is where the
-    boundary has to actually hold.
+    Restricting the repository alone leaves a hole: ``begin_cascade`` hands
+    back the adapter's own concrete cascade, so every method the port never
+    declared remains reachable through an annotation that is never evaluated
+    under ``from __future__ import annotations``. The handle is where purge
+    stages exact artifact deletion, so its declared boundary has to hold too.
     """
 
     def __init__(self, inner: object) -> None:
@@ -702,6 +948,29 @@ def test_the_service_needs_only_what_the_repository_port_declares(
     assert sorted(artifact_keys(store, key)) == [(1, 0), (2, 0)]
 
 
+def test_deletion_and_purge_need_only_what_the_repository_port_declares(
+    tmp_path: Path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    pending = playable_pending_record()
+    assert pending.identity is not None
+    key = imported_hand_record_key(pending.identity)
+    store.save(key, pending)
+    service = port_only_service(store)
+
+    service.approve(key, revision_one())
+    service.request_deletion(
+        key,
+        reason="player requested permanent deletion",
+        at=CLOSED_AT,
+    )
+    deleted = service.purge(key, receipt=deletion_receipt())
+
+    assert deleted.lifecycle.status == "deleted"
+    assert store.get(key) == deleted
+    assert store.list_decision_artifacts(key) == []
+
+
 def test_rejection_and_an_unextractable_hand_also_stay_within_the_port(
     tmp_path: Path,
 ) -> None:
@@ -731,16 +1000,10 @@ def test_rejection_and_an_unextractable_hand_also_stay_within_the_port(
     assert retained.outcome == "not_extractable"
 
 
-def test_the_cascade_the_port_yields_hides_the_purge_only_stage(
+def test_the_cascade_the_port_yields_exposes_the_purge_only_stage(
     tmp_path: Path,
 ) -> None:
-    """What the wrapper restricts, asserted rather than assumed.
-
-    Without this, ``PortOnlyRepository`` could stop restricting the
-    handle -- by yielding the concrete cascade again -- and every test
-    above would stay green, because none of them reaches for a member
-    the port does not declare.
-    """
+    """Permanent purge reaches deletion only through the declared port."""
     store = FileImportedHandStore(tmp_path)
     record = playable_pending_record()
     assert record.identity is not None
@@ -750,8 +1013,7 @@ def test_the_cascade_the_port_yields_hides_the_purge_only_stage(
 
     with repository.begin_cascade(key, operation="save") as cascade:
         assert not isinstance(cascade, ImportedHandCascade)
-        with pytest.raises(AttributeError):
-            cascade.stage_decisions_delete("r1-g0.json")
+        cascade.stage_decisions_delete("r1-g0.json")
         cascade.stage_record(record)
 
     assert store.get(key) == record

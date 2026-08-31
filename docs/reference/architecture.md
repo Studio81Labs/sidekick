@@ -244,8 +244,9 @@ lock, so it is skipped entirely when the journal holds nothing to recover - see
 `docs/process/deployment.md`.
 
 `app/application/imported_hand_lifecycle.py` is the single boundary every
-lifecycle transition crosses (approve, reapprove, withdraw, reject), publishing
-each record's new state and the artifacts derived from it in one cascade.
+lifecycle transition crosses (approve, reapprove, withdraw, reject, deletion
+request, permanent purge), publishing each record's new state and the artifacts
+derived from it in one cascade.
 Reapproval extraction and validation happen before the cascade opens. A failure
 there rejects the attempted correction without superseding the prior approved
 revision, so its matching decision artifact remains current and the caller can
@@ -257,6 +258,20 @@ hand to newer lifecycle writes until replay finishes. Structurally unusable
 intent is instead quarantined with its evidence for explicit repair; the
 matching-revision read gate continues to prevent mismatched learning artifacts
 from being served (ADR 0048).
+
+A permanent-deletion request advances the deletion generation and atomically
+publishes `deletion_pending` with no active canonical pointer. The source,
+canonical revisions, conflicts, and superseded decision artifacts remain
+available for audit while cleanup is pending, but both lifecycle status and
+generation make them immediately learning-ineligible. Purge accepts a deletion
+receipt only for that pending generation, replaces the retained record with a
+non-sensitive tombstone, and deletes every exact decision-artifact filename the
+store reports in the same cascade. A failure before durable intent leaves the
+complete pending hand intact; after durable intent, the tombstone is already
+inactive and startup recovery rolls any remaining artifact deletions forward.
+Retries of the published request or completed purge are idempotent. Older
+backups remain subject to `classify_restore`, so they cannot reactivate a
+purged generation without an explicit authorized reimport.
 
 What is deliberately not wired yet: there are no V2 routes and no HTTP surface,
 so none of this is reachable by a client, and the hosted screenshot workflow is
@@ -285,9 +300,9 @@ prior action, allowing rehydration to verify the short-all-in reopening verdict
 through the aggregate's shared rule without replaying the betting line.
 Decision points are `Decimal`-native and N-player rather than reusing
 `app/domain/poker`'s `float`-typed, single-opponent `CanonicalState`. No
-concept tag is attached until the versioned taxonomy lands in #417, and
-the atomic supersede/deactivate/rebuild lifecycle for this derived
-learning state lands with the local store in #432.
+concept tag is attached until the versioned taxonomy lands in #417. The
+application lifecycle boundary atomically supersedes or deactivates current
+decision artifacts and permanently purges them with their imported hand.
 
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact
