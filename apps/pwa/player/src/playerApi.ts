@@ -44,6 +44,15 @@ export class PlayerApiError extends Error {
   }
 }
 
+export class PlayerRestoreAmbiguousError extends Error {
+  constructor() {
+    super(
+      "The runtime accepted the restore upload, but its completion response was incomplete. Local data may already have changed. Review the refreshed storage totals and export a backup before deciding whether to retry.",
+    );
+    this.name = "PlayerRestoreAmbiguousError";
+  }
+}
+
 function takeLaunchTicket(): string | null {
   const fragment = new URLSearchParams(window.location.hash.slice(1));
   const ticket = fragment.get("ticket");
@@ -189,7 +198,32 @@ export async function restorePlayerBackup(
       body: backup,
     },
   );
-  return (await response.json()) as PlayerBackupRestoreResult;
+  try {
+    const payload = (await response.json()) as Record<string, unknown>;
+    const integerFields = [
+      "imported_records",
+      "reused_records",
+      "skipped_stale_records",
+      "imported_decision_artifacts",
+      "reused_decision_artifacts",
+      "removed_decision_artifacts",
+      "total_records",
+    ] as const;
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      integerFields.some(
+        (field) =>
+          !Number.isInteger(payload[field]) || Number(payload[field]) < 0,
+      )
+    ) {
+      throw new PlayerRestoreAmbiguousError();
+    }
+    return payload as unknown as PlayerBackupRestoreResult;
+  } catch (error) {
+    if (error instanceof PlayerRestoreAmbiguousError) throw error;
+    throw new PlayerRestoreAmbiguousError();
+  }
 }
 
 export async function revokePlayerSession(

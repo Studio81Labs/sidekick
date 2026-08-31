@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   PlayerApiError,
+  PlayerRestoreAmbiguousError,
   type PlayerBackupRestoreResult,
   type PlayerCredentials,
   type PlayerStorageStatus,
@@ -130,7 +131,21 @@ export default function PlayerApp() {
         );
       }
     } catch (reason) {
-      handleRequestError(reason);
+      if (reason instanceof PlayerRestoreAmbiguousError) {
+        setSelectedBackup(null);
+        if (backupInput.current) backupInput.current.value = "";
+        try {
+          setStorage(await loadPlayerStorage(credentials));
+          setError(reason.message);
+        } catch (refreshError) {
+          handleRequestError(
+            refreshError,
+            `${reason.message} Storage status could not be refreshed.`,
+          );
+        }
+      } else {
+        handleRequestError(reason);
+      }
     } finally {
       setBusy(null);
     }
