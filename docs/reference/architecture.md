@@ -302,9 +302,11 @@ restore to finish rather than presenting a stale or intermediate count; if a
 stable refresh fails, stale status and backup controls are hidden until restart.
 A restore storage failure remains unresolved even when returned explicitly as
 `503`, because cascade intent or partial publication may already exist. The
-runtime revokes the active session and the player clears its credentials,
-status, and restore input, so a reload cannot re-enable work before restart
-recovery. Export and retry remain unavailable until the local runtime restarts.
+runtime invalidates every active session and pending launch ticket, refuses new
+tickets, and rechecks storage/export authorization after the restore gate. The
+player clears its credentials, status, and restore input, so no browser can
+re-enable work before restart recovery. Export and retry remain unavailable
+until the local runtime restarts.
 
 `app/application/imported_hand_lifecycle.py` is the single boundary every
 lifecycle transition crosses (approve, reapprove, withdraw, reject, deletion

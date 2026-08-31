@@ -19,7 +19,7 @@ from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
 from app.player_main import build_player_server, configured_player_runtime
-from app.player_backup import PlayerBackupRestoreResult
+from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
 from app.player_namespace import (
     DenyHostedPlayerNamespaceMiddleware,
     is_player_api_path,
@@ -526,6 +526,96 @@ async def test_player_storage_waits_without_exhausting_restore_workers(
         response.json()["imported_hand_record_count"] == 0
         for response in storage_responses
     )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_restore_storage_failure_rejects_requests_already_waiting_on_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    anyio_backend: str,
+) -> None:
+    assert anyio_backend == "asyncio"
+    runtime = _create_player_runtime(tmp_path)
+    upload_started = asyncio.Event()
+    allow_upload_to_finish = asyncio.Event()
+
+    def fail_after_partial_publication(*_args: object, **_kwargs: object) -> None:
+        raise PlayerBackupStorageError(
+            "Player backup restore did not complete; restart the local runtime "
+            "before retrying so journal recovery can finish"
+        )
+
+    monkeypatch.setattr(
+        "app.player_runtime.restore_player_backup",
+        fail_after_partial_publication,
+    )
+
+    async def slow_upload():
+        upload_started.set()
+        yield b"restore "
+        await allow_upload_to_finish.wait()
+        yield b"archive"
+
+    transport = httpx.ASGITransport(
+        app=runtime.app,
+        client=("127.0.0.1", 50000),
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url=PLAYER_ORIGIN,
+    ) as client:
+        ticket = runtime.issue_launch_url().split("#ticket=", 1)[1]
+        session_response = await client.post(
+            "/api/player/session",
+            headers={
+                "Authorization": f"Bearer {ticket}",
+                "Origin": PLAYER_ORIGIN,
+            },
+        )
+        assert session_response.status_code == 200
+        session = session_response.json()
+        authorization = f"Bearer {session['session_token']}"
+        restore_task = asyncio.create_task(
+            client.post(
+                "/api/player/backups/restore",
+                content=slow_upload(),
+                headers={
+                    "Authorization": authorization,
+                    "Origin": PLAYER_ORIGIN,
+                    "X-Poker-CSRF-Token": str(session["csrf_token"]),
+                    "Content-Type": "application/zip",
+                },
+            )
+        )
+        await asyncio.wait_for(upload_started.wait(), 2)
+
+        storage_task = asyncio.create_task(
+            client.get(
+                "/api/player/storage",
+                headers={"Authorization": authorization},
+            )
+        )
+        export_task = asyncio.create_task(
+            client.get(
+                "/api/player/backups/export",
+                headers={"Authorization": authorization},
+            )
+        )
+        await asyncio.sleep(0.1)
+        assert not storage_task.done()
+        assert not export_task.done()
+
+        allow_upload_to_finish.set()
+        restore_response = await asyncio.wait_for(restore_task, 5)
+        storage_response, export_response = await asyncio.wait_for(
+            asyncio.gather(storage_task, export_task),
+            5,
+        )
+
+    assert restore_response.status_code == 503
+    assert storage_response.status_code == 401
+    assert export_response.status_code == 401
 
 
 def test_player_storage_reports_when_a_stable_snapshot_times_out(

@@ -248,6 +248,7 @@ class PlayerSessionAuthority:
         self._session_ttl_seconds = session_ttl_seconds
         self._bootstrap_tickets: dict[bytes, float] = {}
         self._sessions: dict[bytes, tuple[bytes, float]] = {}
+        self._disabled_until_restart = False
         self._lock = Lock()
 
     def _digest(self, kind: str, token: str) -> bytes:
@@ -260,6 +261,10 @@ class PlayerSessionAuthority:
     def issue_bootstrap_ticket(self) -> str:
         ticket = secrets.token_urlsafe(32)
         with self._lock:
+            if self._disabled_until_restart:
+                raise PlayerCredentialError(
+                    "Player recovery requires a local runtime restart"
+                )
             self._bootstrap_tickets[self._digest("bootstrap", ticket)] = (
                 self._clock() + self._bootstrap_ttl_seconds
             )
@@ -268,6 +273,8 @@ class PlayerSessionAuthority:
     def exchange_bootstrap_ticket(self, ticket: str) -> PlayerSession | None:
         now = self._clock()
         with self._lock:
+            if self._disabled_until_restart:
+                return None
             expires_at = self._bootstrap_tickets.pop(
                 self._digest("bootstrap", ticket),
                 None,
@@ -289,6 +296,8 @@ class PlayerSessionAuthority:
     def authorize(self, session_token: str) -> bool:
         digest = self._digest("session", session_token)
         with self._lock:
+            if self._disabled_until_restart:
+                return False
             session = self._sessions.get(digest)
             if session is None:
                 return False
@@ -301,6 +310,8 @@ class PlayerSessionAuthority:
     def authorize_mutation(self, session_token: str, csrf_token: str) -> bool:
         session_digest = self._digest("session", session_token)
         with self._lock:
+            if self._disabled_until_restart:
+                return False
             session = self._sessions.get(session_digest)
             if session is None:
                 return False
@@ -319,6 +330,12 @@ class PlayerSessionAuthority:
                 self._digest("session", session_token),
                 None,
             ) is not None
+
+    def disable_until_restart(self) -> None:
+        with self._lock:
+            self._disabled_until_restart = True
+            self._bootstrap_tickets.clear()
+            self._sessions.clear()
 
 
 def _header_values(scope: Scope, name: bytes) -> list[str]:
@@ -578,7 +595,7 @@ def create_player_runtime(
         load_or_create_installation_secret(workspace.data_dir),
         clock=clock,
     )
-    restore_status_gate = asyncio.Lock()
+    restore_access_gate = asyncio.Lock()
     restore_in_progress = False
     app = FastAPI(
         title="Poker Hero Local Player Runtime",
@@ -625,10 +642,12 @@ def create_player_runtime(
         return JSONResponse({"status": "ok", "runtime": "local-player"})
 
     @app.get(f"{PLAYER_API_PREFIX}/storage")
-    async def player_storage() -> JSONResponse:
+    async def player_storage(request: Request) -> JSONResponse:
         # Wait without occupying the shared AnyIO thread pool: the restore
         # needs a worker after it finishes reading and parsing the upload.
-        async with restore_status_gate:
+        async with restore_access_gate:
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
             try:
                 payload = await run_in_threadpool(
                     workspace.status_payload,
@@ -639,18 +658,21 @@ def create_player_runtime(
         return JSONResponse(payload)
 
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
-    async def export_player_backup() -> Response:
-        try:
-            archive_file = await run_in_threadpool(
-                build_player_backup_archive,
-                workspace,
-                max_archive_bytes=max_player_backup_bytes,
-                lock_timeout_seconds=backup_lock_timeout_seconds,
-            )
-        except PlayerBackupError as exc:
-            return _json_denial(exc.status_code, str(exc))
-        except DataLockTimeoutError as exc:
-            return _json_denial(409, str(exc))
+    async def export_player_backup(request: Request) -> Response:
+        async with restore_access_gate:
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                archive_file = await run_in_threadpool(
+                    build_player_backup_archive,
+                    workspace,
+                    max_archive_bytes=max_player_backup_bytes,
+                    lock_timeout_seconds=backup_lock_timeout_seconds,
+                )
+            except PlayerBackupError as exc:
+                return _json_denial(exc.status_code, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return StreamingResponse(
             stream_player_backup(archive_file),
@@ -673,7 +695,7 @@ def create_player_runtime(
             return _json_denial(409, "Another player restore is already in progress")
         restore_in_progress = True
         try:
-            async with restore_status_gate:
+            async with restore_access_gate:
                 media_type = request.headers.get("content-type", "").partition(";")[0]
                 if media_type.strip().lower() not in {
                     "application/zip",
@@ -694,10 +716,10 @@ def create_player_runtime(
                     )
                 except PlayerBackupStorageError as exc:
                     # Storage failures can follow durable journal intent or
-                    # partial publication. Revoke the browser session so a
-                    # reload cannot resume ordinary work before process-start
+                    # partial publication. Disable every session and ticket so
+                    # no browser can resume ordinary work before process-start
                     # recovery has run.
-                    sessions.revoke(request.state.player_session_token)
+                    sessions.disable_until_restart()
                     return _json_denial(exc.status_code, str(exc))
                 except PlayerBackupError as exc:
                     return _json_denial(exc.status_code, str(exc))
