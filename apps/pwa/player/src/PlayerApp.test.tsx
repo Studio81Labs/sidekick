@@ -288,7 +288,47 @@ describe("PlayerApp", () => {
 
     expect(
       await screen.findByText(
-        /The runtime accepted the restore upload, but its completion response was incomplete/,
+        /The restore may have committed, but the browser did not receive a complete response/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("5", { selector: "dd" })).toBeInTheDocument();
+    expect(backupInput.value).toBe("");
+    expect(
+      screen.getByRole("button", { name: "Restore backup" }),
+    ).toBeDisabled();
+    expect(screen.queryByText("Restore committed.")).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/player/storage");
+  });
+
+  it("treats a restore transport rejection as ambiguous", async () => {
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...readyStorage, imported_hand_record_count: 5 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    const backupInput = screen.getByLabelText(
+      "Player backup ZIP",
+    ) as HTMLInputElement;
+    await user.upload(
+      backupInput,
+      new File(["backup"], "player-backup.zip", {
+        type: "application/zip",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Restore backup" }));
+
+    expect(
+      await screen.findByText(
+        /The restore may have committed, but the browser did not receive a complete response/,
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("5", { selector: "dd" })).toBeInTheDocument();

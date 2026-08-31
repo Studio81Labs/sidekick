@@ -47,7 +47,7 @@ export class PlayerApiError extends Error {
 export class PlayerRestoreAmbiguousError extends Error {
   constructor() {
     super(
-      "The runtime accepted the restore upload, but its completion response was incomplete. Local data may already have changed. Review the refreshed storage totals and export a backup before deciding whether to retry.",
+      "The restore may have committed, but the browser did not receive a complete response. Local data may already have changed. Review the refreshed storage totals and export a backup before deciding whether to retry.",
     );
     this.name = "PlayerRestoreAmbiguousError";
   }
@@ -189,15 +189,17 @@ export async function restorePlayerBackup(
   credentials: PlayerCredentials,
   backup: File,
 ): Promise<PlayerBackupRestoreResult> {
-  const response = await playerRequest(
-    credentials,
-    "/api/player/backups/restore",
-    {
+  let response: Response;
+  try {
+    response = await playerRequest(credentials, "/api/player/backups/restore", {
       method: "POST",
       headers: { "Content-Type": "application/zip" },
       body: backup,
-    },
-  );
+    });
+  } catch (error) {
+    if (error instanceof PlayerApiError) throw error;
+    throw new PlayerRestoreAmbiguousError();
+  }
   try {
     const payload = (await response.json()) as Record<string, unknown>;
     const integerFields = [
