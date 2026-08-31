@@ -85,6 +85,14 @@ OriginBasis = Literal[
     "user_confirmed",
     "unresolved",
 ]
+HeroDecisionGateRejection = Literal[
+    "not_active",
+    "unresolved_conflict",
+    "invalid_revision_lineage",
+    "incomplete_hand_state",
+    "incomplete_economics",
+    "unreconciled_pot",
+]
 LifecycleStatus = Literal[
     "pending_review",
     "active",
@@ -2639,6 +2647,7 @@ class ImportedHandRecord(ImportedHandModel):
     def _active_extraction_context(
         self,
     ) -> tuple[
+        Self,
         ImportedHandState,
         DetectedImportedHand,
         CanonicalHandRevision,
@@ -2675,12 +2684,122 @@ class ImportedHandRecord(ImportedHandModel):
         )
         if active_detection is None:
             return None
-        return active_revision.state, active_detection, active_revision
+        return snapshot, active_revision.state, active_detection, active_revision
 
     @property
     def active_state_for_extraction(self) -> ImportedHandState | None:
         context = self._active_extraction_context()
-        return context[0] if context is not None else None
+        return context[1] if context is not None else None
+
+    def _active_hero_decision_context_gate(
+        self,
+        *,
+        require_complete_extraction: bool,
+    ) -> tuple[
+        HeroDecisionGateRejection | None,
+        Self | None,
+        ImportedHandState | None,
+        list[HeroActionContext],
+    ]:
+        """Resolve the shared extraction gate from one validated snapshot.
+
+        The aggregate property accepts unresolved import conflicts and the
+        walk's resolved prefix, preserving its historical list-only contract.
+        Decision extraction opts into both stricter checks so conflicting
+        evidence or an unresolved voluntary action rejects the hand instead of
+        becoming learning evidence or an indistinguishable ``no_decision``.
+        The rejection order is part of the decision-extraction contract.
+        """
+
+        context = self._active_extraction_context()
+        try:
+            learning_eligible = self.lifecycle.learning_eligible
+            has_unresolved_conflict = any(
+                conflict.status not in {
+                    "resolved_keep_active",
+                    "resolved_use_source",
+                }
+                for conflict in self.conflicts
+            )
+        except (
+            AttributeError,
+            IndexError,
+            KeyError,
+            PydanticSerializationError,
+            TypeError,
+            ValidationError,
+            ValueError,
+        ):
+            return "invalid_revision_lineage", None, None, []
+        if not learning_eligible:
+            return "not_active", None, None, []
+        if require_complete_extraction and has_unresolved_conflict:
+            return "unresolved_conflict", None, None, []
+        if context is None:
+            return "invalid_revision_lineage", None, None, []
+
+        snapshot, state, detection, revision = context
+        if state.hero_player_id is None:
+            return "incomplete_hand_state", None, None, []
+        if not _terminal_hand_ready_for_extraction(state):
+            return "incomplete_hand_state", None, None, []
+        if not _blind_structure_ready_for_extraction(state.game.blinds):
+            return "incomplete_hand_state", None, None, []
+        if state.game.betting_limit not in {"no_limit", "pot_limit"}:
+            return "incomplete_hand_state", None, None, []
+        hero = next(
+            (
+                seat
+                for seat in state.seats
+                if seat.player_id == state.hero_player_id
+            ),
+            None,
+        )
+        if hero is None or hero.participation != "dealt_in":
+            return "incomplete_hand_state", None, None, []
+        if any(seat.participation == "unknown" for seat in state.seats):
+            return "incomplete_hand_state", None, None, []
+        if any(
+            seat.participation == "dealt_in" and seat.starting_stack is None
+            for seat in state.seats
+        ):
+            return "incomplete_hand_state", None, None, []
+        positions = _known_structural_positions(state.seats, state.button_seat)
+        if positions is None:
+            return "incomplete_hand_state", None, None, []
+
+        contexts = _hero_decision_contexts_for_extraction(
+            state,
+            positions=positions,
+        )
+        if require_complete_extraction:
+            graded = [
+                action
+                for street in state.streets
+                for action in street.actions
+                if action.actor_id == state.hero_player_id
+                and action.is_player_decision
+            ]
+            if len(contexts) != len(graded):
+                return "incomplete_hand_state", None, None, []
+
+        dealt_in_starting_stacks = {
+            seat.player_id: seat.starting_stack
+            for seat in state.seats
+            if seat.participation == "dealt_in"
+        }
+        if not _economics_ready_for_extraction(
+            state.game.economics,
+            dealt_in_starting_stacks=dealt_in_starting_stacks,
+        ) or not _cash_rake_consistent_for_extraction(state):
+            return "incomplete_economics", None, None, []
+        if not _pot_reconciliation_ready_for_extraction(
+            state,
+            detection=detection,
+            revision=revision,
+        ):
+            return "unreconciled_pot", None, None, []
+        return None, snapshot, state, contexts
 
     @property
     def active_hero_decision_contexts(self) -> list[HeroActionContext]:
@@ -2694,51 +2813,10 @@ class ImportedHandRecord(ImportedHandModel):
         approved chip representation before extraction.
         """
 
-        context = self._active_extraction_context()
-        if context is None:
-            return []
-        state, detection, revision = context
-        if state.hero_player_id is None:
-            return []
-        if not _terminal_hand_ready_for_extraction(state):
-            return []
-        if not _blind_structure_ready_for_extraction(state.game.blinds):
-            return []
-        if state.game.betting_limit not in {"no_limit", "pot_limit"}:
-            return []
-        dealt_in_starting_stacks = {
-            seat.player_id: seat.starting_stack
-            for seat in state.seats
-            if seat.participation == "dealt_in"
-        }
-        if not _economics_ready_for_extraction(
-            state.game.economics,
-            dealt_in_starting_stacks=dealt_in_starting_stacks,
-        ):
-            return []
-        if not _pot_reconciliation_ready_for_extraction(
-            state,
-            detection=detection,
-            revision=revision,
-        ):
-            return []
-        if not _cash_rake_consistent_for_extraction(state):
-            return []
-        hero = next(
-            seat for seat in state.seats if seat.player_id == state.hero_player_id
+        rejection, _, _, contexts = self._active_hero_decision_context_gate(
+            require_complete_extraction=False,
         )
-        if hero.participation != "dealt_in":
-            return []
-        if any(seat.participation == "unknown" for seat in state.seats):
-            return []
-        if any(
-            seat.participation == "dealt_in" and seat.starting_stack is None
-            for seat in state.seats
-        ):
-            return []
-        if _known_action_orders(state.seats, state.button_seat) is None:
-            return []
-        return _hero_decision_contexts_for_extraction(state)
+        return contexts if rejection is None else []
 
     @property
     def active_hero_actions_for_extraction(self) -> list[ImportedAction]:
@@ -2758,7 +2836,7 @@ class ImportedHandRecord(ImportedHandModel):
         context = self._active_extraction_context()
         if context is None:
             return False
-        state, detection, revision = context
+        _, state, detection, revision = context
         return _pot_reconciliation_ready_for_extraction(
             state,
             detection=detection,
@@ -4318,6 +4396,8 @@ def _blind_structure_ready_for_extraction(blinds: BlindStructure) -> bool:
 
 def _hero_decision_contexts_for_extraction(
     state: ImportedHandState,
+    *,
+    positions: dict[int, StructuralPosition] | None = None,
 ) -> list[HeroActionContext]:
     """Return hero decisions with complete cards and reconstructable chip state.
 
@@ -4327,10 +4407,11 @@ def _hero_decision_contexts_for_extraction(
     """
 
     assert state.hero_player_id is not None
-    positions = _known_structural_positions(state.seats, state.button_seat)
+    if positions is None:
+        positions = _known_structural_positions(state.seats, state.button_seat)
     # Unreachable through the aggregate property: its gate already rejects a
-    # state whose `_known_action_orders` -- derived from these positions -- is
-    # unresolved. Retained so the function stands on its own.
+    # state whose structural positions are unresolved. Retained so the function
+    # stands on its own.
     if positions is None:
         return []
     ring = sorted(

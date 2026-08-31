@@ -20,6 +20,7 @@ from app.domain.imported_hands.models import (
     Economics,
     GameVariant,
     HeroActionContext,
+    HeroDecisionGateRejection,
     Identifier,
     ImportedAction,
     ImportedHandModel,
@@ -38,11 +39,6 @@ from app.domain.imported_hands.models import (
     StreetName,
     StructuralPosition,
     TableSize,
-    _blind_structure_ready_for_extraction,
-    _cash_rake_consistent_for_extraction,
-    _economics_ready_for_extraction,
-    _hero_decision_contexts_for_extraction,
-    _known_action_orders,
     _CHIP_ACTIONS,
     _sole_actionable_player_with_only_all_in_opponents,
     _stack_is_exhausted,
@@ -50,7 +46,6 @@ from app.domain.imported_hands.models import (
     _STREET_ORDER,
     _TABLE_ACTIONS,
     _validate_action_shape,
-    _terminal_hand_ready_for_extraction,
 )
 from app.domain.poker import Card
 
@@ -61,19 +56,10 @@ HeroActionExclusion = Literal[
     "unresolved_origin",
 ]
 
-ExtractionRejection = Literal[
-    "not_active",
-    "unresolved_conflict",
-    "invalid_revision_lineage",
-    "incomplete_hand_state",
-    "incomplete_economics",
-    "unreconciled_pot",
-]
+ExtractionRejection = HeroDecisionGateRejection
 
 DecisionOutcome = Literal["decisions", "no_decision", "not_extractable"]
 
-_RESOLVED_CONFLICT_STATUSES = {"resolved_keep_active", "resolved_use_source"}
-_EXTRACTABLE_BETTING_LIMITS = {"no_limit", "pot_limit"}
 _EXCLUSION_REASONS: dict[OriginKind, HeroActionExclusion] = {
     "forced_system": "forced_or_system",
     "client_automatic": "client_automatic",
@@ -785,12 +771,16 @@ def extract_hero_decision_points(
 ) -> HandDecisionExtraction:
     """Extract the voluntary hero decisions an approved record can prove."""
 
-    state = record.active_state_for_extraction
-    rejection, contexts = _rejection_reason(record, state)
-    deletion_generation = record.lifecycle.deletion_generation
+    rejection, snapshot, state, contexts = (
+        record._active_hero_decision_context_gate(
+            require_complete_extraction=True,
+        )
+    )
+    source_record = snapshot if snapshot is not None else record
+    deletion_generation = source_record.lifecycle.deletion_generation
     if rejection is not None:
         return HandDecisionExtraction(
-            identity=record.identity,
+            identity=source_record.identity,
             chronology=None,
             provenance=None,
             canonical_revision=None,
@@ -801,15 +791,16 @@ def extract_hero_decision_points(
             excluded_actions=[],
         )
     assert state is not None
-    assert record.identity is not None
-    canonical_revision = record.lifecycle.active_canonical_revision
+    assert snapshot is not None
+    assert snapshot.identity is not None
+    canonical_revision = snapshot.lifecycle.active_canonical_revision
     assert canonical_revision is not None
-    provenance = _active_provenance(record, state)
+    provenance = _active_provenance(snapshot, state)
     decision_points = [
         _decision_point(
             context,
             state=state,
-            identity=record.identity,
+            identity=snapshot.identity,
             provenance=provenance,
             canonical_revision=canonical_revision,
             deletion_generation=deletion_generation,
@@ -829,7 +820,7 @@ def extract_hero_decision_points(
         if not action.is_player_decision
     ]
     return HandDecisionExtraction(
-        identity=record.identity,
+        identity=snapshot.identity,
         chronology=state.chronology,
         provenance=provenance,
         canonical_revision=canonical_revision,
@@ -839,99 +830,6 @@ def extract_hero_decision_points(
         decision_points=decision_points,
         excluded_actions=excluded_actions,
     )
-
-
-def _rejection_reason(
-    record: ImportedHandRecord,
-    state: ImportedHandState | None,
-) -> tuple[ExtractionRejection | None, list[HeroActionContext]]:
-    """Resolve the first rejection reason in ``ExtractionRejection`` order.
-
-    The accepted hero contexts come back with the verdict so the caller emits
-    decision points from the very walk this function proved complete. Reading
-    them from a second traversal instead would let the two silently disagree:
-    a hand with hero decisions could then report ``no_decision``, which is a
-    structurally legal result no validator can reject.
-    """
-
-    if not record.lifecycle.learning_eligible:
-        return "not_active", []
-    if any(
-        conflict.status not in _RESOLVED_CONFLICT_STATUSES
-        for conflict in record.conflicts
-    ):
-        return "unresolved_conflict", []
-    if state is None:
-        return "invalid_revision_lineage", []
-    contexts = _complete_hand_state_contexts(state)
-    if contexts is None:
-        return "incomplete_hand_state", []
-    if not _economics_are_complete(state):
-        return "incomplete_economics", []
-    if not record.active_pot_reconciles_for_extraction:
-        return "unreconciled_pot", []
-    return None, contexts
-
-
-def _complete_hand_state_contexts(
-    state: ImportedHandState,
-) -> list[HeroActionContext] | None:
-    """Return the walk's hero contexts, or ``None`` for an incomplete state.
-
-    Every condition up to the walk is the aggregate's own hand-state condition.
-    The final clause is deliberately **stricter** than the aggregate: the gate
-    is content to publish a partial walk, dropping the hero decisions it could
-    not resolve, whereas extraction rejects the whole hand. A decision point
-    silently missing from the middle of a hand is indistinguishable from a hand
-    that never had one, so it has to be a reported reason instead.
-    """
-
-    if state.hero_player_id is None:
-        return None
-    if not _terminal_hand_ready_for_extraction(state):
-        return None
-    if not _blind_structure_ready_for_extraction(state.game.blinds):
-        return None
-    if state.game.betting_limit not in _EXTRACTABLE_BETTING_LIMITS:
-        return None
-    hero = next(
-        (seat for seat in state.seats if seat.player_id == state.hero_player_id),
-        None,
-    )
-    if hero is None or hero.participation != "dealt_in":
-        return None
-    if any(seat.participation == "unknown" for seat in state.seats):
-        return None
-    if any(
-        seat.participation == "dealt_in" and seat.starting_stack is None
-        for seat in state.seats
-    ):
-        return None
-    if _known_action_orders(state.seats, state.button_seat) is None:
-        return None
-    # Cards, boards, and chip representations are resolved inside the walk, so
-    # an unemitted hero decision means the state itself is still incomplete.
-    contexts = _hero_decision_contexts_for_extraction(state)
-    graded = [
-        action for _, action in _hero_actions(state) if action.is_player_decision
-    ]
-    if len(contexts) != len(graded):
-        return None
-    return contexts
-
-
-def _economics_are_complete(state: ImportedHandState) -> bool:
-    """Apply the aggregate's own economics conditions for extraction."""
-
-    dealt_in_starting_stacks = {
-        seat.player_id: seat.starting_stack
-        for seat in state.seats
-        if seat.participation == "dealt_in"
-    }
-    return _economics_ready_for_extraction(
-        state.game.economics,
-        dealt_in_starting_stacks=dealt_in_starting_stacks,
-    ) and _cash_rake_consistent_for_extraction(state)
 
 
 def _hero_actions(
