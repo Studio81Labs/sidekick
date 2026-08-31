@@ -129,6 +129,8 @@ calibrated coordinates/templates are added.
   benchmark selection, export, and import (default 100 MiB)
 - `POKER_MAX_BACKUP_UPLOAD_BYTES`: maximum full application backup ZIP size for
   export and restore (default 100 MiB)
+- `POKER_DATA_LOCK_EXPORT_TIMEOUT_SECONDS`: maximum wait for browser backup
+  export to acquire its exclusive snapshot lock (default 30 seconds)
 - `POKER_API_RATE_LIMIT_ENABLED`: enable bounded per-client limits for uploads,
   benchmark runs, and archive transfers (default `true`)
 - `POKER_API_RATE_LIMIT_*_PER_MINUTE`: tune each expensive-operation budget;

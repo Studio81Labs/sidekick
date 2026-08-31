@@ -95,7 +95,7 @@ from app.benchmark_corpus import (
 )
 from app.benchmarking import run_benchmark
 from app.config import Settings, get_settings
-from app.data_lock import InterprocessDataLock
+from app.data_lock import DataLockTimeoutError, InterprocessDataLock
 from app.error_monitoring import (
     capture_unhandled_exception,
     configure_error_monitoring,
@@ -1218,9 +1218,18 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
                 ) from exc
 
     async def export_application_backup() -> ApplicationBackupExport:
-        descriptor = await data_lock.acquire_async(
-            exclusive=True,
-        )
+        try:
+            descriptor = await data_lock.acquire_async(
+                exclusive=True,
+                timeout_seconds=(
+                    active_settings.data_lock_export_timeout_seconds
+                ),
+            )
+        except DataLockTimeoutError as exc:
+            raise ApplicationBackupTransportError(
+                "Application backup export is busy; try again",
+                409,
+            ) from exc
         try:
             archive_file = await run_in_threadpool(
                 build_browser_application_backup,

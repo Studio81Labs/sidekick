@@ -27,12 +27,14 @@ from app.application.imported_hand_ports import (
 from app.config import Settings
 from app.data_lock import (
     DATA_LOCK_FILENAME,
+    DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     DataLockTimeoutError,
     InterprocessDataLock,
 )
+from app.domain.hands import JobRecord
 from app.domain.imported_hands import (
     CanonicalHandRevision,
     DeletionReceipt,
@@ -51,6 +53,7 @@ from app.domain.imported_hands import (
     imported_hand_canonical_json,
     imported_hand_state_sha256,
 )
+from app.domain.poker import DetectedState, ParserResult
 from app.storage.cascade_journal import (
     CascadeJournal,
     CascadeReentryError,
@@ -1143,22 +1146,10 @@ def test_workspace_still_recovers_interrupted_jobs(tmp_path: Path) -> None:
     assert recovered.error == INTERRUPTED_PARSER_ERROR
 
 
-def test_job_recovery_runs_under_the_shared_hold_not_the_exclusive_one(
+def test_job_recovery_writes_under_its_own_exclusive_hold(
     tmp_path: Path,
 ) -> None:
-    """Two halves, and both need pinning.
-
-    recover_interrupted_jobs() reads and validates every job record on
-    disk. That scan is the dominant cost of startup and must not be what
-    other processes are blocked behind, so it must not be inside the
-    exclusive hold. But it must still be inside the *shared* hold it has
-    always had - asserting only "not exclusive" is equally satisfied by
-    "under no lock at all", which is a different regression entirely.
-
-    So both probes run: an exclusive acquire must fail (something holds
-    the lock) while a shared acquire must succeed (that something is not
-    holding it exclusively). Together those mean exactly "shared".
-    """
+    """The state-changing pass excludes both readers and writers."""
     from app.storage.file_job_store import FileJobStore
 
     FileJobStore(tmp_path).create_job(
@@ -1167,25 +1158,82 @@ def test_job_recovery_runs_under_the_shared_hold_not_the_exclusive_one(
         parser_provider="mock",
     )
     observed: list[tuple[bool, bool]] = []
-    real_recover_jobs = WorkspaceCoordinator.recover_interrupted_jobs
+    real_save = FileJobStore.save
 
-    def recording_recover_jobs(self: WorkspaceCoordinator) -> None:
+    def recording_save(self: FileJobStore, job: JobRecord) -> JobRecord:
         observed.append(
             (
                 exclusive_data_lock_is_blocked(tmp_path),
                 shared_data_lock_is_blocked(tmp_path),
             )
         )
-        real_recover_jobs(self)
+        return real_save(self, job)
 
-    with mock.patch.object(
-        WorkspaceCoordinator, "recover_interrupted_jobs", recording_recover_jobs
-    ):
+    with mock.patch.object(FileJobStore, "save", recording_save):
         WorkspaceCoordinator.open(tmp_path)
 
-    assert observed == [(True, False)], (
-        "job recovery must run under a shared hold: held, but not exclusively"
+    assert observed == [(True, True)]
+
+
+def test_job_recovery_rechecks_after_waiting_for_a_live_parser(
+    tmp_path: Path,
+) -> None:
+    """A live request's completed state wins over startup recovery."""
+    from app.storage.file_job_store import FileJobStore
+
+    store = FileJobStore(tmp_path)
+    job = store.create_job(
+        original_filename="parsing.png",
+        image_bytes=b"image",
+        parser_provider="mock",
     )
+    blocker = InterprocessDataLock(tmp_path)
+    blocker_descriptor = blocker.acquire(exclusive=False)
+    exclusive_attempted = threading.Event()
+    opened: list[WorkspaceCoordinator] = []
+    failures: list[Exception] = []
+    real_acquire = InterprocessDataLock.acquire
+
+    def recording_acquire(
+        lock: InterprocessDataLock,
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
+        if exclusive:
+            exclusive_attempted.set()
+        return real_acquire(
+            lock,
+            exclusive=exclusive,
+            timeout_seconds=timeout_seconds,
+        )
+
+    def open_workspace() -> None:
+        try:
+            opened.append(WorkspaceCoordinator.open(tmp_path))
+        except Exception as exc:
+            failures.append(exc)
+
+    with mock.patch.object(InterprocessDataLock, "acquire", recording_acquire):
+        opener = threading.Thread(target=open_workspace)
+        opener.start()
+        try:
+            assert exclusive_attempted.wait(timeout=5)
+            current = store.get(job.id)
+            current.status = "parsed"
+            current.parser_result = ParserResult(state=DetectedState())
+            store.save(current)
+        finally:
+            blocker.release(blocker_descriptor)
+            opener.join(timeout=5)
+
+    assert not opener.is_alive()
+    assert failures == []
+    assert len(opened) == 1
+    persisted = opened[0].jobs.get(job.id)
+    assert persisted.status == "parsed"
+    assert persisted.parser_result == ParserResult(state=DetectedState())
+    assert persisted.error is None
 
 
 def test_startup_gives_up_loudly_rather_than_hanging_on_its_exclusive_acquire(
@@ -1383,10 +1431,10 @@ def test_the_shared_startup_budget_is_far_larger_than_the_exclusive_one() -> Non
     ), "the shared bound must sit well clear of a slow but legitimate export"
 
 
-def test_all_three_data_lock_budgets_are_tunable_without_moving_each_other(
+def test_all_four_data_lock_budgets_are_tunable_without_moving_each_other(
     tmp_path: Path,
 ) -> None:
-    """Three bounds, three settings, no shared constant behind them.
+    """Four bounds, four settings, no shared constant behind them.
 
     The write hold's default equals the startup *exclusive* bound today,
     which is a coincidence: one protects a request-path write against an
@@ -1402,26 +1450,22 @@ def test_all_three_data_lock_budgets_are_tunable_without_moving_each_other(
     the write budget really reaches the store.
     """
     assert DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS == 30
+    assert DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS == 30
+    with pytest.raises(ValidationError):
+        Settings(data_dir=tmp_path, data_lock_export_timeout_seconds=0)
 
     # Each setting moves on its own.
-    for field, other_fields in (
-        (
-            "data_lock_recovery_timeout_seconds",
-            ("data_lock_startup_timeout_seconds", "data_lock_write_timeout_seconds"),
-        ),
-        (
-            "data_lock_startup_timeout_seconds",
-            ("data_lock_recovery_timeout_seconds", "data_lock_write_timeout_seconds"),
-        ),
-        (
-            "data_lock_write_timeout_seconds",
-            ("data_lock_recovery_timeout_seconds", "data_lock_startup_timeout_seconds"),
-        ),
-    ):
+    fields = (
+        "data_lock_recovery_timeout_seconds",
+        "data_lock_startup_timeout_seconds",
+        "data_lock_write_timeout_seconds",
+        "data_lock_export_timeout_seconds",
+    )
+    for field in fields:
         baseline = Settings(data_dir=tmp_path)
         tuned = Settings(data_dir=tmp_path, **{field: 123})
         assert getattr(tuned, field) == 123
-        for untouched in other_fields:
+        for untouched in set(fields) - {field}:
             assert getattr(tuned, untouched) == getattr(baseline, untouched), (
                 f"tuning {field} moved {untouched}"
             )

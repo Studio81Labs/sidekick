@@ -1042,7 +1042,9 @@ benchmark selection are job fields, they travel with the record. API
 mutations hold a shared data-volume lock across the full request, including
 background work. Browser and CLI exports take its exclusive side while
 building the archive, then refuse to capture any persisted active parser work
-or a pending benchmark import journal.
+or a pending benchmark import journal. Browser export bounds the exclusive
+acquire and returns a conflict response when active mutations keep the snapshot
+lock busy; CLI export retains its operational blocking behavior.
 
 Restore parses and verifies the complete archive before acquiring the mutation
 locks. It checks declared paths, entry counts and sizes, supported images,

@@ -59,9 +59,16 @@ def test_mutation_waits_while_snapshot_lock_is_held(tmp_path: Path) -> None:
     middleware = DataMutationLockMiddleware(app, data_lock)
     original_acquire = data_lock.acquire
 
-    def observed_acquire(*, exclusive: bool) -> int:
+    def observed_acquire(
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
         lock_attempted.set()
-        return original_acquire(exclusive=exclusive)
+        return original_acquire(
+            exclusive=exclusive,
+            timeout_seconds=timeout_seconds,
+        )
 
     with data_lock.hold(exclusive=True):
         data_lock.acquire = observed_acquire  # type: ignore[method-assign]
@@ -127,7 +134,11 @@ def test_mcp_transport_does_not_join_data_mutations(tmp_path: Path) -> None:
     data_lock = InterprocessDataLock(tmp_path)
     middleware = DataMutationLockMiddleware(app, data_lock)
 
-    async def unexpected_acquire(*, exclusive: bool) -> int:
+    async def unexpected_acquire(
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
         raise AssertionError("MCP transport must not acquire the data lock")
 
     data_lock.acquire_async = unexpected_acquire  # type: ignore[method-assign]
@@ -151,9 +162,16 @@ def test_cancelled_async_wait_releases_eventual_lock(tmp_path: Path) -> None:
     original_acquire = waiter.acquire
     original_release = waiter.release
 
-    def observed_acquire(*, exclusive: bool) -> int:
+    def observed_acquire(
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
         lock_attempted.set()
-        return original_acquire(exclusive=exclusive)
+        return original_acquire(
+            exclusive=exclusive,
+            timeout_seconds=timeout_seconds,
+        )
 
     def observed_release(descriptor: int) -> None:
         original_release(descriptor)
@@ -176,3 +194,29 @@ def test_cancelled_async_wait_releases_eventual_lock(tmp_path: Path) -> None:
         assert await asyncio.to_thread(cancelled_lock_released.wait, 5)
 
     asyncio.run(cancel_waiter())
+
+
+def test_async_acquire_forwards_the_timeout_budget(tmp_path: Path) -> None:
+    data_lock = InterprocessDataLock(tmp_path)
+    observed: list[tuple[bool, int | None]] = []
+    original_acquire = data_lock.acquire
+
+    def observed_acquire(
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
+        observed.append((exclusive, timeout_seconds))
+        return original_acquire(
+            exclusive=exclusive,
+            timeout_seconds=timeout_seconds,
+        )
+
+    data_lock.acquire = observed_acquire  # type: ignore[method-assign]
+
+    descriptor = asyncio.run(
+        data_lock.acquire_async(exclusive=True, timeout_seconds=17)
+    )
+    data_lock.release(descriptor)
+
+    assert observed == [(True, 17)]
