@@ -47,7 +47,7 @@ export class PlayerApiError extends Error {
 export class PlayerRestoreAmbiguousError extends Error {
   constructor() {
     super(
-      "The restore may have committed, but the browser did not receive a complete response. Local data may already have changed. Review the refreshed storage totals and export a backup before deciding whether to retry.",
+      "The restore may have committed, but the browser did not receive a complete response. Local data may already have changed.",
     );
     this.name = "PlayerRestoreAmbiguousError";
   }

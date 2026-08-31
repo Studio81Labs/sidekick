@@ -142,11 +142,14 @@ export default function PlayerApp() {
         if (backupInput.current) backupInput.current.value = "";
         try {
           setStorage(await loadPlayerStorage(credentials));
-          setError(reason.message);
+          setError(
+            `${reason.message} Review the refreshed storage totals and export a backup before deciding whether to retry.`,
+          );
         } catch (refreshError) {
+          setStorage(null);
           handleRequestError(
             refreshError,
-            `${reason.message} Storage status could not be refreshed.`,
+            `${reason.message} A stable storage status could not be obtained. Restart the local player runtime before exporting a backup or retrying.`,
           );
         }
       } else {

@@ -68,7 +68,10 @@ response is potentially committed: the PWA clears the selected archive, blocks
 an immediate retry, and refreshes only after the runtime finishes the in-flight
 restore. Storage status takes the shared data-volume lock; if that bounded wait
 cannot produce a stable snapshot, the UI keeps the restore outcome explicitly
-unresolved. A `503` restore storage failure is also unresolved because journal
+unresolved, hides stale totals and backup controls, and requires restart before
+export or retry. Status waits behind the restore asynchronously before it uses
+the shared worker pool, so queued refreshes cannot prevent restore completion. A
+`503` restore storage failure is also unresolved because journal
 intent or some files may already be durable. The PWA hides the pre-restore
 status and requires a local runtime restart so startup recovery finishes before
 export or another restore attempt.

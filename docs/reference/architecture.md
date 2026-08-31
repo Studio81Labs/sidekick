@@ -294,10 +294,13 @@ through one multi-record cascade, preserving local audit artifacts the archive
 does not contain. A bound tombstone removes every retained artifact in that same
 cascade (ADR 0052). Within the local runtime, storage-status reads serialize
 behind the full restore request, including upload and archive parsing, then take
-the shared data-volume lock for the filesystem snapshot. A browser refresh after
-an ambiguous transport failure therefore waits for the restore to finish rather
-than presenting a stale or intermediate count; a bounded shared-lock failure is
-reported explicitly instead. A restore storage failure remains unresolved even
+the shared data-volume lock for the filesystem snapshot. Status waits on the
+restore gate asynchronously before dispatching filesystem work, preventing
+queued refreshes from exhausting the worker pool needed to finish restore. A
+browser refresh after an ambiguous transport failure therefore waits for the
+restore to finish rather than presenting a stale or intermediate count; if a
+stable refresh fails, stale status and backup controls are hidden until restart.
+A restore storage failure remains unresolved even
 when returned explicitly as `503`, because cascade intent or partial publication
 may already exist. The player PWA clears the retry input, hides the stale status,
 and requires restart recovery before export or retry.

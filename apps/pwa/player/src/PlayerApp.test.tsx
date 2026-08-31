@@ -340,6 +340,51 @@ describe("PlayerApp", () => {
     expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/player/storage");
   });
 
+  it("hides stale storage when an ambiguous refresh fails", async () => {
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        new Response("{", {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ detail: "Stable storage snapshot unavailable" }, 409),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    const backupInput = screen.getByLabelText(
+      "Player backup ZIP",
+    ) as HTMLInputElement;
+    await user.upload(
+      backupInput,
+      new File(["backup"], "player-backup.zip", {
+        type: "application/zip",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Restore backup" }));
+
+    expect(
+      await screen.findByText(
+        /A stable storage status could not be obtained. Restart the local player runtime before exporting a backup or retrying/,
+      ),
+    ).toBeInTheDocument();
+    expect(backupInput.value).toBe("");
+    expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Restore backup" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Restore committed.")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
   it("requires restart recovery after a restore storage failure", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");

@@ -8,7 +8,7 @@ import shutil
 import socket
 import subprocess
 import sys
-from threading import Event, Thread
+from threading import Thread
 from time import monotonic, sleep
 
 import httpx
@@ -421,23 +421,19 @@ def test_player_storage_status_preserves_recovery_attention(
     }
 
 
-def test_player_storage_waits_for_an_in_flight_restore(
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_player_storage_waits_without_exhausting_restore_workers(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    anyio_backend: str,
 ) -> None:
-    client, runtime = player_client(tmp_path)
-    status_client = TestClient(
-        runtime.app,
-        base_url=PLAYER_ORIGIN,
-        client=("127.0.0.1", 50001),
-    )
-    session = exchange_session(client, runtime)
-    restore_started = Event()
-    allow_restore_to_finish = Event()
+    assert anyio_backend == "asyncio"
+    runtime = _create_player_runtime(tmp_path)
+    upload_started = asyncio.Event()
+    allow_upload_to_finish = asyncio.Event()
 
-    def blocking_restore(*_args, **_kwargs) -> PlayerBackupRestoreResult:
-        restore_started.set()
-        assert allow_restore_to_finish.wait(5)
+    def complete_restore(*_args, **_kwargs) -> PlayerBackupRestoreResult:
         return PlayerBackupRestoreResult(
             imported_records=0,
             reused_records=0,
@@ -450,66 +446,86 @@ def test_player_storage_waits_for_an_in_flight_restore(
 
     monkeypatch.setattr(
         "app.player_runtime.restore_player_backup",
-        blocking_restore,
+        complete_restore,
     )
-    authorization = f"Bearer {session['session_token']}"
-    restore_responses = []
-    storage_responses = []
-    storage_finished = Event()
 
-    def request_restore() -> None:
-        restore_responses.append(
-            client.post(
-                "/api/player/backups/restore",
-                content=b"restore archive",
-                headers={
-                    "Authorization": authorization,
-                    "Origin": PLAYER_ORIGIN,
-                    "X-Poker-CSRF-Token": str(session["csrf_token"]),
-                    "Content-Type": "application/zip",
-                },
-            )
+    async def slow_upload():
+        upload_started.set()
+        yield b"restore "
+        await allow_upload_to_finish.wait()
+        yield b"archive"
+
+    transport = httpx.ASGITransport(
+        app=runtime.app,
+        client=("127.0.0.1", 50000),
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url=PLAYER_ORIGIN,
+    ) as client:
+        ticket = runtime.issue_launch_url().split("#ticket=", 1)[1]
+        session_response = await client.post(
+            "/api/player/session",
+            headers={
+                "Authorization": f"Bearer {ticket}",
+                "Origin": PLAYER_ORIGIN,
+            },
         )
-
-    def request_storage() -> None:
-        storage_responses.append(
-            status_client.get(
-                "/api/player/storage",
-                headers={"Authorization": authorization},
-            )
-        )
-        storage_finished.set()
-
-    restore_thread = Thread(target=request_restore)
-    storage_thread = Thread(target=request_storage)
-    restore_thread.start()
-    assert restore_started.wait(2)
-    concurrent_restore = status_client.post(
-        "/api/player/backups/restore",
-        content=b"second restore archive",
-        headers={
+        assert session_response.status_code == 200
+        session = session_response.json()
+        authorization = f"Bearer {session['session_token']}"
+        restore_headers = {
             "Authorization": authorization,
             "Origin": PLAYER_ORIGIN,
             "X-Poker-CSRF-Token": str(session["csrf_token"]),
             "Content-Type": "application/zip",
-        },
-    )
-    assert concurrent_restore.status_code == 409
-    assert concurrent_restore.json()["detail"] == (
-        "Another player restore is already in progress"
-    )
-    storage_thread.start()
-    assert not storage_finished.wait(0.2)
+        }
+        restore_task = asyncio.create_task(
+            client.post(
+                "/api/player/backups/restore",
+                content=slow_upload(),
+                headers=restore_headers,
+            )
+        )
+        await asyncio.wait_for(upload_started.wait(), 2)
 
-    allow_restore_to_finish.set()
-    restore_thread.join(5)
-    storage_thread.join(5)
+        concurrent_restore = await client.post(
+            "/api/player/backups/restore",
+            content=b"second restore archive",
+            headers=restore_headers,
+        )
+        assert concurrent_restore.status_code == 409
+        assert concurrent_restore.json()["detail"] == (
+            "Another player restore is already in progress"
+        )
 
-    assert not restore_thread.is_alive()
-    assert not storage_thread.is_alive()
-    assert restore_responses[0].status_code == 200
-    assert storage_responses[0].status_code == 200
-    assert storage_responses[0].json()["imported_hand_record_count"] == 0
+        # More waiters than AnyIO's default worker limit prove that storage
+        # waits on the async gate before it asks the pool for filesystem work.
+        storage_tasks = [
+            asyncio.create_task(
+                client.get(
+                    "/api/player/storage",
+                    headers={"Authorization": authorization},
+                )
+            )
+            for _ in range(50)
+        ]
+        await asyncio.sleep(0.1)
+        assert all(not task.done() for task in storage_tasks)
+
+        allow_upload_to_finish.set()
+        restore_response = await asyncio.wait_for(restore_task, 5)
+        storage_responses = await asyncio.wait_for(
+            asyncio.gather(*storage_tasks),
+            5,
+        )
+
+    assert restore_response.status_code == 200
+    assert all(response.status_code == 200 for response in storage_responses)
+    assert all(
+        response.json()["imported_hand_record_count"] == 0
+        for response in storage_responses
+    )
 
 
 def test_player_storage_reports_when_a_stable_snapshot_times_out(
