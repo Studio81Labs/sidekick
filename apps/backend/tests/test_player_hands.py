@@ -1,3 +1,10 @@
+from datetime import datetime, timezone
+
+from app.domain.imported_hands import (
+    ImportedHandRecord,
+    UserCorrection,
+    imported_hand_state_sha256,
+)
 from app.player_hands import (
     REDACTED_SOURCE_EXCERPT,
     _sanitized_correction_value,
@@ -111,6 +118,68 @@ def test_player_hand_detail_identifies_the_active_approved_revision(tmp_path) ->
         "source_hand_id": "123456701",
     }
     assert detail.canonical_revisions[0].corrections[0].approved_value == "hero"
+
+
+def test_player_hand_summary_prefers_approved_chronology_over_raw_proposal(
+    tmp_path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    detected_played_at = datetime(2026, 8, 30, 18, 0, tzinfo=timezone.utc)
+    approved_played_at = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+
+    detected_chronology = record.detections[0].state.chronology.model_copy(
+        update={"played_at": detected_played_at, "source_timezone": "UTC"}
+    )
+    detected_state = record.detections[0].state.model_copy(
+        update={"chronology": detected_chronology}
+    )
+    detection = record.detections[0].model_copy(
+        update={
+            "state": detected_state,
+            "content_sha256": imported_hand_state_sha256(detected_state),
+        }
+    )
+    raw_source = record.raw_sources[0].model_copy(
+        update={"chronology": detected_chronology}
+    )
+    approved_chronology = record.canonical_revisions[0].state.chronology.model_copy(
+        update={"played_at": approved_played_at, "source_timezone": "UTC"}
+    )
+    approved_state = record.canonical_revisions[0].state.model_copy(
+        update={"chronology": approved_chronology}
+    )
+    chronology_correction = UserCorrection(
+        field_pointer="/chronology/played_at",
+        detected_value=detected_state.model_dump(mode="json")["chronology"]["played_at"],
+        approved_value=approved_state.model_dump(mode="json")["chronology"]["played_at"],
+        corrected_at=record.canonical_revisions[0].approved_at,
+        reason="Confirmed from the table session",
+    )
+    revision = record.canonical_revisions[0].model_copy(
+        update={
+            "state": approved_state,
+            "corrections": [
+                *record.canonical_revisions[0].corrections,
+                chronology_correction,
+            ],
+        }
+    )
+    corrected_record = ImportedHandRecord(
+        identity=record.identity,
+        raw_sources=[raw_source],
+        detections=[detection],
+        canonical_revisions=[revision],
+        lifecycle=record.lifecycle,
+    )
+    key = imported_hand_record_key(corrected_record.identity)
+    store.save(key, corrected_record)
+
+    page = list_player_hands(store)
+    detail = get_player_hand(store, key)
+
+    assert page.items[0].played_at == approved_played_at
+    assert detail.summary.played_at == approved_played_at
 
 
 def test_player_hand_state_projection_removes_nested_evidence_excerpts() -> None:

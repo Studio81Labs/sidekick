@@ -14,7 +14,6 @@ interface ObservedRequest {
   hasAuthorization: boolean;
   hasCsrf: boolean;
   method: string;
-  origin: string | undefined;
   url: string;
 }
 
@@ -35,13 +34,12 @@ async function readLaunchUrl(): Promise<string> {
   return (await readFile(LAUNCH_FILE, "utf8")).trim();
 }
 
-async function observeRequest(request: Request): Promise<ObservedRequest> {
-  const headers = await request.allHeaders();
+function observeRequest(request: Request): ObservedRequest {
+  const headers = request.headers();
   return {
     hasAuthorization: /^Bearer \S+$/.test(headers.authorization ?? ""),
     hasCsrf: Boolean(headers["x-poker-csrf-token"]),
     method: request.method(),
-    origin: headers.origin,
     url: request.url(),
   };
 }
@@ -50,9 +48,16 @@ test("runs the authenticated player recovery flow only on loopback", async ({
   context,
   page,
 }) => {
-  const observedRequestPromises: Array<Promise<ObservedRequest>> = [];
+  const observedRequests: ObservedRequest[] = [];
+  const restoreOriginPromises: Array<Promise<string | null>> = [];
   context.on("request", (request) => {
-    observedRequestPromises.push(observeRequest(request));
+    observedRequests.push(observeRequest(request));
+    if (
+      request.method() === "POST" &&
+      new URL(request.url()).pathname === "/api/player/backups/restore"
+    ) {
+      restoreOriginPromises.push(request.headerValue("origin"));
+    }
   });
 
   const launchUrl = await readLaunchUrl();
@@ -162,7 +167,8 @@ test("runs the authenticated player recovery flow only on loopback", async ({
     }),
   ).toBe(false);
 
-  const onlineObservedRequestPromises = [...observedRequestPromises];
+  const onlineObservedRequests = [...observedRequests];
+  const onlineRestoreOriginPromises = [...restoreOriginPromises];
 
   await context.setOffline(true);
   try {
@@ -180,8 +186,7 @@ test("runs the authenticated player recovery flow only on loopback", async ({
     await context.setOffline(false);
   }
 
-  const observedRequests = await Promise.all(onlineObservedRequestPromises);
-  const httpRequests = observedRequests.filter(({ url }) =>
+  const httpRequests = onlineObservedRequests.filter(({ url }) =>
     /^https?:/.test(url),
   );
   expect(httpRequests.length).toBeGreaterThan(0);
@@ -200,12 +205,13 @@ test("runs the authenticated player recovery flow only on loopback", async ({
     playerApiRequests
       .filter(({ method }) => method === "POST")
       .some(
-        ({ hasCsrf, origin, url }) =>
-          new URL(url).pathname === "/api/player/backups/restore" &&
-          hasCsrf &&
-          origin === PLAYER_ORIGIN,
+        ({ hasCsrf, url }) =>
+          new URL(url).pathname === "/api/player/backups/restore" && hasCsrf,
       ),
   ).toBe(true);
+  expect(await Promise.all(onlineRestoreOriginPromises)).toContain(
+    PLAYER_ORIGIN,
+  );
 });
 
 test("the hosted Worker denies direct and encoded player paths before proxying", async ({

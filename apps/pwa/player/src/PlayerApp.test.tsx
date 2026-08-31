@@ -190,6 +190,27 @@ const activeHandDetail = {
   ],
 };
 
+function inactiveApprovedHandDetail(status: "withdrawn" | "rejected") {
+  return {
+    ...activeHandDetail,
+    summary: {
+      ...activeHand,
+      lifecycle_status: status,
+      active_canonical_revision: null,
+      learning_eligible: false,
+    },
+    lifecycle: {
+      ...activeHandDetail.lifecycle,
+      status,
+      active_canonical_revision: null,
+      reason:
+        status === "withdrawn"
+          ? "player withdrew approval"
+          : "not the hand I meant to import",
+    },
+  };
+}
+
 const failedDeletionHand = {
   ...pendingHand,
   lifecycle_status: "deletion_pending",
@@ -424,6 +445,52 @@ describe("PlayerApp", () => {
       screen.getByText("Confirmed from dealt-to evidence"),
     ).toBeInTheDocument();
   });
+
+  it.each([
+    ["withdrawn", /previously approved, but its approval is now withdrawn/],
+    ["rejected", /previously approved, then rejected/],
+  ] as const)(
+    "describes a %s approved hand as retained but inactive",
+    async (status, expectedCopy) => {
+      const user = userEvent.setup();
+      const detail = inactiveApprovedHandDetail(status);
+      window.location.hash = "#ticket=one-use-ticket";
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            session_token: "player-session",
+            csrf_token: "csrf-token",
+            expires_in_seconds: 86400,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(readyStorage))
+        .mockResolvedValueOnce(
+          jsonResponse({ items: [detail.summary], next_cursor: null }),
+        )
+        .mockResolvedValueOnce(jsonResponse(detail));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<PlayerApp />);
+      await screen.findByText("Ready on this machine");
+      await user.click(
+        screen.getByRole("button", { name: "Load hand records" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "View audit detail" }),
+      );
+
+      expect(await screen.findByText(expectedCopy)).toBeInTheDocument();
+      expect(
+        screen.queryByText(/proposal until a later review workflow/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          new RegExp(`Lifecycle reason: ${detail.lifecycle.reason}`),
+        ),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("surfaces a failed deletion cleanup instead of generic inactive copy", async () => {
     const user = userEvent.setup();

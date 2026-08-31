@@ -116,13 +116,18 @@ class PlayerHandDetail(PlayerHandProjection):
 
 
 def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:
-    played_at = max(
-        (
-            raw.chronology.played_at
-            for raw in record.raw_sources
-            if raw.chronology.played_at is not None
-        ),
-        default=None,
+    active_revision = record.lifecycle.active_canonical_revision
+    played_at = (
+        record.canonical_revisions[active_revision - 1].state.chronology.played_at
+        if active_revision is not None
+        else max(
+            (
+                raw.chronology.played_at
+                for raw in record.raw_sources
+                if raw.chronology.played_at is not None
+            ),
+            default=None,
+        )
     )
     warning_count = sum(
         len(detection.warnings)

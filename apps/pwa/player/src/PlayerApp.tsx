@@ -133,6 +133,17 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
             Canonical revision {summary.active_canonical_revision} is active and
             eligible for local learning.
           </p>
+        ) : summary.lifecycle_status === "withdrawn" ? (
+          <p>
+            This hand was previously approved, but its approval is now
+            withdrawn. Its retained canonical revisions are inactive and not
+            used for learning.
+          </p>
+        ) : summary.lifecycle_status === "rejected" ? (
+          <p>
+            This hand was previously approved, then rejected. Its retained
+            canonical revisions are inactive and not used for learning.
+          </p>
         ) : (
           <p>
             This record is not approved for learning. Detected evidence remains
