@@ -225,6 +225,14 @@ def test_record_boundaries_use_a_fresh_validated_snapshot() -> None:
     assert classify_restore(record, snapshot).kind == "allow"
 
 
+def test_context_properties_fail_closed_for_an_unsafe_lifecycle() -> None:
+    unsafe_record = active_record().model_copy(update={"lifecycle": None})
+
+    assert unsafe_record.active_state_for_extraction is None
+    assert unsafe_record.active_hero_decision_contexts == []
+    assert unsafe_record.active_hero_actions_for_extraction == []
+
+
 def test_revalidated_serialization_preserves_exclude_unset_semantics() -> None:
     record = active_record()
 

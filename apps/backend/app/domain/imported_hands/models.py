@@ -2712,15 +2712,28 @@ class ImportedHandRecord(ImportedHandModel):
         """
 
         context = self._active_extraction_context()
-        if not self.lifecycle.learning_eligible:
-            return "not_active", None, None, []
-        if require_complete_extraction and any(
-            conflict.status not in {
-                "resolved_keep_active",
-                "resolved_use_source",
-            }
-            for conflict in self.conflicts
+        try:
+            learning_eligible = self.lifecycle.learning_eligible
+            has_unresolved_conflict = any(
+                conflict.status not in {
+                    "resolved_keep_active",
+                    "resolved_use_source",
+                }
+                for conflict in self.conflicts
+            )
+        except (
+            AttributeError,
+            IndexError,
+            KeyError,
+            PydanticSerializationError,
+            TypeError,
+            ValidationError,
+            ValueError,
         ):
+            return "invalid_revision_lineage", None, None, []
+        if not learning_eligible:
+            return "not_active", None, None, []
+        if require_complete_extraction and has_unresolved_conflict:
             return "unresolved_conflict", None, None, []
         if context is None:
             return "invalid_revision_lineage", None, None, []
