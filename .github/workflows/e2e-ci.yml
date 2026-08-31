@@ -9,7 +9,10 @@ on:
       - "packages/openapi/**"
       - "packages/openapi-client/**"
       - "scripts/e2e_provider_stub.py"
+      - "scripts/e2e_worker_backend_sink.mjs"
+      - "scripts/player_e2e_server.py"
       - "scripts/start-e2e-backend.sh"
+      - "scripts/start-player-e2e.sh"
       - "scripts/ci/**"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -25,7 +28,10 @@ on:
       - "packages/openapi/**"
       - "packages/openapi-client/**"
       - "scripts/e2e_provider_stub.py"
+      - "scripts/e2e_worker_backend_sink.mjs"
+      - "scripts/player_e2e_server.py"
       - "scripts/start-e2e-backend.sh"
+      - "scripts/start-player-e2e.sh"
       - "scripts/ci/**"
       - "package.json"
       - "pnpm-lock.yaml"
@@ -90,4 +96,6 @@ jobs:
       - name: Run browser workflow tests
         env:
           POKER_E2E_PYTHON: python
-        run: pnpm test:e2e
+        run: |
+          pnpm test:e2e
+          pnpm player:test:e2e

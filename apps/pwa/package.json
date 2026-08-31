@@ -11,7 +11,8 @@
     "build:player:assets": "vite build --config vite.player.config.ts && node scripts/verify-player-pwa-build.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test --project=chromium && playwright test --project=mobile-chromium"
+    "test:e2e": "playwright test --project=chromium && playwright test --project=mobile-chromium",
+    "test:e2e:player-boundary": "pnpm build && playwright test --config=playwright.player.config.ts"
   },
   "dependencies": {
     "@poker-hero/openapi-client": "workspace:*",

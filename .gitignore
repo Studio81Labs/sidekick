@@ -10,6 +10,7 @@ dist-player/
 coverage/
 playwright-report/
 test-results/
+.player-e2e-launch-url
 .vite/
 .vitest/
 .pytest_cache/

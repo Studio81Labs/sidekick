@@ -20,9 +20,10 @@ local writable system of record.
 [ADR 0050](../decisions/0050-establish-local-player-runtime-security-substrate.md)
 implements the first runtime security substrate as a separate loopback-only
 application, one-use browser bootstrap, process-local authenticated session,
-CSRF boundary, and reserved hosted namespace. Its readiness shell has no V2
-import, lifecycle, learning, backup, or player-data routes, so this reference
-still describes V1 as the deployed product and the Phase 1 gate remains closed.
+CSRF boundary, and reserved hosted namespace. Later checkpoints add local
+storage status and whole-store backup/restore, but no V2 import, per-record,
+lifecycle, or learning routes, so this reference still describes V1 as the
+deployed product and the Phase 1 gate remains closed.
 [ADR 0051](../decisions/0051-isolate-the-local-player-store-composition.md)
 attaches only the imported-hand store to that runtime, enforces a private
 player-owned data directory, performs interrupted-write recovery before
@@ -33,6 +34,14 @@ the inline readiness document with a separately built local recovery PWA. It
 exposes storage/recovery status and the existing player backup/restore workflow
 without importing the hosted administrative application or adding player
 import, lifecycle, or learning routes.
+CI exercises that separation over real listeners. A browser consumes a one-use
+launch URL from the production Uvicorn player application, proves all player
+API traffic stays on its exact loopback origin, and verifies the service worker
+cannot satisfy an offline player-data read. A separate local Wrangler process
+runs the production hosted Worker against a recording backend; direct and
+encoded `/api/player` POSTs must be denied without any backend request. The
+test-only launch handoff and recorder do not participate in either production
+runtime.
 The retirement of the V1 screenshot-bound learning surface (recommendation
 requests, training decisions, training review, progress, and lessons) is
 defined by
