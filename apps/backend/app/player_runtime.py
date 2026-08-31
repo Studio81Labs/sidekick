@@ -32,6 +32,7 @@ from app.data_lock import (
 from app.player_backup import (
     DEFAULT_MAX_PLAYER_BACKUP_BYTES,
     PlayerBackupError,
+    PlayerBackupStorageError,
     build_player_backup_archive,
     restore_player_backup,
     stream_player_backup,
@@ -691,6 +692,13 @@ def create_player_runtime(
                         max_archive_bytes=max_player_backup_bytes,
                         lock_timeout_seconds=backup_lock_timeout_seconds,
                     )
+                except PlayerBackupStorageError as exc:
+                    # Storage failures can follow durable journal intent or
+                    # partial publication. Revoke the browser session so a
+                    # reload cannot resume ordinary work before process-start
+                    # recovery has run.
+                    sessions.revoke(request.state.player_session_token)
+                    return _json_denial(exc.status_code, str(exc))
                 except PlayerBackupError as exc:
                     return _json_denial(exc.status_code, str(exc))
                 except DataLockTimeoutError as exc:

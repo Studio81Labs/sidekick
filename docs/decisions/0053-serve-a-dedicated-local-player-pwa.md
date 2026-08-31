@@ -45,9 +45,11 @@ through completion. Status waits on that gate asynchronously before using a
 worker, then takes the shared data-volume lock for its snapshot, so follow-up
 refreshes cannot exhaust the restore worker pool or be mistaken for a stable
 pre-commit view. If refresh fails, the PWA hides stale status and backup actions
-until restart. A restore storage failure can follow durable journal intent or partial
-publication; the PWA hides the stale status and requires runtime restart
-recovery before export or retry.
+until restart. A restore storage failure can follow durable journal intent or
+partial publication, so the runtime revokes that browser session and the player
+clears its local credentials on an explicit `503`. A reload therefore cannot
+resume ordinary work before process-start recovery; restart is required before
+export or retry.
 
 `pnpm player:start` builds and verifies the player PWA before starting Python.
 The loopback FastAPI composition refuses to start when `index.html`, the

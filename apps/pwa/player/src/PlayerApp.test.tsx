@@ -428,9 +428,8 @@ describe("PlayerApp", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Restore committed.")).not.toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBe(
-      "stored-session",
-    );
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(PLAYER_CSRF_STORAGE_KEY)).toBeNull();
   });
 
   it("downloads an authenticated backup without sending a CSRF header", async () => {

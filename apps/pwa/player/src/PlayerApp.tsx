@@ -133,6 +133,8 @@ export default function PlayerApp() {
       }
     } catch (reason) {
       if (reason instanceof PlayerRestoreRecoveryRequiredError) {
+        clearPlayerCredentials();
+        setCredentials(null);
         setStorage(null);
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";

@@ -643,6 +643,44 @@ def test_player_restore_route_rejects_malformed_zip_without_writes(
     assert runtime.workspace.imported_hands.backup_snapshot() == expected
 
 
+def test_player_restore_storage_failure_revokes_the_session(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+
+    def fail_after_partial_publication(*_args: object, **_kwargs: object) -> None:
+        raise PlayerBackupStorageError(
+            "Player backup restore did not complete; restart the local runtime "
+            "before retrying so journal recovery can finish"
+        )
+
+    monkeypatch.setattr(
+        "app.player_runtime.restore_player_backup",
+        fail_after_partial_publication,
+    )
+    authorization = f"Bearer {session['session_token']}"
+
+    response = client.post(
+        "/api/player/backups/restore",
+        content=b"player backup archive",
+        headers={
+            "Authorization": authorization,
+            "Origin": PLAYER_ORIGIN,
+            "X-Poker-CSRF-Token": str(session["csrf_token"]),
+            "Content-Type": "application/zip",
+        },
+    )
+
+    assert response.status_code == 503
+    assert "restart the local runtime" in response.json()["detail"]
+    assert client.get(
+        "/api/player/storage",
+        headers={"Authorization": authorization},
+    ).status_code == 401
+
+
 def test_player_backup_export_reports_an_exclusive_lock_timeout(
     tmp_path: Path,
 ) -> None:
