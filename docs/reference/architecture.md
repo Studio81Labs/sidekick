@@ -17,6 +17,12 @@ the ADR's gated migration work is implemented. In particular, the Worker proxy
 and hosted file-backed API below are not an approved V2 player-data path: Phase 1
 requires the ADR's loopback-only, authenticated co-located player runtime and
 local writable system of record.
+[ADR 0050](../decisions/0050-establish-local-player-runtime-security-substrate.md)
+implements the first runtime security substrate as a separate loopback-only
+application, one-use browser bootstrap, process-local authenticated session,
+CSRF boundary, and reserved hosted namespace. Its readiness shell has no V2
+import, lifecycle, learning, backup, or player-data routes, so this reference
+still describes V1 as the deployed product and the Phase 1 gate remains closed.
 The retirement of the V1 screenshot-bound learning surface (recommendation
 requests, training decisions, training review, progress, and lessons) is
 defined by
