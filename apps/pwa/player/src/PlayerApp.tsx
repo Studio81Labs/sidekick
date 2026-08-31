@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   PlayerApiError,
   PlayerRestoreAmbiguousError,
+  PlayerRestoreRecoveryRequiredError,
   type PlayerBackupRestoreResult,
   type PlayerCredentials,
   type PlayerStorageStatus,
@@ -131,7 +132,12 @@ export default function PlayerApp() {
         );
       }
     } catch (reason) {
-      if (reason instanceof PlayerRestoreAmbiguousError) {
+      if (reason instanceof PlayerRestoreRecoveryRequiredError) {
+        setStorage(null);
+        setSelectedBackup(null);
+        if (backupInput.current) backupInput.current.value = "";
+        setError(reason.message);
+      } else if (reason instanceof PlayerRestoreAmbiguousError) {
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         try {

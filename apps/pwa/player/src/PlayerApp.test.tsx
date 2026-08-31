@@ -340,6 +340,54 @@ describe("PlayerApp", () => {
     expect(fetchMock.mock.calls[2]?.[0]).toBe("/api/player/storage");
   });
 
+  it("requires restart recovery after a restore storage failure", async () => {
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            detail:
+              "Player backup restore did not complete; restart the local runtime before retrying so journal recovery can finish",
+          },
+          503,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    const backupInput = screen.getByLabelText(
+      "Player backup ZIP",
+    ) as HTMLInputElement;
+    await user.upload(
+      backupInput,
+      new File(["backup"], "player-backup.zip", {
+        type: "application/zip",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Restore backup" }));
+
+    expect(
+      await screen.findByText(
+        /Restart the local player runtime so journal recovery can finish before exporting a backup or retrying/,
+      ),
+    ).toBeInTheDocument();
+    expect(backupInput.value).toBe("");
+    expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Restore backup" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Restore committed.")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBe(
+      "stored-session",
+    );
+  });
+
   it("downloads an authenticated backup without sending a CSRF header", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");

@@ -53,6 +53,15 @@ export class PlayerRestoreAmbiguousError extends Error {
   }
 }
 
+export class PlayerRestoreRecoveryRequiredError extends Error {
+  constructor() {
+    super(
+      "The restore did not complete and may have partially changed local data. Restart the local player runtime so journal recovery can finish before exporting a backup or retrying.",
+    );
+    this.name = "PlayerRestoreRecoveryRequiredError";
+  }
+}
+
 function takeLaunchTicket(): string | null {
   const fragment = new URLSearchParams(window.location.hash.slice(1));
   const ticket = fragment.get("ticket");
@@ -197,6 +206,9 @@ export async function restorePlayerBackup(
       body: backup,
     });
   } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerRestoreRecoveryRequiredError();
+    }
     if (error instanceof PlayerApiError) throw error;
     throw new PlayerRestoreAmbiguousError();
   }

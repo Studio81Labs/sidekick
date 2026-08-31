@@ -297,7 +297,10 @@ behind the full restore request, including upload and archive parsing, then take
 the shared data-volume lock for the filesystem snapshot. A browser refresh after
 an ambiguous transport failure therefore waits for the restore to finish rather
 than presenting a stale or intermediate count; a bounded shared-lock failure is
-reported explicitly instead.
+reported explicitly instead. A restore storage failure remains unresolved even
+when returned explicitly as `503`, because cascade intent or partial publication
+may already exist. The player PWA clears the retry input, hides the stale status,
+and requires restart recovery before export or retry.
 
 `app/application/imported_hand_lifecycle.py` is the single boundary every
 lifecycle transition crosses (approve, reapprove, withdraw, reject, deletion

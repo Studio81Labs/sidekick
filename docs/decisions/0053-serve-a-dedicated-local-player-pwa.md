@@ -42,7 +42,10 @@ non-replayable request. If the browser loses a restore response, it clears the
 selected archive and treats the outcome as potentially committed. The runtime
 holds storage-status reads behind that restore from request-body handling
 through completion, and the status snapshot takes the shared data-volume lock,
-so a follow-up refresh cannot be mistaken for a stable pre-commit view.
+so a follow-up refresh cannot be mistaken for a stable pre-commit view. A
+restore storage failure can follow durable journal intent or partial
+publication; the PWA hides the stale status and requires runtime restart
+recovery before export or retry.
 
 `pnpm player:start` builds and verifies the player PWA before starting Python.
 The loopback FastAPI composition refuses to start when `index.html`, the
