@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import zlib
 from datetime import datetime, timezone
 from hashlib import sha256
 from io import BytesIO
@@ -9,8 +10,9 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
-from app.domain.imported_hands import ImportedHandRecord, extract_hero_decision_points
+import app.player_backup as player_backup_module
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
+from app.domain.imported_hands import ImportedHandRecord, extract_hero_decision_points
 from app.player_backup import (
     PlayerBackupConflictError,
     PlayerBackupError,
@@ -234,6 +236,30 @@ def test_restore_classifies_every_record_before_writing(tmp_path: Path) -> None:
     assert target.imported_hands.get(conflict_key) == retained
 
 
+def test_restore_rejects_a_merged_store_over_the_export_record_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_identity = sample_identity(hand_ordinal=18)
+    source_key = imported_hand_record_key(source_identity)
+    source = workspace_at(tmp_path / "source")
+    source.imported_hands.save(source_key, withdrawn_record(source_identity))
+    payload = archive_bytes(source)
+
+    target_identity = sample_identity(hand_ordinal=19)
+    target_key = imported_hand_record_key(target_identity)
+    target_record = withdrawn_record(target_identity)
+    target = workspace_at(tmp_path / "target")
+    target.imported_hands.save(target_key, target_record)
+    monkeypatch.setattr(player_backup_module, "MAX_PLAYER_BACKUP_RECORDS", 1)
+
+    with pytest.raises(PlayerBackupConflictError, match="1-record limit"):
+        restore(target, payload)
+    with pytest.raises(ImportedHandNotFoundError):
+        target.imported_hands.get(source_key)
+    assert target.imported_hands.get(target_key) == target_record
+
+
 def test_restore_preserves_local_artifacts_missing_from_the_archive(
     tmp_path: Path,
 ) -> None:
@@ -331,6 +357,23 @@ def test_player_backup_rejects_duplicate_archive_paths(tmp_path: Path) -> None:
     with pytest.raises(PlayerBackupError, match="duplicate paths"):
         parse_player_backup_archive(
             duplicate.getvalue(),
+            max_archive_bytes=10 * 1024 * 1024,
+        )
+
+
+def test_player_backup_translates_corrupt_member_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = archive_bytes(workspace_at(tmp_path / "source"))
+
+    def corrupt_read(_archive, _member, *_args, **_kwargs):
+        raise zlib.error("corrupt deflate stream")
+
+    monkeypatch.setattr(ZipFile, "read", corrupt_read)
+    with pytest.raises(PlayerBackupError, match="member could not be read"):
+        parse_player_backup_archive(
+            payload,
             max_archive_bytes=10 * 1024 * 1024,
         )
 

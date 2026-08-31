@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import lzma
+import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -570,6 +572,14 @@ def _restore_parsed_backup(
     backup: ParsedPlayerBackup,
     store: FileImportedHandStore,
 ) -> PlayerBackupRestoreResult:
+    resulting_record_keys = set(store.list_keys()) | {
+        snapshot.record_key for snapshot in backup.records
+    }
+    if len(resulting_record_keys) > MAX_PLAYER_BACKUP_RECORDS:
+        raise PlayerBackupConflictError(
+            "Restoring this player backup would exceed the "
+            f"{MAX_PLAYER_BACKUP_RECORDS}-record limit"
+        )
     writes: list[ImportedHandRestoreWrite] = []
     imported_records = 0
     reused_records = 0
@@ -727,7 +737,22 @@ def _member_info(
 
 
 def _read_member(archive: ZipFile, info: ZipInfo) -> bytes:
-    payload = archive.read(info)
+    try:
+        payload = archive.read(info)
+    except (NotImplementedError, RuntimeError) as exc:
+        raise PlayerBackupError(
+            "Player backup uses an unsupported compression method"
+        ) from exc
+    except (
+        BadZipFile,
+        EOFError,
+        OSError,
+        lzma.LZMAError,
+        zlib.error,
+    ) as exc:
+        raise PlayerBackupError(
+            f"Player backup member could not be read: {info.filename}"
+        ) from exc
     if len(payload) != info.file_size:
         raise PlayerBackupError(
             f"Player backup member {info.filename} did not match its declared size"
