@@ -146,7 +146,7 @@ def test_unhandled_error_response_keeps_request_id(
         )
     )
 
-    @app.app.app.get("/api/test-crash")
+    @app.api_application.get("/api/test-crash")
     def crash() -> None:
         raise RuntimeError("test crash")
 
@@ -205,7 +205,7 @@ def test_stream_failure_is_logged_after_response_start(
         ]
         raise RuntimeError("stream failed")
 
-    @app.app.app.get("/api/test-stream")
+    @app.api_application.get("/api/test-stream")
     def stream() -> StreamingResponse:
         return StreamingResponse(stream_chunks())
 

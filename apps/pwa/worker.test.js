@@ -11,6 +11,46 @@ afterEach(() => {
 });
 
 describe("API Worker proxy", () => {
+  it("denies direct and encoded player API paths without reading or forwarding them", async () => {
+    const fetchMock = vi.fn();
+    const assetsFetch = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    for (const path of [
+      "/api/player",
+      "/api/player/imports",
+      "/api%2Fplayer%2Fimports",
+      "/%61pi/%70layer/imports",
+      "/%2561pi%252Fplayer%252Fimports",
+    ]) {
+      const bodyAccess = vi.fn();
+      const arrayBuffer = vi.fn();
+      const request = {
+        url: `https://poker.example${path}`,
+        method: "POST",
+        headers: new Headers(),
+        signal: new AbortController().signal,
+        get body() {
+          bodyAccess();
+          return new ReadableStream();
+        },
+        arrayBuffer,
+      };
+      const response = await worker.fetch(request, {
+        ASSETS: { fetch: assetsFetch },
+        API_PROXY_SECRET: "trusted-worker-value",
+        BACKEND_URL: "https://backend.example",
+      });
+
+      expect(response.status).toBe(404);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      expect(bodyAccess).not.toHaveBeenCalled();
+      expect(arrayBuffer).not.toHaveBeenCalled();
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(assetsFetch).not.toHaveBeenCalled();
+  });
+
   it("rejects encoded API paths before they can bypass MCP administration", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

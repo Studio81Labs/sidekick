@@ -147,6 +147,7 @@ from app.pipeline import (
     resolve_pipeline_selection,
     settings_for_selection,
 )
+from app.player_namespace import DenyHostedPlayerNamespaceMiddleware
 from app.rate_limiting import (
     ApiRateLimiter,
     rate_limit_category,
@@ -542,7 +543,9 @@ def _json_safe_validation_content(value: Any) -> Any:
     return value
 
 
-def create_app(settings: Settings | None = None) -> RequestObservabilityMiddleware:
+def create_app(
+    settings: Settings | None = None,
+) -> DenyHostedPlayerNamespaceMiddleware:
     active_settings = settings or get_settings()
     configure_error_monitoring(active_settings)
     workspace = WorkspaceCoordinator.open(
@@ -1472,17 +1475,20 @@ def create_app(settings: Settings | None = None) -> RequestObservabilityMiddlewa
         )
         app.mount("/", hosted_mcp_runtime.app, name="mcp")
 
-    return RequestObservabilityMiddleware(
-        PathCorsMiddleware(
-            app,
-            api_origins=active_settings.cors_origins,
-            mcp_origins=(
-                active_settings.mcp_allowed_origins
-                if active_settings.mcp_enabled
-                else []
+    return DenyHostedPlayerNamespaceMiddleware(
+        RequestObservabilityMiddleware(
+            PathCorsMiddleware(
+                app,
+                api_origins=active_settings.cors_origins,
+                mcp_origins=(
+                    active_settings.mcp_allowed_origins
+                    if active_settings.mcp_enabled
+                    else []
+                ),
             ),
+            access_log_level=ACCESS_LOG_LEVELS[active_settings.access_log_level],
+            api_application=app,
         ),
-        access_log_level=ACCESS_LOG_LEVELS[active_settings.access_log_level],
         api_application=app,
     )
 

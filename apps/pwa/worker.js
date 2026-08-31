@@ -2,6 +2,10 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
+    if (isPlayerApiPath(url.pathname)) {
+      return privateJsonResponse(404, "Not Found");
+    }
+
     if (isPrivateProxyPath(url.pathname)) {
       if (url.pathname.includes("%")) {
         return privateJsonResponse(400, "Encoded URL paths are not supported");
@@ -63,6 +67,28 @@ function isPrivateProxyPath(pathname) {
     }
   }
   return candidate.includes("%") || matchesPrivateProxyPath(candidate);
+}
+
+function isPlayerApiPath(pathname) {
+  let candidate = pathname;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (candidate === "/api/player" || candidate.startsWith("/api/player/")) {
+      return true;
+    }
+    if (!candidate.includes("%")) return false;
+    try {
+      const decoded = decodeURIComponent(candidate);
+      if (decoded === candidate) return false;
+      candidate = decoded;
+    } catch {
+      return false;
+    }
+  }
+  return (
+    candidate.includes("%") ||
+    candidate === "/api/player" ||
+    candidate.startsWith("/api/player/")
+  );
 }
 
 function staticAssetResponse(request, response) {

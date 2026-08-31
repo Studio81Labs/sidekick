@@ -14,6 +14,7 @@
     "prepare": "husky",
     "backend:dev": "cd apps/backend && PATH=\"$(pwd)/../../solver-plugins/postflop/target/release:$PATH\" .venv/bin/python -m uvicorn app.main:app --reload --host localhost --port 8000",
     "backend:start": "cd apps/backend && PATH=\"$(pwd)/../../solver-plugins/postflop/target/release:$PATH\" .venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000",
+    "player:start": "cd apps/backend && .venv/bin/python -m app.player_main",
     "backend:mcp": "cd apps/backend && .venv/bin/python -m app.mcp_gateway",
     "backend:benchmark": "export POKER_BENCHMARK_BASE_DIR=\"$PWD\" && cd apps/backend && .venv/bin/python -m app.dataset_benchmark",
     "backend:recommendation-benchmark": "export POKER_BENCHMARK_BASE_DIR=\"$PWD\" && cd apps/backend && PATH=\"$(pwd)/../../solver-plugins/postflop/target/release:$PATH\" .venv/bin/python -m app.recommendation_benchmark",
