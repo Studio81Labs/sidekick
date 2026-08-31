@@ -16,6 +16,7 @@ from app.domain.imported_hands import ImportedHandRecord, extract_hero_decision_
 from app.player_backup import (
     PlayerBackupConflictError,
     PlayerBackupError,
+    PlayerBackupExportError,
     PlayerBackupRestoreResult,
     PlayerBackupStorageError,
     build_player_backup_archive,
@@ -123,6 +124,76 @@ def test_player_backup_preserves_records_and_retained_decisions(
     assert second.reused_records == 1
     assert second.reused_decision_artifacts == 1
     assert target.imported_hands.backup_snapshot() == expected_snapshot
+
+
+def test_player_backup_bounds_record_before_building_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = workspace_at(tmp_path / "source")
+    identity = sample_identity(hand_ordinal=22)
+    record_key = imported_hand_record_key(identity)
+    save_record(source, record_key, approved_record(identity))
+    record_size = len(source.imported_hands.backup_snapshot()[0].record_payload)
+    monkeypatch.setattr(
+        player_backup_module,
+        "MAX_PLAYER_BACKUP_RECORD_BYTES",
+        record_size - 1,
+    )
+
+    def unexpected_archive_build(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("oversized snapshot reached the archive builder")
+
+    monkeypatch.setattr(
+        player_backup_module,
+        "_build_archive",
+        unexpected_archive_build,
+    )
+
+    with pytest.raises(PlayerBackupExportError, match="allowed snapshot size"):
+        build_player_backup_archive(
+            source,
+            max_archive_bytes=10 * 1024 * 1024,
+            lock_timeout_seconds=1,
+        )
+
+
+def test_player_backup_bounds_aggregate_before_building_archive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = workspace_at(tmp_path / "source")
+    identity = sample_identity(hand_ordinal=23)
+    record_key = imported_hand_record_key(identity)
+    save_record(source, record_key, approved_record(identity))
+    snapshot = source.imported_hands.backup_snapshot()[0]
+    payload_sizes = [
+        len(snapshot.record_payload),
+        *(len(artifact.payload) for artifact in snapshot.decision_artifacts),
+    ]
+    max_archive_bytes = max(payload_sizes)
+    assert sum(payload_sizes) > max_archive_bytes
+    monkeypatch.setattr(
+        player_backup_module,
+        "MAX_PLAYER_BACKUP_EXPANSION_RATIO",
+        1,
+    )
+
+    def unexpected_archive_build(*_args: object, **_kwargs: object) -> None:
+        pytest.fail("oversized snapshot reached the archive builder")
+
+    monkeypatch.setattr(
+        player_backup_module,
+        "_build_archive",
+        unexpected_archive_build,
+    )
+
+    with pytest.raises(PlayerBackupExportError, match="allowed total size"):
+        build_player_backup_archive(
+            source,
+            max_archive_bytes=max_archive_bytes,
+            lock_timeout_seconds=1,
+        )
 
 
 def test_restore_skips_an_older_deletion_generation(tmp_path: Path) -> None:

@@ -42,6 +42,7 @@ from app.storage.imported_hand_store import (
     ImportedHandRestoreWrite,
     ImportedHandSnapshotArtifact,
     ImportedHandSnapshotError,
+    ImportedHandSnapshotLimitError,
     ImportedHandStoredSnapshot,
     imported_hand_record_key,
 )
@@ -176,11 +177,19 @@ def build_player_backup_archive(
             exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
-            snapshots = workspace.imported_hands.backup_snapshot()
+            snapshots = workspace.imported_hands.backup_snapshot(
+                max_record_bytes=MAX_PLAYER_BACKUP_RECORD_BYTES,
+                max_artifact_bytes=MAX_PLAYER_BACKUP_ARTIFACT_BYTES,
+                max_total_bytes=(
+                    max_archive_bytes * MAX_PLAYER_BACKUP_EXPANSION_RATIO
+                ),
+            )
             return _build_archive(
                 snapshots,
                 max_archive_bytes=max_archive_bytes,
             )
+    except ImportedHandSnapshotLimitError as exc:
+        raise PlayerBackupExportError(str(exc)) from exc
     except (ImportedHandSnapshotError, OSError, ValidationError, ValueError) as exc:
         raise PlayerBackupExportError(
             "The player store cannot be exported until its invalid data is repaired"

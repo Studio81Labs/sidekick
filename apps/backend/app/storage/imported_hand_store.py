@@ -232,6 +232,10 @@ class ImportedHandSnapshotError(RuntimeError):
     """The store cannot produce or apply a trustworthy backup snapshot."""
 
 
+class ImportedHandSnapshotLimitError(ImportedHandSnapshotError):
+    """A snapshot cannot be buffered within the caller's explicit limits."""
+
+
 @dataclass(frozen=True)
 class ImportedHandSnapshotArtifact:
     filename: str
@@ -579,21 +583,37 @@ class FileImportedHandStore:
                 )
         return sorted(artifacts)
 
-    def backup_snapshot(self) -> tuple[ImportedHandStoredSnapshot, ...]:
+    def backup_snapshot(
+        self,
+        *,
+        max_record_bytes: int | None = None,
+        max_artifact_bytes: int | None = None,
+        max_total_bytes: int | None = None,
+    ) -> tuple[ImportedHandStoredSnapshot, ...]:
         """Read a validated, byte-preserving snapshot for player backup.
 
         The caller must hold the data lock exclusively for the entire read and
         archive build. Exact bytes are retained so a restore can distinguish an
         idempotent artifact from a same-name replacement without normalising
-        older serialisation formats.
+        older serialisation formats. Optional byte limits are enforced while
+        each file is read, before its payload is retained in the snapshot.
         """
 
+        byte_limits = (max_record_bytes, max_artifact_bytes, max_total_bytes)
+        if any(limit is not None and limit <= 0 for limit in byte_limits):
+            raise ValueError("Snapshot byte limits must be positive")
+
         snapshots: list[ImportedHandStoredSnapshot] = []
+        total_bytes = 0
         for record_key in self.list_keys():
-            record_payload = self._read_snapshot_file(
+            record_payload = self._read_bounded_snapshot_file(
                 self._record_path(record_key),
                 subject=f"record {record_key}",
+                max_file_bytes=max_record_bytes,
+                max_total_bytes=max_total_bytes,
+                total_bytes=total_bytes,
             )
+            total_bytes += len(record_payload)
             try:
                 record = ImportedHandRecord.model_validate_json(record_payload)
             except ValidationError as exc:
@@ -614,10 +634,14 @@ class FileImportedHandStore:
             for _revision, _generation, filename in self.list_decision_artifacts(
                 record_key
             ):
-                payload = self._read_snapshot_file(
+                payload = self._read_bounded_snapshot_file(
                     self._decisions_dir(record_key) / filename,
                     subject=f"decision artifact {record_key}/{filename}",
+                    max_file_bytes=max_artifact_bytes,
+                    max_total_bytes=max_total_bytes,
+                    total_bytes=total_bytes,
                 )
+                total_bytes += len(payload)
                 try:
                     extraction = HandDecisionExtraction.model_validate_json(payload)
                 except ValidationError as exc:
@@ -655,6 +679,42 @@ class FileImportedHandStore:
                 )
             )
         return tuple(snapshots)
+
+    @classmethod
+    def _read_bounded_snapshot_file(
+        cls,
+        path: Path,
+        *,
+        subject: str,
+        max_file_bytes: int | None,
+        max_total_bytes: int | None,
+        total_bytes: int,
+    ) -> bytes:
+        remaining_total = (
+            None
+            if max_total_bytes is None
+            else max(max_total_bytes - total_bytes, 0)
+        )
+        limits = tuple(
+            limit
+            for limit in (max_file_bytes, remaining_total)
+            if limit is not None
+        )
+        read_limit = min(limits) if limits else None
+        try:
+            return cls._read_snapshot_file(
+                path,
+                subject=subject,
+                max_bytes=read_limit,
+            )
+        except ImportedHandSnapshotLimitError as exc:
+            if remaining_total is not None and (
+                max_file_bytes is None or remaining_total < max_file_bytes
+            ):
+                raise ImportedHandSnapshotLimitError(
+                    "Backup snapshot exceeds the allowed total size"
+                ) from exc
+            raise
 
     def apply_backup_restore(
         self,
@@ -787,7 +847,12 @@ class FileImportedHandStore:
             return None
 
     @staticmethod
-    def _read_snapshot_file(path: Path, *, subject: str) -> bytes:
+    def _read_snapshot_file(
+        path: Path,
+        *,
+        subject: str,
+        max_bytes: int | None = None,
+    ) -> bytes:
         flags = os.O_RDONLY
         if hasattr(os, "O_NOFOLLOW"):
             flags |= os.O_NOFOLLOW
@@ -800,10 +865,27 @@ class FileImportedHandStore:
                 f"Cannot safely read {subject}"
             ) from exc
         try:
-            if not S_ISREG(os.fstat(descriptor).st_mode):
+            file_stat = os.fstat(descriptor)
+            if not S_ISREG(file_stat.st_mode):
                 raise ImportedHandSnapshotError(f"{subject} is not a regular file")
+            if max_bytes is not None and file_stat.st_size > max_bytes:
+                raise ImportedHandSnapshotLimitError(
+                    f"{subject} exceeds the allowed snapshot size"
+                )
             chunks: list[bytes] = []
-            while chunk := os.read(descriptor, 1024 * 1024):
+            bytes_read = 0
+            while True:
+                read_size = 1024 * 1024
+                if max_bytes is not None:
+                    read_size = min(read_size, max_bytes - bytes_read + 1)
+                chunk = os.read(descriptor, read_size)
+                if not chunk:
+                    break
+                bytes_read += len(chunk)
+                if max_bytes is not None and bytes_read > max_bytes:
+                    raise ImportedHandSnapshotLimitError(
+                        f"{subject} exceeds the allowed snapshot size"
+                    )
                 chunks.append(chunk)
             return b"".join(chunks)
         finally:
