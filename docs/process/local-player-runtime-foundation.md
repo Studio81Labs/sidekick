@@ -90,6 +90,30 @@ There is intentionally no player-runtime host or port flag. A non-loopback
 operator development service would be a different runtime and would require
 TLS plus its own server-enforced authorization design.
 
+## Boundary verification
+
+Run the direct-network browser checkpoint with:
+
+```bash
+pnpm player:test:e2e
+```
+
+The command builds both PWA entries, starts the production Uvicorn player
+application on `127.0.0.1:8765`, and consumes a one-use launch URL through an
+owner-readable test handoff file. It verifies the authenticated same-origin
+storage and backup/restore flow, service-worker control, static-shell-only
+caches, and a failed offline storage read. The same suite starts the production
+Worker under local Wrangler with a recording backend. Direct and repeatedly
+encoded player API POSTs must return `404` with `Cache-Control: no-store`, and
+the recording backend must receive neither a request nor its sentinel body.
+The backend transport test also connects through a discovered non-loopback
+IPv4 address and requires connection refusal; Linux CI fails when it cannot
+produce that LAN-side evidence instead of silently skipping it.
+
+The browser harness uses only test-side launch and recording processes. It does
+not add a ticket endpoint, configurable player bind address, hosted player
+route, or production credential transport.
+
 ## Current limit
 
 This checkpoint exposes authenticated session lifecycle, health, store status,
@@ -99,5 +123,7 @@ hand-history import, record read, approval, learning, migration, remote lookup,
 operating-system installer/uninstaller, or complete player workflow. Future
 grade, mastery, drill, and proof stores do not yet exist, so they are not part
 of the version 1 archive. The hosted Worker and V1 FastAPI deployment deny the
-namespace. Do not use this command as evidence that the Phase 1 gate or issue
-#432 is complete.
+namespace, and the direct-network checkpoint verifies that denial without
+proxying a request body. This closes only the network-evidence slice: do not use
+the runtime or its test command as evidence that the Phase 1 gate or issue #432
+is complete.

@@ -862,9 +862,15 @@ def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
             assert response.status_code == 200
 
             lan_address = _non_loopback_ipv4()
-            if lan_address is not None:
-                with pytest.raises(httpx.ConnectError):
-                    client.get(f"http://{lan_address}:{PLAYER_PORT}/")
+            if lan_address is None:
+                if sys.platform.startswith("linux"):
+                    pytest.fail(
+                        "Linux CI must expose a non-loopback IPv4 address for "
+                        "the LAN refusal check"
+                    )
+                pytest.skip("No non-loopback IPv4 interface is available")
+            with pytest.raises(httpx.ConnectError):
+                client.get(f"http://{lan_address}:{PLAYER_PORT}/")
     finally:
         server.should_exit = True
         server_thread.join(timeout=5)
