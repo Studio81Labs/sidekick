@@ -24,11 +24,13 @@ deactivates every artifact it had.
 A reapproval attempt does not supersede its outgoing revision merely by
 reaching this service. Extraction and validation run before the cascade
 opens; if either fails, no durable intent exists and the prior revision and
-its matching artifact remain active so the caller can report the failed
-attempt and retry it. Once the journal has durable publish intent, recovery
-rolls it forward and the store refuses newer writes to that hand until replay
-finishes. The boundary is therefore atomic at acceptance without inventing a
-second, partially accepted failed-rebuild lifecycle state.
+its matching artifact remain active. The raised storage error does not reveal
+whether the journal reached durable intent, so callers must report only that
+reapproval did not complete and refresh lifecycle state before retrying. A
+recoverable pending intent closes the hand to newer writes until replay
+finishes; a structurally unusable one is quarantined for explicit repair. The
+boundary is therefore atomic at publication without inventing a second,
+partially accepted failed-rebuild lifecycle state.
 
 Three things this service deliberately does not do.
 
@@ -353,7 +355,9 @@ class ImportedHandLifecycleService:
         reapproval is not accepted, the prior approved revision remains
         current, and the caller may retry. Once the cascade is open, both
         stages go through the one handle; after its publish intent becomes
-        durable, recovery rolls it forward rather than rolling it back.
+        durable, recovery owns the outcome rather than rolling it back. A
+        recoverable intent rolls forward; a structurally unusable one is
+        quarantined with its evidence.
 
         Whether to derive anything at all is decided from the record
         being published, never from which verb asked. That is what makes

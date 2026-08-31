@@ -25,27 +25,35 @@ committed revision, supersede previously approved canonical state.
 The current cascade journal already supplies a precise durability boundary.
 Extraction and validation happen before a cascade opens. Before the journal is
 ready, failure leaves no publish intent. After it is ready, the per-hand key
-refuses newer lifecycle writes and startup recovery completes the intent by
-idempotent roll-forward.
+refuses newer lifecycle writes while the intent remains recoverable and startup
+recovery attempts idempotent roll-forward. A structurally unusable ready cascade
+is quarantined with its evidence instead of being presented as completed.
 
 ## Decision
 
-A correction/reapproval is accepted for eventual supersession only when the
-replacement canonical revision and its derived artifacts enter the lifecycle's
-durable publish boundary. The outgoing revision remains current until
-roll-forward publication makes the replacement record active.
+A correction/reapproval supersedes the outgoing revision only when publication
+makes the replacement canonical record active with matching derived artifacts.
+Durable journal intent transfers responsibility to recovery, but is not itself a
+successful reapproval response.
 
 Extraction, binding validation, staging, or finalization failure before durable
 publish intent rejects the attempted reapproval atomically. The prior approved
 revision and the artifact derived from that exact revision remain active. The
 artifact is not stale because its canonical revision was never superseded. The
-caller must report that the correction was not accepted and allow the player to
-retry; it must not present the attempted correction as saved.
+caller must report only that reapproval did not complete, preserve the proposed
+correction, and refresh lifecycle state before allowing retry; the propagated
+storage exception does not identify which side of the durability boundary
+failed. The caller must never present the attempted correction as saved from an
+exception alone.
 
-Once publish intent is durable, the existing journal protocol applies: the hand
-refuses newer lifecycle writes until recovery rolls the pending intent forward.
+Once publish intent is durable, the existing journal protocol applies. A
+recoverable pending cascade closes the hand to newer lifecycle writes until
+recovery rolls it forward. A structurally unusable cascade is quarantined for
+explicit human repair instead; its evidence is retained and completion is not
+promised. The active-decision read gate continues to serve only an artifact that
+matches the currently published canonical revision and deletion generation.
 Superseded artifacts remain audit-only after the replacement record becomes
-active. Unrelated hands continue independently throughout either failure path.
+active. Unrelated hands continue independently throughout every failure path.
 
 This decision clarifies ADR 0046's atomic reapproval rule. It does not change the
 separate withdrawal, rejection, deletion-pending, or permanent-purge semantics.
@@ -55,12 +63,14 @@ separate withdrawal, rejection, deletion-pending, or permanent-purge semantics.
 No new failed-rebuild lifecycle status, backup precedence rule, or recovery API
 is introduced. A failed pre-publication attempt does not silently deactivate a
 previously accepted revision, and retry follows the ordinary `reapprove`
-transition. The eventual player UI/API must keep the unsaved correction visible
-to the player, identify the failure, and offer retry or an explicit
-withdraw/reject action when the player wants the prior approval removed
-immediately.
+transition when no pending recovery blocks that key. The eventual player UI/API
+must keep the unsaved correction visible, describe the operation as incomplete,
+refresh the record, and then offer retry or an explicit withdraw/reject action
+when the player wants the prior approval removed immediately. It must not infer
+acceptance or rollback from the original exception type.
 
 The lifecycle test contract distinguishes the two sides of the durability
 boundary: extraction failure leaves revision 1 active and a later retry can
-publish revision 2, while a ready interrupted cascade closes that hand to newer
-writes until roll-forward recovery completes it.
+publish revision 2, while a recoverable ready cascade closes that hand to newer
+writes until roll-forward recovery completes it and a structurally unusable one
+is quarantined for repair.
