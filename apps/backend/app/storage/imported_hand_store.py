@@ -24,8 +24,8 @@ named ``r<revision>-g<generation>.json``, so whether one is stale is decidable
 **from the filename alone**: it is active only while both numbers still match
 the record's current ``lifecycle``, and nothing here may open a file just to
 find that out. A superseded artifact is never deleted here -- issue #432
-requires it stay retained for audit -- only Task 6's purge, through
-``ImportedHandCascade.stage_decisions_delete``, may remove one. Nor is
+requires it stay retained for audit -- only the lifecycle's permanent purge,
+through ``ImportedHandCascade.stage_decisions_delete``, may remove one. Nor is
 one ever silently replaced: staging a *different* artifact under a name
 already occupied raises ``DecisionArtifactRetentionError`` rather than
 ``os.replace``-ing the retained one out of existence, which is the same
@@ -357,7 +357,7 @@ class FileImportedHandStore:
 
         Yields an ``ImportedHandCascade`` through which the caller stages
         any mix of the record itself, one or more decision artifacts, and a
-        decision-artifact deletion (Task 6's purge only -- see
+        decision-artifact deletion (the lifecycle purge only -- see
         ``ImportedHandCascade.stage_decisions_delete``); everything staged
         commits together when the ``with`` block exits normally, or nothing
         does if it raises. ``save`` and ``save_decisions`` are
@@ -800,7 +800,7 @@ class ImportedHandCascade:
         ``missing_ok=True``, so a purge built that way would report
         success while the artifact survives it.
 
-        For Task 6's purge only: a decision artifact is otherwise retained
+        For permanent purge only: a decision artifact is otherwise retained
         forever (see the module docstring). Staging a delete outside a
         cascade that also writes the tombstone in the same unit would let
         a crash strand an artifact deleted with no tombstone to show for

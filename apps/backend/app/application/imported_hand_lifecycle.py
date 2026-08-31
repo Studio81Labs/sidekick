@@ -74,6 +74,8 @@ from app.application.imported_hand_ports import (
 )
 from app.domain.imported_hands import (
     CanonicalHandRevision,
+    DeletionReceipt,
+    DeletionRequest,
     HandDecisionExtraction,
     ImportedHandLifecycle,
     ImportedHandRecord,
@@ -116,7 +118,7 @@ class ConcurrentTransitionError(LifecycleCascadeError):
 
 
 class ImportedHandLifecycleService:
-    """Approve, reapprove, withdraw, and reject one imported hand.
+    """Approve, reapprove, close, and permanently delete one imported hand.
 
     ``extract`` is injected rather than imported so this service can be
     given the domain's real extractor in production and something
@@ -237,6 +239,125 @@ class ImportedHandLifecycleService:
             reason=reason,
             at=at,
         )
+
+    def request_deletion(
+        self, record_key: str, *, reason: str, at: datetime
+    ) -> ImportedHandRecord:
+        """Make a retained hand immediately learning-ineligible before purge.
+
+        The generation advances at logical deactivation, not at physical
+        removal. That makes every artifact from the retained generation stale
+        even for a reader that accidentally checks only generation, while the
+        lifecycle status independently closes the ordinary active read gate.
+
+        Retrying an already-published request is idempotent. This matters when
+        a caller loses the response after commit: a retry must not create a
+        second deletion generation or replace the original audit timestamp.
+        """
+        record = self._store.get(record_key)
+        if record.lifecycle.status == "deleted":
+            raise LifecycleCascadeError(
+                f"record {record_key} has already been permanently deleted"
+            )
+        if record.lifecycle.deletion_request is not None:
+            return record
+
+        generation = record.lifecycle.deletion_generation + 1
+        pending = ImportedHandRecord(
+            identity=record.identity,
+            raw_sources=record.raw_sources,
+            detections=record.detections,
+            conflicts=record.conflicts,
+            canonical_revisions=record.canonical_revisions,
+            lifecycle=ImportedHandLifecycle(
+                status="deletion_pending",
+                active_canonical_revision=None,
+                deletion_generation=generation,
+                changed_at=at,
+                reason=reason,
+                deletion_request=DeletionRequest(
+                    generation=generation,
+                    requested_at=at,
+                ),
+            ),
+        )
+        return self._publish(
+            record_key,
+            pending,
+            operation="request_deletion",
+            expected=record,
+        )
+
+    def purge(
+        self, record_key: str, *, receipt: DeletionReceipt
+    ) -> ImportedHandRecord:
+        """Atomically replace a pending hand with its tombstone and audit purge.
+
+        ``receipt`` is supplied by the cleanup coordinator that owns the
+        deletion proof; this boundary validates its generation and chronology
+        against the retained request before publishing it. A retry carrying
+        the receipt already stored on a tombstone is idempotent.
+
+        Decision artifacts are enumerated after the compare-and-swap check and
+        their exact storage-reported filenames are deleted in the same durable
+        cascade as the tombstone. A pre-commit failure therefore leaves the
+        complete deletion-pending record in place. Once commit begins, the
+        tombstone is learning-ineligible even if recovery still has artifact
+        deletions to roll forward.
+        """
+        record = self._store.get(record_key)
+        if record.lifecycle.status == "deleted":
+            if record.deletion_receipt != receipt:
+                raise LifecycleCascadeError(
+                    f"record {record_key} was already purged with a different "
+                    "deletion receipt"
+                )
+            if not self._store.list_decision_artifacts(record_key):
+                return record
+            # A tombstone can be visible while the original purge's artifact
+            # deletions still wait for roll-forward recovery. Do not report
+            # that as a completed idempotent retry: opening the cascade will
+            # either name the pending recovery that must run first or, after a
+            # quarantined/cleared intent, safely retry the residual cleanup.
+            return self._purge_artifacts(record_key, record, expected=record)
+        if record.lifecycle.status != "deletion_pending":
+            raise LifecycleCascadeError(
+                f"record {record_key} is {record.lifecycle.status}, not "
+                "deletion_pending; logical deactivation must complete before "
+                "physical purge"
+            )
+
+        tombstone = ImportedHandRecord(
+            identity=None,
+            lifecycle=ImportedHandLifecycle(
+                status="deleted",
+                active_canonical_revision=None,
+                deletion_generation=record.lifecycle.deletion_generation,
+                changed_at=receipt.deleted_at,
+                reason="purged",
+            ),
+            deletion_receipt=receipt,
+        )
+        self._require_advancing_marker(record_key, tombstone, record)
+
+        return self._purge_artifacts(record_key, tombstone, expected=record)
+
+    def _purge_artifacts(
+        self,
+        record_key: str,
+        tombstone: ImportedHandRecord,
+        *,
+        expected: ImportedHandRecord,
+    ) -> ImportedHandRecord:
+        """Publish ``tombstone`` and delete all currently retained decisions."""
+        cascade: ImportedHandCascadeHandle
+        with self._store.begin_cascade(record_key, operation="purge") as cascade:
+            self._require_unchanged(record_key, expected)
+            artifacts = self._store.list_decision_artifacts(record_key)
+            cascade.stage_record(tombstone)
+            for _revision, _generation, filename in artifacts:
+                cascade.stage_decisions_delete(filename)
+        return tombstone
 
     def _current(self, record_key: str) -> ImportedHandRecord:
         """Read the record a transition starts from, refusing one mid-deletion.

@@ -138,6 +138,16 @@ class ImportedHandCascadeHandle(Protocol):
         """
         ...
 
+    def stage_decisions_delete(self, filename: str) -> None:
+        """Stage one exact retained decision-artifact filename for deletion.
+
+        This is the physical-purge half of the lifecycle boundary. Callers
+        must pass a name returned by ``list_decision_artifacts`` rather than
+        reconstructing one from revision/generation values, and must stage
+        the deletion in the same cascade as the permanent tombstone.
+        """
+        ...
+
 
 class ImportedHandRepository(Protocol):
     """Durable storage for imported-hand aggregates, keyed by record key."""
@@ -165,6 +175,18 @@ class ImportedHandRepository(Protocol):
 
     def list_keys(self) -> list[str]:
         """Return every stored record key, sorted."""
+        ...
+
+    def list_decision_artifacts(
+        self, record_key: str
+    ) -> list[tuple[int, int, str]]:
+        """Return retained decision artifacts with their exact filenames.
+
+        The filename is deliberately part of the port: permanent purge must
+        delete what storage actually found, including a valid non-canonical
+        spelling such as ``r01-g0.json``, rather than guessing a path from
+        the parsed revision and generation.
+        """
         ...
 
     def save(self, record_key: str, record: ImportedHandRecord) -> ImportedHandRecord:
