@@ -72,7 +72,9 @@ export default function PlayerApp() {
       })
       .catch((reason: unknown) => {
         if (!active) return;
-        clearPlayerCredentials();
+        if (reason instanceof PlayerApiError && reason.status === 401) {
+          clearPlayerCredentials();
+        }
         setError(friendlyError(reason));
       });
     return () => {

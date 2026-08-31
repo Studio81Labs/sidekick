@@ -75,6 +75,48 @@ describe("PlayerApp", () => {
     );
   });
 
+  it("preserves an exchanged session when initial storage status is transient", async () => {
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ detail: "Stable status unavailable" }, 409),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+
+    expect(
+      await screen.findByText("Stable status unavailable"),
+    ).toBeInTheDocument();
+    expect(window.location.hash).toBe("");
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBe(
+      "player-session",
+    );
+    expect(sessionStorage.getItem(PLAYER_CSRF_STORAGE_KEY)).toBe("csrf-token");
+
+    fetchMock.mockResolvedValueOnce(jsonResponse(readyStorage));
+    cleanup();
+    render(<PlayerApp />);
+
+    expect(
+      await screen.findByText("Ready on this machine"),
+    ).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    const retriedStorageRequest = fetchMock.mock.calls[2];
+    expect(retriedStorageRequest?.[0]).toBe("/api/player/storage");
+    expect(
+      new Headers(retriedStorageRequest?.[1]?.headers).get("Authorization"),
+    ).toBe("Bearer player-session");
+  });
+
   it("restores with session and CSRF headers, then refreshes storage", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
