@@ -292,7 +292,12 @@ reactivation, and a tombstone not bound to the same deletion-pending generation
 reject the request before writes. Accepted records and missing artifacts publish
 through one multi-record cascade, preserving local audit artifacts the archive
 does not contain. A bound tombstone removes every retained artifact in that same
-cascade (ADR 0052).
+cascade (ADR 0052). Within the local runtime, storage-status reads serialize
+behind the full restore request, including upload and archive parsing, then take
+the shared data-volume lock for the filesystem snapshot. A browser refresh after
+an ambiguous transport failure therefore waits for the restore to finish rather
+than presenting a stale or intermediate count; a bounded shared-lock failure is
+reported explicitly instead.
 
 `app/application/imported_hand_lifecycle.py` is the single boundary every
 lifecycle transition crosses (approve, reapprove, withdraw, reject, deletion

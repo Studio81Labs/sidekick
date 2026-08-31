@@ -8,7 +8,7 @@ import shutil
 import socket
 import subprocess
 import sys
-from threading import Thread
+from threading import Event, Thread
 from time import monotonic, sleep
 
 import httpx
@@ -19,6 +19,7 @@ from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
 from app.player_main import build_player_server, configured_player_runtime
+from app.player_backup import PlayerBackupRestoreResult
 from app.player_namespace import (
     DenyHostedPlayerNamespaceMiddleware,
     is_player_api_path,
@@ -418,6 +419,117 @@ def test_player_storage_status_preserves_recovery_attention(
         "quarantined": ["quarantined-cascade"],
         "failed": ["failed-cascade"],
     }
+
+
+def test_player_storage_waits_for_an_in_flight_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    status_client = TestClient(
+        runtime.app,
+        base_url=PLAYER_ORIGIN,
+        client=("127.0.0.1", 50001),
+    )
+    session = exchange_session(client, runtime)
+    restore_started = Event()
+    allow_restore_to_finish = Event()
+
+    def blocking_restore(*_args, **_kwargs) -> PlayerBackupRestoreResult:
+        restore_started.set()
+        assert allow_restore_to_finish.wait(5)
+        return PlayerBackupRestoreResult(
+            imported_records=0,
+            reused_records=0,
+            skipped_stale_records=0,
+            imported_decision_artifacts=0,
+            reused_decision_artifacts=0,
+            removed_decision_artifacts=0,
+            total_records=0,
+        )
+
+    monkeypatch.setattr(
+        "app.player_runtime.restore_player_backup",
+        blocking_restore,
+    )
+    authorization = f"Bearer {session['session_token']}"
+    restore_responses = []
+    storage_responses = []
+    storage_finished = Event()
+
+    def request_restore() -> None:
+        restore_responses.append(
+            client.post(
+                "/api/player/backups/restore",
+                content=b"restore archive",
+                headers={
+                    "Authorization": authorization,
+                    "Origin": PLAYER_ORIGIN,
+                    "X-Poker-CSRF-Token": str(session["csrf_token"]),
+                    "Content-Type": "application/zip",
+                },
+            )
+        )
+
+    def request_storage() -> None:
+        storage_responses.append(
+            status_client.get(
+                "/api/player/storage",
+                headers={"Authorization": authorization},
+            )
+        )
+        storage_finished.set()
+
+    restore_thread = Thread(target=request_restore)
+    storage_thread = Thread(target=request_storage)
+    restore_thread.start()
+    assert restore_started.wait(2)
+    concurrent_restore = status_client.post(
+        "/api/player/backups/restore",
+        content=b"second restore archive",
+        headers={
+            "Authorization": authorization,
+            "Origin": PLAYER_ORIGIN,
+            "X-Poker-CSRF-Token": str(session["csrf_token"]),
+            "Content-Type": "application/zip",
+        },
+    )
+    assert concurrent_restore.status_code == 409
+    assert concurrent_restore.json()["detail"] == (
+        "Another player restore is already in progress"
+    )
+    storage_thread.start()
+    assert not storage_finished.wait(0.2)
+
+    allow_restore_to_finish.set()
+    restore_thread.join(5)
+    storage_thread.join(5)
+
+    assert not restore_thread.is_alive()
+    assert not storage_thread.is_alive()
+    assert restore_responses[0].status_code == 200
+    assert storage_responses[0].status_code == 200
+    assert storage_responses[0].json()["imported_hand_record_count"] == 0
+
+
+def test_player_storage_reports_when_a_stable_snapshot_times_out(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path, status_lock_timeout_seconds=0)
+    session = exchange_session(client, runtime)
+    descriptor = runtime.workspace.data_lock.acquire(exclusive=True)
+    try:
+        response = client.get(
+            "/api/player/storage",
+            headers={
+                "Authorization": f"Bearer {session['session_token']}",
+            },
+        )
+    finally:
+        runtime.workspace.data_lock.release(descriptor)
+
+    assert response.status_code == 409
+    assert "waiting for a shared hold" in response.json()["detail"]
 
 
 def test_player_storage_status_preserves_quarantine_across_restarts(

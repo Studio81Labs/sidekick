@@ -63,7 +63,12 @@ exact local Origin, the process-local bearer session, and its matching CSRF
 token. The local recovery PWA exposes both controls. **Download backup** streams
 the archive to the browser. **Restore backup** sends the selected ZIP only to
 the same-origin loopback API, blocks page unload while the non-replayable request
-is active, and refreshes storage status after success.
+is active, and refreshes storage status after success. A lost or incomplete
+response is potentially committed: the PWA clears the selected archive, blocks
+an immediate retry, and refreshes only after the runtime finishes the in-flight
+restore. Storage status takes the shared data-volume lock; if that bounded wait
+cannot produce a stable snapshot, the UI keeps the restore outcome explicitly
+unresolved.
 
 Export includes each record and every retained decision artifact, including
 inactive audit history. Restore validates the complete archive before writing,

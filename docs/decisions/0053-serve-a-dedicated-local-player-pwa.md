@@ -38,7 +38,11 @@ The player service worker precaches only `/` and content-addressed build assets.
 It treats every `/api` path and encoded equivalent as network-only, never writes
 API responses to Cache Storage, and uses a player-specific versioned cache
 namespace. Restore registers unload protection for the duration of its
-non-replayable request.
+non-replayable request. If the browser loses a restore response, it clears the
+selected archive and treats the outcome as potentially committed. The runtime
+holds storage-status reads behind that restore from request-body handling
+through completion, and the status snapshot takes the shared data-volume lock,
+so a follow-up refresh cannot be mistaken for a stable pre-commit view.
 
 `pnpm player:start` builds and verifies the player PWA before starting Python.
 The loopback FastAPI composition refuses to start when `index.html`, the

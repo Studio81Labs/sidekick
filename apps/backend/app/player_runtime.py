@@ -562,6 +562,7 @@ def create_player_runtime(
     startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     backup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
+    status_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     max_player_backup_bytes: int = DEFAULT_MAX_PLAYER_BACKUP_BYTES,
 ) -> PlayerRuntime:
     player_assets = validate_player_assets(player_assets_dir)
@@ -575,6 +576,7 @@ def create_player_runtime(
         load_or_create_installation_secret(workspace.data_dir),
         clock=clock,
     )
+    restore_status_gate = Lock()
     app = FastAPI(
         title="Poker Hero Local Player Runtime",
         docs_url=None,
@@ -621,7 +623,21 @@ def create_player_runtime(
 
     @app.get(f"{PLAYER_API_PREFIX}/storage")
     async def player_storage() -> JSONResponse:
-        return JSONResponse(await run_in_threadpool(workspace.status_payload))
+        def stable_status_payload() -> dict[str, object]:
+            # The local gate covers request-body reading and archive parsing,
+            # before restore_player_backup takes the cross-process exclusive
+            # lock. The shared data lock inside status_payload then protects
+            # the filesystem snapshot itself.
+            with restore_status_gate:
+                return workspace.status_payload(
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+
+        try:
+            payload = await run_in_threadpool(stable_status_payload)
+        except DataLockTimeoutError as exc:
+            return _json_denial(409, str(exc))
+        return JSONResponse(payload)
 
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
     async def export_player_backup() -> Response:
@@ -650,28 +666,36 @@ def create_player_runtime(
 
     @app.post(f"{PLAYER_API_PREFIX}/backups/restore")
     async def restore_uploaded_player_backup(request: Request) -> JSONResponse:
-        media_type = request.headers.get("content-type", "").partition(";")[0]
-        if media_type.strip().lower() not in {
-            "application/zip",
-            "application/octet-stream",
-        }:
-            return _json_denial(415, "Upload must be a player backup ZIP")
+        # Acquire without yielding when no restore is active. A status request
+        # that follows a lost response will then wait from the start of body
+        # handling until the restore has either committed or failed.
+        if not restore_status_gate.acquire(blocking=False):
+            return _json_denial(409, "Another player restore is already in progress")
         try:
-            archive_bytes = await _read_bounded_body(
-                request,
-                limit=max_player_backup_bytes,
-            )
-            result = await run_in_threadpool(
-                restore_player_backup,
-                workspace,
-                archive_bytes,
-                max_archive_bytes=max_player_backup_bytes,
-                lock_timeout_seconds=backup_lock_timeout_seconds,
-            )
-        except PlayerBackupError as exc:
-            return _json_denial(exc.status_code, str(exc))
-        except DataLockTimeoutError as exc:
-            return _json_denial(409, str(exc))
+            media_type = request.headers.get("content-type", "").partition(";")[0]
+            if media_type.strip().lower() not in {
+                "application/zip",
+                "application/octet-stream",
+            }:
+                return _json_denial(415, "Upload must be a player backup ZIP")
+            try:
+                archive_bytes = await _read_bounded_body(
+                    request,
+                    limit=max_player_backup_bytes,
+                )
+                result = await run_in_threadpool(
+                    restore_player_backup,
+                    workspace,
+                    archive_bytes,
+                    max_archive_bytes=max_player_backup_bytes,
+                    lock_timeout_seconds=backup_lock_timeout_seconds,
+                )
+            except PlayerBackupError as exc:
+                return _json_denial(exc.status_code, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+        finally:
+            restore_status_gate.release()
         return JSONResponse(result.model_dump(mode="json"))
 
     @app.delete(f"{PLAYER_API_PREFIX}/session")
