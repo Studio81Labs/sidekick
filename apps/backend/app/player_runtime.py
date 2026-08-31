@@ -15,12 +15,19 @@ from typing import Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.data_lock import (
+    DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+)
 from app.player_namespace import (
     PLAYER_API_PREFIX,
     is_player_api_scope,
 )
+from app.player_workspace import PlayerWorkspace
 
 
 PLAYER_HOST = "127.0.0.1"
@@ -57,6 +64,7 @@ PLAYER_SHELL = """<!doctype html>
     <main>
       <h1>Poker Hero</h1>
       <p id="runtime-status" role="status">Starting the local player runtime…</p>
+      <p>Player data location: <code id="data-location">authentication required</code></p>
       <p>The V2 hand-import workflow is not enabled in this foundation release.</p>
     </main>
     <script type="module" src="/player-bootstrap.js"></script>
@@ -94,6 +102,16 @@ async function verifySession(token) {{
   if (!response.ok) throw new Error("The local player session is unavailable.");
 }}
 
+async function loadStorageStatus(token) {{
+  const response = await fetch("/api/player/storage", {{
+    cache: "no-store",
+    credentials: "same-origin",
+    headers: {{ Authorization: `Bearer ${{token}}` }},
+  }});
+  if (!response.ok) throw new Error("The local player store is unavailable.");
+  return response.json();
+}}
+
 async function bootstrap() {{
   const fragment = new URLSearchParams(location.hash.slice(1));
   const ticket = fragment.get("ticket");
@@ -102,7 +120,11 @@ async function bootstrap() {{
   if (ticket) token = await exchangeTicket(ticket);
   if (!token) throw new Error("Start the player runtime again to create a session.");
   await verifySession(token);
-  setStatus("The authenticated loopback runtime is ready.");
+  const storage = await loadStorageStatus(token);
+  document.getElementById("data-location").textContent = storage.data_directory;
+  setStatus(storage.status === "ready"
+    ? "The authenticated loopback runtime and player store are ready."
+    : "The player store needs recovery attention before import is enabled.");
 }}
 
 bootstrap().catch((error) => {{
@@ -456,6 +478,7 @@ class PlayerRuntime:
     app: ASGIApp
     api_application: FastAPI
     sessions: PlayerSessionAuthority
+    workspace: PlayerWorkspace
     origin: str = PLAYER_ORIGIN
 
     def issue_launch_url(self) -> str:
@@ -469,9 +492,18 @@ def create_player_runtime(
     authority: str = PLAYER_AUTHORITY,
     origin: str = PLAYER_ORIGIN,
     clock: Callable[[], float] = monotonic,
+    recovery_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
 ) -> PlayerRuntime:
+    workspace = PlayerWorkspace.open(
+        data_dir,
+        recovery_lock_timeout_seconds=recovery_lock_timeout_seconds,
+        startup_lock_timeout_seconds=startup_lock_timeout_seconds,
+        write_lock_timeout_seconds=write_lock_timeout_seconds,
+    )
     sessions = PlayerSessionAuthority(
-        load_or_create_installation_secret(data_dir),
+        load_or_create_installation_secret(workspace.data_dir),
         clock=clock,
     )
     app = FastAPI(
@@ -508,6 +540,10 @@ def create_player_runtime(
     async def player_health() -> JSONResponse:
         return JSONResponse({"status": "ok", "runtime": "local-player"})
 
+    @app.get(f"{PLAYER_API_PREFIX}/storage")
+    async def player_storage() -> JSONResponse:
+        return JSONResponse(await run_in_threadpool(workspace.status_payload))
+
     @app.delete(f"{PLAYER_API_PREFIX}/session")
     async def revoke_session(request: Request) -> Response:
         session_token = request.state.player_session_token
@@ -525,5 +561,6 @@ def create_player_runtime(
         app=secured_app,
         api_application=app,
         sessions=sessions,
+        workspace=workspace,
         origin=origin,
     )

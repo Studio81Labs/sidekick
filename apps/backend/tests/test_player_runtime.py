@@ -1,8 +1,12 @@
 import asyncio
+import ctypes
+import errno
 from ipaddress import ip_address
 import os
 from pathlib import Path
 import socket
+import subprocess
+import sys
 from threading import Thread
 from time import monotonic, sleep
 
@@ -10,6 +14,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
 from app.player_main import build_player_server, configured_player_runtime
@@ -32,6 +37,11 @@ from app.player_runtime import (
     create_player_runtime,
     load_or_create_installation_secret,
 )
+from app.player_workspace import (
+    PlayerDataDirectoryError,
+    _macos_extended_acl_has_entries,
+)
+from app.storage.imported_hand_store import FileImportedHandStore
 
 
 def player_client(tmp_path: Path, **kwargs) -> tuple[TestClient, PlayerRuntime]:
@@ -86,6 +96,80 @@ def test_installation_secret_rejects_a_symlink(tmp_path: Path) -> None:
 
     with pytest.raises(PlayerCredentialError, match="Cannot safely open"):
         load_or_create_installation_secret(tmp_path)
+
+
+def test_player_runtime_rejects_a_shared_data_directory(tmp_path: Path) -> None:
+    data_dir = tmp_path / "shared-player-data"
+    data_dir.mkdir(mode=0o755)
+    data_dir.chmod(0o755)
+
+    with pytest.raises(PlayerDataDirectoryError, match="only by its owner"):
+        create_player_runtime(data_dir)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="Darwin extended ACL test")
+def test_player_runtime_rejects_a_data_directory_acl(tmp_path: Path) -> None:
+    data_dir = tmp_path / "acl-player-data"
+    data_dir.mkdir(mode=0o700)
+    subprocess.run(
+        ["/bin/chmod", "+a", "everyone allow read,search", str(data_dir)],
+        check=True,
+    )
+
+    with pytest.raises(PlayerDataDirectoryError, match="extended ACL"):
+        create_player_runtime(data_dir)
+
+
+def test_allocated_empty_macos_acl_is_not_rejected(tmp_path: Path) -> None:
+    class FakeFunction:
+        def __init__(self, result) -> None:
+            self._result = result
+            self.argtypes = None
+            self.restype = None
+
+        def __call__(self, *_args):
+            if callable(self._result):
+                return self._result()
+            return self._result
+
+    def no_first_entry() -> int:
+        ctypes.set_errno(errno.EINVAL)
+        return -1
+
+    class FakeAclLibrary:
+        acl_get_file = FakeFunction(1)
+        acl_get_entry = FakeFunction(no_first_entry)
+        acl_free = FakeFunction(0)
+
+    assert not _macos_extended_acl_has_entries(
+        tmp_path,
+        library=FakeAclLibrary(),
+    )
+
+
+def test_player_runtime_opens_only_the_player_store(tmp_path: Path) -> None:
+    runtime = create_player_runtime(tmp_path)
+
+    assert runtime.workspace.data_dir == tmp_path.resolve()
+    assert runtime.workspace.imported_hands.list_keys() == []
+    assert {path.name for path in tmp_path.iterdir()} == {
+        ".player-runtime-key",
+        ".poker-hero-data.lock",
+        "imported-hands",
+    }
+
+
+def test_player_runtime_rejects_an_imported_hand_store_symlink(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "player-data"
+    data_dir.mkdir(mode=0o700)
+    target = tmp_path / "outside-store"
+    target.mkdir()
+    (data_dir / "imported-hands").symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(PlayerDataDirectoryError, match="must be a directory inside"):
+        create_player_runtime(data_dir)
 
 
 def test_bootstrap_ticket_is_single_use_and_session_requires_csrf() -> None:
@@ -143,6 +227,8 @@ def test_player_shell_bootstraps_from_fragment_into_session_storage(
     assert PLAYER_CSRF_STORAGE_KEY in script.text
     assert "history.replaceState" in script.text
     assert "location.hash" in script.text
+    assert "/api/player/storage" in script.text
+    assert 'id="data-location"' in shell.text
     assert "script-src 'self'" in shell.headers["Content-Security-Policy"]
 
 
@@ -154,6 +240,7 @@ def test_player_api_requires_a_session_and_one_use_launch_ticket(
     ticket = launch_url.split("#ticket=", 1)[1]
 
     assert client.get("/api/player/health").status_code == 401
+    assert client.get("/api/player/storage").status_code == 401
     response = client.post(
         "/api/player/session",
         headers={
@@ -181,6 +268,77 @@ def test_player_api_requires_a_session_and_one_use_launch_ticket(
     )
     assert health.status_code == 200
     assert health.json() == {"status": "ok", "runtime": "local-player"}
+
+    storage = client.get(
+        "/api/player/storage",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    assert storage.status_code == 200
+    assert storage.json() == {
+        "status": "ready",
+        "storage": "player-local-file",
+        "data_directory": str(tmp_path.resolve()),
+        "imported_hand_record_count": 0,
+        "recovery": {"completed": [], "quarantined": [], "failed": []},
+    }
+
+
+def test_player_storage_status_preserves_recovery_attention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        FileImportedHandStore,
+        "has_interrupted_writes",
+        lambda _self: True,
+    )
+    monkeypatch.setattr(
+        FileImportedHandStore,
+        "recover",
+        lambda _self: ImportedHandRecoveryReport(
+            completed=("completed-cascade",),
+            quarantined=("quarantined-cascade",),
+            failed=("failed-cascade",),
+        ),
+    )
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+
+    storage = client.get(
+        "/api/player/storage",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert storage.status_code == 200
+    assert storage.json()["status"] == "attention_required"
+    assert storage.json()["recovery"] == {
+        "completed": ["completed-cascade"],
+        "quarantined": ["quarantined-cascade"],
+        "failed": ["failed-cascade"],
+    }
+
+
+def test_player_storage_status_preserves_quarantine_across_restarts(
+    tmp_path: Path,
+) -> None:
+    imported_hands = tmp_path / "imported-hands"
+    imported_hands.mkdir(mode=0o700)
+    interrupted = imported_hands / ".cascade" / "interrupted-cascade"
+    interrupted.mkdir(parents=True)
+    (interrupted / "ready").write_bytes(b"")
+
+    first = create_player_runtime(tmp_path)
+    assert first.workspace.imported_hand_recovery.quarantined == (
+        "interrupted-cascade",
+    )
+    assert first.workspace.status_payload()["status"] == "attention_required"
+
+    second = create_player_runtime(tmp_path)
+    assert second.workspace.imported_hand_recovery == ImportedHandRecoveryReport()
+    assert second.workspace.status_payload()["status"] == "attention_required"
+    assert second.workspace.status_payload()["recovery"]["quarantined"] == [
+        "interrupted-cascade"
+    ]
 
 
 def test_player_api_enforces_origin_and_csrf(tmp_path: Path) -> None:

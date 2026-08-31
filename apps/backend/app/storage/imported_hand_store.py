@@ -558,6 +558,10 @@ class FileImportedHandStore:
         """
         return self._journal.has_pending_cascades()
 
+    def list_quarantined_cascades(self) -> tuple[str, ...]:
+        """Return retained recovery evidence that still needs human review."""
+        return self._journal.quarantined_cascades()
+
     def recover(self) -> ImportedHandRecoveryReport:
         """Finish or set aside writes interrupted by an earlier crash.
 

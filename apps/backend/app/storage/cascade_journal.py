@@ -420,6 +420,26 @@ class CascadeJournal:
         """
         return bool(self._sweepable_cascade_dirs())
 
+    def quarantined_cascades(self) -> tuple[str, ...]:
+        """Return every retained quarantine evidence directory name.
+
+        Quarantine is deliberately excluded from recovery sweeps, but it must
+        remain visible to readiness and operator surfaces on every later
+        process start. Names are returned without following directory symlinks.
+        """
+        quarantine_root = self._cascade_root / _QUARANTINE_DIRNAME
+        try:
+            with os.scandir(quarantine_root) as entries:
+                return tuple(
+                    sorted(
+                        entry.name
+                        for entry in entries
+                        if entry.is_dir(follow_symlinks=False)
+                    )
+                )
+        except FileNotFoundError:
+            return ()
+
     def _sweepable_cascade_dirs(self) -> list[Path]:
         """Every directory under .cascade that a sweep would consider.
 
