@@ -16,7 +16,6 @@ from app.domain.imported_hands import (
     ImportedHandRecord,
     ImportProvenance,
     SourceChronology,
-    UserCorrection,
 )
 from app.storage.imported_hand_store import FileImportedHandStore
 
@@ -88,12 +87,20 @@ class PlayerDetectionAudit(PlayerHandProjection):
     content_sha256: str
 
 
+class PlayerUserCorrectionAudit(PlayerHandProjection):
+    field_pointer: str
+    detected_value: JsonValue
+    approved_value: JsonValue
+    corrected_at: datetime
+    reason: str | None
+
+
 class PlayerCanonicalRevisionAudit(PlayerHandProjection):
     revision: int
     detection_id: str
     approved_at: datetime
     state: dict[str, JsonValue]
-    corrections: list[UserCorrection]
+    corrections: list[PlayerUserCorrectionAudit]
 
 
 class PlayerHandDetail(PlayerHandProjection):
@@ -240,7 +247,20 @@ def get_player_hand(
                         cast(JsonValue, revision.state.model_dump(mode="json"))
                     ),
                 ),
-                corrections=revision.corrections,
+                corrections=[
+                    PlayerUserCorrectionAudit(
+                        field_pointer=correction.field_pointer,
+                        detected_value=_without_evidence_excerpts(
+                            correction.detected_value
+                        ),
+                        approved_value=_without_evidence_excerpts(
+                            correction.approved_value
+                        ),
+                        corrected_at=correction.corrected_at,
+                        reason=correction.reason,
+                    )
+                    for correction in revision.corrections
+                ],
             )
             for revision in record.canonical_revisions
         ],

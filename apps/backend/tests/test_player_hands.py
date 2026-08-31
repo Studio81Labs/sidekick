@@ -102,6 +102,7 @@ def test_player_hand_detail_identifies_the_active_approved_revision(tmp_path) ->
         "site": "pokerstars",
         "source_hand_id": "123456701",
     }
+    assert detail.canonical_revisions[0].corrections[0].approved_value == "hero"
 
 
 def test_player_hand_state_projection_removes_nested_evidence_excerpts() -> None:
