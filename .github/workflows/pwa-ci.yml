@@ -109,6 +109,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm -C apps/pwa test --run src/features src/domains src/shared
 
+      - name: Test local player app
+        if: ${{ !cancelled() }}
+        run: pnpm -C apps/pwa test --run player/src
+
       - name: Build PWA and audit bundle budgets
         if: ${{ !cancelled() }}
         run: pnpm pwa:performance
