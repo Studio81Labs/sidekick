@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -18,6 +18,7 @@ import app.bootstrap as bootstrap_module
 import app.application_backup as application_backup_module
 from app.bootstrap import create_app
 from app.config import Settings
+from app.data_lock import InterprocessDataLock
 from app.storage.file_benchmark_store import FileBenchmarkStore
 from app.storage.file_job_store import FileJobStore
 from api_test_support import (
@@ -316,6 +317,44 @@ def test_upload_waiting_for_backup_does_not_block_unrelated_requests(
             assert upload.status_code == 201
 
     asyncio.run(exercise_upload())
+
+
+def test_backup_export_returns_conflict_after_its_lock_wait_budget(
+    tmp_path: Path,
+) -> None:
+    client = make_client(
+        tmp_path,
+        data_lock_export_timeout_seconds=1,
+    )
+    blocker = InterprocessDataLock(tmp_path)
+    responses: list[httpx.Response] = []
+    failures: list[Exception] = []
+
+    def request_export() -> None:
+        try:
+            responses.append(client.get("/api/backups/export"))
+        except Exception as exc:
+            failures.append(exc)
+
+    with blocker.hold(exclusive=False):
+        request = Thread(target=request_export)
+        request.start()
+        request.join(timeout=3)
+        completed_before_release = not request.is_alive()
+
+    request.join(timeout=5)
+
+    assert completed_before_release
+    assert not request.is_alive()
+    assert failures == []
+    assert len(responses) == 1
+    assert responses[0].status_code == 409
+    assert responses[0].json() == {
+        "detail": "Application backup export is busy; try again"
+    }
+
+    retry = client.get("/api/backups/export")
+    assert retry.status_code == 200
 
 
 def test_slow_backup_download_does_not_block_mutations(

@@ -9,26 +9,27 @@ from pathlib import Path
 
 DATA_LOCK_FILENAME = ".poker-hero-data.lock"
 
-# Three bounds. They are separate because they protect against different
-# failures, not because the numbers differ - two of them are equal today,
+# Four bounds. They are separate because they protect against different
+# failures, not because the numbers differ - three of them are equal today,
 # and that is a coincidence rather than a link. Anyone tuning one of these
 # must be able to do it without silently moving the others.
 #
-# STARTUP, EXCLUSIVE side (retired-record deployment cleanup and the imported-
-# hand recovery sweep). Both paths skip the acquire unless raw candidates exist.
+# STARTUP, EXCLUSIVE side (retired-record deployment cleanup, imported-hand
+# recovery, and interrupted-job recovery). All paths skip the acquire unless
+# raw candidates exist.
 # An exclusive acquire can be starved indefinitely: flock() has no writer
 # preference, so a steady stream of overlapping shared holders can keep one
 # waiting forever. No length of wait rescues that, so the bound is tight - fail
 # fast and say which side was wanted.
 DEFAULT_DATA_LOCK_TIMEOUT_SECONDS = 30
 
-# STARTUP, SHARED side (everything else a boot does). Blocked only by
-# exclusive holders, and those *drain*: the backup export finishes its
-# archive and the wait ends. Waiting is the correct behaviour, so this
-# bound exists only to turn a genuinely stuck system into a message
-# instead of an infinite wedge with no log line, and it sits well clear of
-# a legitimate export - the runbook schedules one daily, building up to a
-# 100 MB archive under the exclusive side.
+# STARTUP, SHARED side (workspace construction before recovery writes).
+# Blocked only by exclusive holders, and those *drain*: the backup export
+# finishes its archive and the wait ends. Waiting is the correct behaviour,
+# so this bound exists only to turn a genuinely stuck system into a message
+# instead of an infinite wedge with no log line, and it sits well clear of a
+# legitimate export - the runbook schedules one daily, building up to a 100 MB
+# archive under the exclusive side.
 DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS = 600
 
 # WRITE hold (a record store cascade). Also a shared acquire, so also
@@ -39,6 +40,12 @@ DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS = 600
 # the length of an archive build. Equal to the startup exclusive bound by
 # coincidence, not by connection.
 DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS = 30
+
+# BACKUP EXPORT acquire. This is the exclusive side on an HTTP request path.
+# Like startup recovery it can be starved by overlapping shared holders, but
+# operators must be able to tune a browser-facing request deadline without
+# changing whether a deployment can recover persisted state.
+DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS = 30
 
 _NANOSECONDS_PER_SECOND = 1_000_000_000
 _MILLISECONDS_PER_SECOND = 1_000
@@ -143,8 +150,8 @@ class InterprocessDataLock:
         wanted = "an exclusive" if exclusive else "a shared"
         blocker = (
             "another process holds it, either shared (an in-flight mutating "
-            "request, or a backup export) or exclusively (another instance "
-            "starting up)"
+            "request, or startup workspace construction) or exclusively "
+            "(startup recovery, or a backup export)"
             if exclusive
             else "another process holds it exclusively (a startup recovery "
             "sweep, or a backup export)"
@@ -157,9 +164,18 @@ class InterprocessDataLock:
             "directory, then retry."
         )
 
-    async def acquire_async(self, *, exclusive: bool) -> int:
+    async def acquire_async(
+        self,
+        *,
+        exclusive: bool,
+        timeout_seconds: int | None = None,
+    ) -> int:
         acquisition = asyncio.create_task(
-            asyncio.to_thread(self.acquire, exclusive=exclusive)
+            asyncio.to_thread(
+                self.acquire,
+                exclusive=exclusive,
+                timeout_seconds=timeout_seconds,
+            )
         )
         try:
             return await asyncio.shield(acquisition)

@@ -10,6 +10,7 @@ from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_va
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.data_lock import (
+    DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
@@ -86,14 +87,15 @@ class Settings(BaseSettings):
     )
 
     data_dir: Path = Field(default=Path("data"))
-    # Startup's two data-lock acquires are bounded separately, because
-    # they fail in different ways. See app/data_lock.py for why one is
-    # tight and the other is not; both are tunable because they run
+    # Startup's shared and exclusive data-lock acquires use separate budgets,
+    # because they fail in different ways. See app/data_lock.py for why one is
+    # tight and the other is not; both budgets are tunable because they run
     # before uvicorn binds, where a wrong bound is a failed deploy.
     #
-    # The exclusive acquire used by retired-record deployment cleanup and the
-    # imported-hand recovery sweep. Each is skipped unless raw candidates
-    # exist, so on a current healthy volume neither requests the lock.
+    # The exclusive acquire used by retired-record deployment cleanup,
+    # imported-hand recovery, and interrupted-job recovery. Each is skipped
+    # unless raw candidates exist, so a current healthy volume does not request
+    # the lock.
     data_lock_recovery_timeout_seconds: int = Field(
         default=DEFAULT_DATA_LOCK_TIMEOUT_SECONDS, gt=0
     )
@@ -111,6 +113,12 @@ class Settings(BaseSettings):
     # by coincidence, not by connection.
     data_lock_write_timeout_seconds: int = Field(
         default=DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS, gt=0
+    )
+    # The exclusive acquire used by browser backup export. It can be starved
+    # by ordinary shared request holders, so an HTTP caller must not wait
+    # forever. This stays independent from every startup and write budget.
+    data_lock_export_timeout_seconds: int = Field(
+        default=DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS, gt=0
     )
     deployment_environment: Literal["local", "staging", "production"] = "local"
     data_volume_id: str | None = Field(

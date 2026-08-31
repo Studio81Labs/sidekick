@@ -129,13 +129,9 @@ class WorkspaceCoordinator:
                 timeout_seconds=recovery_lock_timeout_seconds,
             ):
                 recovery = imported_hands.recover()
-        # Everything else keeps the shared hold it has always had.
-        # recover_interrupted_jobs() reads and validates every job record
-        # on disk, which is the dominant cost here and has no business
-        # inside an exclusive hold taken for the sweep. It does write job
-        # records under a shared lock, which is a real race - but a
-        # pre-existing one, tracked separately, and not fixed by widening
-        # a lock introduced for something else.
+        # Everything else keeps the shared hold it has always had. Job
+        # recovery is deliberately not included: it writes records and needs
+        # its own exclusive hold rather than widening the imported-hand sweep.
         #
         # This acquire is bounded too, but on its OWN, much larger budget,
         # because it is protecting against a different failure than the
@@ -172,15 +168,32 @@ class WorkspaceCoordinator:
                 imported_hand_lock_factory=imported_hand_lock_factory,
             )
             workspace.imported_hand_recovery = recovery
-            workspace.recover_interrupted_jobs()
+        workspace.recover_interrupted_jobs(
+            lock_timeout_seconds=recovery_lock_timeout_seconds,
+        )
         return workspace
 
-    def recover_interrupted_jobs(self) -> None:
-        for job in self.jobs.list():
-            if job.status == "created":
-                job.status = "error"
-                job.error = INTERRUPTED_PARSER_ERROR
-                self.jobs.save(job)
+    def recover_interrupted_jobs(
+        self,
+        *,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+    ) -> None:
+        # Avoid requesting an exclusive hold on a healthy volume. If a live
+        # request owns one of the observed `created` jobs, its shared hold
+        # keeps this acquire waiting until that request saves its result.
+        if not any(job.status == "created" for job in self.jobs.list()):
+            return
+        with self.data_lock.hold(
+            exclusive=True,
+            timeout_seconds=lock_timeout_seconds,
+        ):
+            # Re-read only after exclusivity is established. Another process
+            # may have completed parsing while this waiter was blocked.
+            for job in self.jobs.list():
+                if job.status == "created":
+                    job.status = "error"
+                    job.error = INTERRUPTED_PARSER_ERROR
+                    self.jobs.save(job)
 
     def save_job(self, job: JobRecord) -> JobRecord:
         if job.archived_at is None:
