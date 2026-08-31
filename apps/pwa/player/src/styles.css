@@ -330,6 +330,25 @@ code {
   color: #7b4325;
 }
 
+.warning-block li,
+.confidence-block li {
+  display: grid;
+  gap: 4px;
+}
+
+.corrections-block {
+  margin-top: 16px;
+}
+
+.corrections-block h5 {
+  margin: 0 0 8px;
+}
+
+.corrections-block li {
+  display: grid;
+  gap: 6px;
+}
+
 .conflict-block li {
   display: grid;
   gap: 4px;

@@ -59,18 +59,40 @@ function confidenceLabel(confidence: string | null): string {
     : "confidence unavailable";
 }
 
+function evidenceLocation(
+  evidence: PlayerHandDetail["detections"][number]["field_evidence"][string]["evidence"][number],
+): string {
+  const lines = evidence.line_start
+    ? evidence.line_end && evidence.line_end !== evidence.line_start
+      ? `lines ${evidence.line_start}-${evidence.line_end}`
+      : `line ${evidence.line_start}`
+    : "source location retained";
+  return `source ${evidence.raw_source_id} · ${lines}${
+    evidence.marker ? ` · marker ${evidence.marker}` : ""
+  }`;
+}
+
 function HandDetail({ detail }: { detail: PlayerHandDetail }) {
   const { summary } = detail;
-  const evidenceWarnings = detail.detections.flatMap((detection) => [
-    ...detection.warnings,
-    ...Object.values(detection.field_evidence).flatMap(
-      (evidence) => evidence.warnings,
+  const recognitionWarnings = detail.detections.flatMap((detection) => [
+    ...detection.warnings.map((warning) => ({
+      detectionId: detection.detection_id,
+      field: null,
+      warning,
+    })),
+    ...Object.entries(detection.field_evidence).flatMap(([field, evidence]) =>
+      evidence.warnings.map((warning) => ({
+        detectionId: detection.detection_id,
+        field,
+        warning,
+      })),
     ),
   ]);
   const fieldConfidence = detail.detections.flatMap((detection) =>
     Object.entries(detection.field_evidence).map(([field, evidence]) => ({
       confidence: evidence.confidence,
       detectionId: detection.detection_id,
+      evidence: evidence.evidence,
       field,
     })),
   );
@@ -84,6 +106,9 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
           Lifecycle: <strong>{lifecycleLabel(summary.lifecycle_status)}</strong>
           . Changed {new Date(summary.lifecycle_changed_at).toLocaleString()}.
         </p>
+        {detail.lifecycle.reason ? (
+          <p>Lifecycle reason: {detail.lifecycle.reason}</p>
+        ) : null}
         {summary.lifecycle_status === "deleted" ? (
           <p>
             The tombstone retains only deletion generation and receipt evidence;
@@ -94,6 +119,8 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
             <p className="deletion-failure" role="alert">
               Deletion cleanup failed: {deletionRequest.last_error}. This record
               remains inactive and needs repair before cleanup can finish.
+              Requested{" "}
+              {new Date(deletionRequest.requested_at).toLocaleString()}.
             </p>
           ) : (
             <p>
@@ -155,6 +182,11 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
               <li key={`${field.detectionId}-${field.field}`}>
                 Detection {field.detectionId} · <code>{field.field}</code> ·{" "}
                 {confidenceLabel(field.confidence)}
+                {field.evidence.map((evidence, index) => (
+                  <span key={`${evidence.raw_source_id}-${index}`}>
+                    {evidenceLocation(evidence)}
+                  </span>
+                ))}
               </li>
             ))}
           </ul>
@@ -172,17 +204,28 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
                 {source.provenance.adapter_version}
                 {" · "}
                 {new Date(source.provenance.imported_at).toLocaleString()}
+                {source.chronology.played_at
+                  ? ` · played ${new Date(source.chronology.played_at).toLocaleString()}`
+                  : ""}
               </li>
             ))}
           </ul>
         </div>
       ) : null}
-      {evidenceWarnings.length > 0 ? (
+      {recognitionWarnings.length > 0 ? (
         <div className="audit-block warning-block">
           <h4>Recognition warnings</h4>
           <ul>
-            {evidenceWarnings.map((warning, index) => (
-              <li key={`${index}-${warning}`}>{warning}</li>
+            {recognitionWarnings.map((warning, index) => (
+              <li key={`${warning.detectionId}-${warning.field}-${index}`}>
+                <span>
+                  Detection {warning.detectionId} ·{" "}
+                  {warning.field
+                    ? `field ${warning.field}`
+                    : "proposal warning"}
+                </span>
+                <span>{warning.warning}</span>
+              </li>
             ))}
           </ul>
         </div>
@@ -234,6 +277,36 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
                 · approved {new Date(revision.approved_at).toLocaleString()}
               </summary>
               <pre>{JSON.stringify(revision.state, null, 2)}</pre>
+              {revision.corrections.length > 0 ? (
+                <div className="corrections-block">
+                  <h5>User corrections</h5>
+                  <ul>
+                    {revision.corrections.map((correction) => (
+                      <li
+                        key={`${revision.revision}-${correction.field_pointer}`}
+                      >
+                        <strong>
+                          <code>{correction.field_pointer}</code> ·{" "}
+                          {new Date(correction.corrected_at).toLocaleString()}
+                        </strong>
+                        {correction.reason ? (
+                          <span>{correction.reason}</span>
+                        ) : null}
+                        <pre>
+                          {JSON.stringify(
+                            {
+                              approved: correction.approved_value,
+                              detected: correction.detected_value,
+                            },
+                            null,
+                            2,
+                          )}
+                        </pre>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </details>
           ))}
         </div>
@@ -590,6 +663,11 @@ export default function PlayerApp() {
                               ? `Active revision ${hand.active_canonical_revision} · learning eligible`
                               : "Not used for learning"}
                           </span>
+                          {hand.played_at ? (
+                            <span>
+                              Played {new Date(hand.played_at).toLocaleString()}
+                            </span>
+                          ) : null}
                         </div>
                         <button
                           className="quiet-button"

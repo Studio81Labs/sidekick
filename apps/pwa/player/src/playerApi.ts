@@ -93,7 +93,16 @@ export interface PlayerHandDetail {
     state: Record<string, unknown>;
     field_evidence: Record<
       string,
-      { confidence: string | null; warnings: string[] }
+      {
+        confidence: string | null;
+        evidence: Array<{
+          raw_source_id: string;
+          line_start: number | null;
+          line_end: number | null;
+          marker: string | null;
+        }>;
+        warnings: string[];
+      }
     >;
     warnings: string[];
   }>;
@@ -111,7 +120,13 @@ export interface PlayerHandDetail {
     detection_id: string;
     approved_at: string;
     state: Record<string, unknown>;
-    corrections: unknown[];
+    corrections: Array<{
+      field_pointer: string;
+      detected_value: unknown;
+      approved_value: unknown;
+      corrected_at: string;
+      reason: string | null;
+    }>;
   }>;
   deletion_receipt: {
     receipt_id: string;

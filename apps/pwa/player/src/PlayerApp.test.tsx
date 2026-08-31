@@ -90,6 +90,14 @@ const pendingHandDetail = {
       field_evidence: {
         "/hero_player_id": {
           confidence: "0.4",
+          evidence: [
+            {
+              raw_source_id: "file-1",
+              line_start: 1,
+              line_end: 1,
+              marker: "hero-line",
+            },
+          ],
           warnings: ["Hero line was absent"],
         },
       },
@@ -107,7 +115,18 @@ const pendingHandDetail = {
         hero_cards: [],
       },
       field_evidence: {
-        "/hero_player_id": { confidence: "0.95", warnings: [] },
+        "/hero_player_id": {
+          confidence: "0.95",
+          evidence: [
+            {
+              raw_source_id: "file-2",
+              line_start: 3,
+              line_end: 4,
+              marker: null,
+            },
+          ],
+          warnings: [],
+        },
       },
       warnings: [],
     },
@@ -158,7 +177,15 @@ const activeHandDetail = {
         hero_player_id: "hero",
         hero_cards: ["As", "Kh"],
       },
-      corrections: [],
+      corrections: [
+        {
+          field_pointer: "/hero_player_id",
+          detected_value: null,
+          approved_value: "hero",
+          corrected_at: "2026-08-30T12:00:00Z",
+          reason: "Confirmed from dealt-to evidence",
+        },
+      ],
     },
   ],
 };
@@ -176,6 +203,7 @@ const failedDeletionHandDetail = {
     ...pendingHandDetail.lifecycle,
     status: "deletion_pending",
     deletion_generation: 2,
+    reason: "delete requested",
     deletion_request: {
       generation: 2,
       requested_at: "2026-08-30T12:00:00Z",
@@ -327,6 +355,7 @@ describe("PlayerApp", () => {
     expect(screen.getByText("Hero line was absent")).toBeInTheDocument();
     expect(screen.getAllByText("/hero_player_id")).toHaveLength(2);
     expect(screen.getByText(/40% confidence/)).toBeInTheDocument();
+    expect(screen.getByText(/source file-1 · line 1/)).toBeInTheDocument();
     expect(screen.getByText("Detected proposals")).toBeInTheDocument();
     expect(screen.getByText(/"hero_player_id": null/)).toBeInTheDocument();
     expect(screen.getAllByText(/Detection detection-1/).length).toBeGreaterThan(
@@ -336,6 +365,12 @@ describe("PlayerApp", () => {
       1,
     );
     expect(screen.getByText(/95% confidence/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Detection detection-1 · proposal warning/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Detection detection-1 · field \/hero_player_id/),
+    ).toBeInTheDocument();
     expect(screen.getByText("Import conflict history")).toBeInTheDocument();
     expect(screen.getByText(/resolved use source/)).toBeInTheDocument();
     expect(screen.getByText(/Selected source: file-2/)).toBeInTheDocument();
@@ -384,6 +419,10 @@ describe("PlayerApp", () => {
       screen.getByText(/Revision 1 · detection detection-1/),
     ).toBeInTheDocument();
     expect(screen.getByText(/"hero_player_id": "hero"/)).toBeInTheDocument();
+    expect(screen.getByText("User corrections")).toBeInTheDocument();
+    expect(
+      screen.getByText("Confirmed from dealt-to evidence"),
+    ).toBeInTheDocument();
   });
 
   it("surfaces a failed deletion cleanup instead of generic inactive copy", async () => {
@@ -418,6 +457,9 @@ describe("PlayerApp", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("needs repair");
+    expect(
+      screen.getByText(/Lifecycle reason: delete requested/),
+    ).toBeInTheDocument();
   });
 
   it("restores with session and CSRF headers, then refreshes storage", async () => {
