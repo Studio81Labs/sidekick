@@ -6,16 +6,27 @@ import {
   PlayerRestoreRecoveryRequiredError,
   type PlayerBackupRestoreResult,
   type PlayerCredentials,
+  type PlayerHandDetail,
+  type PlayerHandList,
+  type PlayerHandSummary,
   type PlayerStorageStatus,
   bootstrapPlayerSession,
   clearPlayerCredentials,
   exportPlayerBackup,
+  loadPlayerHand,
+  loadPlayerHands,
   loadPlayerStorage,
   restorePlayerBackup,
   revokePlayerSession,
 } from "./playerApi";
 
-type BusyAction = "export" | "restore" | "signout" | null;
+type BusyAction =
+  | "export"
+  | "restore"
+  | "records"
+  | "detail"
+  | "signout"
+  | null;
 
 function friendlyError(error: unknown): string {
   if (error instanceof PlayerApiError && error.status === 401) {
@@ -28,6 +39,321 @@ function friendlyError(error: unknown): string {
 
 function recoveryCount(storage: PlayerStorageStatus): number {
   return storage.recovery.quarantined.length + storage.recovery.failed.length;
+}
+
+function lifecycleLabel(status: string): string {
+  return status.replace(/_/g, " ");
+}
+
+function handLabel(hand: PlayerHandSummary): string {
+  return hand.identity
+    ? `${hand.identity.namespace} · ${hand.identity.site} #${hand.identity.source_hand_id}`
+    : `Deleted record · generation ${hand.deletion_generation}`;
+}
+
+function confidenceLabel(confidence: string | null): string {
+  if (confidence === null) return "confidence not scored";
+  const value = Number(confidence);
+  return Number.isFinite(value)
+    ? `${Math.round(value * 100)}% confidence`
+    : "confidence unavailable";
+}
+
+function evidenceLocation(
+  evidence: PlayerHandDetail["detections"][number]["field_evidence"][string]["evidence"][number],
+): string {
+  const locators: string[] = [];
+  if (evidence.line_start) {
+    locators.push(
+      evidence.line_end && evidence.line_end !== evidence.line_start
+        ? `lines ${evidence.line_start}-${evidence.line_end}`
+        : `line ${evidence.line_start}`,
+    );
+  }
+  if (evidence.marker) locators.push(`marker ${evidence.marker}`);
+  if (locators.length === 0) {
+    locators.push("source excerpt redacted; no visible locator retained");
+  }
+  return `source ${evidence.raw_source_id} · ${locators.join(" · ")}`;
+}
+
+function HandDetail({ detail }: { detail: PlayerHandDetail }) {
+  const { summary } = detail;
+  const recognitionWarnings = detail.detections.flatMap((detection) => [
+    ...detection.warnings.map((warning) => ({
+      detectionId: detection.detection_id,
+      field: null,
+      warning,
+    })),
+    ...Object.entries(detection.field_evidence).flatMap(([field, evidence]) =>
+      evidence.warnings.map((warning) => ({
+        detectionId: detection.detection_id,
+        field,
+        warning,
+      })),
+    ),
+  ]);
+  const fieldConfidence = detail.detections.flatMap((detection) =>
+    Object.entries(detection.field_evidence).map(([field, evidence]) => ({
+      confidence: evidence.confidence,
+      detectionId: detection.detection_id,
+      evidence: evidence.evidence,
+      field,
+    })),
+  );
+  const deletionRequest = detail.lifecycle.deletion_request;
+  return (
+    <article className="hand-detail" aria-labelledby="hand-detail-heading">
+      <div>
+        <p className="eyebrow">Read-only audit detail</p>
+        <h3 id="hand-detail-heading">{handLabel(summary)}</h3>
+        <p>
+          Record key <code>{summary.record_key}</code>
+        </p>
+        <p>
+          Lifecycle: <strong>{lifecycleLabel(summary.lifecycle_status)}</strong>
+          . Changed {new Date(summary.lifecycle_changed_at).toLocaleString()}.
+        </p>
+        {detail.lifecycle.reason ? (
+          <p>Lifecycle reason: {detail.lifecycle.reason}</p>
+        ) : null}
+        {summary.lifecycle_status === "deleted" ? (
+          <p>
+            The tombstone retains only deletion generation and receipt evidence;
+            hand-linked content is gone.
+          </p>
+        ) : summary.lifecycle_status === "deletion_pending" ? (
+          deletionRequest?.cleanup_status === "failed" ? (
+            <p className="deletion-failure" role="alert">
+              Deletion cleanup failed: {deletionRequest.last_error}. This record
+              remains inactive and needs repair before cleanup can finish.
+              Requested{" "}
+              {new Date(deletionRequest.requested_at).toLocaleString()}.
+            </p>
+          ) : (
+            <p>
+              Deletion cleanup is pending. This record is inactive and is not
+              used for learning.
+            </p>
+          )
+        ) : summary.learning_eligible ? (
+          <p>
+            Canonical revision {summary.active_canonical_revision} is active and
+            eligible for local learning.
+          </p>
+        ) : summary.lifecycle_status === "withdrawn" ? (
+          <p>
+            This hand was previously approved, but its approval is now
+            withdrawn. Its retained canonical revisions are inactive and not
+            used for learning.
+          </p>
+        ) : summary.lifecycle_status === "rejected" ? (
+          <p>
+            This hand was previously approved, then rejected. Its retained
+            canonical revisions are inactive and not used for learning.
+          </p>
+        ) : (
+          <p>
+            This record is not approved for learning. Detected evidence remains
+            a proposal until a later review workflow explicitly approves it.
+          </p>
+        )}
+      </div>
+      <dl className="audit-facts">
+        <div>
+          <dt>Raw sources</dt>
+          <dd>{summary.raw_source_count}</dd>
+        </div>
+        <div>
+          <dt>Detections</dt>
+          <dd>{summary.detection_count}</dd>
+        </div>
+        <div>
+          <dt>Warnings</dt>
+          <dd>{summary.warning_count}</dd>
+        </div>
+        <div>
+          <dt>Open conflicts</dt>
+          <dd>{summary.unresolved_conflict_count}</dd>
+        </div>
+      </dl>
+      {detail.detections.length > 0 ? (
+        <div className="audit-block state-block">
+          <h4>Detected proposals</h4>
+          {detail.detections.map((detection) => (
+            <details key={detection.detection_id}>
+              <summary>
+                Detection {detection.detection_id} · source{" "}
+                {detection.raw_source_id} · {detection.detector_id}{" "}
+                {detection.detector_version} · detected{" "}
+                {new Date(detection.detected_at).toLocaleString()}
+              </summary>
+              <pre>{JSON.stringify(detection.state, null, 2)}</pre>
+              <p className="receipt-line">
+                Normalized proposal checksum{" "}
+                <code>{detection.content_sha256}</code>
+              </p>
+            </details>
+          ))}
+        </div>
+      ) : null}
+      {fieldConfidence.length > 0 ? (
+        <div className="audit-block confidence-block">
+          <h4>Detected field confidence</h4>
+          <ul>
+            {fieldConfidence.map((field) => (
+              <li key={`${field.detectionId}-${field.field}`}>
+                Detection {field.detectionId} · <code>{field.field}</code> ·{" "}
+                {confidenceLabel(field.confidence)}
+                {field.evidence.map((evidence, index) => (
+                  <span key={`${evidence.raw_source_id}-${index}`}>
+                    {evidenceLocation(evidence)}
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {detail.raw_sources.length > 0 ? (
+        <div className="audit-block">
+          <h4>Import provenance</h4>
+          <ul>
+            {detail.raw_sources.map((source) => (
+              <li key={source.raw_source_id}>
+                Source <code>{source.raw_source_id}</code> ·{" "}
+                {source.provenance.source_filename ?? "Unnamed source"} ·{" "}
+                {source.provenance.source_kind} import{" "}
+                <code>{source.provenance.import_id}</code> · format{" "}
+                {source.provenance.format_revision} ·{" "}
+                {source.provenance.adapter_id}{" "}
+                {source.provenance.adapter_version}
+                {" · "}
+                {new Date(source.provenance.imported_at).toLocaleString()}
+                {source.chronology.played_at
+                  ? ` · played ${new Date(source.chronology.played_at).toLocaleString()} (${source.chronology.played_at})`
+                  : " · played time not retained"}
+                {` · source timezone ${source.chronology.source_timezone ?? "not retained"}`}
+                {` · source session ${source.chronology.source_session_id ?? "not retained"}`}
+                {` · source file ${source.chronology.source_file_id}`}
+                {` · hand ordinal ${source.chronology.hand_ordinal ?? "not retained"}`}
+                {" · raw source checksum "}
+                <code>{source.content_sha256}</code>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {recognitionWarnings.length > 0 ? (
+        <div className="audit-block warning-block">
+          <h4>Recognition warnings</h4>
+          <ul>
+            {recognitionWarnings.map((warning, index) => (
+              <li key={`${warning.detectionId}-${warning.field}-${index}`}>
+                <span>
+                  Detection {warning.detectionId} ·{" "}
+                  {warning.field
+                    ? `field ${warning.field}`
+                    : "proposal warning"}
+                </span>
+                <span>{warning.warning}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {detail.conflicts.length > 0 ? (
+        <div className="audit-block conflict-block">
+          <h4>Import conflict history</h4>
+          <ul>
+            {detail.conflicts.map((conflict) => (
+              <li key={conflict.conflict_id}>
+                <span>
+                  <strong>{lifecycleLabel(conflict.status)}</strong> · conflict{" "}
+                  <code>{conflict.conflict_id}</code>
+                </span>
+                <span>
+                  Sources: {conflict.raw_source_ids.join(", ")}. Detections:{" "}
+                  {conflict.detected_ids.length > 0
+                    ? conflict.detected_ids.join(", ")
+                    : "none retained at creation"}
+                  .
+                </span>
+                {conflict.active_canonical_revision_at_creation !== null ? (
+                  <span>
+                    Active revision at creation:{" "}
+                    {conflict.active_canonical_revision_at_creation}.
+                  </span>
+                ) : null}
+                {conflict.selected_raw_source_id ? (
+                  <span>
+                    Selected source: {conflict.selected_raw_source_id}
+                    {conflict.resolved_at
+                      ? ` · resolved ${new Date(conflict.resolved_at).toLocaleString()}`
+                      : ""}
+                    .
+                  </span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {detail.canonical_revisions.length > 0 ? (
+        <div className="audit-block state-block">
+          <h4>Approved canonical revisions</h4>
+          {detail.canonical_revisions.map((revision) => (
+            <details key={revision.revision}>
+              <summary>
+                Revision {revision.revision} · detection {revision.detection_id}{" "}
+                · approved {new Date(revision.approved_at).toLocaleString()}
+              </summary>
+              <pre>{JSON.stringify(revision.state, null, 2)}</pre>
+              {revision.corrections.length > 0 ? (
+                <div className="corrections-block">
+                  <h5>User corrections</h5>
+                  <ul>
+                    {revision.corrections.map((correction) => (
+                      <li
+                        key={`${revision.revision}-${correction.field_pointer}`}
+                      >
+                        <strong>
+                          <code>{correction.field_pointer}</code> ·{" "}
+                          {new Date(correction.corrected_at).toLocaleString()}
+                        </strong>
+                        {correction.reason ? (
+                          <span>{correction.reason}</span>
+                        ) : null}
+                        <pre>
+                          {JSON.stringify(
+                            {
+                              approved: correction.approved_value,
+                              detected: correction.detected_value,
+                            },
+                            null,
+                            2,
+                          )}
+                        </pre>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </details>
+          ))}
+        </div>
+      ) : null}
+      {detail.deletion_receipt ? (
+        <p className="receipt-line">
+          Deletion receipt {detail.deletion_receipt.receipt_id} · generation{" "}
+          {detail.deletion_receipt.generation} ·{" "}
+          {new Date(detail.deletion_receipt.deleted_at).toLocaleString()} ·
+          tombstone checksum{" "}
+          <code>{detail.deletion_receipt.tombstone_sha256}</code>
+        </p>
+      ) : null}
+    </article>
+  );
 }
 
 function RestoreSummary({ result }: { result: PlayerBackupRestoreResult }) {
@@ -58,6 +384,9 @@ export default function PlayerApp() {
   const [selectedBackup, setSelectedBackup] = useState<File | null>(null);
   const [restoreResult, setRestoreResult] =
     useState<PlayerBackupRestoreResult | null>(null);
+  const [handPage, setHandPage] = useState<PlayerHandList | null>(null);
+  const [handDetail, setHandDetail] = useState<PlayerHandDetail | null>(null);
+  const [loadingHandKey, setLoadingHandKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
 
@@ -97,6 +426,8 @@ export default function PlayerApp() {
       clearPlayerCredentials();
       setCredentials(null);
       setStorage(null);
+      setHandPage(null);
+      setHandDetail(null);
     }
     const message = friendlyError(reason);
     setError(context ? `${context} ${message}` : message);
@@ -115,6 +446,48 @@ export default function PlayerApp() {
     }
   };
 
+  const loadHands = async (append: boolean) => {
+    if (!credentials) return;
+    setBusy("records");
+    setError(null);
+    try {
+      const page = await loadPlayerHands(
+        credentials,
+        append ? (handPage?.next_cursor ?? undefined) : undefined,
+      );
+      setHandPage((current) =>
+        append && current
+          ? {
+              items: [...current.items, ...page.items],
+              unreadable: [...current.unreadable, ...page.unreadable],
+              next_cursor: page.next_cursor,
+            }
+          : page,
+      );
+      if (!append) setHandDetail(null);
+    } catch (reason) {
+      handleRequestError(reason);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const inspectHand = async (recordKey: string) => {
+    if (!credentials) return;
+    setBusy("detail");
+    setError(null);
+    setHandDetail(null);
+    setLoadingHandKey(recordKey);
+    try {
+      setHandDetail(await loadPlayerHand(credentials, recordKey));
+    } catch (reason) {
+      handleRequestError(reason);
+    } finally {
+      setLoadingHandKey(null);
+      setBusy(null);
+    }
+  };
+
   const restoreBackup = async () => {
     if (!credentials || !selectedBackup) return;
     setBusy("restore");
@@ -123,6 +496,8 @@ export default function PlayerApp() {
     try {
       const result = await restorePlayerBackup(credentials, selectedBackup);
       setRestoreResult(result);
+      setHandPage(null);
+      setHandDetail(null);
       setSelectedBackup(null);
       if (backupInput.current) backupInput.current.value = "";
       try {
@@ -139,10 +514,14 @@ export default function PlayerApp() {
         clearPlayerCredentials();
         setCredentials(null);
         setStorage(null);
+        setHandPage(null);
+        setHandDetail(null);
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         setError(reason.message);
       } else if (reason instanceof PlayerRestoreAmbiguousError) {
+        setHandPage(null);
+        setHandDetail(null);
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         try {
@@ -180,6 +559,8 @@ export default function PlayerApp() {
       setStorage(null);
       setSelectedBackup(null);
       setRestoreResult(null);
+      setHandPage(null);
+      setHandDetail(null);
       if (backupInput.current) backupInput.current.value = "";
       setError(message);
       setBusy(null);
@@ -267,6 +648,113 @@ export default function PlayerApp() {
             ) : null}
           </section>
 
+          <section
+            className="panel records-panel"
+            aria-labelledby="records-heading"
+          >
+            <div className="records-heading-row">
+              <div>
+                <p className="eyebrow">Retained evidence</p>
+                <h2 id="records-heading">Local hand records</h2>
+                <p>
+                  Inspect lifecycle and provenance without exposing raw hand
+                  histories in the collection response.
+                </p>
+              </div>
+              {storage.imported_hand_record_count > 0 ? (
+                <button
+                  className="secondary-button records-load-button"
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void loadHands(false)}
+                >
+                  {busy === "records" && handPage === null
+                    ? "Loading records…"
+                    : handPage
+                      ? "Refresh records"
+                      : "Load hand records"}
+                </button>
+              ) : null}
+            </div>
+            {storage.imported_hand_record_count === 0 ? (
+              <p className="empty-records">
+                No imported hand records are retained yet.
+              </p>
+            ) : handPage ? (
+              <>
+                <ul className="hand-list">
+                  {handPage.items.map((hand) => (
+                    <li key={hand.record_key}>
+                      <div>
+                        <strong>{handLabel(hand)}</strong>
+                        <span>
+                          Record key <code>{hand.record_key}</code>
+                        </span>
+                        <span>
+                          {lifecycleLabel(hand.lifecycle_status)} ·{" "}
+                          {hand.warning_count} warnings
+                          {" · "}
+                          {hand.unresolved_conflict_count} open conflicts
+                        </span>
+                        <span>
+                          {hand.learning_eligible
+                            ? `Active revision ${hand.active_canonical_revision} · learning eligible`
+                            : "Not used for learning"}
+                        </span>
+                        {hand.played_at ? (
+                          <span>
+                            Played {new Date(hand.played_at).toLocaleString()}
+                          </span>
+                        ) : null}
+                      </div>
+                      <button
+                        className="quiet-button"
+                        type="button"
+                        disabled={busy !== null}
+                        onClick={() => void inspectHand(hand.record_key)}
+                      >
+                        {busy === "detail" && loadingHandKey === hand.record_key
+                          ? "Loading…"
+                          : "View audit detail"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {handPage.unreadable.length > 0 ? (
+                  <div className="notice error" role="alert">
+                    <p>
+                      Some retained records could not be read safely. Their keys
+                      remain visible so later records stay reachable.
+                    </p>
+                    <ul>
+                      {handPage.unreadable.map((failure) => (
+                        <li key={failure.record_key}>
+                          <code>{failure.record_key}</code> · {failure.detail}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {handPage.next_cursor ? (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() => void loadHands(true)}
+                  >
+                    {busy === "records" ? "Loading more…" : "Load more"}
+                  </button>
+                ) : null}
+              </>
+            ) : (
+              <p className="empty-records">
+                {storage.imported_hand_record_count} retained records are ready
+                for authenticated, read-only inspection.
+              </p>
+            )}
+            {handDetail ? <HandDetail detail={handDetail} /> : null}
+          </section>
+
           <section className="backup-grid" aria-label="Backup and restore">
             <article className="panel action-card">
               <p className="step">01 · Protect your data</p>
@@ -324,8 +812,9 @@ export default function PlayerApp() {
           >
             <strong>Recovery checkpoint</strong>
             <span>
-              Hand-history import, review, and learning are not enabled in this
-              build yet. Screenshot capture is not a player feature.
+              Direct hand-history import, correction, approval, and learning are
+              not enabled in this build yet. Retained backup records can be
+              inspected read-only. Screenshot capture is not a player feature.
             </span>
           </aside>
         </>

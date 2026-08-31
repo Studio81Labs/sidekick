@@ -215,6 +215,191 @@ code {
   margin-top: 24px;
 }
 
+.records-panel {
+  margin-top: 24px;
+  padding: 32px;
+}
+
+.records-heading-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.records-heading-row p:not(.eyebrow),
+.empty-records,
+.hand-detail p {
+  color: #596b65;
+  line-height: 1.6;
+}
+
+.records-load-button {
+  flex: 0 0 auto;
+  margin-top: 0;
+}
+
+.hand-list {
+  display: grid;
+  gap: 12px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hand-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px;
+  border: 1px solid rgb(23 34 31 / 12%);
+  border-radius: 16px;
+  background: #fff;
+}
+
+.hand-list li > div,
+.hand-list span {
+  display: grid;
+  gap: 4px;
+}
+
+.hand-list span {
+  color: #66746f;
+  font-size: 0.84rem;
+}
+
+.hand-detail {
+  display: grid;
+  gap: 20px;
+  margin-top: 24px;
+  padding: 24px;
+  border-radius: 18px;
+  background: #eaf1ed;
+}
+
+.hand-detail h3,
+.hand-detail h4,
+.hand-detail p,
+.hand-detail ul {
+  margin-top: 0;
+}
+
+.hand-detail h3 {
+  margin-bottom: 8px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.55rem;
+}
+
+.audit-facts {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.audit-facts div {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgb(255 255 255 / 70%);
+}
+
+.audit-facts dt {
+  color: #66746f;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.audit-facts dd {
+  margin: 4px 0 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.65rem;
+}
+
+.audit-block h4 {
+  margin-bottom: 8px;
+}
+
+.audit-block ul {
+  margin-bottom: 0;
+  padding-left: 22px;
+}
+
+.warning-block {
+  color: #7b4325;
+}
+
+.warning-block li,
+.confidence-block li {
+  display: grid;
+  gap: 4px;
+}
+
+.corrections-block {
+  margin-top: 16px;
+}
+
+.corrections-block h5 {
+  margin: 0 0 8px;
+}
+
+.corrections-block li {
+  display: grid;
+  gap: 6px;
+}
+
+.conflict-block li {
+  display: grid;
+  gap: 4px;
+}
+
+.conflict-block span {
+  display: block;
+}
+
+.conflict-block li + li {
+  margin-top: 12px;
+}
+
+.conflict-block code {
+  display: inline;
+}
+
+.confidence-block code {
+  display: inline;
+}
+
+.state-block details {
+  margin-top: 10px;
+}
+
+.state-block summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.state-block pre {
+  max-height: 360px;
+  overflow: auto;
+  padding: 14px;
+  border-radius: 12px;
+  color: #2c4940;
+  background: rgb(255 255 255 / 75%);
+  font-size: 0.78rem;
+  white-space: pre-wrap;
+}
+
+.deletion-failure {
+  color: #762f25 !important;
+  font-weight: 650;
+}
+
+.receipt-line {
+  margin-bottom: 0;
+  font-size: 0.84rem;
+}
+
 .action-card {
   display: flex;
   flex-direction: column;
@@ -319,8 +504,15 @@ button:disabled {
   }
 
   .storage-panel,
-  .backup-grid {
+  .backup-grid,
+  .audit-facts {
     grid-template-columns: 1fr;
+  }
+
+  .records-heading-row,
+  .hand-list li {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .facts {

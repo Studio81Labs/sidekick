@@ -23,6 +23,290 @@ const readyStorage = {
   recovery: { completed: [], quarantined: [], failed: [] },
 };
 
+const pendingHand = {
+  record_key: "a".repeat(64),
+  identity: {
+    namespace: "site-hand-id/v1",
+    site: "pokerstars",
+    source_hand_id: "123456789",
+  },
+  played_at: "2026-08-30T11:00:00Z",
+  lifecycle_status: "pending_review",
+  lifecycle_changed_at: "2026-08-30T12:00:00Z",
+  active_canonical_revision: null,
+  learning_eligible: false,
+  deletion_generation: 0,
+  raw_source_count: 2,
+  detection_count: 2,
+  warning_count: 2,
+  unresolved_conflict_count: 0,
+  canonical_revision_count: 0,
+};
+
+const pendingHandDetail = {
+  summary: pendingHand,
+  lifecycle: {
+    status: "pending_review",
+    active_canonical_revision: null,
+    deletion_generation: 0,
+    changed_at: "2026-08-30T12:00:00Z",
+    reason: null,
+    deletion_request: null,
+  },
+  raw_sources: [
+    {
+      raw_source_id: "file-1",
+      chronology: {
+        played_at: "2026-08-30T11:00:00Z",
+        source_timezone: "Europe/Prague",
+        source_session_id: "session-1",
+        source_file_id: "file-1",
+        hand_ordinal: 7,
+      },
+      provenance: {
+        source_kind: "hand_history",
+        import_id: "import-file-1",
+        imported_at: "2026-08-30T12:00:00Z",
+        adapter_id: "pokerstars",
+        adapter_version: "1.0.0",
+        format_revision: "pokerstars-text/v1",
+        source_filename: "HH20260830.txt",
+      },
+      content_sha256: "b".repeat(64),
+    },
+    {
+      raw_source_id: "file-2",
+      chronology: {
+        played_at: null,
+        source_timezone: null,
+        source_session_id: "session-1",
+        source_file_id: "file-2",
+        hand_ordinal: 8,
+      },
+      provenance: {
+        source_kind: "hand_history",
+        import_id: "import-file-2",
+        imported_at: "2026-08-30T12:15:00Z",
+        adapter_id: "pokerstars",
+        adapter_version: "2.0.0",
+        format_revision: "pokerstars-text/v1",
+        source_filename: "HH20260830-corrected.txt",
+      },
+      content_sha256: "c".repeat(64),
+    },
+  ],
+  detections: [
+    {
+      detection_id: "detection-1",
+      raw_source_id: "file-1",
+      detector_id: "pokerstars",
+      detector_version: "1.0.0",
+      detected_at: "2026-08-30T12:00:00Z",
+      state: {
+        identity: {
+          namespace: "site-hand-id/v1",
+          site: "pokerstars",
+          source_hand_id: "123456789",
+        },
+        hero_player_id: null,
+        hero_cards: [],
+      },
+      field_evidence: {
+        "/hero_player_id": {
+          confidence: "0.4",
+          evidence: [
+            {
+              raw_source_id: "file-1",
+              line_start: 1,
+              line_end: 1,
+              marker: "hero-line",
+            },
+            {
+              raw_source_id: "file-1",
+              line_start: null,
+              line_end: null,
+              marker: null,
+            },
+          ],
+          warnings: ["Hero line was absent"],
+        },
+      },
+      warnings: ["Review hero identity"],
+      content_sha256: "d".repeat(64),
+    },
+    {
+      detection_id: "detection-2",
+      raw_source_id: "file-2",
+      detector_id: "pokerstars",
+      detector_version: "2.0.0",
+      detected_at: "2026-08-30T12:15:00Z",
+      state: {
+        identity: {
+          namespace: "site-hand-id/v1",
+          site: "pokerstars",
+          source_hand_id: "123456789",
+        },
+        hero_player_id: "hero",
+        hero_cards: [],
+      },
+      field_evidence: {
+        "/hero_player_id": {
+          confidence: "0.95",
+          evidence: [
+            {
+              raw_source_id: "file-2",
+              line_start: 3,
+              line_end: 4,
+              marker: null,
+            },
+          ],
+          warnings: [],
+        },
+      },
+      warnings: [],
+      content_sha256: "e".repeat(64),
+    },
+  ],
+  conflicts: [
+    {
+      conflict_id: "conflict-1",
+      raw_source_ids: ["file-1", "file-2"],
+      detected_ids: ["detection-1", "detection-2"],
+      active_canonical_revision_at_creation: 1,
+      status: "resolved_use_source",
+      selected_raw_source_id: "file-2",
+      resolved_at: "2026-08-30T12:30:00Z",
+    },
+  ],
+  canonical_revisions: [],
+  deletion_receipt: null,
+};
+
+const activeHand = {
+  ...pendingHand,
+  lifecycle_status: "active",
+  active_canonical_revision: 1,
+  learning_eligible: true,
+  canonical_revision_count: 1,
+  raw_source_count: 1,
+  detection_count: 1,
+};
+
+const activeHandDetail = {
+  ...pendingHandDetail,
+  summary: activeHand,
+  lifecycle: {
+    ...pendingHandDetail.lifecycle,
+    status: "active",
+    active_canonical_revision: 1,
+  },
+  raw_sources: pendingHandDetail.raw_sources.slice(0, 1),
+  detections: pendingHandDetail.detections.slice(0, 1),
+  conflicts: [],
+  canonical_revisions: [
+    {
+      revision: 1,
+      detection_id: "detection-1",
+      approved_at: "2026-08-30T12:00:00Z",
+      state: {
+        identity: {
+          namespace: "site-hand-id/v1",
+          site: "pokerstars",
+          source_hand_id: "123456789",
+        },
+        hero_player_id: "hero",
+        hero_cards: ["As", "Kh"],
+      },
+      corrections: [
+        {
+          field_pointer: "/hero_player_id",
+          detected_value: null,
+          approved_value: "hero",
+          corrected_at: "2026-08-30T12:00:00Z",
+          reason: "Confirmed from dealt-to evidence",
+        },
+      ],
+    },
+  ],
+};
+
+function inactiveApprovedHandDetail(status: "withdrawn" | "rejected") {
+  return {
+    ...activeHandDetail,
+    summary: {
+      ...activeHand,
+      lifecycle_status: status,
+      active_canonical_revision: null,
+      learning_eligible: false,
+    },
+    lifecycle: {
+      ...activeHandDetail.lifecycle,
+      status,
+      active_canonical_revision: null,
+      reason:
+        status === "withdrawn"
+          ? "player withdrew approval"
+          : "not the hand I meant to import",
+    },
+  };
+}
+
+const failedDeletionHand = {
+  ...pendingHand,
+  lifecycle_status: "deletion_pending",
+  deletion_generation: 2,
+};
+
+const failedDeletionHandDetail = {
+  ...pendingHandDetail,
+  summary: failedDeletionHand,
+  lifecycle: {
+    ...pendingHandDetail.lifecycle,
+    status: "deletion_pending",
+    deletion_generation: 2,
+    reason: "delete requested",
+    deletion_request: {
+      generation: 2,
+      requested_at: "2026-08-30T12:00:00Z",
+      cleanup_status: "failed",
+      last_error: "retained artifact cleanup failed",
+    },
+  },
+};
+
+const deletedHand = {
+  ...pendingHand,
+  identity: null,
+  played_at: null,
+  lifecycle_status: "deleted",
+  deletion_generation: 3,
+  raw_source_count: 0,
+  detection_count: 0,
+  warning_count: 0,
+};
+
+const deletedHandDetail = {
+  summary: deletedHand,
+  lifecycle: {
+    status: "deleted",
+    active_canonical_revision: null,
+    deletion_generation: 3,
+    changed_at: "2026-08-30T13:00:00Z",
+    reason: "purged",
+    deletion_request: null,
+  },
+  raw_sources: [],
+  detections: [],
+  conflicts: [],
+  canonical_revisions: [],
+  deletion_receipt: {
+    receipt_id: "receipt-3",
+    generation: 3,
+    deleted_at: "2026-08-30T13:00:00Z",
+    tombstone_sha256: "f".repeat(64),
+  },
+};
+
 describe("PlayerApp", () => {
   afterEach(() => {
     cleanup();
@@ -117,6 +401,272 @@ describe("PlayerApp", () => {
     ).toBe("Bearer player-session");
   });
 
+  it("loads retained hand summaries and audit detail without mutation credentials", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [pendingHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(pendingHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    expect(
+      await screen.findByText("site-hand-id/v1 · pokerstars #123456789"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Not used for learning")).toBeInTheDocument();
+
+    const listRequest = fetchMock.mock.calls[2];
+    expect(listRequest?.[0]).toBe("/api/player/hands?limit=25");
+    expect(new Headers(listRequest?.[1]?.headers).get("Authorization")).toBe(
+      "Bearer player-session",
+    );
+    expect(
+      new Headers(listRequest?.[1]?.headers).has("X-Poker-CSRF-Token"),
+    ).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "View audit detail" }));
+    expect(
+      await screen.findByText("Read-only audit detail"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/This record is not approved for learning/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Review hero identity")).toBeInTheDocument();
+    expect(screen.getByText("Hero line was absent")).toBeInTheDocument();
+    expect(screen.getAllByText("/hero_player_id")).toHaveLength(2);
+    expect(screen.getByText(/40% confidence/)).toBeInTheDocument();
+    expect(screen.getByText(/source file-1 · line 1/)).toBeInTheDocument();
+    expect(screen.getByText("Detected proposals")).toBeInTheDocument();
+    expect(screen.getByText(/"hero_player_id": null/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Detection detection-1/).length).toBeGreaterThan(
+      1,
+    );
+    expect(screen.getAllByText(/Detection detection-2/).length).toBeGreaterThan(
+      1,
+    );
+    expect(screen.getByText(/95% confidence/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Detection detection-1 · proposal warning/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Detection detection-1 · field \/hero_player_id/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Import conflict history")).toBeInTheDocument();
+    expect(screen.getByText(/resolved use source/)).toBeInTheDocument();
+    expect(screen.getByText(/Selected source: file-2/)).toBeInTheDocument();
+    expect(screen.getByText(/HH20260830.txt/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/source timezone Europe\/Prague/),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/source session session-1/)).toHaveLength(2);
+    expect(screen.getByText(/source file file-1/)).toBeInTheDocument();
+    expect(screen.getByText(/hand ordinal 7/)).toBeInTheDocument();
+    expect(screen.getByText(/2026-08-30T11:00:00Z/)).toBeInTheDocument();
+    expect(screen.getByText(/import-file-1/)).toBeInTheDocument();
+    expect(screen.getAllByText(/format pokerstars-text\/v1/)).toHaveLength(2);
+    expect(screen.getByText(/source excerpt redacted/)).toBeInTheDocument();
+    expect(screen.getByText("d".repeat(64))).toBeInTheDocument();
+    expect(screen.getByText("b".repeat(64))).toBeInTheDocument();
+    expect(screen.getAllByText("a".repeat(64))).toHaveLength(2);
+
+    const detailRequest = fetchMock.mock.calls[3];
+    expect(detailRequest?.[0]).toBe(
+      `/api/player/hands/${pendingHand.record_key}`,
+    );
+    expect(
+      new Headers(detailRequest?.[1]?.headers).has("X-Poker-CSRF-Token"),
+    ).toBe(false);
+    expect(document.body).not.toHaveTextContent("PokerStars Hand #123456789");
+  });
+
+  it("renders the approved canonical state retained by an active revision", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    expect(
+      await screen.findByText(/Canonical revision 1 is active/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Revision 1 · detection detection-1/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/"hero_player_id": "hero"/)).toBeInTheDocument();
+    expect(screen.getByText("User corrections")).toBeInTheDocument();
+    expect(
+      screen.getByText("Confirmed from dealt-to evidence"),
+    ).toBeInTheDocument();
+  });
+
+  it.each([
+    ["withdrawn", /previously approved, but its approval is now withdrawn/],
+    ["rejected", /previously approved, then rejected/],
+  ] as const)(
+    "describes a %s approved hand as retained but inactive",
+    async (status, expectedCopy) => {
+      const user = userEvent.setup();
+      const detail = inactiveApprovedHandDetail(status);
+      window.location.hash = "#ticket=one-use-ticket";
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            session_token: "player-session",
+            csrf_token: "csrf-token",
+            expires_in_seconds: 86400,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(readyStorage))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            items: [detail.summary],
+            unreadable: [],
+            next_cursor: null,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(detail));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<PlayerApp />);
+      await screen.findByText("Ready on this machine");
+      await user.click(
+        screen.getByRole("button", { name: "Load hand records" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "View audit detail" }),
+      );
+
+      expect(await screen.findByText(expectedCopy)).toBeInTheDocument();
+      expect(
+        screen.queryByText(/proposal until a later review workflow/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText(
+          new RegExp(`Lifecycle reason: ${detail.lifecycle.reason}`),
+        ),
+      ).toBeInTheDocument();
+    },
+  );
+
+  it("surfaces a failed deletion cleanup instead of generic inactive copy", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [failedDeletionHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(failedDeletionHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /Deletion cleanup failed: retained artifact cleanup failed/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("needs repair");
+    expect(
+      screen.getByText(/Lifecycle reason: delete requested/),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the complete retained deletion receipt", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [deletedHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(deletedHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    expect(
+      await screen.findByText(/Deletion receipt receipt-3/),
+    ).toHaveTextContent("generation 3");
+    expect(screen.getByText("f".repeat(64))).toBeInTheDocument();
+  });
+
   it("restores with session and CSRF headers, then refreshes storage", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
@@ -169,9 +719,10 @@ describe("PlayerApp", () => {
   it("surfaces quarantined recovery evidence without enabling import", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
-    vi.stubGlobal(
-      "fetch",
-      vi.fn<typeof fetch>().mockResolvedValueOnce(
+    const unreadableKey = "d".repeat(64);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
         jsonResponse({
           ...readyStorage,
           status: "attention_required",
@@ -181,8 +732,21 @@ describe("PlayerApp", () => {
             failed: ["cascade-two"],
           },
         }),
-      ),
-    );
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [pendingHand],
+          unreadable: [
+            {
+              record_key: unreadableKey,
+              detail: "Stored imported hand record could not be read safely",
+            },
+          ],
+          next_cursor: null,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
 
     render(<PlayerApp />);
 
@@ -192,9 +756,16 @@ describe("PlayerApp", () => {
     expect(screen.getByText("2", { selector: "dd" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Hand-history import, review, and learning are not enabled/,
+        /Direct hand-history import, correction, approval, and learning are not enabled/,
       ),
     ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    expect(
+      await screen.findByText("site-hand-id/v1 · pokerstars #123456789"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(unreadableKey).closest("li")).toHaveTextContent(
+      "Stored imported hand record could not be read safely",
+    );
   });
 
   it("clears an expired stored session when storage bootstrap is unauthorized", async () => {

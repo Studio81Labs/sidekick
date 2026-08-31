@@ -17,8 +17,9 @@ from time import monotonic
 from types import MappingProxyType
 from typing import Callable
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -37,11 +38,16 @@ from app.player_backup import (
     restore_player_backup,
     stream_player_backup,
 )
+from app.player_hands import (
+    DEFAULT_PLAYER_HAND_PAGE_SIZE,
+    MAX_PLAYER_HAND_PAGE_SIZE,
+)
 from app.player_namespace import (
     PLAYER_API_PREFIX,
     is_player_api_scope,
 )
 from app.player_workspace import PlayerWorkspace
+from app.storage.imported_hand_store import ImportedHandNotFoundError
 
 
 PLAYER_HOST = "127.0.0.1"
@@ -656,6 +662,57 @@ def create_player_runtime(
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
         return JSONResponse(payload)
+
+    @app.get(f"{PLAYER_API_PREFIX}/hands")
+    async def player_hands(
+        request: Request,
+        limit: int = Query(
+            default=DEFAULT_PLAYER_HAND_PAGE_SIZE,
+            ge=1,
+            le=MAX_PLAYER_HAND_PAGE_SIZE,
+        ),
+        cursor: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
+    ) -> JSONResponse:
+        async with restore_access_gate:
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.list_hand_records,
+                    limit=limit,
+                    cursor=cursor,
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "Stored imported hand records could not be read safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    @app.get(f"{PLAYER_API_PREFIX}/hands/{{record_key}}")
+    async def player_hand_detail(request: Request, record_key: str) -> JSONResponse:
+        async with restore_access_gate:
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.get_hand_record,
+                    record_key,
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "Stored imported hand record could not be read safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
 
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
     async def export_player_backup(request: Request) -> Response:

@@ -28,6 +28,128 @@ export interface PlayerBackupRestoreResult {
   total_records: number;
 }
 
+export type PlayerHandLifecycleStatus =
+  | "pending_review"
+  | "active"
+  | "withdrawn"
+  | "rejected"
+  | "deletion_pending"
+  | "deleted";
+
+export interface PlayerHandSummary {
+  record_key: string;
+  identity: {
+    namespace: string;
+    site: string;
+    source_hand_id: string;
+  } | null;
+  played_at: string | null;
+  lifecycle_status: PlayerHandLifecycleStatus;
+  lifecycle_changed_at: string;
+  active_canonical_revision: number | null;
+  learning_eligible: boolean;
+  deletion_generation: number;
+  raw_source_count: number;
+  detection_count: number;
+  warning_count: number;
+  unresolved_conflict_count: number;
+  canonical_revision_count: number;
+}
+
+export interface PlayerHandList {
+  items: PlayerHandSummary[];
+  unreadable: Array<{ record_key: string; detail: string }>;
+  next_cursor: string | null;
+}
+
+export interface PlayerHandDetail {
+  summary: PlayerHandSummary;
+  lifecycle: {
+    status: PlayerHandLifecycleStatus;
+    active_canonical_revision: number | null;
+    deletion_generation: number;
+    changed_at: string;
+    reason: string | null;
+    deletion_request: {
+      generation: number;
+      requested_at: string;
+      cleanup_status: "pending" | "failed";
+      last_error: string | null;
+    } | null;
+  };
+  raw_sources: Array<{
+    raw_source_id: string;
+    chronology: {
+      played_at: string | null;
+      source_timezone: string | null;
+      source_session_id: string | null;
+      source_file_id: string;
+      hand_ordinal: number | null;
+    };
+    provenance: {
+      source_kind: "hand_history";
+      import_id: string;
+      imported_at: string;
+      adapter_id: string;
+      adapter_version: string;
+      format_revision: string;
+      source_filename: string | null;
+    };
+    content_sha256: string;
+  }>;
+  detections: Array<{
+    detection_id: string;
+    raw_source_id: string;
+    detector_id: string;
+    detector_version: string;
+    detected_at: string;
+    state: Record<string, unknown>;
+    field_evidence: Record<
+      string,
+      {
+        confidence: string | null;
+        evidence: Array<{
+          raw_source_id: string;
+          line_start: number | null;
+          line_end: number | null;
+          marker: string | null;
+        }>;
+        warnings: string[];
+      }
+    >;
+    warnings: string[];
+    content_sha256: string;
+  }>;
+  conflicts: Array<{
+    conflict_id: string;
+    raw_source_ids: string[];
+    detected_ids: string[];
+    active_canonical_revision_at_creation: number | null;
+    status: "unresolved" | "resolved_keep_active" | "resolved_use_source";
+    selected_raw_source_id: string | null;
+    resolved_at: string | null;
+  }>;
+  canonical_revisions: Array<{
+    revision: number;
+    detection_id: string;
+    approved_at: string;
+    state: Record<string, unknown>;
+    corrections: Array<{
+      field_pointer: string;
+      detected_value: unknown;
+      approved_value: unknown;
+      corrected_at: string;
+      reason: string | null;
+    }>;
+  }>;
+  deletion_receipt: {
+    receipt_id: string;
+    generation: number;
+    deleted_at: string;
+    tombstone_sha256: string;
+  } | null;
+}
+
 interface PlayerSessionResponse {
   session_token: string;
   csrf_token: string;
@@ -168,6 +290,30 @@ export async function loadPlayerStorage(
 ): Promise<PlayerStorageStatus> {
   const response = await playerRequest(credentials, "/api/player/storage");
   return (await response.json()) as PlayerStorageStatus;
+}
+
+export async function loadPlayerHands(
+  credentials: PlayerCredentials,
+  cursor?: string,
+): Promise<PlayerHandList> {
+  const query = new URLSearchParams({ limit: "25" });
+  if (cursor) query.set("cursor", cursor);
+  const response = await playerRequest(
+    credentials,
+    `/api/player/hands?${query.toString()}`,
+  );
+  return (await response.json()) as PlayerHandList;
+}
+
+export async function loadPlayerHand(
+  credentials: PlayerCredentials,
+  recordKey: string,
+): Promise<PlayerHandDetail> {
+  const response = await playerRequest(
+    credentials,
+    `/api/player/hands/${encodeURIComponent(recordKey)}`,
+  );
+  return (await response.json()) as PlayerHandDetail;
 }
 
 function backupFilename(response: Response): string {

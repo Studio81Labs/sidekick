@@ -247,8 +247,10 @@ validates a complete snapshot; an invalid graph cannot be persisted or exposed
 as learning evidence. Conflict resolutions are retained audit events, so a
 deletion request must be ordered after them before deletion can proceed.
 
-These contracts are now backed by a player-local file store, and player records
-are still not reachable over HTTP. `app/storage/imported_hand_store.py` persists
+These contracts are now backed by a player-local file store. Authenticated,
+loopback-only player routes expose bounded record summaries and sanitized audit
+detail, while raw hand-history text stays inside the store.
+`app/storage/imported_hand_store.py` persists
 each record at `<data>/imported-hands/<record_key>/record.json`, keyed by a
 SHA-256 of the hand's stable identity, with derived decision artifacts beside
 it under `decisions/`. Because a purged record's tombstone keeps neither its
@@ -276,8 +278,18 @@ to group/world users through mode bits or Darwin extended ACLs, rejects a
 symlinked imported-hand root, and runs the same interrupted-cascade recovery
 before the loopback listener starts. Authenticated `/api/player/storage`
 reports the data location, record count, and distinct recovery buckets without
-exposing record contents. V1 screenshot and benchmark stores are neither
-constructed nor reachable from this composition.
+exposing record contents. `GET /api/player/hands` pages opaque-key summaries,
+and `GET /api/player/hands/{record_key}` returns provenance, confidence and
+warning metadata, conflicts, sanitized detected and approved state, lifecycle
+state including deletion-cleanup failures, and deletion receipts. Collection
+responses omit source content; detail responses also omit raw text and evidence
+excerpts, including scalar correction values whose JSON pointer directly names
+an excerpt. The player renders parser proposals, approved revisions,
+field-level confidence, retained conflict resolutions, and cleanup failures
+with source/detection/revision lineage rather than collapsing uncertain or
+failed records into generic inactive copy. Both reads serialize behind restore
+and take the shared data-volume lock before opening records. V1 screenshot and
+benchmark stores are neither constructed nor reachable from this composition.
 
 The loopback backend serves the verified `apps/pwa/dist-player` build from the
 same local origin. Only its document, manifest, service worker,
@@ -347,13 +359,13 @@ Retries of the published request or completed purge are idempotent. Older
 backups remain subject to `classify_restore`, so they cannot reactivate a
 purged generation without an explicit authorized reimport.
 
-What is deliberately not wired yet: there is no imported-hand import,
-per-record, or lifecycle HTTP surface, and the hosted screenshot workflow is
-not a V2 player-data path. The local runtime constructs and recovers the player
-store and exposes authenticated storage metadata plus whole-store V2
-backup/restore. No import writer, lifecycle transition, or re-import resolution
-has a non-test caller. Future record routes inherit the session, Host/Origin,
-and CSRF boundary established by ADR 0050.
+What is deliberately not wired yet: there is no imported-hand import or
+lifecycle mutation HTTP surface, and the hosted screenshot workflow is not a
+V2 player-data path. The local runtime constructs and recovers the player store
+and exposes authenticated storage metadata, read-only record projections, and
+whole-store V2 backup/restore. No import writer, lifecycle transition, or
+re-import resolution has a non-test caller. Future mutation routes inherit the
+session, Host/Origin, and CSRF boundary established by ADR 0050.
 
 Hero decision-point extraction lives in
 `app/domain/imported_hands/decisions.py` and consumes the aggregate's

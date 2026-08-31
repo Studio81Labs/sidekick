@@ -1,0 +1,267 @@
+from datetime import datetime, timezone
+
+from app.domain.imported_hands import (
+    ImportedHandRecord,
+    UserCorrection,
+    imported_hand_state_sha256,
+)
+from app.player_hands import (
+    REDACTED_SOURCE_EXCERPT,
+    _sanitized_correction_value,
+    _without_evidence_excerpts,
+    get_player_hand,
+    list_player_hands,
+)
+from app.storage.imported_hand_store import (
+    FileImportedHandStore,
+    imported_hand_record_key,
+)
+from test_imported_hand_store import (
+    RAW_TEXT,
+    approved_record,
+    pending_review_record,
+    sample_identity,
+    tombstone_record,
+)
+
+
+def test_player_hand_pages_are_bounded_sorted_and_omit_raw_text(tmp_path) -> None:
+    store = FileImportedHandStore(tmp_path)
+    records = [
+        pending_review_record(sample_identity(hand_ordinal=index))
+        for index in (1, 2)
+    ]
+    keys = sorted(imported_hand_record_key(record.identity) for record in records)
+    for record in records:
+        store.save(imported_hand_record_key(record.identity), record)
+
+    first = list_player_hands(store, limit=1)
+    second = list_player_hands(store, limit=1, cursor=first.next_cursor)
+
+    assert [item.record_key for item in first.items] == keys[:1]
+    assert first.unreadable == []
+    assert first.next_cursor == keys[0]
+    assert [item.record_key for item in second.items] == keys[1:]
+    assert second.next_cursor is None
+    assert RAW_TEXT not in first.model_dump_json()
+    assert "raw_text" not in first.model_dump_json()
+
+
+def test_player_hand_detail_preserves_review_metadata_without_raw_text(tmp_path) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    detail = get_player_hand(store, key)
+    serialized = detail.model_dump_json()
+
+    assert detail.summary.lifecycle_status == "pending_review"
+    assert detail.summary.learning_eligible is False
+    assert detail.summary.warning_count == 2
+    assert detail.raw_sources[0].provenance.adapter_id == "pokerstars"
+    assert detail.detections[0].state["identity"] == {
+        "namespace": "site-hand-id/v1",
+        "site": "pokerstars",
+        "source_hand_id": "123456701",
+    }
+    assert detail.detections[0].state["hero_player_id"] is None
+    assert (
+        detail.detections[0].field_evidence["/hero_player_id"].confidence
+        is not None
+    )
+    assert detail.detections[0].warnings == ["Review hero identity"]
+    assert RAW_TEXT not in serialized
+    assert "raw_text" not in serialized
+    assert "PokerStars Hand #123456789" not in serialized
+    assert "excerpt" not in serialized
+
+
+def test_player_hand_detail_represents_a_tombstone_without_identity_or_evidence(
+    tmp_path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    key = "f" * 64
+    store.save(key, tombstone_record(generation=3))
+
+    detail = get_player_hand(store, key)
+
+    assert detail.summary.identity is None
+    assert detail.summary.lifecycle_status == "deleted"
+    assert detail.summary.deletion_generation == 3
+    assert detail.summary.learning_eligible is False
+    assert detail.raw_sources == []
+    assert detail.detections == []
+    assert detail.conflicts == []
+    assert detail.canonical_revisions == []
+    assert detail.deletion_receipt is not None
+    assert detail.deletion_receipt.generation == 3
+
+
+def test_player_hand_detail_identifies_the_active_approved_revision(tmp_path) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    store.save(key, record)
+
+    detail = get_player_hand(store, key)
+
+    assert detail.summary.lifecycle_status == "active"
+    assert detail.summary.identity is not None
+    assert detail.summary.identity.namespace == "site-hand-id/v1"
+    assert detail.summary.active_canonical_revision == 1
+    assert detail.summary.learning_eligible is True
+    assert detail.summary.canonical_revision_count == 1
+    assert [revision.revision for revision in detail.canonical_revisions] == [1]
+    approved_state = detail.canonical_revisions[0].state
+    assert approved_state["hero_player_id"] == "hero"
+    assert approved_state["identity"] == {
+        "namespace": "site-hand-id/v1",
+        "site": "pokerstars",
+        "source_hand_id": "123456701",
+    }
+    assert detail.canonical_revisions[0].corrections[0].approved_value == "hero"
+
+
+def test_player_hand_summary_prefers_retained_approved_chronology_over_raw_proposal(
+    tmp_path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    record = approved_record()
+    detected_played_at = datetime(2026, 8, 30, 18, 0, tzinfo=timezone.utc)
+    approved_played_at = datetime(2026, 8, 30, 12, 0, tzinfo=timezone.utc)
+
+    detected_chronology = record.detections[0].state.chronology.model_copy(
+        update={"played_at": detected_played_at, "source_timezone": "UTC"}
+    )
+    detected_state = record.detections[0].state.model_copy(
+        update={"chronology": detected_chronology}
+    )
+    detection = record.detections[0].model_copy(
+        update={
+            "state": detected_state,
+            "content_sha256": imported_hand_state_sha256(detected_state),
+        }
+    )
+    raw_source = record.raw_sources[0].model_copy(
+        update={"chronology": detected_chronology}
+    )
+    approved_chronology = record.canonical_revisions[0].state.chronology.model_copy(
+        update={"played_at": approved_played_at, "source_timezone": "UTC"}
+    )
+    approved_state = record.canonical_revisions[0].state.model_copy(
+        update={"chronology": approved_chronology}
+    )
+    chronology_correction = UserCorrection(
+        field_pointer="/chronology/played_at",
+        detected_value=detected_state.model_dump(mode="json")["chronology"]["played_at"],
+        approved_value=approved_state.model_dump(mode="json")["chronology"]["played_at"],
+        corrected_at=record.canonical_revisions[0].approved_at,
+        reason="Confirmed from the table session",
+    )
+    revision = record.canonical_revisions[0].model_copy(
+        update={
+            "state": approved_state,
+            "corrections": [
+                *record.canonical_revisions[0].corrections,
+                chronology_correction,
+            ],
+        }
+    )
+    corrected_record = ImportedHandRecord(
+        identity=record.identity,
+        raw_sources=[raw_source],
+        detections=[detection],
+        canonical_revisions=[revision],
+        lifecycle=record.lifecycle,
+    )
+    key = imported_hand_record_key(corrected_record.identity)
+    store.save(key, corrected_record)
+
+    active_page = list_player_hands(store)
+    active_detail = get_player_hand(store, key)
+
+    inactive_store = FileImportedHandStore(tmp_path / "inactive")
+    inactive_record = ImportedHandRecord(
+        identity=corrected_record.identity,
+        raw_sources=corrected_record.raw_sources,
+        detections=corrected_record.detections,
+        canonical_revisions=corrected_record.canonical_revisions,
+        lifecycle=corrected_record.lifecycle.model_copy(
+            update={"status": "withdrawn", "active_canonical_revision": None}
+        ),
+    )
+    inactive_store.save(key, inactive_record)
+    inactive_page = list_player_hands(inactive_store)
+    inactive_detail = get_player_hand(inactive_store, key)
+
+    assert active_page.items[0].played_at == approved_played_at
+    assert active_detail.summary.played_at == approved_played_at
+    assert inactive_page.items[0].played_at == approved_played_at
+    assert inactive_detail.summary.played_at == approved_played_at
+
+
+def test_player_hand_pages_skip_corrupt_records_without_losing_the_cursor(
+    tmp_path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    records = [
+        pending_review_record(sample_identity(hand_ordinal=index))
+        for index in (1, 2, 3)
+    ]
+    keys = sorted(imported_hand_record_key(record.identity) for record in records)
+    for record in records:
+        store.save(imported_hand_record_key(record.identity), record)
+    corrupt_key = keys[1]
+    (store.records_dir / corrupt_key / "record.json").write_text(
+        "{not-json",
+        encoding="utf-8",
+    )
+
+    first = list_player_hands(store, limit=2)
+    second = list_player_hands(store, limit=2, cursor=first.next_cursor)
+
+    assert [item.record_key for item in first.items] == [keys[0]]
+    assert [error.record_key for error in first.unreadable] == [corrupt_key]
+    assert first.next_cursor == corrupt_key
+    assert [item.record_key for item in second.items] == [keys[2]]
+    assert second.unreadable == []
+    assert second.next_cursor is None
+
+
+def test_player_hand_state_projection_removes_nested_evidence_excerpts() -> None:
+    payload = {
+        "identity": {"site": "pokerstars"},
+        "evidence": [
+            {
+                "raw_source_id": "file-1",
+                "line_start": 1,
+                "excerpt": "private source text",
+                "marker": "hero-line",
+            }
+        ],
+    }
+
+    assert _without_evidence_excerpts(payload) == {
+        "identity": {"site": "pokerstars"},
+        "evidence": [
+            {
+                "raw_source_id": "file-1",
+                "line_start": 1,
+                "marker": "hero-line",
+            }
+        ],
+    }
+
+
+def test_player_hand_correction_redacts_a_direct_excerpt_pointer() -> None:
+    pointer = "/streets/0/actions/0/evidence/0/excerpt"
+
+    assert (
+        _sanitized_correction_value(pointer, "private source text")
+        == REDACTED_SOURCE_EXCERPT
+    )
+    assert _sanitized_correction_value(
+        "/streets/0/actions/0/evidence/0/marker",
+        "hero-line",
+    ) == "hero-line"
