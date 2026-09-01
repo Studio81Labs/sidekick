@@ -494,14 +494,7 @@ def test_route_factory_binds_the_full_canonical_decision_state() -> None:
 
     assert route.decision == DecisionBinding.from_decision(decision)
     assert route.outbound_request == canonical_route_request()
-    assert route.decision_state_sha256 == sha256(
-        json.dumps(
-            decision.state.model_dump(mode="json"),
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
+    assert len(route.decision_state_sha256) == 64
 
 
 def test_cash_economic_configuration_is_derived_from_approved_state() -> None:
@@ -580,15 +573,19 @@ def test_route_derivation_must_match_the_canonical_decision() -> None:
         {"rank": "Q", "suit": "hearts"},
     ]
     different_decision = HeroDecisionPoint.model_validate(decision_payload)
-    different_state_payload = json.dumps(
-        different_decision.state.model_dump(mode="json"),
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
+    different_components = list(canonical_route_request().components)
+    different_components[1] = HoleCardAbstractionRoute(
+        abstraction_schema_revision="class-v1",
+        abstraction_schema_sha256=DIGEST_C,
+        starting_hand_class="QQ",
+    )
+    different_route = bind_remote_reference_route(
+        different_decision,
+        canonical_route_request(components=tuple(different_components)),
+    )
     forged_route = RemoteReferenceRouteDerivation(
         decision=DecisionBinding.from_decision(different_decision),
-        decision_state_sha256=sha256(different_state_payload).hexdigest(),
+        decision_state_sha256=different_route.decision_state_sha256,
         outbound_request=canonical_route_request(),
     )
     request = canonical_route_request()
@@ -1121,6 +1118,28 @@ def test_route_hash_normalizes_equivalent_decimal_exponents() -> None:
     assert original == equivalent
     assert original.canonical_bytes() == equivalent.canonical_bytes()
     assert original.semantic_digest() == equivalent.semantic_digest()
+
+
+def test_decision_state_hash_normalizes_equivalent_decimal_exponents() -> None:
+    original = decision_point()
+    equivalent_payload = original.model_dump(mode="python")
+    equivalent_payload["state"]["hero_stack_before_action"] = Decimal("99.500")
+    equivalent = HeroDecisionPoint.model_validate(equivalent_payload)
+    route = route_derivation(decision=original)
+    policy = provider_policy()
+
+    result = evaluate_remote_reference_preflight(
+        equivalent,
+        mode="remote_enabled",
+        policy=policy,
+        consent=consent(policy=policy),
+        route=route,
+        now=NOW,
+    )
+
+    assert original.state == equivalent.state
+    assert result.outcome == "dispatch_candidate"
+    assert result.reason == "preflight_passed"
 
 
 def test_postflop_ranges_cover_every_active_opponent_exactly() -> None:

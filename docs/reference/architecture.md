@@ -574,7 +574,7 @@ excluded from pending action. A short all-in blind contributes its exact posted
 amount to the pot; heads-up uses the actual posted wager while multiway retains
 the nominal big-blind bring-in, and a stackless hero cannot become a candidate.
 Unordered hole cards and equivalent Decimal exponents are canonicalized before
-exact-route hashing. A route
+exact-route and local decision-state hashing. A route
 cannot claim another decision after all pending
 responders have matched or left the hand. Pot-limit routes remain unavailable
 until their running-pot maximum sizing can be reconstructed; tournament routes

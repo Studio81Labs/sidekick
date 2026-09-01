@@ -32,6 +32,7 @@ from app.domain.remote_references.models import (
     StackWagerPotRoute,
     TablePositionRoute,
     UtilityConfigurationBinding,
+    _canonical_json_bytes,
 )
 
 
@@ -334,13 +335,7 @@ def bind_remote_reference_route(
 
 
 def _decision_state_sha256(decision: HeroDecisionPoint) -> str:
-    payload = json.dumps(
-        decision.state.model_dump(mode="json"),
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    ).encode("utf-8")
-    return sha256(payload).hexdigest()
+    return sha256(_canonical_json_bytes(decision.state)).hexdigest()
 
 
 def _derive_request_from_decision(
