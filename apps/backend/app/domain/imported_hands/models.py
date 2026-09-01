@@ -2179,6 +2179,7 @@ class UserCorrection(ImportedHandModel):
 
 class CanonicalHandRevision(ImportedHandModel):
     schema_version: Literal["canonical-imported-hand/v1"] = "canonical-imported-hand/v1"
+    approval_id: Identifier | None = None
     revision: PositiveInteger
     detection_id: Identifier
     approved_at: AwareDatetime
@@ -2496,6 +2497,13 @@ class ImportedHandRecord(ImportedHandModel):
         revisions = [revision.revision for revision in self.canonical_revisions]
         if revisions != list(range(1, len(revisions) + 1)):
             raise ValueError("canonical revisions must be monotonic and contiguous from one")
+        approval_ids = [
+            revision.approval_id
+            for revision in self.canonical_revisions
+            if revision.approval_id is not None
+        ]
+        if len(approval_ids) != len(set(approval_ids)):
+            raise ValueError("canonical approval ids must be unique")
         previous_revision: CanonicalHandRevision | None = None
         for revision in self.canonical_revisions:
             detected = detection_by_id.get(revision.detection_id)
@@ -3526,6 +3534,113 @@ def imported_hand_state_sha256(state: ImportedHandState) -> str:
     return sha256(
         imported_hand_canonical_json(_state_payload_for_hash(state))
     ).hexdigest()
+
+
+def canonical_revision_from_review(
+    detection: DetectedImportedHand,
+    *,
+    approval_id: str,
+    revision: int,
+    approved_at: datetime,
+    approved_state: dict[str, JsonValue],
+    correction_reason: str | None,
+) -> CanonicalHandRevision:
+    """Build an auditable canonical revision from one explicit review.
+
+    The caller supplies the reviewed state, never the detected values or
+    correction timestamps. This factory derives the smallest non-overlapping
+    JSON-pointer corrections from the immutable detection and stamps them at
+    the server-owned approval instant.
+    """
+
+    detected_document = json.loads(detection.state.model_dump_json())
+    approved_document = json.loads(
+        json.dumps(approved_state, ensure_ascii=False, separators=(",", ":"))
+    )
+    _preserve_review_excerpts(detected_document, approved_document)
+    approved_state = ImportedHandState.model_validate_json(
+        json.dumps(approved_document, ensure_ascii=False, separators=(",", ":"))
+    )
+    approved_document = json.loads(approved_state.model_dump_json())
+    differences = _review_differences(
+        detected_document,
+        approved_document,
+        pointer="",
+    )
+    if differences and not correction_reason:
+        raise ValueError("a changed reviewed state requires a correction reason")
+    corrections = [
+        UserCorrection(
+            field_pointer=pointer,
+            detected_value=detected_value,
+            approved_value=approved_value,
+            corrected_at=approved_at,
+            reason=correction_reason,
+        )
+        for pointer, detected_value, approved_value in differences
+    ]
+    return CanonicalHandRevision(
+        approval_id=approval_id,
+        revision=revision,
+        detection_id=detection.detection_id,
+        approved_at=approved_at,
+        state=approved_state,
+        corrections=corrections,
+    )
+
+
+def _preserve_review_excerpts(detected: JsonValue, approved: JsonValue) -> None:
+    """Keep raw evidence excerpts hidden from and unchanged by player review."""
+
+    if isinstance(detected, dict) and isinstance(approved, dict):
+        for key, detected_value in detected.items():
+            if key == "excerpt":
+                approved[key] = detected_value
+            elif key in approved:
+                _preserve_review_excerpts(detected_value, approved[key])
+    elif isinstance(detected, list) and isinstance(approved, list):
+        for detected_item, approved_item in zip(detected, approved):
+            _preserve_review_excerpts(detected_item, approved_item)
+
+
+def _review_differences(
+    detected: JsonValue,
+    approved: JsonValue,
+    *,
+    pointer: str,
+) -> list[tuple[str, JsonValue, JsonValue]]:
+    if _json_values_equal(detected, approved):
+        return []
+    if isinstance(detected, dict) and isinstance(approved, dict):
+        if detected.keys() == approved.keys():
+            differences: list[tuple[str, JsonValue, JsonValue]] = []
+            for key in sorted(detected):
+                escaped = key.replace("~", "~0").replace("/", "~1")
+                differences.extend(
+                    _review_differences(
+                        detected[key],
+                        approved[key],
+                        pointer=f"{pointer}/{escaped}",
+                    )
+                )
+            return differences
+    if isinstance(detected, list) and isinstance(approved, list):
+        if len(detected) == len(approved):
+            differences = []
+            for index, (detected_item, approved_item) in enumerate(
+                zip(detected, approved, strict=True)
+            ):
+                differences.extend(
+                    _review_differences(
+                        detected_item,
+                        approved_item,
+                        pointer=f"{pointer}/{index}",
+                    )
+                )
+            return differences
+    if not pointer:
+        raise ValueError("reviewed state cannot replace its document root")
+    return [(pointer, detected, approved)]
 
 
 def _detected_state_semantic_sha256(state: ImportedHandState) -> str:

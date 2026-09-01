@@ -30,6 +30,7 @@ from app.domain.imported_hands import (
     StructuralPosition,
     TournamentEconomics,
     UserCorrection,
+    canonical_revision_from_review,
     classify_reimport,
     classify_restore,
     derive_structural_positions,
@@ -14172,6 +14173,112 @@ def test_active_record_enforces_user_corrections_and_round_trips() -> None:
                 "status": "active",
                 "active_canonical_revision": 1,
                 "changed_at": NOW,
+            },
+        )
+
+
+def test_review_factory_derives_corrections_and_server_owned_audit() -> None:
+    approved_payload = hand_state().model_dump(mode="json")
+    approved_payload["hero_player_id"] = "hero"
+    approved_at = NOW + timedelta(minutes=1)
+
+    approved = canonical_revision_from_review(
+        detected(),
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=approved_at,
+        approved_state=approved_payload,
+        correction_reason="Confirmed from reviewed source evidence",
+    )
+    unchanged = canonical_revision_from_review(
+        detected(),
+        approval_id="44444444-4444-4444-8444-444444444444",
+        revision=2,
+        approved_at=approved_at,
+        approved_state=hand_state().model_dump(mode="json"),
+        correction_reason=None,
+    )
+
+    assert approved.approval_id == "33333333-3333-4333-8333-333333333333"
+    assert approved.state.hero_player_id == "hero"
+    assert approved.corrections == [
+        UserCorrection(
+            field_pointer="/hero_player_id",
+            detected_value=None,
+            approved_value="hero",
+            corrected_at=approved_at,
+            reason="Confirmed from reviewed source evidence",
+        )
+    ]
+    assert unchanged.corrections == []
+
+    with pytest.raises(ValueError, match="requires a correction reason"):
+        canonical_revision_from_review(
+            detected(),
+            approval_id="55555555-5555-4555-8555-555555555555",
+            revision=1,
+            approved_at=approved_at,
+            approved_state=approved_payload,
+            correction_reason=None,
+        )
+
+
+def test_review_factory_restores_private_source_excerpts_before_validation() -> None:
+    state_payload = hand_state().model_dump()
+    state_payload["streets"][0]["actions"] = [
+        wager_action(0, "hero", "check", total=Decimal(0))
+    ]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed_payload = source_state.model_dump(mode="json")
+    action = reviewed_payload["streets"][0]["actions"][0]
+    del action["evidence"][0]["excerpt"]
+    del action["origin"]["evidence"][0]["excerpt"]
+
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason=None,
+    )
+
+    assert approved.corrections == []
+    retained_action = approved.state.streets[0].actions[0]
+    assert retained_action.evidence[0].excerpt == "PokerStars Hand #123456789"
+    assert retained_action.origin.evidence[0].excerpt == (
+        "PokerStars Hand #123456789"
+    )
+
+
+def test_record_rejects_duplicate_non_null_approval_ids() -> None:
+    first = revision().model_copy(
+        update={"approval_id": "33333333-3333-4333-8333-333333333333"}
+    )
+    second = first.model_copy(
+        update={
+            "revision": 2,
+            "approved_at": NOW + timedelta(minutes=1),
+            "corrections": [
+                correction.model_copy(
+                    update={"corrected_at": NOW + timedelta(minutes=1)}
+                )
+                for correction in first.corrections
+            ],
+        }
+    )
+
+    with pytest.raises(ValidationError, match="canonical approval ids must be unique"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[first, second],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 2,
+                "changed_at": second.approved_at,
             },
         )
 

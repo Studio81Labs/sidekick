@@ -24,8 +24,13 @@ from app.data_lock import (
     InterprocessDataLock,
     InterprocessFileLock,
 )
-from app.domain.imported_hands import DeletionReceipt, extract_hero_decision_points
+from app.domain.imported_hands import (
+    DeletionReceipt,
+    canonical_revision_from_review,
+    extract_hero_decision_points,
+)
 from app.player_hands import (
+    PlayerHandApprovalRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
     PlayerHandDeleteRequest,
@@ -47,6 +52,10 @@ class PlayerDataDirectoryError(RuntimeError):
 
 class PlayerHandTransitionConflict(RuntimeError):
     """A local lifecycle request no longer describes the stored record."""
+
+
+class PlayerHandApprovalInvalid(ValueError):
+    """A reviewed state cannot form an auditable canonical revision."""
 
 
 class PlayerHandRecoveryRequired(RuntimeError):
@@ -460,6 +469,143 @@ class PlayerWorkspace:
                             reason=request.reason,
                             at=_advanced_lifecycle_time(at, lifecycle.changed_at),
                         )
+                    except (DataLockError, OSError) as exc:
+                        if self.imported_hands.has_interrupted_write(record_key):
+                            raise PlayerHandRecoveryRequired(
+                                "This hand has an interrupted lifecycle write; "
+                                "restart the local player runtime so recovery "
+                                "can finish"
+                            ) from exc
+                        raise
+                    self._require_final_hand_record(record_key)
+                    return get_player_hand(self.imported_hands, record_key)
+
+    def approve_hand_record(
+        self,
+        record_key: str,
+        *,
+        request: PlayerHandApprovalRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerHandDetail:
+        """Publish one exact reviewed state and its derived decisions."""
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self._require_final_hand_record(record_key)
+                    record = self.imported_hands.get(record_key)
+                    lifecycle = record.lifecycle
+                    latest = (
+                        record.canonical_revisions[-1]
+                        if record.canonical_revisions
+                        else None
+                    )
+                    if latest is not None and latest.approval_id == request.request_id:
+                        detection = next(
+                            (
+                                item
+                                for item in record.detections
+                                if item.detection_id == request.detection_id
+                            ),
+                            None,
+                        )
+                        try:
+                            expected = (
+                                canonical_revision_from_review(
+                                    detection,
+                                    approval_id=request.request_id,
+                                    revision=latest.revision,
+                                    approved_at=latest.approved_at,
+                                    approved_state=request.approved_state,
+                                    correction_reason=request.correction_reason,
+                                )
+                                if detection is not None
+                                else None
+                            )
+                        except ValueError:
+                            expected = None
+                        if (
+                            expected == latest
+                            and lifecycle.status == "active"
+                            and lifecycle.active_canonical_revision == latest.revision
+                        ):
+                            return get_player_hand(self.imported_hands, record_key)
+                        raise PlayerHandTransitionConflict(
+                            "This approval request id is already bound to a "
+                            "different or no-longer-active review"
+                        )
+                    if any(
+                        revision.approval_id == request.request_id
+                        for revision in record.canonical_revisions
+                    ):
+                        raise PlayerHandTransitionConflict(
+                            "This approval request id was already used by an "
+                            "earlier canonical revision"
+                        )
+
+                    if (
+                        player_hand_record_version(record)
+                        != request.expected_record_version
+                        or lifecycle.status != request.expected_lifecycle_status
+                        or lifecycle.active_canonical_revision
+                        != request.expected_active_canonical_revision
+                        or len(record.canonical_revisions)
+                        != request.expected_canonical_revision_count
+                        or lifecycle.deletion_generation
+                        != request.expected_deletion_generation
+                        or lifecycle.changed_at
+                        != request.expected_lifecycle_changed_at
+                    ):
+                        raise PlayerHandTransitionConflict(
+                            "The retained hand changed after this audit detail was "
+                            "loaded; refresh it before approving reviewed state"
+                        )
+
+                    detection = next(
+                        (
+                            item
+                            for item in record.detections
+                            if item.detection_id == request.detection_id
+                        ),
+                        None,
+                    )
+                    if detection is None:
+                        raise PlayerHandTransitionConflict(
+                            "The selected detection is not retained by this hand"
+                        )
+                    approved_at = _advanced_lifecycle_time(at, lifecycle.changed_at)
+                    try:
+                        revision = canonical_revision_from_review(
+                            detection,
+                            approval_id=request.request_id,
+                            revision=len(record.canonical_revisions) + 1,
+                            approved_at=approved_at,
+                            approved_state=request.approved_state,
+                            correction_reason=request.correction_reason,
+                        )
+                    except ValueError as exc:
+                        raise PlayerHandApprovalInvalid(str(exc)) from exc
+
+                    lifecycle_service = ImportedHandLifecycleService(
+                        store=self.imported_hands,
+                        extract=extract_hero_decision_points,
+                        now=lambda: approved_at,
+                    )
+                    transition = (
+                        lifecycle_service.reapprove
+                        if record.canonical_revisions
+                        else lifecycle_service.approve
+                    )
+                    try:
+                        transition(record_key, revision)
                     except (DataLockError, OSError) as exc:
                         if self.imported_hands.has_interrupted_write(record_key):
                             raise PlayerHandRecoveryRequired(

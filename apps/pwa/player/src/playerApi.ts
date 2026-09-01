@@ -133,6 +133,7 @@ export interface PlayerHandDetail {
     resolved_at: string | null;
   }>;
   canonical_revisions: Array<{
+    approval_id: string | null;
     revision: number;
     detection_id: string;
     approved_at: string;
@@ -358,6 +359,55 @@ export async function closePlayerHand(
           reason,
           expected_active_canonical_revision:
             expected.active_canonical_revision,
+          expected_deletion_generation: expected.deletion_generation,
+          expected_lifecycle_changed_at: expected.lifecycle_changed_at,
+        }),
+      },
+    );
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerHandRecoveryRequiredError();
+    }
+    throw error;
+  }
+  return (await response.json()) as PlayerHandDetail;
+}
+
+export async function approvePlayerHand(
+  credentials: PlayerCredentials,
+  recordKey: string,
+  requestId: string,
+  detectionId: string,
+  approvedState: Record<string, unknown>,
+  correctionReason: string | null,
+  expected: PlayerHandSummary,
+): Promise<PlayerHandDetail> {
+  if (
+    expected.lifecycle_status === "deletion_pending" ||
+    expected.lifecycle_status === "deleted"
+  ) {
+    throw new Error(
+      "A hand pending or completing deletion cannot be approved.",
+    );
+  }
+  let response: Response;
+  try {
+    response = await playerRequest(
+      credentials,
+      `/api/player/hands/${encodeURIComponent(recordKey)}/approve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request_id: requestId,
+          detection_id: detectionId,
+          approved_state: approvedState,
+          correction_reason: correctionReason,
+          expected_record_version: expected.record_version,
+          expected_lifecycle_status: expected.lifecycle_status,
+          expected_active_canonical_revision:
+            expected.active_canonical_revision,
+          expected_canonical_revision_count: expected.canonical_revision_count,
           expected_deletion_generation: expected.deletion_generation,
           expected_lifecycle_changed_at: expected.lifecycle_changed_at,
         }),
