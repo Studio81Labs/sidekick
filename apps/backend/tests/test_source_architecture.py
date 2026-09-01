@@ -191,3 +191,19 @@ def test_package_root_compatibility_exports_are_retired() -> None:
 
 def test_training_aggregation_monolith_is_retired() -> None:
     assert not (APP_ROOT / "training.py").exists()
+
+
+def test_grading_domain_does_not_import_provider_or_benchmark_execution() -> None:
+    forbidden = {
+        "app.application",
+        "app.providers",
+        "app.recommendation_benchmark",
+    }
+    violations = [
+        f"{path}: {module}"
+        for path in sorted((APP_ROOT / "domain" / "grading").glob("*.py"))
+        for module in imported_modules(path)
+        if module in forbidden
+        or any(module.startswith(prefix + ".") for prefix in forbidden)
+    ]
+    assert violations == []
