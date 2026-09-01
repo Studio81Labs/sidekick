@@ -541,14 +541,20 @@ by default and evaluates a dispatch candidate only when active provider-policy
 snapshots, the semantic policy digest, exact disclosure, explicit unexpired
 consent generation, canonical DNS-only HTTPS origin, route schema, and sorted
 field-category allowlist all match. A provider-owned route manifest explicitly
-allowlists every outbound economics, utility, abstraction, and conditioned-range
-revision or digest. Closed component models
+allowlists every revision or digest in a currently eligible cash-preflop route.
+Closed component models
 make raw histories, hand/site/session and canonical-record identities, player
 names, timestamps, screenshots, and learning/profile state unrepresentable in
 the outbound DTO. Route revisions, abstraction digests, and range digests must
 match that independently selected provider manifest, never player data. Active
 players and their position-bound remaining stacks are explicit, so multiway
 routes cannot collapse materially different stack configurations.
+Current wager, amount-to-call, and pot values are checked against the complete
+position-bound commitments and prior-action totals rather than accepted as
+independent claims. Tournament routes remain unavailable until payout, field,
+stack, and bounty state is representable. Postflop routes remain unavailable
+until each conditioned-range artifact can be bound to its exact board, action
+line, position, and derivation context instead of a global digest allowlist.
 Provider configuration, policy, reference-source, commercial
 serving-rights, derived-output-rights, disclosure, consent, request, economics,
 utility, and abstraction revisions remain pinned in local audit provenance;

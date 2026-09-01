@@ -20,6 +20,7 @@ from app.domain.remote_references import (
     HoleCardAbstractionRoute,
     HoleCardsRoute,
     PriorActionsRoute,
+    PositionedCommitment,
     PositionedStack,
     RemotePriorAction,
     RemoteReferenceConsent,
@@ -179,9 +180,37 @@ def route_request(**updates: object) -> RemoteReferenceRouteRequest:
                 RemotePriorAction(
                     street="preflop",
                     sequence=0,
+                    actor_position="UTG",
+                    action="fold",
+                    all_in=False,
+                ),
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=1,
+                    actor_position="HJ",
+                    action="fold",
+                    all_in=False,
+                ),
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=2,
+                    actor_position="CO",
+                    action="fold",
+                    all_in=False,
+                ),
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=3,
                     actor_position="BTN",
                     action="raise",
                     total_committed_bb=Decimal("2.5"),
+                    all_in=False,
+                ),
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=4,
+                    actor_position="SB",
+                    action="fold",
                     all_in=False,
                 ),
             ),
@@ -190,11 +219,29 @@ def route_request(**updates: object) -> RemoteReferenceRouteRequest:
             hero_stack_bb=Decimal("99"),
             active_player_stacks=(
                 PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
-                PositionedStack(position="BTN", remaining_stack_bb=Decimal("97")),
+                PositionedStack(
+                    position="BTN",
+                    remaining_stack_bb=Decimal("97.5"),
+                ),
             ),
-            pot_bb=Decimal("2.5"),
-            current_wager_bb=Decimal("1"),
-            amount_to_call_bb=Decimal("1"),
+            committed_pot_before_street_bb=Decimal("0"),
+            current_street_commitments=(
+                PositionedCommitment(position="BB", committed_bb=Decimal("1")),
+                PositionedCommitment(
+                    position="BTN",
+                    committed_bb=Decimal("2.5"),
+                ),
+                PositionedCommitment(position="CO", committed_bb=Decimal("0")),
+                PositionedCommitment(position="HJ", committed_bb=Decimal("0")),
+                PositionedCommitment(
+                    position="SB",
+                    committed_bb=Decimal("0.5"),
+                ),
+                PositionedCommitment(position="UTG", committed_bb=Decimal("0")),
+            ),
+            pot_bb=Decimal("4"),
+            current_wager_bb=Decimal("2.5"),
+            amount_to_call_bb=Decimal("1.5"),
         ),
         TablePositionRoute(
             dealt_in_player_count=6,
@@ -213,6 +260,70 @@ def route_request(**updates: object) -> RemoteReferenceRouteRequest:
     }
     values.update(updates)
     return RemoteReferenceRouteRequest.model_validate(values)
+
+
+def postflop_route_request() -> RemoteReferenceRouteRequest:
+    preflop = route_request()
+    prior_actions = preflop.components[2]
+    assert isinstance(prior_actions, PriorActionsRoute)
+    components = (
+        BoardCardsRoute(cards=("As", "7d", "2c")),
+        ConditionedRangesRoute(
+            ranges=(
+                ConditionedRange(position="BTN", range_artifact_sha256=DIGEST_D),
+            )
+        ),
+        preflop.components[0],
+        preflop.components[1],
+        PriorActionsRoute(
+            actions=(
+                *prior_actions.actions,
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=5,
+                    actor_position="BB",
+                    action="call",
+                    total_committed_bb=Decimal("2.5"),
+                    all_in=False,
+                ),
+            )
+        ),
+        StackWagerPotRoute(
+            hero_stack_bb=Decimal("97.5"),
+            active_player_stacks=(
+                PositionedStack(
+                    position="BB",
+                    remaining_stack_bb=Decimal("97.5"),
+                ),
+                PositionedStack(
+                    position="BTN",
+                    remaining_stack_bb=Decimal("97.5"),
+                ),
+            ),
+            committed_pot_before_street_bb=Decimal("5.5"),
+            current_street_commitments=tuple(
+                PositionedCommitment(position=position, committed_bb=Decimal("0"))
+                for position in ("BB", "BTN", "CO", "HJ", "SB", "UTG")
+            ),
+            pot_bb=Decimal("5.5"),
+            current_wager_bb=Decimal("0"),
+            amount_to_call_bb=Decimal("0"),
+        ),
+        TablePositionRoute(
+            dealt_in_player_count=6,
+            hero_position="BB",
+            hero_button_distance=2,
+            hero_action_index=5,
+            active_player_positions=("BB", "BTN"),
+            relative_position="out_of_position",
+        ),
+    )
+    return RemoteReferenceRouteRequest(
+        route_schema_revision="route-v1",
+        route_schema_sha256=DIGEST_B,
+        decision_street="flop",
+        components=components,
+    )
 
 
 def preflight(
@@ -485,6 +596,34 @@ def test_route_revisions_and_digests_require_provider_manifest_membership() -> N
     assert result.outbound_request is None
 
 
+def test_postflop_ranges_remain_unavailable_until_context_bound() -> None:
+    categories = (
+        "board_cards",
+        "conditioned_ranges",
+        "game_economics",
+        "hole_card_abstraction",
+        "prior_actions",
+        "stack_wager_pot",
+        "table_position",
+    )
+    policy = provider_policy(
+        disclosure=disclosure(outbound_categories=categories)
+    )
+
+    result = evaluate_remote_reference_preflight(
+        decision_binding(),
+        mode="remote_enabled",
+        policy=policy,
+        consent=consent(policy=policy),
+        request=postflop_route_request(),
+        now=NOW,
+    )
+
+    assert result.outcome == "unavailable"
+    assert result.reason == "route_manifest_mismatch"
+    assert result.outbound_request is None
+
+
 @pytest.mark.parametrize(
     "origin",
     [
@@ -570,9 +709,18 @@ def test_request_digest_binds_exact_route_content() -> None:
             PositionedStack(position="BB", remaining_stack_bb=Decimal("98")),
             PositionedStack(position="BTN", remaining_stack_bb=Decimal("95")),
         ),
-        pot_bb=Decimal("2.5"),
-        current_wager_bb=Decimal("1"),
-        amount_to_call_bb=Decimal("1"),
+        committed_pot_before_street_bb=Decimal("0"),
+        current_street_commitments=(
+            PositionedCommitment(position="BB", committed_bb=Decimal("1")),
+            PositionedCommitment(position="BTN", committed_bb=Decimal("2.5")),
+            PositionedCommitment(position="CO", committed_bb=Decimal("0")),
+            PositionedCommitment(position="HJ", committed_bb=Decimal("0")),
+            PositionedCommitment(position="SB", committed_bb=Decimal("0.5")),
+            PositionedCommitment(position="UTG", committed_bb=Decimal("0")),
+        ),
+        pot_bb=Decimal("4"),
+        current_wager_bb=Decimal("2.5"),
+        amount_to_call_bb=Decimal("1.5"),
     )
     changed = route_request(components=tuple(changed_components))
 
@@ -603,6 +751,11 @@ def test_route_requires_complete_structural_state() -> None:
             "game_format": "tournament",
             "economic_model": "cash_rake",
             "utility_model": "chip_ev",
+        },
+        {
+            "game_format": "tournament",
+            "economic_model": "tournament_icm",
+            "utility_model": "icm_equity",
         },
         {"small_blind_bb": Decimal("1")},
     ],
@@ -747,6 +900,75 @@ def test_position_bound_stacks_cover_every_active_player() -> None:
     )
 
     with pytest.raises(ValidationError, match="every active player"):
+        route_request(components=tuple(components))
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"current_wager_bb": Decimal("1")},
+        {"pot_bb": Decimal("3.5")},
+    ],
+)
+def test_wager_and_pot_are_derived_from_position_commitments(
+    update: dict[str, object],
+) -> None:
+    stack = route_request().components[3]
+    payload = stack.model_dump(mode="python")
+    payload.update(update)
+    with pytest.raises(ValidationError):
+        StackWagerPotRoute.model_validate(payload)
+
+
+def test_call_and_action_totals_match_position_commitments() -> None:
+    request = route_request()
+    stack_payload = request.components[3].model_dump(mode="python")
+    stack_payload["amount_to_call_bb"] = Decimal("1")
+    components = list(request.components)
+    components[3] = StackWagerPotRoute.model_validate(stack_payload)
+    with pytest.raises(ValidationError, match="amount to call"):
+        route_request(components=tuple(components))
+
+    prior_actions = request.components[2]
+    assert isinstance(prior_actions, PriorActionsRoute)
+    actions = list(prior_actions.actions)
+    actions[3] = RemotePriorAction(
+        street="preflop",
+        sequence=3,
+        actor_position="BTN",
+        action="raise",
+        total_committed_bb=Decimal("3"),
+        all_in=False,
+    )
+    components = list(request.components)
+    components[2] = PriorActionsRoute(actions=tuple(actions))
+    with pytest.raises(ValidationError, match="action totals"):
+        route_request(components=tuple(components))
+
+
+def test_preflop_action_line_is_complete_and_structurally_ordered() -> None:
+    request = route_request()
+    prior_actions = request.components[2]
+    assert isinstance(prior_actions, PriorActionsRoute)
+    actions = list(prior_actions.actions)
+    actions[0] = RemotePriorAction(
+        street="preflop",
+        sequence=0,
+        actor_position="HJ",
+        action="fold",
+        all_in=False,
+    )
+    actions[1] = RemotePriorAction(
+        street="preflop",
+        sequence=1,
+        actor_position="UTG",
+        action="fold",
+        all_in=False,
+    )
+    components = list(request.components)
+    components[2] = PriorActionsRoute(actions=tuple(actions))
+
+    with pytest.raises(ValidationError, match="complete and in structural order"):
         route_request(components=tuple(components))
 
 

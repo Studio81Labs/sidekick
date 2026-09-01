@@ -8,8 +8,6 @@ from hashlib import sha256
 from app.domain.learning_content.models import DecisionBinding
 from app.domain.remote_references.models import (
     AbstractionSchemaBinding,
-    BoardAbstractionRoute,
-    ConditionedRangesRoute,
     EconomicConfigurationBinding,
     GameEconomicsRoute,
     HoleCardAbstractionRoute,
@@ -358,6 +356,8 @@ def _request_matches_manifest(
     request: RemoteReferenceRouteRequest,
     policy: RemoteReferenceProviderPolicy,
 ) -> bool:
+    if request.decision_street != "preflop":
+        return False
     manifest = policy.route_manifest
     for component in request.components:
         if isinstance(component, GameEconomicsRoute):
@@ -385,23 +385,5 @@ def _request_matches_manifest(
                 abstraction_schema_sha256=component.abstraction_schema_sha256,
             )
             if schema not in manifest.hole_card_abstraction_schemas:
-                return False
-        elif isinstance(component, BoardAbstractionRoute):
-            schema = AbstractionSchemaBinding(
-                abstraction_schema_revision=component.abstraction_schema_revision,
-                abstraction_schema_sha256=component.abstraction_schema_sha256,
-            )
-            if schema not in manifest.board_abstraction_schemas:
-                return False
-            if component.abstraction_sha256 not in (
-                manifest.board_abstraction_artifacts
-            ):
-                return False
-        elif isinstance(component, ConditionedRangesRoute):
-            if any(
-                item.range_artifact_sha256
-                not in manifest.conditioned_range_artifacts
-                for item in component.ranges
-            ):
                 return False
     return True

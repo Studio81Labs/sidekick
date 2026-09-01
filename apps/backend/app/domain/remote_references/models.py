@@ -275,7 +275,7 @@ class AbstractionSchemaBinding(RemoteReferenceModel):
 
 
 class RemoteReferenceRouteManifest(RemoteReferenceModel):
-    """Provider-owned allowlist for every route-supplied revision and digest."""
+    """Provider-owned allowlist for every eligible route revision and digest."""
 
     manifest_revision: Identifier
     economic_configurations: tuple[EconomicConfigurationBinding, ...] = Field(
@@ -285,9 +285,6 @@ class RemoteReferenceRouteManifest(RemoteReferenceModel):
         min_length=1
     )
     hole_card_abstraction_schemas: tuple[AbstractionSchemaBinding, ...] = ()
-    board_abstraction_schemas: tuple[AbstractionSchemaBinding, ...] = ()
-    board_abstraction_artifacts: tuple[Sha256Digest, ...] = ()
-    conditioned_range_artifacts: tuple[Sha256Digest, ...] = ()
 
     @model_validator(mode="after")
     def validate_manifest_order(self) -> Self:
@@ -295,20 +292,11 @@ class RemoteReferenceRouteManifest(RemoteReferenceModel):
             self.economic_configurations,
             self.utility_configurations,
             self.hole_card_abstraction_schemas,
-            self.board_abstraction_schemas,
         )
         for bindings in model_bindings:
             digests = [_canonical_sha256(binding) for binding in bindings]
             if digests != sorted(digests) or len(digests) != len(set(digests)):
                 raise ValueError("route-manifest bindings must be sorted and unique")
-        for artifacts in (
-            self.board_abstraction_artifacts,
-            self.conditioned_range_artifacts,
-        ):
-            if artifacts != tuple(sorted(artifacts)):
-                raise ValueError("route-manifest artifacts must be sorted")
-            if len(artifacts) != len(set(artifacts)):
-                raise ValueError("route-manifest artifacts must be unique")
         return self
 
     def semantic_digest(self) -> str:
@@ -406,27 +394,20 @@ class GameEconomicsRoute(RemoteReferenceModel):
 
     @model_validator(mode="after")
     def validate_blind_units(self) -> Self:
+        if self.game_format != "cash":
+            raise ValueError(
+                "tournament routes remain unavailable until tournament state is modeled"
+            )
         if self.big_blind_bb != Decimal(1):
             raise ValueError("BB-normalized routes require big_blind_bb equal to one")
         if self.small_blind_bb >= self.big_blind_bb:
             raise ValueError("small blind must be less than the big blind")
         if (self.ante_bb == 0) != (self.ante_mode == "none"):
             raise ValueError("ante amount and ante mode must agree")
-        if self.game_format == "cash":
-            if self.economic_model != "cash_rake":
-                raise ValueError("cash routes require the cash-rake economic model")
-            if self.utility_model not in {"chip_ev", "currency_ev"}:
-                raise ValueError("cash routes require a cash-compatible utility")
-        else:
-            expected_utility = {
-                "tournament_bounty_icm": "bounty_adjusted_equity",
-                "tournament_chip_ev": "chip_ev",
-                "tournament_icm": "icm_equity",
-            }
-            if self.economic_model == "cash_rake":
-                raise ValueError("tournament routes require a tournament model")
-            if self.utility_model != expected_utility[self.economic_model]:
-                raise ValueError("tournament economics and utility must agree")
+        if self.economic_model != "cash_rake":
+            raise ValueError("cash routes require the cash-rake economic model")
+        if self.utility_model not in {"chip_ev", "currency_ev"}:
+            raise ValueError("cash routes require a cash-compatible utility")
         return self
 
 
@@ -478,10 +459,20 @@ class PositionedStack(RemoteReferenceModel):
     remaining_stack_bb: NonNegativeDecimal
 
 
+class PositionedCommitment(RemoteReferenceModel):
+    position: PositionLabel
+    committed_bb: NonNegativeDecimal
+
+
 class StackWagerPotRoute(RemoteReferenceModel):
     category: Literal["stack_wager_pot"] = "stack_wager_pot"
     hero_stack_bb: NonNegativeDecimal
     active_player_stacks: tuple[PositionedStack, ...] = Field(
+        min_length=2,
+        max_length=10,
+    )
+    committed_pot_before_street_bb: NonNegativeDecimal
+    current_street_commitments: tuple[PositionedCommitment, ...] = Field(
         min_length=2,
         max_length=10,
     )
@@ -498,6 +489,24 @@ class StackWagerPotRoute(RemoteReferenceModel):
             raise ValueError("active player stacks must be sorted by position")
         if len(positions) != len(set(positions)):
             raise ValueError("active player stacks require unique positions")
+        commitment_positions = [
+            item.position for item in self.current_street_commitments
+        ]
+        if commitment_positions != sorted(commitment_positions):
+            raise ValueError("current-street commitments must be sorted by position")
+        if len(commitment_positions) != len(set(commitment_positions)):
+            raise ValueError("current-street commitments require unique positions")
+        derived_wager = max(
+            item.committed_bb for item in self.current_street_commitments
+        )
+        if self.current_wager_bb != derived_wager:
+            raise ValueError("current wager must match position commitments")
+        derived_pot = self.committed_pot_before_street_bb + sum(
+            (item.committed_bb for item in self.current_street_commitments),
+            start=Decimal(0),
+        )
+        if self.pot_bb != derived_pot:
+            raise ValueError("pot must match prior pot and current commitments")
         return self
 
 
@@ -764,6 +773,94 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
         )
         if hero_stack != stacks.hero_stack_bb:
             raise ValueError("position-bound hero stack must match hero_stack_bb")
+        commitment_by_position = {
+            item.position: item.committed_bb
+            for item in stacks.current_street_commitments
+        }
+        if set(commitment_by_position) != valid_positions:
+            raise ValueError("commitments must cover every dealt-in position exactly")
+        hero_commitment = commitment_by_position[table.hero_position]
+        expected_call = min(
+            max(stacks.current_wager_bb - hero_commitment, Decimal(0)),
+            stacks.hero_stack_bb,
+        )
+        if stacks.amount_to_call_bb != expected_call:
+            raise ValueError("amount to call must match wager and hero commitment")
+
+        latest_action_totals: dict[str, Decimal] = {}
+        for action in prior_actions.actions:
+            if action.street != self.decision_street:
+                continue
+            if action.total_committed_bb is None:
+                continue
+            prior_total = latest_action_totals.get(action.actor_position)
+            if prior_total is not None and action.total_committed_bb < prior_total:
+                raise ValueError("action commitments cannot decrease within a street")
+            latest_action_totals[action.actor_position] = action.total_committed_bb
+        if any(
+            commitment_by_position[position] != total
+            for position, total in latest_action_totals.items()
+        ):
+            raise ValueError("action totals must match current-street commitments")
+
+        if self.decision_street == "preflop":
+            economics = next(
+                component
+                for component in self.components
+                if isinstance(component, GameEconomicsRoute)
+            )
+            expected_ante_pot = (
+                Decimal(0)
+                if economics.ante_mode == "none"
+                else economics.ante_bb
+                if economics.ante_mode == "big_blind"
+                else economics.ante_bb * table.dealt_in_player_count
+            )
+            if stacks.committed_pot_before_street_bb != expected_ante_pot:
+                raise ValueError("preflop prior pot must match the configured antes")
+            small_blind_position = (
+                "BTN/SB" if table.dealt_in_player_count == 2 else "SB"
+            )
+            if (
+                commitment_by_position[small_blind_position]
+                < economics.small_blind_bb
+            ):
+                raise ValueError("small-blind commitment is missing")
+            if commitment_by_position["BB"] < economics.big_blind_bb:
+                raise ValueError("big-blind commitment is missing")
+            ordered_positions = sorted(
+                valid_positions,
+                key=lambda position: (
+                    structural_position_labels(
+                        table.dealt_in_player_count
+                    ).index(position)
+                    if table.dealt_in_player_count == 2
+                    else (
+                        structural_position_labels(
+                            table.dealt_in_player_count
+                        ).index(position)
+                        - 3
+                    )
+                    % table.dealt_in_player_count
+                ),
+            )
+            actionable = list(ordered_positions)
+            cursor = 0
+            for action in prior_actions.actions:
+                if action.street != "preflop":
+                    continue
+                if not actionable or action.actor_position != actionable[cursor]:
+                    raise ValueError(
+                        "preflop actions must be complete and in structural order"
+                    )
+                if action.action == "fold" or action.all_in:
+                    actionable.pop(cursor)
+                    if actionable:
+                        cursor %= len(actionable)
+                else:
+                    cursor = (cursor + 1) % len(actionable)
+            if not actionable or actionable[cursor] != table.hero_position:
+                raise ValueError("preflop action line must end at the hero decision")
         return self
 
     @property
