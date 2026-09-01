@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ported from Studio81Labs/taven@71e82cd
+# ported from Studio81Labs/nexcue@c98544bb37a4e1b6cf785a95c164f2e14e3ffa41
 """Fixture tests for prune-stale-caches.py."""
 
 from __future__ import annotations

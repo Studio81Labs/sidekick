@@ -1,4 +1,4 @@
-# ported from Studio81Labs/tabletap@a36cebcd
+# ported from Studio81Labs/nexcue@c98544bb37a4e1b6cf785a95c164f2e14e3ffa41
 name: Prune Stale Caches
 
 # Deletes superseded Actions caches on refs/heads/main.
