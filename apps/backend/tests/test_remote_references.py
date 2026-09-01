@@ -46,6 +46,7 @@ from test_imported_hand_models import (
     automatic_action,
     extraction_ready_state_payload,
     extraction_record_for_state,
+    hero_facing_a_raise_decision_record,
     wager_action,
 )
 
@@ -106,6 +107,28 @@ def equal_blind_decision_point() -> HeroDecisionPoint:
     extraction = extract_hero_decision_points(extraction_record_for_state(state))
     assert extraction.outcome == "decisions"
     return extraction.decision_points[0]
+
+
+def short_stacked_facing_raise_decision_point() -> HeroDecisionPoint:
+    source = hero_facing_a_raise_decision_record(
+        hero_stack=Decimal("10")
+    ).active_state_for_extraction
+    assert source is not None
+    payload = source.model_dump(mode="python")
+    payload["seats"][0]["starting_stack"] = Decimal("2")
+    payload["streets"][0]["actions"][5] = wager_action(
+        5,
+        "hero",
+        "fold",
+        total=Decimal("1"),
+    )
+    for street in payload["streets"][1:]:
+        street["actions"] = street["actions"][:2]
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("9")}}
+    state = ImportedHandState.model_validate(payload)
+    extraction = extract_hero_decision_points(extraction_record_for_state(state))
+    assert extraction.outcome == "decisions"
+    return extraction.decision_points[1]
 
 
 def decision_binding() -> DecisionBinding:
@@ -421,6 +444,73 @@ def equal_blind_route_request(
     )
 
 
+def short_stacked_route_request() -> RemoteReferenceRouteRequest:
+    request = canonical_route_request()
+    components = (
+        request.components[0],
+        request.components[1],
+        PriorActionsRoute(
+            actions=(
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=0,
+                    actor_position="BTN",
+                    action="call",
+                    total_committed_bb=Decimal("1"),
+                    all_in=False,
+                ),
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=1,
+                    actor_position="SB",
+                    action="raise",
+                    total_committed_bb=Decimal("4"),
+                    all_in=False,
+                ),
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=2,
+                    actor_position="BB",
+                    action="call",
+                    total_committed_bb=Decimal("4"),
+                    all_in=False,
+                ),
+            )
+        ),
+        StackWagerPotRoute(
+            hero_stack_bb=Decimal("1"),
+            active_player_stacks=(
+                PositionedStack(position="BB", remaining_stack_bb=Decimal("96")),
+                PositionedStack(position="BTN", remaining_stack_bb=Decimal("1")),
+                PositionedStack(position="SB", remaining_stack_bb=Decimal("96")),
+            ),
+            committed_pot_before_street_bb=Decimal("0"),
+            current_street_commitments=(
+                PositionedCommitment(position="BB", committed_bb=Decimal("4")),
+                PositionedCommitment(position="BTN", committed_bb=Decimal("1")),
+                PositionedCommitment(position="SB", committed_bb=Decimal("4")),
+            ),
+            pot_bb=Decimal("9"),
+            current_wager_bb=Decimal("4"),
+            amount_to_call_bb=Decimal("1"),
+        ),
+        TablePositionRoute(
+            dealt_in_player_count=3,
+            hero_position="BTN",
+            hero_button_distance=0,
+            hero_action_index=0,
+            active_player_positions=("BB", "BTN", "SB"),
+            relative_position="not_applicable",
+        ),
+    )
+    return RemoteReferenceRouteRequest.model_validate(
+        {
+            **request.model_dump(mode="python"),
+            "components": components,
+        }
+    )
+
+
 def route_derivation(
     *,
     decision: HeroDecisionPoint | None = None,
@@ -605,6 +695,19 @@ def test_route_factory_accepts_equal_blind_cash_game() -> None:
     economics = route.outbound_request.components[0]
     assert isinstance(economics, GameEconomicsRoute)
     assert economics.small_blind_bb == economics.big_blind_bb == Decimal("1")
+
+
+def test_route_factory_caps_call_at_short_stacked_hero_chips() -> None:
+    decision = short_stacked_facing_raise_decision_point()
+    assert decision.state.amount_to_call == Decimal("3")
+    assert decision.state.hero_stack_before_action == Decimal("1")
+    request = short_stacked_route_request()
+
+    route = bind_remote_reference_route(decision, request)
+
+    stacks = route.outbound_request.components[3]
+    assert isinstance(stacks, StackWagerPotRoute)
+    assert stacks.amount_to_call_bb == stacks.hero_stack_bb == Decimal("1")
 
 
 def test_cash_economic_configuration_is_derived_from_approved_state() -> None:

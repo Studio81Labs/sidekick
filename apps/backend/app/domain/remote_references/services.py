@@ -497,7 +497,12 @@ def _derive_request_from_decision(
                     ),
                     pot_bb=bb(state.pot_before_action),
                     current_wager_bb=bb(state.current_wager),
-                    amount_to_call_bb=bb(state.amount_to_call),
+                    amount_to_call_bb=bb(
+                        min(
+                            state.amount_to_call,
+                            state.hero_stack_before_action,
+                        )
+                    ),
                 ),
                 TablePositionRoute(
                     dealt_in_player_count=state.dealt_in_player_count,
