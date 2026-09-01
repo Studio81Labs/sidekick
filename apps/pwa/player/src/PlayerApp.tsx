@@ -96,18 +96,28 @@ function approvalDraftFor(
   detail: PlayerHandDetail,
   requestedDetectionId?: string,
 ): HandApprovalDraft | null {
-  const retainedDetectionIds = new Set(
-    detail.detections.map((detection) => detection.detection_id),
+  const approvalEligibleDetectionIds = new Set(
+    detail.detections
+      .filter((detection) => detection.approval_eligible)
+      .map((detection) => detection.detection_id),
   );
   const latestRevision =
     detail.canonical_revisions[detail.canonical_revisions.length - 1];
-  const detectionId =
-    (requestedDetectionId && retainedDetectionIds.has(requestedDetectionId)
+  const requestedDetection =
+    requestedDetectionId &&
+    approvalEligibleDetectionIds.has(requestedDetectionId)
       ? requestedDetectionId
-      : null) ??
-    (latestRevision && retainedDetectionIds.has(latestRevision.detection_id)
+      : null;
+  const latestRevisionDetection =
+    latestRevision &&
+    approvalEligibleDetectionIds.has(latestRevision.detection_id)
       ? latestRevision.detection_id
-      : detail.detections[detail.detections.length - 1]?.detection_id);
+      : null;
+  const latestEligibleDetection = [...detail.detections]
+    .reverse()
+    .find((detection) => detection.approval_eligible)?.detection_id;
+  const detectionId =
+    requestedDetection ?? latestRevisionDetection ?? latestEligibleDetection;
   if (!detectionId) return null;
   const matchingRevision = [...detail.canonical_revisions]
     .reverse()
@@ -330,15 +340,17 @@ function HandDetail({
                 onApprovalDetectionChange(event.target.value)
               }
             >
-              {detail.detections.map((detection) => (
-                <option
-                  key={detection.detection_id}
-                  value={detection.detection_id}
-                >
-                  {detection.detection_id} · {detection.detector_id}{" "}
-                  {detection.detector_version}
-                </option>
-              ))}
+              {detail.detections
+                .filter((detection) => detection.approval_eligible)
+                .map((detection) => (
+                  <option
+                    key={detection.detection_id}
+                    value={detection.detection_id}
+                  >
+                    {detection.detection_id} · {detection.detector_id}{" "}
+                    {detection.detector_version}
+                  </option>
+                ))}
             </select>
           </label>
           <label>
@@ -467,6 +479,7 @@ function HandDetail({
                 {detection.raw_source_id} · {detection.detector_id}{" "}
                 {detection.detector_version} · detected{" "}
                 {new Date(detection.detected_at).toLocaleString()}
+                {detection.approval_eligible ? "" : " · reimport audit only"}
               </summary>
               <pre>{JSON.stringify(detection.state, null, 2)}</pre>
               <p className="receipt-line">
@@ -543,6 +556,8 @@ function HandDetail({
                         {` · source session ${reimport.chronology.source_session_id ?? "not retained"}`}
                         {` · source file ${reimport.chronology.source_file_id}`}
                         {` · hand ordinal ${reimport.chronology.hand_ordinal ?? "not retained"}`}
+                        {" · detection "}
+                        <code>{reimport.detection_id}</code>
                         {" · detected meaning checksum "}
                         <code>{reimport.detected_semantic_sha256}</code>
                       </li>

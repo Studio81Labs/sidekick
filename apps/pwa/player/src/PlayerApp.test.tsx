@@ -44,8 +44,8 @@ const pendingHand = {
   learning_eligible: false,
   deletion_generation: 0,
   raw_source_count: 3,
-  detection_count: 2,
-  warning_count: 2,
+  detection_count: 3,
+  warning_count: 4,
   unresolved_conflict_count: 0,
   canonical_revision_count: 0,
 };
@@ -99,6 +99,7 @@ const pendingHandDetail = {
             format_revision: "pokerstars-text/v1",
             source_filename: "HH20260831.txt",
           },
+          detection_id: "detection-reimport-1",
           detected_semantic_sha256: "6".repeat(64),
         },
       ],
@@ -163,6 +164,7 @@ const pendingHandDetail = {
       },
       warnings: ["Review hero identity"],
       content_sha256: "d".repeat(64),
+      approval_eligible: true,
     },
     {
       detection_id: "detection-2",
@@ -195,6 +197,40 @@ const pendingHandDetail = {
       },
       warnings: [],
       content_sha256: "e".repeat(64),
+      approval_eligible: true,
+    },
+    {
+      detection_id: "detection-reimport-1",
+      raw_source_id: "file-1-reimport",
+      detector_id: "pokerstars",
+      detector_version: "1.1.0",
+      detected_at: "2026-08-31T12:00:00Z",
+      state: {
+        identity: {
+          namespace: "site-hand-id/v1",
+          site: "pokerstars",
+          source_hand_id: "123456789",
+        },
+        hero_player_id: null,
+        hero_cards: [],
+      },
+      field_evidence: {
+        "/hero_player_id": {
+          confidence: "0.7",
+          evidence: [
+            {
+              raw_source_id: "file-1-reimport",
+              line_start: 2,
+              line_end: 2,
+              marker: "reimport-hero-line",
+            },
+          ],
+          warnings: ["Reimport hero evidence changed"],
+        },
+      },
+      warnings: ["Review reimport hero evidence"],
+      content_sha256: "7".repeat(64),
+      approval_eligible: false,
     },
   ],
   conflicts: [
@@ -264,7 +300,7 @@ const activeHandDetail = {
 const conflictedActiveHand = {
   ...activeHand,
   raw_source_count: 3,
-  detection_count: 2,
+  detection_count: 3,
   unresolved_conflict_count: 1,
 };
 
@@ -505,18 +541,29 @@ describe("PlayerApp", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Review hero identity")).toBeInTheDocument();
     expect(screen.getByText("Hero line was absent")).toBeInTheDocument();
-    expect(screen.getAllByText("/hero_player_id")).toHaveLength(2);
+    expect(screen.getAllByText("/hero_player_id")).toHaveLength(3);
     expect(screen.getByText(/40% confidence/)).toBeInTheDocument();
     expect(screen.getByText(/source file-1 · line 1/)).toBeInTheDocument();
     expect(screen.getByText("Detected proposals")).toBeInTheDocument();
-    expect(screen.getByText(/"hero_player_id": null/)).toBeInTheDocument();
+    expect(screen.getAllByText(/"hero_player_id": null/)).toHaveLength(2);
     expect(screen.getAllByText(/Detection detection-1/).length).toBeGreaterThan(
       1,
     );
     expect(screen.getAllByText(/Detection detection-2/).length).toBeGreaterThan(
       1,
     );
+    expect(
+      screen.getAllByText(/Detection detection-reimport-1/).length,
+    ).toBeGreaterThan(1);
+    expect(screen.getByText(/reimport audit only/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /detection-reimport-1/ }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/95% confidence/)).toBeInTheDocument();
+    expect(screen.getByText(/70% confidence/)).toBeInTheDocument();
+    expect(
+      screen.getByText("Review reimport hero evidence"),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Detection detection-1 · proposal warning/),
     ).toBeInTheDocument();

@@ -117,6 +117,7 @@ export interface PlayerHandDetail {
         format_revision: string;
         source_filename: string | null;
       };
+      detection_id: string;
       detected_semantic_sha256: string;
     }>;
   }>;
@@ -142,6 +143,7 @@ export interface PlayerHandDetail {
     >;
     warnings: string[];
     content_sha256: string;
+    approval_eligible: boolean;
   }>;
   conflicts: Array<{
     conflict_id: string;

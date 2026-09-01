@@ -35,10 +35,12 @@ The service applies one of four append-only outcomes:
 - Identical bytes with the same detected meaning append a `RawHandReimport`
   occurrence to the retained raw source. The occurrence keeps the later source
   ID, chronology, filename, adapter/version, import ID, and import time, while
-  raw text, detection, canonical revisions, and derived learning data remain
-  single-copy. The initial occurrence and every reimport bind their import ID to
-  a semantic fingerprint, so a retry cannot change meaning after other detected
-  interpretations have also been retained.
+  raw text, canonical revisions, and derived learning data remain single-copy.
+  Its full detection remains as occurrence-specific audit evidence so changed
+  confidence, warnings, detector metadata, and source evidence stay reviewable.
+  The initial occurrence and every reimport bind their import ID to both that
+  detection and its semantic fingerprint, so a retry cannot change meaning or
+  recognition evidence after other interpretations have also been retained.
 - Materially different bytes retain the new raw source and detection under an
   unresolved `ImportConflict`.
 - A different detected meaning for identical bytes appends the source
@@ -46,12 +48,18 @@ The service applies one of four append-only outcomes:
   bytes, and creates a single-source/multiple-detection unresolved conflict.
 
 An exact retry of one import ID is a no-op only when its source evidence and
-detected meaning still agree. Reusing the ID for different provenance, bytes,
-or meaning fails explicitly. A new occurrence cannot precede the latest import
-time anywhere in the aggregate; an exact retry remains a no-op even after later
-imports. Source occurrence IDs and import IDs are unique across the aggregate.
-They participate in lifecycle chronology, deletion ordering, backup/restore,
-and monotonic restore comparison.
+complete detection audit still agree. Reusing the ID for different provenance,
+bytes, meaning, confidence, warnings, evidence, or detector metadata fails
+explicitly. A new occurrence cannot precede the latest import time anywhere in
+the aggregate; an exact retry remains a no-op even after later imports. Source
+occurrence IDs and import IDs are unique across the aggregate. They participate
+in lifecycle chronology, deletion ordering, backup/restore, and monotonic
+restore comparison.
+
+An unchanged-meaning reimport detection remains tied to its nested source
+occurrence and is audit-only. It can be inspected but cannot become a canonical
+revision; canonical approval continues to use detections bound to top-level raw
+sources. A materially changed meaning follows the conflict path instead.
 
 The ingestion service preserves a retained lifecycle and active pointer when a
 conflict is appended. The unresolved conflict still makes decision extraction

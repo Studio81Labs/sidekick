@@ -264,11 +264,14 @@ Parsed hand-history candidates enter this aggregate through
 workspace's stable thread/process record stripes and shared data-volume lock.
 New identities become pending review. Byte-identical reimports append a source
 occurrence with its own chronology and import provenance without copying raw
-text, detections, canonical revisions, or derived data. Materially different
-bytes, or a different detected meaning for identical bytes, append unresolved
-conflict evidence and therefore fail decision extraction closed. Deleted and
-deletion-pending records require a separate authorized lifecycle reimport and
-cannot be resurrected by this boundary. ADR 0058 records why the
+text, canonical revisions, or derived data; each occurrence retains its full
+detection audit so confidence, warnings, and source evidence remain reviewable.
+Unchanged-meaning reimport detections are audit-only and cannot be selected for
+canonical approval. Materially different bytes, or a different detected
+meaning for identical bytes, append unresolved conflict evidence and therefore
+fail decision extraction closed. Deleted and deletion-pending records require
+a separate authorized lifecycle reimport and cannot be resurrected by this
+boundary. ADR 0058 records why the
 parsed-candidate transaction lands before the #409 PokerStars adapter and
 player upload route. Sanitized player audit detail nests these later occurrences
 under their retained raw source, and its source count includes every occurrence.

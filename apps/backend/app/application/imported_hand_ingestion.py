@@ -104,6 +104,13 @@ class ImportedHandIngestionService:
             )
             if duplicate is not None:
                 return duplicate
+            if any(
+                item.detection_id == detection.detection_id
+                for item in existing.detections
+            ):
+                raise ImportedHandIngestionError(
+                    "a detection id is already retained for another import"
+                )
             _require_append_chronology(existing, raw)
 
         if resolution.disposition == "new_identity":
@@ -164,9 +171,12 @@ def _validated_candidate(
         raise ImportedHandIngestionError(
             "an adapter candidate cannot pre-author retained reimport audit"
         )
-    if raw.initial_detected_semantic_sha256 is not None:
+    if (
+        raw.initial_detection_id is not None
+        or raw.initial_detected_semantic_sha256 is not None
+    ):
         raise ImportedHandIngestionError(
-            "an adapter candidate cannot pre-author a retained semantic binding"
+            "an adapter candidate cannot pre-author a retained detection binding"
         )
     return raw, detection
 
@@ -178,9 +188,6 @@ def _duplicate_import_result(
     candidate_detection: DetectedImportedHand,
 ) -> ImportedHandIngestionResult | None:
     import_id = candidate.provenance.import_id
-    candidate_semantic_sha256 = detected_imported_hand_semantic_sha256(
-        candidate_detection.state
-    )
     for raw in record.raw_sources:
         if raw.provenance.import_id == import_id:
             if (
@@ -192,12 +199,9 @@ def _duplicate_import_result(
                 raise ImportedHandImportIdConflict(
                     "an import id is already bound to different source evidence"
                 )
-            if (
-                _initial_semantic_fingerprint(record, raw)
-                != candidate_semantic_sha256
-            ):
+            if _initial_detection(record, raw) != candidate_detection:
                 raise ImportedHandImportIdConflict(
-                    "an import retry changed the detected hand meaning"
+                    "an import retry changed the detected hand meaning or audit evidence"
                 )
             return ImportedHandIngestionResult(
                 record_key=record_key,
@@ -216,12 +220,21 @@ def _duplicate_import_result(
                 raise ImportedHandImportIdConflict(
                     "an import id is already bound to different source evidence"
                 )
-            if (
-                reimport.detected_semantic_sha256
-                != candidate_semantic_sha256
-            ):
+            retained_detection = _retained_detection(
+                record,
+                reimport.detection_id,
+            )
+            comparable_candidate = (
+                candidate_detection
+                if retained_detection.raw_source_id == candidate.raw_source_id
+                else _remap_detection_raw_source(
+                    candidate_detection,
+                    target_raw_source_id=retained_detection.raw_source_id,
+                )
+            )
+            if retained_detection != comparable_candidate:
                 raise ImportedHandImportIdConflict(
-                    "an import retry changed the detected hand meaning"
+                    "an import retry changed the detected hand meaning or audit evidence"
                 )
             return ImportedHandIngestionResult(
                 record_key=record_key,
@@ -248,32 +261,56 @@ def _require_append_chronology(
         )
 
 
-def _initial_semantic_fingerprint(
+def _retained_detection(
+    record: ImportedHandRecord,
+    detection_id: str,
+) -> DetectedImportedHand:
+    matches = [
+        detection
+        for detection in record.detections
+        if detection.detection_id == detection_id
+    ]
+    if len(matches) != 1:
+        raise ImportedHandIngestionError(
+            "retained import has no unique detection audit binding"
+        )
+    return matches[0]
+
+
+def _initial_detection(
     record: ImportedHandRecord,
     raw: RawHandHistory,
-) -> str:
-    if raw.initial_detected_semantic_sha256 is not None:
-        return raw.initial_detected_semantic_sha256
-    retained_fingerprints = {
-        detected_imported_hand_semantic_sha256(detection.state)
+) -> DetectedImportedHand:
+    if raw.initial_detection_id is not None:
+        return _retained_detection(record, raw.initial_detection_id)
+    matches = [
+        detection
         for detection in record.detections
         if detection.raw_source_id == raw.raw_source_id
-    }
-    if len(retained_fingerprints) != 1:
-        raise ImportedHandIngestionError(
-            "legacy raw source has no unambiguous initial semantic binding"
+        and (
+            raw.initial_detected_semantic_sha256 is None
+            or detected_imported_hand_semantic_sha256(detection.state)
+            == raw.initial_detected_semantic_sha256
         )
-    return next(iter(retained_fingerprints))
+    ]
+    if len(matches) != 1:
+        raise ImportedHandIngestionError(
+            "legacy raw source has no unambiguous initial detection binding"
+        )
+    return matches[0]
 
 
-def _bind_initial_semantic_fingerprint(
+def _bind_initial_detection(
     raw: RawHandHistory,
-    semantic_sha256: str,
+    detection: DetectedImportedHand,
 ) -> RawHandHistory:
     return RawHandHistory.model_validate(
         {
             **raw.model_dump(mode="python"),
-            "initial_detected_semantic_sha256": semantic_sha256,
+            "initial_detection_id": detection.detection_id,
+            "initial_detected_semantic_sha256": (
+                detected_imported_hand_semantic_sha256(detection.state)
+            ),
         }
     )
 
@@ -283,10 +320,7 @@ def _new_or_empty_record(
     raw: RawHandHistory,
     detection: DetectedImportedHand,
 ) -> ImportedHandRecord:
-    raw = _bind_initial_semantic_fingerprint(
-        raw,
-        detected_imported_hand_semantic_sha256(detection.state),
-    )
+    raw = _bind_initial_detection(raw, detection)
     changed_at = max(raw.provenance.imported_at, detection.detected_at)
     if existing is None:
         return ImportedHandRecord(
@@ -324,6 +358,7 @@ def _append_exact_reimport(
         raw_source_id=candidate.raw_source_id,
         chronology=candidate.chronology,
         provenance=candidate.provenance,
+        detection_id=candidate_detection.detection_id,
         detected_semantic_sha256=candidate_semantic_sha256,
     )
     updated_sources: list[RawHandHistory] = []
@@ -335,10 +370,10 @@ def _append_exact_reimport(
         found = True
         retained_raw = (
             raw
-            if raw.initial_detected_semantic_sha256 is not None
-            else _bind_initial_semantic_fingerprint(
+            if raw.initial_detection_id is not None
+            else _bind_initial_detection(
                 raw,
-                _initial_semantic_fingerprint(existing, raw),
+                _initial_detection(existing, raw),
             )
         )
         updated_sources.append(
@@ -356,7 +391,11 @@ def _append_exact_reimport(
     return _updated_record(
         existing,
         raw_sources=updated_sources,
-        changed_at=candidate.provenance.imported_at,
+        detections=[*existing.detections, candidate_detection],
+        changed_at=max(
+            candidate.provenance.imported_at,
+            candidate_detection.detected_at,
+        ),
     )
 
 
@@ -379,11 +418,9 @@ def _append_identity_conflict(
     detection = candidate_detection
     if matching_raw is None:
         raw_sources.append(
-            _bind_initial_semantic_fingerprint(
+            _bind_initial_detection(
                 candidate_raw,
-                detected_imported_hand_semantic_sha256(
-                    candidate_detection.state
-                ),
+                candidate_detection,
             )
         )
         conflict_raw_source_ids = [raw.raw_source_id for raw in raw_sources]
@@ -393,7 +430,7 @@ def _append_identity_conflict(
             candidate_raw,
             candidate_detection,
             target_raw_source_id=matching_raw.raw_source_id,
-            target_initial_semantic_sha256=_initial_semantic_fingerprint(
+            target_initial_detection=_initial_detection(
                 existing,
                 matching_raw,
             ),
@@ -436,7 +473,7 @@ def _append_occurrence_to_sources(
     candidate_detection: DetectedImportedHand,
     *,
     target_raw_source_id: str,
-    target_initial_semantic_sha256: str,
+    target_initial_detection: DetectedImportedHand,
 ) -> list[RawHandHistory]:
     candidate_semantic_sha256 = detected_imported_hand_semantic_sha256(
         candidate_detection.state
@@ -445,6 +482,7 @@ def _append_occurrence_to_sources(
         raw_source_id=candidate.raw_source_id,
         chronology=candidate.chronology,
         provenance=candidate.provenance,
+        detection_id=candidate_detection.detection_id,
         detected_semantic_sha256=candidate_semantic_sha256,
     )
     updated_sources: list[RawHandHistory] = []
@@ -454,10 +492,10 @@ def _append_occurrence_to_sources(
             continue
         retained_raw = (
             raw
-            if raw.initial_detected_semantic_sha256 is not None
-            else _bind_initial_semantic_fingerprint(
+            if raw.initial_detection_id is not None
+            else _bind_initial_detection(
                 raw,
-                target_initial_semantic_sha256,
+                target_initial_detection,
             )
         )
         updated_sources.append(

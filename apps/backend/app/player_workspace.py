@@ -613,6 +613,12 @@ class PlayerWorkspace:
                         raise PlayerHandTransitionConflict(
                             "The selected detection is not retained by this hand"
                         )
+                    if detection.raw_source_id not in {
+                        raw.raw_source_id for raw in record.raw_sources
+                    }:
+                        raise PlayerHandApprovalInvalid(
+                            "A reimport audit-only detection cannot be approved"
+                        )
                     approved_at = _advanced_lifecycle_time(at, lifecycle.changed_at)
                     try:
                         revision = canonical_revision_from_review(
