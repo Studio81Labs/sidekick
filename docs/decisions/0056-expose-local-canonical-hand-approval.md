@@ -46,11 +46,15 @@ invariants continue to fail closed in domain validation.
 
 The server builds the canonical revision from the immutable detection and the
 reviewed document. It restores source-evidence `excerpt` fields removed by the
-sanitized player projection before validating the complete hand state, then
-derives the smallest non-overlapping JSON-pointer corrections. Detected values,
-approved values, correction timestamps, approval timestamp, and revision number
-are server-owned. An unchanged review records no corrections. A changed review
-without a reason is rejected without writing.
+sanitized player projection before validating the complete hand state. List
+elements carrying private excerpts are matched through their visible provenance
+identity, including street, player, pot, and source-location fields; an
+ambiguous structural edit is rejected instead of attaching an excerpt to the
+wrong element. The server then derives the smallest non-overlapping JSON-pointer
+corrections. Detected values, approved values, correction timestamps, approval
+timestamp, and revision number are server-owned. An unchanged review records no
+corrections. A changed review without a reason is rejected without writing, and
+validation responses never include private evidence values.
 
 Canonical revisions gain an optional `approval_id`. Existing stored revisions
 remain valid with a null value, while every non-null ID must be unique within an

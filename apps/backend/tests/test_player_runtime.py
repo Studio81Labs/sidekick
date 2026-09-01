@@ -1,6 +1,7 @@
 import asyncio
 import ctypes
 from datetime import timedelta
+from decimal import Decimal
 import errno
 from ipaddress import ip_address
 import os
@@ -21,7 +22,11 @@ from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
 from app.data_lock import DataLockTimeoutError, InterprocessDataLock
-from app.domain.imported_hands import extract_hero_decision_points
+from app.domain.imported_hands import (
+    ImportedHandState,
+    extract_hero_decision_points,
+    imported_hand_state_sha256,
+)
 from app.player_main import build_player_server, configured_player_runtime
 from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
 from app.player_hands import player_hand_record_version
@@ -569,6 +574,65 @@ def test_player_hand_approval_refuses_missing_reason_stale_state_and_detection(
     assert stale.status_code == 409
     assert "retained hand changed" in stale.json()["detail"]
     assert runtime.workspace.imported_hands.get(key) == changed
+
+
+def test_player_hand_approval_does_not_expose_private_evidence_on_validation(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    state_payload = record.detections[0].state.model_dump()
+    source_locator = {
+        "raw_source_id": record.detections[0].raw_source_id,
+        "line_start": 1,
+        "excerpt": RAW_TEXT.rstrip("\n"),
+    }
+    state_payload["streets"][0]["actions"] = [
+        {
+            "sequence": 0,
+            "actor_id": "hero",
+            "action_type": "check",
+            "amount": None,
+            "total_committed": Decimal(0),
+            "all_in": False,
+            "origin": {
+                "kind": "player_selected",
+                "basis": "explicit_marker",
+                "evidence": [source_locator],
+            },
+            "evidence": [source_locator],
+        }
+    ]
+    detected_state = ImportedHandState.model_validate(state_payload)
+    detection = record.detections[0].model_copy(
+        update={
+            "state": detected_state,
+            "content_sha256": imported_hand_state_sha256(detected_state),
+        }
+    )
+    record = record.model_copy(update={"detections": [detection]})
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    approved_state = detected_state.model_dump(mode="json")
+    reviewed_action = approved_state["streets"][0]["actions"][0]
+    reviewed_action["evidence"][0].pop("excerpt")
+    reviewed_action["origin"]["evidence"][0].pop("excerpt")
+    reviewed_action["total_committed"] = "-1"
+
+    response = client.post(
+        f"/api/player/hands/{key}/approve",
+        json=hand_approval_payload(
+            record,
+            approved_state=approved_state,
+            correction_reason="Reviewed",
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "Reviewed canonical state is invalid"
+    assert RAW_TEXT.rstrip("\n") not in response.text
 
 
 def test_player_hand_approval_keeps_a_ready_cascade_unresolved(

@@ -3599,8 +3599,129 @@ def _preserve_review_excerpts(detected: JsonValue, approved: JsonValue) -> None:
             elif key in approved:
                 _preserve_review_excerpts(detected_value, approved[key])
     elif isinstance(detected, list) and isinstance(approved, list):
-        for detected_item, approved_item in zip(detected, approved):
-            _preserve_review_excerpts(detected_item, approved_item)
+        private_indexes = [
+            index
+            for index, item in enumerate(detected)
+            if _contains_review_excerpt(item)
+        ]
+        if not private_indexes:
+            return
+        used_detected_indexes: set[int] = set()
+        detected_identities = [
+            _review_list_item_identity(item) for item in detected
+        ]
+        for approved_index, approved_item in enumerate(approved):
+            identity = _review_list_item_identity(approved_item)
+            candidates = [
+                index
+                for index in private_indexes
+                if index not in used_detected_indexes
+                and detected_identities[index] == identity
+            ]
+            if not candidates:
+                continue
+            if len(candidates) == 1:
+                detected_index = candidates[0]
+            elif (
+                approved_index in candidates
+                and _without_review_excerpts(detected[approved_index])
+                == approved_item
+            ):
+                detected_index = approved_index
+            else:
+                raise ValueError(
+                    "reviewed list changes cannot map private source evidence "
+                    "unambiguously"
+                )
+            used_detected_indexes.add(detected_index)
+            _preserve_review_excerpts(
+                detected[detected_index],
+                approved_item,
+            )
+
+
+def _contains_review_excerpt(value: JsonValue) -> bool:
+    if isinstance(value, dict):
+        return any(
+            (key == "excerpt" and item is not None)
+            or _contains_review_excerpt(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_review_excerpt(item) for item in value)
+    return False
+
+
+def _review_list_item_identity(value: JsonValue) -> tuple[Any, ...] | None:
+    if not isinstance(value, dict):
+        return None
+    if "street" in value:
+        return ("street", value["street"])
+    if "disposition" in value and "player_id" in value:
+        return ("showdown", value["player_id"])
+    if "pot_index" in value and "player_id" in value:
+        return ("award", value["player_id"], value["pot_index"])
+    if {
+        "raw_source_id",
+        "line_start",
+        "line_end",
+        "marker",
+    }.issubset(value):
+        return (
+            "evidence",
+            value["raw_source_id"],
+            value["line_start"],
+            value["line_end"],
+            value["marker"],
+        )
+    evidence_locations = _review_evidence_locations(value)
+    if evidence_locations:
+        return ("nested-evidence", *evidence_locations)
+    return None
+
+
+def _review_evidence_locations(
+    value: JsonValue,
+) -> tuple[tuple[JsonValue, JsonValue, JsonValue, JsonValue], ...]:
+    locations: list[tuple[JsonValue, JsonValue, JsonValue, JsonValue]] = []
+
+    def collect(item: JsonValue) -> None:
+        if isinstance(item, dict):
+            if {
+                "raw_source_id",
+                "line_start",
+                "line_end",
+                "marker",
+            }.issubset(item):
+                locations.append(
+                    (
+                        item["raw_source_id"],
+                        item["line_start"],
+                        item["line_end"],
+                        item["marker"],
+                    )
+                )
+                return
+            for child in item.values():
+                collect(child)
+        elif isinstance(item, list):
+            for child in item:
+                collect(child)
+
+    collect(value)
+    return tuple(sorted(locations, key=repr))
+
+
+def _without_review_excerpts(value: JsonValue) -> JsonValue:
+    if isinstance(value, dict):
+        return {
+            key: _without_review_excerpts(item)
+            for key, item in value.items()
+            if key != "excerpt"
+        }
+    if isinstance(value, list):
+        return [_without_review_excerpts(item) for item in value]
+    return value
 
 
 def _review_differences(

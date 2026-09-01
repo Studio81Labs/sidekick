@@ -14252,6 +14252,106 @@ def test_review_factory_restores_private_source_excerpts_before_validation() -> 
     )
 
 
+def test_review_factory_matches_reordered_actions_by_visible_evidence() -> None:
+    state_payload = hand_state().model_dump()
+    actions = [
+        wager_action(0, "hero", "check", total=Decimal(0)),
+        wager_action(1, "villain", "check", total=Decimal(0)),
+    ]
+    for line, action in enumerate(actions, start=1):
+        locator = {
+            "raw_source_id": "file-1",
+            "line_start": line,
+            "excerpt": f"action line {line}",
+        }
+        action["evidence"] = [locator]
+        action["origin"]["evidence"] = [locator]
+    state_payload["streets"][0]["actions"] = actions
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_actions = list(reversed(reviewed_payload["streets"][0]["actions"]))
+    for sequence, action in enumerate(reviewed_actions):
+        action["sequence"] = sequence
+        del action["evidence"][0]["excerpt"]
+        del action["origin"]["evidence"][0]["excerpt"]
+    reviewed_payload["streets"][0]["actions"] = reviewed_actions
+
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Corrected action order",
+    )
+
+    assert [action.actor_id for action in approved.state.streets[0].actions] == [
+        "villain",
+        "hero",
+    ]
+    assert [
+        action.evidence[0].excerpt for action in approved.state.streets[0].actions
+    ] == ["action line 2", "action line 1"]
+
+
+def test_review_factory_allows_corrections_to_lists_without_private_evidence() -> None:
+    source_payload = hand_state(hero_player_id="hero").model_dump()
+    source_payload["hero_cards"] = [
+        {"rank": "A", "suit": "spades"},
+        {"rank": "K", "suit": "hearts"},
+    ]
+    source_state = ImportedHandState.model_validate(source_payload)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_payload["hero_cards"][1] = {"rank": "Q", "suit": "hearts"}
+
+    approved = canonical_revision_from_review(
+        detected(source_state),
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Corrected the second hole card",
+    )
+
+    assert [card.code for card in approved.state.hero_cards] == ["As", "Qh"]
+
+
+def test_review_factory_rejects_ambiguous_private_evidence_reordering() -> None:
+    state_payload = hand_state().model_dump()
+    actions = [
+        wager_action(0, "hero", "check", total=Decimal(0)),
+        wager_action(1, "villain", "check", total=Decimal(0)),
+    ]
+    for index, action in enumerate(actions, start=1):
+        locator = {
+            "raw_source_id": "file-1",
+            "line_start": 1,
+            "excerpt": f"private action {index}",
+        }
+        action["evidence"] = [locator]
+        action["origin"]["evidence"] = [locator]
+    state_payload["streets"][0]["actions"] = actions
+    source_state = ImportedHandState.model_validate(state_payload)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_actions = list(reversed(reviewed_payload["streets"][0]["actions"]))
+    for sequence, action in enumerate(reviewed_actions):
+        action["sequence"] = sequence
+        del action["evidence"][0]["excerpt"]
+        del action["origin"]["evidence"][0]["excerpt"]
+    reviewed_payload["streets"][0]["actions"] = reviewed_actions
+
+    with pytest.raises(ValueError, match="cannot map private source evidence"):
+        canonical_revision_from_review(
+            detected(source_state),
+            approval_id="33333333-3333-4333-8333-333333333333",
+            revision=1,
+            approved_at=NOW + timedelta(minutes=1),
+            approved_state=reviewed_payload,
+            correction_reason="Corrected action order",
+        )
+
+
 def test_record_rejects_duplicate_non_null_approval_ids() -> None:
     first = revision().model_copy(
         update={"approval_id": "33333333-3333-4333-8333-333333333333"}

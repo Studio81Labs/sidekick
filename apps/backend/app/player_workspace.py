@@ -14,6 +14,8 @@ from stat import S_ISDIR
 import sys
 from threading import Lock
 
+from pydantic import ValidationError
+
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.data_lock import (
@@ -591,6 +593,10 @@ class PlayerWorkspace:
                             approved_state=request.approved_state,
                             correction_reason=request.correction_reason,
                         )
+                    except ValidationError as exc:
+                        raise PlayerHandApprovalInvalid(
+                            "Reviewed canonical state is invalid"
+                        ) from exc
                     except ValueError as exc:
                         raise PlayerHandApprovalInvalid(str(exc)) from exc
 

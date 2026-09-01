@@ -865,8 +865,8 @@ def create_player_runtime(
                 return _json_denial(404, "Imported hand record not found")
             except PlayerHandApprovalInvalid as exc:
                 return _json_denial(422, str(exc))
-            except ValidationError as exc:
-                return _json_denial(422, f"Reviewed state is invalid: {exc}")
+            except ValidationError:
+                return _json_denial(422, "Reviewed canonical state is invalid")
             except (PlayerHandTransitionConflict, LifecycleCascadeError) as exc:
                 return _json_denial(409, str(exc))
             except DataLockTimeoutError as exc:
