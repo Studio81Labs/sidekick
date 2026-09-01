@@ -44,6 +44,7 @@ from app.player_workspace import (
     PlayerDataDirectoryError,
     _macos_extended_acl_has_entries,
 )
+from app.storage.cascade_journal import CascadeJournal
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
     imported_hand_record_key,
@@ -991,6 +992,54 @@ def test_player_hand_close_holds_the_volume_snapshot_through_transition(
     assert not request_thread.is_alive()
     assert responses[0].status_code == 200
     assert runtime.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+
+
+def test_player_hand_close_keeps_a_ready_cascade_outcome_unresolved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    real_commit_replace = CascadeJournal._commit_replace
+
+    def fail_record_publication(
+        journal: CascadeJournal,
+        record_key: str,
+        relative: Path,
+        staged_file: Path,
+    ) -> None:
+        if relative.as_posix() == "record.json":
+            raise OSError("simulated lifecycle publication failure")
+        real_commit_replace(journal, record_key, relative, staged_file)
+
+    monkeypatch.setattr(
+        CascadeJournal,
+        "_commit_replace",
+        fail_record_publication,
+    )
+    response = client.post(
+        f"/api/player/hands/{key}/withdraw",
+        json=hand_close_payload(record, reason="Reviewed"),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 503
+    assert "interrupted lifecycle write" in response.json()["detail"]
+    assert runtime.workspace.imported_hands.has_interrupted_write(key)
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "active"
+    detail = client.get(
+        f"/api/player/hands/{key}",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    assert detail.status_code == 503
+
+    monkeypatch.setattr(CascadeJournal, "_commit_replace", real_commit_replace)
+    recovered = _create_player_runtime(tmp_path)
+    assert recovered.workspace.imported_hand_recovery.completed
+    assert recovered.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
 
 
 def test_player_storage_status_preserves_quarantine_across_restarts(

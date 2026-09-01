@@ -300,14 +300,16 @@ field-level confidence, retained conflict resolutions, and cleanup failures
 with source/detection/revision lineage rather than collapsing uncertain or
 failed records into generic inactive copy. Active details expose explicit,
 confirmed withdrawal/rejection controls; interrupted mutation responses are
-reconciled by rereading the audit before the UI reports the outcome. Reads and
-writes serialize behind restore. Reads take the shared data-volume lock before
-opening records. Lifecycle writes take a stable per-record thread stripe and a
-matching named process-shared flock, then keep a shared data-volume hold across
-the request precondition read and lifecycle cascade. The store's nested shared
-hold and leaf journal lock follow. This prevents either another local-runtime
-process or a concurrent restore from replacing the record between validation
-and transition. V1 screenshot and benchmark stores are neither constructed nor
+reconciled by rereading the audit before the UI reports the outcome. A durable
+ready cascade makes both its failed mutation and subsequent detail reads return
+recovery-required, so the pre-replay record cannot be mistaken for a final
+outcome. Reads and writes serialize behind restore. Detail reads and lifecycle
+writes take the stable per-record thread stripe, matching named process-shared
+flock, and shared data-volume hold. Lifecycle writes retain that volume hold
+across the request precondition read and cascade; the store's nested shared hold
+and leaf journal lock follow. This prevents either another local-runtime process
+or a concurrent restore from replacing the record between validation and
+transition. V1 screenshot and benchmark stores are neither constructed nor
 reachable from this composition.
 
 The loopback backend serves the verified `apps/pwa/dist-player` build from the

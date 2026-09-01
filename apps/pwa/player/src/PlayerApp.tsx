@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   PlayerApiError,
+  PlayerHandRecoveryRequiredError,
   PlayerRestoreAmbiguousError,
   PlayerRestoreRecoveryRequiredError,
   type PlayerBackupRestoreResult,
@@ -494,6 +495,17 @@ export default function PlayerApp() {
     setError(context ? `${context} ${message}` : message);
   };
 
+  const requireHandRecovery = (message: string) => {
+    clearPlayerCredentials();
+    setCredentials(null);
+    setStorage(null);
+    setHandPage(null);
+    setHandDetail(null);
+    setCloseReason("");
+    setActionNotice(null);
+    setError(message);
+  };
+
   const downloadBackup = async () => {
     if (!credentials) return;
     setBusy("export");
@@ -602,7 +614,12 @@ export default function PlayerApp() {
           : "Hand rejected. Retained evidence is now inactive.",
       );
     } catch (reasonError) {
-      if (reasonError instanceof PlayerApiError && reasonError.status === 401) {
+      if (reasonError instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(reasonError.message);
+      } else if (
+        reasonError instanceof PlayerApiError &&
+        reasonError.status === 401
+      ) {
         handleRequestError(reasonError);
       } else {
         try {
@@ -636,11 +653,17 @@ export default function PlayerApp() {
             );
           }
         } catch (refreshError) {
-          setHandDetail(null);
-          handleRequestError(
-            refreshError,
-            `${friendlyError(reasonError)} The lifecycle outcome could not be refreshed; reload the records before retrying.`,
-          );
+          if (refreshError instanceof PlayerHandRecoveryRequiredError) {
+            requireHandRecovery(
+              `${friendlyError(reasonError)} ${refreshError.message}`,
+            );
+          } else {
+            setHandDetail(null);
+            handleRequestError(
+              refreshError,
+              `${friendlyError(reasonError)} The lifecycle outcome could not be refreshed; reload the records before retrying.`,
+            );
+          }
         }
       }
     } finally {

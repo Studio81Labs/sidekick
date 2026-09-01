@@ -18,6 +18,7 @@ from app.data_lock import (
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    DataLockError,
     InterprocessDataLock,
     InterprocessFileLock,
 )
@@ -42,6 +43,10 @@ class PlayerDataDirectoryError(RuntimeError):
 
 class PlayerHandTransitionConflict(RuntimeError):
     """A local lifecycle request no longer describes the stored record."""
+
+
+class PlayerHandRecoveryRequired(RuntimeError):
+    """A ready lifecycle cascade must be replayed before this hand is read."""
 
 
 DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
@@ -297,13 +302,20 @@ class PlayerWorkspace:
         *,
         lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     ) -> PlayerHandDetail:
-        """Read one validated record projection under the shared volume lock."""
+        """Read one final record projection, refusing a pending replay."""
 
-        with self.data_lock.hold(
-            exclusive=False,
-            timeout_seconds=lock_timeout_seconds,
-        ):
-            return get_player_hand(self.imported_hands, record_key)
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=False,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self._require_final_hand_record(record_key)
+                    return get_player_hand(self.imported_hands, record_key)
 
     def close_hand_record(
         self,
@@ -334,6 +346,7 @@ class PlayerWorkspace:
                     exclusive=False,
                     timeout_seconds=lock_timeout_seconds,
                 ):
+                    self._require_final_hand_record(record_key)
                     record = self.imported_hands.get(record_key)
                     latest_revision = (
                         record.canonical_revisions[-1].revision
@@ -379,9 +392,25 @@ class PlayerWorkspace:
                         if action == "withdraw"
                         else lifecycle_service.reject
                     )
-                    transition(
-                        record_key,
-                        reason=request.reason,
-                        at=max(at, lifecycle.changed_at),
-                    )
+                    try:
+                        transition(
+                            record_key,
+                            reason=request.reason,
+                            at=max(at, lifecycle.changed_at),
+                        )
+                    except (DataLockError, OSError) as exc:
+                        if self.imported_hands.has_interrupted_write(record_key):
+                            raise PlayerHandRecoveryRequired(
+                                "This hand has an interrupted lifecycle write; "
+                                "restart the local player runtime so recovery "
+                                "can finish"
+                            ) from exc
+                        raise
                     return get_player_hand(self.imported_hands, record_key)
+
+    def _require_final_hand_record(self, record_key: str) -> None:
+        if self.imported_hands.has_interrupted_write(record_key):
+            raise PlayerHandRecoveryRequired(
+                "This hand has an interrupted lifecycle write; restart the "
+                "local player runtime so recovery can finish"
+            )

@@ -58,15 +58,20 @@ and explicit confirmation, sends the stored precondition with session and CSRF
 credentials, and replaces both list summary and detail with the returned audit.
 After an error or interrupted response it rereads the detail and requires the
 requested status, reason, canonical revision, and deletion generation before
-reporting that the inactive state committed.
+reporting that the inactive state committed. If a storage failure leaves a
+durable ready cascade, both the mutation and detail read return recovery
+required instead of exposing the pre-replay record as final. The PWA discards
+its stale hand projections and session, keeps the lifecycle outcome unresolved,
+and requires a local-runtime restart before the hand can be loaded or retried.
 
 ## Consequences
 
 Players can immediately remove a previously approved hand from learning or mark
 it incorrect without destroying source, detection, correction, canonical, or
 derived audit evidence. Concurrent or stale requests cannot silently overwrite
-a newer lifecycle state, and ambiguous browser responses are reconciled against
-the local store.
+a newer lifecycle state. Ambiguous browser responses are reconciled against a
+final local record; a record with pending roll-forward work is deliberately not
+available for reconciliation until startup recovery completes it.
 
 This advances issue #415 but does not complete it. Hand-history import,
 correction, approval/reapproval, conflict resolution, deletion/purge, and the

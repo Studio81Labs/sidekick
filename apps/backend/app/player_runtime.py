@@ -50,7 +50,11 @@ from app.player_namespace import (
     PLAYER_API_PREFIX,
     is_player_api_scope,
 )
-from app.player_workspace import PlayerHandTransitionConflict, PlayerWorkspace
+from app.player_workspace import (
+    PlayerHandRecoveryRequired,
+    PlayerHandTransitionConflict,
+    PlayerWorkspace,
+)
 from app.storage.cascade_journal import PendingCascadeError
 from app.storage.imported_hand_store import ImportedHandNotFoundError
 
@@ -710,6 +714,8 @@ def create_player_runtime(
                 )
             except ImportedHandNotFoundError:
                 return _json_denial(404, "Imported hand record not found")
+            except PlayerHandRecoveryRequired as exc:
+                return _json_denial(503, str(exc))
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
             except (DataLockError, OSError, ValidationError):
@@ -744,7 +750,7 @@ def create_player_runtime(
                 return _json_denial(409, str(exc))
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
-            except PendingCascadeError:
+            except (PendingCascadeError, PlayerHandRecoveryRequired):
                 return _json_denial(
                     503,
                     "This hand has an interrupted lifecycle write; restart the "
