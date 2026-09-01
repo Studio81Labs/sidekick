@@ -721,6 +721,11 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
             for component in self.components
             if isinstance(component, TablePositionRoute)
         )
+        economics = next(
+            component
+            for component in self.components
+            if isinstance(component, GameEconomicsRoute)
+        )
         valid_positions = set(structural_position_labels(table.dealt_in_player_count))
         if any(
             action.actor_position not in valid_positions
@@ -761,16 +766,13 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
             for component in self.components
             if isinstance(component, StackWagerPotRoute)
         )
-        stack_positions = {
-            item.position for item in stacks.active_player_stacks
-        }
-        if stack_positions != set(table.active_player_positions):
-            raise ValueError("stacks must cover every active player exactly")
-        hero_stack = next(
-            item.remaining_stack_bb
+        remaining_stack_by_position = {
+            item.position: item.remaining_stack_bb
             for item in stacks.active_player_stacks
-            if item.position == table.hero_position
-        )
+        }
+        if set(remaining_stack_by_position) != set(table.active_player_positions):
+            raise ValueError("stacks must cover every active player exactly")
+        hero_stack = remaining_stack_by_position[table.hero_position]
         if hero_stack != stacks.hero_stack_bb:
             raise ValueError("position-bound hero stack must match hero_stack_bb")
         commitment_by_position = {
@@ -787,28 +789,91 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
         if stacks.amount_to_call_bb != expected_call:
             raise ValueError("amount to call must match wager and hero commitment")
 
-        latest_action_totals: dict[str, Decimal] = {}
-        for action in prior_actions.actions:
-            if action.street != self.decision_street:
-                continue
-            if action.total_committed_bb is None:
-                continue
-            prior_total = latest_action_totals.get(action.actor_position)
-            if prior_total is not None and action.total_committed_bb < prior_total:
-                raise ValueError("action commitments cannot decrease within a street")
-            latest_action_totals[action.actor_position] = action.total_committed_bb
+        small_blind_position = (
+            "BTN/SB" if table.dealt_in_player_count == 2 else "SB"
+        )
+        live_positions = set(valid_positions)
+        folded_positions: set[str] = set()
+        all_in_positions: set[str] = set()
+        for street in ("preflop", "flop", "turn", "river"):
+            simulated_commitments = {
+                position: Decimal(0) for position in valid_positions
+            }
+            running_wager = Decimal(0)
+            minimum_raise_increment = Decimal(0)
+            if street == "preflop":
+                simulated_commitments[small_blind_position] = (
+                    economics.small_blind_bb
+                )
+                simulated_commitments["BB"] = economics.big_blind_bb
+                running_wager = economics.big_blind_bb
+                minimum_raise_increment = economics.big_blind_bb
+
+            for action in prior_actions.actions:
+                if action.street != street:
+                    continue
+                actor = action.actor_position
+                if actor in folded_positions or actor in all_in_positions:
+                    raise ValueError("folded or all-in players cannot act again")
+                actor_commitment = simulated_commitments[actor]
+                if action.action == "fold":
+                    folded_positions.add(actor)
+                    live_positions.remove(actor)
+                    continue
+                if action.action == "check":
+                    if actor_commitment != running_wager:
+                        raise ValueError("a player facing a wager cannot check")
+                    continue
+
+                assert action.total_committed_bb is not None
+                new_commitment = action.total_committed_bb
+                if new_commitment <= actor_commitment:
+                    raise ValueError("chip actions must increase the actor commitment")
+                if action.action == "call":
+                    if actor_commitment >= running_wager:
+                        raise ValueError("a call requires an outstanding wager")
+                    if action.all_in:
+                        if new_commitment > running_wager:
+                            raise ValueError("an all-in call cannot exceed the wager")
+                    elif new_commitment != running_wager:
+                        raise ValueError("a call must match the running wager")
+                elif action.action == "bet":
+                    if running_wager != 0:
+                        raise ValueError("a bet cannot be made into an existing wager")
+                    minimum_raise_increment = new_commitment - actor_commitment
+                    running_wager = new_commitment
+                else:
+                    if running_wager == 0 or new_commitment <= running_wager:
+                        raise ValueError("a raise must advance an existing wager")
+                    raise_increment = new_commitment - running_wager
+                    if (
+                        not action.all_in
+                        and raise_increment < minimum_raise_increment
+                    ):
+                        raise ValueError("a non-all-in raise must meet the minimum")
+                    if raise_increment >= minimum_raise_increment:
+                        minimum_raise_increment = raise_increment
+                    running_wager = new_commitment
+                simulated_commitments[actor] = new_commitment
+                if action.all_in:
+                    all_in_positions.add(actor)
+
+            if street == self.decision_street:
+                if simulated_commitments != commitment_by_position:
+                    raise ValueError(
+                        "action totals must match current-street commitments"
+                    )
+                break
+
+        if live_positions != set(table.active_player_positions):
+            raise ValueError("active players must match action-line survivors")
         if any(
-            commitment_by_position[position] != total
-            for position, total in latest_action_totals.items()
+            remaining_stack_by_position[position] != 0
+            for position in all_in_positions
         ):
-            raise ValueError("action totals must match current-street commitments")
+            raise ValueError("all-in players must have no remaining stack")
 
         if self.decision_street == "preflop":
-            economics = next(
-                component
-                for component in self.components
-                if isinstance(component, GameEconomicsRoute)
-            )
             expected_ante_pot = (
                 Decimal(0)
                 if economics.ante_mode == "none"
@@ -818,9 +883,6 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
             )
             if stacks.committed_pot_before_street_bb != expected_ante_pot:
                 raise ValueError("preflop prior pot must match the configured antes")
-            small_blind_position = (
-                "BTN/SB" if table.dealt_in_player_count == 2 else "SB"
-            )
             if (
                 commitment_by_position[small_blind_position]
                 < economics.small_blind_bb

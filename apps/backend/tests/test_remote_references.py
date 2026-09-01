@@ -946,6 +946,103 @@ def test_call_and_action_totals_match_position_commitments() -> None:
         route_request(components=tuple(components))
 
 
+@pytest.mark.parametrize(
+    ("action_update", "message"),
+    [
+        ({"action": "call"}, "call must match the running wager"),
+        (
+            {"action": "check", "total_committed_bb": None},
+            "facing a wager cannot check",
+        ),
+        ({"action": "bet"}, "bet cannot be made into an existing wager"),
+        (
+            {"total_committed_bb": Decimal("1.5")},
+            "non-all-in raise must meet the minimum",
+        ),
+    ],
+)
+def test_action_types_are_validated_against_the_running_wager(
+    action_update: dict[str, object],
+    message: str,
+) -> None:
+    request = route_request()
+    prior_actions = request.components[2]
+    assert isinstance(prior_actions, PriorActionsRoute)
+    actions = list(prior_actions.actions)
+    action_payload = actions[3].model_dump(mode="python")
+    action_payload.update(action_update)
+    actions[3] = RemotePriorAction.model_validate(action_payload)
+    components = list(request.components)
+    components[2] = PriorActionsRoute(actions=tuple(actions))
+
+    with pytest.raises(ValidationError, match=message):
+        route_request(components=tuple(components))
+
+
+def test_active_players_are_derived_from_action_line_survivors() -> None:
+    request = route_request()
+    components = list(request.components)
+    stack_payload = components[3].model_dump(mode="python")
+    stack_payload["active_player_stacks"] = (
+        PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
+        PositionedStack(position="CO", remaining_stack_bb=Decimal("100")),
+    )
+    components[3] = StackWagerPotRoute.model_validate(stack_payload)
+    components[4] = TablePositionRoute(
+        dealt_in_player_count=6,
+        hero_position="BB",
+        hero_button_distance=2,
+        hero_action_index=5,
+        active_player_positions=("BB", "CO"),
+        relative_position="not_applicable",
+    )
+
+    with pytest.raises(ValidationError, match="action-line survivors"):
+        route_request(components=tuple(components))
+
+
+def test_all_in_players_remain_active_with_no_remaining_stack() -> None:
+    request = route_request()
+    components = list(request.components)
+    prior_actions = components[2]
+    assert isinstance(prior_actions, PriorActionsRoute)
+    actions = list(prior_actions.actions)
+    actions[3] = RemotePriorAction(
+        street="preflop",
+        sequence=3,
+        actor_position="BTN",
+        action="raise",
+        total_committed_bb=Decimal("100"),
+        all_in=True,
+    )
+    components[2] = PriorActionsRoute(actions=tuple(actions))
+    components[3] = StackWagerPotRoute(
+        hero_stack_bb=Decimal("99"),
+        active_player_stacks=(
+            PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
+            PositionedStack(position="BTN", remaining_stack_bb=Decimal("0")),
+        ),
+        committed_pot_before_street_bb=Decimal("0"),
+        current_street_commitments=(
+            PositionedCommitment(position="BB", committed_bb=Decimal("1")),
+            PositionedCommitment(position="BTN", committed_bb=Decimal("100")),
+            PositionedCommitment(position="CO", committed_bb=Decimal("0")),
+            PositionedCommitment(position="HJ", committed_bb=Decimal("0")),
+            PositionedCommitment(position="SB", committed_bb=Decimal("0.5")),
+            PositionedCommitment(position="UTG", committed_bb=Decimal("0")),
+        ),
+        pot_bb=Decimal("101.5"),
+        current_wager_bb=Decimal("100"),
+        amount_to_call_bb=Decimal("99"),
+    )
+
+    result = route_request(components=tuple(components))
+
+    table = result.components[4]
+    assert isinstance(table, TablePositionRoute)
+    assert table.active_player_positions == ("BB", "BTN")
+
+
 def test_preflop_action_line_is_complete_and_structurally_ordered() -> None:
     request = route_request()
     prior_actions = request.components[2]
