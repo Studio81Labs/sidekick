@@ -14261,7 +14261,7 @@ def test_review_factory_matches_reordered_actions_by_visible_evidence() -> None:
     for line, action in enumerate(actions, start=1):
         locator = {
             "raw_source_id": "file-1",
-            "line_start": line,
+            "line_start": line + 1,
             "excerpt": f"action line {line}",
         }
         action["evidence"] = [locator]
@@ -14293,6 +14293,95 @@ def test_review_factory_matches_reordered_actions_by_visible_evidence() -> None:
     assert [
         action.evidence[0].excerpt for action in approved.state.streets[0].actions
     ] == ["action line 2", "action line 1"]
+    serialized_corrections = json.dumps(
+        [correction.model_dump(mode="json") for correction in approved.corrections]
+    )
+    assert approved.corrections
+    assert all(
+        "excerpt" not in correction.field_pointer
+        for correction in approved.corrections
+    )
+    assert '"excerpt"' not in serialized_corrections
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(
+                raw_text=(
+                    "PokerStars Hand #123456789\n"
+                    "action line 1\n"
+                    "action line 2\n"
+                )
+            )
+        ],
+        detections=[source_detection],
+        canonical_revisions=[approved],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved.approved_at,
+        },
+    )
+
+    assert record.canonical_revisions[0] == approved
+
+
+def test_aggregate_accepts_legacy_exact_private_excerpt_corrections() -> None:
+    state_payload = hand_state().model_dump()
+    action = wager_action(0, "hero", "check", total=Decimal(0))
+    locator = {
+        "raw_source_id": "file-1",
+        "line_start": 2,
+        "excerpt": "original excerpt",
+    }
+    action["evidence"] = [locator]
+    action["origin"]["evidence"] = [locator]
+    state_payload["streets"][0]["actions"] = [action]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    approved_payload = source_state.model_dump()
+    approved_action = approved_payload["streets"][0]["actions"][0]
+    approved_action["evidence"][0]["excerpt"] = "approved excerpt"
+    approved_action["origin"]["evidence"][0]["excerpt"] = "approved excerpt"
+    approved_state = ImportedHandState.model_validate(approved_payload)
+    approved_at = NOW + timedelta(minutes=1)
+    legacy_revision = CanonicalHandRevision(
+        revision=1,
+        detection_id=source_detection.detection_id,
+        approved_at=approved_at,
+        state=approved_state,
+        corrections=[
+            UserCorrection(
+                field_pointer=f"/streets/0/actions/0/{pointer}/0/excerpt",
+                detected_value="original excerpt",
+                approved_value="approved excerpt",
+                corrected_at=approved_at,
+                reason="Legacy positional evidence correction",
+            )
+            for pointer in ("evidence", "origin/evidence")
+        ],
+    )
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(
+                raw_text=(
+                    "PokerStars Hand #123456789\n"
+                    "original excerpt and approved excerpt\n"
+                )
+            )
+        ],
+        detections=[source_detection],
+        canonical_revisions=[legacy_revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved_at,
+        },
+    )
+
+    assert record.canonical_revisions[0] == legacy_revision
 
 
 def test_review_factory_matches_changed_result_identity_by_visible_evidence() -> None:

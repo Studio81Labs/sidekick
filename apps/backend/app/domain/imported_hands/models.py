@@ -3565,8 +3565,8 @@ def canonical_revision_from_review(
     )
     approved_document = json.loads(approved_state.model_dump_json())
     differences = _review_differences(
-        detected_document,
-        approved_document,
+        _without_review_excerpts(detected_document),
+        _without_review_excerpts(approved_document),
         pointer="",
     )
     if differences and not correction_reason:
@@ -5446,12 +5446,34 @@ def _validate_corrections_win(
             )
     detected_json = detected.state.model_dump_json()
     detected_document = json.loads(detected_json)
+    approved_document = json.loads(revision.state.model_dump_json())
+    visible_detected = _without_review_excerpts(detected_document)
+    visible_approved = _without_review_excerpts(approved_document)
+    raw_matches: list[bool] = []
+    visible_matches: list[bool] = []
     for correction in revision.corrections:
         detected_value = _pointer_get(
             detected_document,
             correction.field_pointer,
         )
-        if not _json_values_equal(detected_value, correction.detected_value):
+        raw_matches.append(
+            _json_values_equal(detected_value, correction.detected_value)
+        )
+        try:
+            visible_detected_value = _pointer_get(
+                visible_detected,
+                correction.field_pointer,
+            )
+        except ValueError:
+            visible_matches.append(False)
+        else:
+            visible_matches.append(
+                _json_values_equal(
+                    visible_detected_value,
+                    correction.detected_value,
+                )
+            )
+        if not raw_matches[-1] and not visible_matches[-1]:
             raise ValueError(
                 f"correction detected_value does not match {correction.field_pointer}"
             )
@@ -5459,12 +5481,38 @@ def _validate_corrections_win(
         [correction.field_pointer for correction in revision.corrections]
     )
     _validate_user_confirmed_origin_corrections(detected, revision)
-    expected = json.loads(detected_json)
-    for correction in revision.corrections:
-        _pointer_set(expected, correction.field_pointer, correction.approved_value)
-    approved = json.loads(revision.state.model_dump_json())
-    if not _json_values_equal(expected, approved):
-        raise ValueError("canonical state may differ from detection only through corrections")
+    if all(raw_matches):
+        expected = json.loads(detected_json)
+        for correction in revision.corrections:
+            _pointer_set(expected, correction.field_pointer, correction.approved_value)
+        if _json_values_equal(expected, approved_document):
+            return
+    visible_corrections = all(visible_matches) and all(
+        "excerpt" not in _pointer_tokens(correction.field_pointer)
+        and not _contains_review_excerpt_field(correction.detected_value)
+        and not _contains_review_excerpt_field(correction.approved_value)
+        for correction in revision.corrections
+    )
+    if visible_corrections:
+        expected = _without_review_excerpts(detected_document)
+        for correction in revision.corrections:
+            _pointer_set(expected, correction.field_pointer, correction.approved_value)
+        if _json_values_equal(expected, visible_approved):
+            restored = json.loads(
+                json.dumps(
+                    visible_approved,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+            try:
+                _preserve_review_excerpts(detected_document, restored)
+            except ValueError:
+                pass
+            else:
+                if _json_values_equal(restored, approved_document):
+                    return
+    raise ValueError("canonical state may differ from detection only through corrections")
 
 
 def _validate_detected_action_origins(state: ImportedHandState) -> None:

@@ -52,10 +52,15 @@ identity, including street, player, pot, and source-location fields; an
 unmatched or ambiguous evidence edit is rejected instead of dropping an excerpt
 or attaching it to the wrong element. Reviewed payloads cannot supply excerpt
 fields. The server then derives the smallest non-overlapping JSON-pointer
-corrections. Detected values, approved values, correction timestamps, approval
-timestamp, and revision number are server-owned. An unchanged review records no
-corrections. A changed review without a reason is rejected without writing, and
-validation responses never include private evidence values.
+corrections from the same excerpt-free document the player reviewed. Private
+excerpt fields remain server-owned canonical evidence and never appear in a
+user correction, including when a correction reorders an evidence-bearing list.
+Detected values, approved values, correction timestamps, approval timestamp,
+and revision number are server-owned. An unchanged review records no corrections.
+A changed review without a reason is rejected without writing, and validation
+responses never include private evidence values. Existing revisions whose
+corrections contain the original complete values remain valid for backward
+compatibility.
 
 Canonical revisions gain an optional `approval_id`. Existing stored revisions
 remain valid with a null value, while every non-null ID must be unique within an
