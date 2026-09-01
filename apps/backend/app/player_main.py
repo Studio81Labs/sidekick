@@ -6,11 +6,16 @@ import webbrowser
 import uvicorn
 
 from app.config import Settings, get_settings
+from app.data_lock import player_runtime_lease
 from app.player_runtime import (
     PLAYER_HOST,
     PLAYER_PORT,
     PlayerRuntime,
     create_player_runtime,
+)
+from app.player_workspace import (
+    prepare_player_data_directory,
+    require_private_player_data_parent,
 )
 
 
@@ -62,8 +67,25 @@ def main() -> None:
     # Filesystem validation, lock acquisition, and crash recovery are blocking
     # startup work. Keep them on the main thread before the async server loop
     # exists so they cannot stall Uvicorn's event loop.
-    runtime = configured_player_runtime(get_settings())
-    asyncio.run(serve_player_runtime(runtime))
+    settings = get_settings()
+    if settings.deployment_environment != "local":
+        raise RuntimeError(
+            "The player runtime is available only in the local deployment environment"
+        )
+    data_dir = prepare_player_data_directory(
+        settings.data_dir,
+        create_if_missing=True,
+    )
+    require_private_player_data_parent(data_dir)
+    lease = player_runtime_lease(data_dir)
+    descriptor = lease.acquire(exclusive=True, timeout_seconds=0)
+    try:
+        runtime = configured_player_runtime(
+            settings.model_copy(update={"data_dir": data_dir})
+        )
+        asyncio.run(serve_player_runtime(runtime))
+    finally:
+        lease.release(descriptor)
 
 
 if __name__ == "__main__":

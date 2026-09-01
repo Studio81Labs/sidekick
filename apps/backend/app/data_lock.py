@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 import fcntl
+from hashlib import sha256
 import os
 import time
 from pathlib import Path
@@ -9,6 +10,7 @@ from stat import S_ISREG
 
 
 DATA_LOCK_FILENAME = ".poker-hero-data.lock"
+PLAYER_RUNTIME_LEASE_PREFIX = ".poker-hero-player-runtime-"
 
 # Four bounds. They are separate because they protect against different
 # failures, not because the numbers differ - three of them are equal today,
@@ -254,3 +256,17 @@ class InterprocessDataLock(InterprocessFileLock):
 
     def __init__(self, data_dir: Path) -> None:
         super().__init__(Path(data_dir) / DATA_LOCK_FILENAME, subject="data lock")
+
+
+def player_runtime_lease(data_dir: Path) -> InterprocessFileLock:
+    """Return the stable sibling lease coordinating runtime and data removal."""
+
+    resolved = Path(data_dir).resolve(strict=False)
+    identity = sha256(os.fsencode(str(resolved))).hexdigest()[:24]
+    return InterprocessFileLock(
+        resolved.parent / f"{PLAYER_RUNTIME_LEASE_PREFIX}{identity}.lock",
+        subject="player runtime lifetime lease",
+        contention_hint=(
+            "stop the local player runtime before exporting and removing its data"
+        ),
+    )
