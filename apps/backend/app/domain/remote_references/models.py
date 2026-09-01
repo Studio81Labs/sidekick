@@ -82,6 +82,7 @@ RemoteDispatchReason = Literal[
     "disclosure_mismatch",
     "outbound_categories_mismatch",
     "route_unavailable",
+    "route_binding_mismatch",
     "route_schema_mismatch",
     "route_manifest_mismatch",
     "preflight_passed",
@@ -590,7 +591,7 @@ class HoleCardsRoute(RemoteReferenceModel):
     def validate_cards(cls, value: tuple[str, str]) -> tuple[str, str]:
         if value[0] == value[1]:
             raise ValueError("hole cards must be distinct")
-        return value
+        return tuple(sorted(value))
 
 
 class HoleCardAbstractionRoute(RemoteReferenceModel):
@@ -782,6 +783,8 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
         hero_stack = remaining_stack_by_position[table.hero_position]
         if hero_stack != stacks.hero_stack_bb:
             raise ValueError("position-bound hero stack must match hero_stack_bb")
+        if hero_stack == 0:
+            raise ValueError("a hero with no remaining stack cannot have a decision")
         commitment_by_position = {
             item.position: item.committed_bb
             for item in stacks.current_street_commitments
@@ -799,9 +802,28 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
         small_blind_position = (
             "BTN/SB" if table.dealt_in_player_count == 2 else "SB"
         )
+        action_actor_positions = {
+            action.actor_position for action in prior_actions.actions
+        }
+        zero_stack_positions = {
+            position
+            for position, remaining_stack in remaining_stack_by_position.items()
+            if remaining_stack == 0
+        }
+        initial_all_in_positions = zero_stack_positions - action_actor_positions
+        forced_contribution_positions = {small_blind_position, "BB"}
+        if economics.ante_mode == "per_player":
+            forced_contribution_positions.update(valid_positions)
+        elif economics.ante_mode == "big_blind":
+            forced_contribution_positions.add("BB")
+        if not initial_all_in_positions <= forced_contribution_positions:
+            raise ValueError(
+                "a stackless player without an action requires a represented"
+                " forced contribution"
+            )
         live_positions = set(valid_positions)
         folded_positions: set[str] = set()
-        all_in_positions: set[str] = set()
+        all_in_positions = set(initial_all_in_positions)
         for street in ("preflop", "flop", "turn", "river"):
             simulated_commitments = {
                 position: Decimal(0) for position in valid_positions
@@ -916,11 +938,11 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
 
         if live_positions != set(table.active_player_positions):
             raise ValueError("active players must match action-line survivors")
-        if any(
-            remaining_stack_by_position[position] != 0
-            for position in all_in_positions
-        ):
-            raise ValueError("all-in players must have no remaining stack")
+        if all_in_positions != zero_stack_positions:
+            raise ValueError(
+                "all-in players must exactly match active players with no"
+                " remaining stack"
+            )
 
         if self.decision_street == "preflop":
             expected_ante_pot = (
@@ -955,7 +977,11 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                     % table.dealt_in_player_count
                 ),
             )
-            actionable = list(ordered_positions)
+            actionable = [
+                position
+                for position in ordered_positions
+                if position not in initial_all_in_positions
+            ]
             cursor = 0
             for action in prior_actions.actions:
                 if action.street != "preflop":
@@ -988,6 +1014,13 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
 
     def semantic_digest(self) -> str:
         return sha256(self.canonical_bytes()).hexdigest()
+
+
+class RemoteReferenceRouteDerivation(RemoteReferenceModel):
+    """A local decision binding kept outside the closed outbound DTO."""
+
+    decision: DecisionBinding
+    outbound_request: RemoteReferenceRouteRequest
 
 
 class RemoteReferenceDispatchPreflight(RemoteReferenceModel):

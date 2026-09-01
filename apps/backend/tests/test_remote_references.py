@@ -26,6 +26,7 @@ from app.domain.remote_references import (
     RemoteReferenceConsent,
     RemoteReferenceDisclosure,
     RemoteReferenceProviderPolicy,
+    RemoteReferenceRouteDerivation,
     RemoteReferenceRouteManifest,
     RemoteReferenceRouteRequest,
     StackWagerPotRoute,
@@ -263,6 +264,17 @@ def route_request(**updates: object) -> RemoteReferenceRouteRequest:
     return RemoteReferenceRouteRequest.model_validate(values)
 
 
+def route_derivation(
+    *,
+    decision: DecisionBinding | None = None,
+    request: RemoteReferenceRouteRequest | None = None,
+) -> RemoteReferenceRouteDerivation:
+    return RemoteReferenceRouteDerivation(
+        decision=decision or decision_binding(),
+        outbound_request=request or route_request(),
+    )
+
+
 def postflop_route_request() -> RemoteReferenceRouteRequest:
     preflop = route_request()
     prior_actions = preflop.components[2]
@@ -342,7 +354,7 @@ def preflight(
         mode=mode,  # type: ignore[arg-type]
         policy=selected,
         consent=selected_consent,
-        request=selected_request,
+        route=route_derivation(request=selected_request),
         now=NOW,
     )
 
@@ -368,7 +380,7 @@ def test_preflight_fails_closed_before_consent(
         mode=overrides.get("mode", "remote_enabled"),  # type: ignore[arg-type]
         policy=overrides.get("policy", provider_policy()),  # type: ignore[arg-type]
         consent=None,
-        request=None,
+        route=None,
         now=NOW,
     )
 
@@ -385,7 +397,7 @@ def test_preflight_rejects_a_naive_clock_without_crashing() -> None:
         mode="remote_enabled",
         policy=provider_policy(),
         consent=consent(),
-        request=route_request(),
+        route=route_derivation(),
         now=datetime(2026, 9, 1, 8, 0),
     )
 
@@ -411,6 +423,30 @@ def test_exact_active_consent_yields_only_a_dispatch_candidate() -> None:
     assert result.route_manifest_sha256 == route_manifest().semantic_digest()
     assert result.commercial_serving_rights_revision == "commercial-rights-v1"
     assert result.derived_output_rights_revision == "derived-rights-v1"
+
+
+def test_route_derivation_must_match_the_canonical_decision() -> None:
+    bound_decision = decision_binding()
+    different_decision = bound_decision.model_copy(
+        update={"decision_index": bound_decision.decision_index + 1}
+    )
+    request = route_request()
+    policy = provider_policy()
+
+    result = evaluate_remote_reference_preflight(
+        different_decision,
+        mode="remote_enabled",
+        policy=policy,
+        consent=consent(policy=policy),
+        route=route_derivation(decision=bound_decision, request=request),
+        now=NOW,
+    )
+
+    assert result.outcome == "unavailable"
+    assert result.reason == "route_binding_mismatch"
+    assert result.decision == different_decision
+    assert result.request_sha256 == request.semantic_digest()
+    assert result.outbound_request is None
 
 
 @pytest.mark.parametrize(
@@ -445,7 +481,7 @@ def test_consent_lifecycle_blocks_egress(
         mode="remote_enabled",
         policy=policy,
         consent=accepted,
-        request=route_request(),
+        route=route_derivation(),
         now=NOW,
     )
 
@@ -467,7 +503,7 @@ def test_revocation_requires_a_fresh_preflight() -> None:
         mode="remote_enabled",
         policy=provider_policy(),
         consent=revoked,
-        request=route_request(),
+        route=route_derivation(),
         now=NOW + timedelta(seconds=1),
     )
 
@@ -498,7 +534,7 @@ def test_consent_is_bound_to_exact_provider_policy(
         mode="remote_enabled",
         policy=changed,
         consent=consent(policy=original),
-        request=route_request(),
+        route=route_derivation(),
         now=NOW,
     )
 
@@ -518,7 +554,7 @@ def test_consent_is_bound_to_exact_disclosure() -> None:
         mode="remote_enabled",
         policy=changed,
         consent=consent(policy=original),
-        request=route_request(),
+        route=route_derivation(),
         now=NOW,
     )
 
@@ -536,7 +572,7 @@ def test_categories_and_route_schema_are_exactly_bound() -> None:
             policy=policy,
             accepted_outbound_categories=("game_economics",),
         ),
-        request=route_request(),
+        route=route_derivation(),
         now=NOW,
     )
     schema_mismatch = evaluate_remote_reference_preflight(
@@ -544,7 +580,9 @@ def test_categories_and_route_schema_are_exactly_bound() -> None:
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        request=route_request(route_schema_revision="route-v2"),
+        route=route_derivation(
+            request=route_request(route_schema_revision="route-v2")
+        ),
         now=NOW,
     )
     request_missing = evaluate_remote_reference_preflight(
@@ -552,7 +590,7 @@ def test_categories_and_route_schema_are_exactly_bound() -> None:
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        request=None,
+        route=None,
         now=NOW,
     )
     raw_components = list(route_request().components)
@@ -562,7 +600,9 @@ def test_categories_and_route_schema_are_exactly_bound() -> None:
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        request=route_request(components=tuple(raw_components)),
+        route=route_derivation(
+            request=route_request(components=tuple(raw_components))
+        ),
         now=NOW,
     )
 
@@ -588,7 +628,9 @@ def test_route_revisions_and_digests_require_provider_manifest_membership() -> N
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        request=route_request(components=tuple(components)),
+        route=route_derivation(
+            request=route_request(components=tuple(components))
+        ),
         now=NOW,
     )
 
@@ -616,7 +658,7 @@ def test_provider_manifest_binds_the_exact_route_context() -> None:
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        request=changed_request,
+        route=route_derivation(request=changed_request),
         now=NOW,
     )
 
@@ -647,7 +689,7 @@ def test_postflop_ranges_remain_unavailable_until_context_bound() -> None:
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        request=postflop_route_request(),
+        route=route_derivation(request=postflop_route_request()),
         now=NOW,
     )
 
@@ -890,6 +932,20 @@ def test_route_rejects_cards_repeated_between_board_and_hole() -> None:
         )
 
 
+def test_hole_cards_are_canonicalized_before_exact_route_hashing() -> None:
+    original_components = list(route_request().components)
+    original_components[1] = HoleCardsRoute(cards=("As", "Kd"))
+    reversed_components = list(route_request().components)
+    reversed_components[1] = HoleCardsRoute(cards=("Kd", "As"))
+
+    original = route_request(components=tuple(original_components))
+    reversed_order = route_request(components=tuple(reversed_components))
+
+    assert original.components[1] == HoleCardsRoute(cards=("As", "Kd"))
+    assert original == reversed_order
+    assert original.semantic_digest() == reversed_order.semantic_digest()
+
+
 def test_postflop_ranges_cover_every_active_opponent_exactly() -> None:
     preflop = route_request()
     incomplete_ranges = (
@@ -1074,6 +1130,51 @@ def test_all_in_players_remain_active_with_no_remaining_stack() -> None:
     table = result.components[4]
     assert isinstance(table, TablePositionRoute)
     assert table.active_player_positions == ("BB", "BTN")
+
+
+def test_stackless_hero_cannot_become_a_dispatchable_decision() -> None:
+    request = route_request()
+    components = list(request.components)
+    stack_payload = components[3].model_dump(mode="python")
+    stack_payload["hero_stack_bb"] = Decimal("0")
+    stack_payload["active_player_stacks"] = (
+        PositionedStack(position="BB", remaining_stack_bb=Decimal("0")),
+        PositionedStack(position="BTN", remaining_stack_bb=Decimal("97.5")),
+    )
+    stack_payload["amount_to_call_bb"] = Decimal("0")
+    components[3] = StackWagerPotRoute.model_validate(stack_payload)
+
+    with pytest.raises(ValidationError, match="no remaining stack"):
+        route_request(components=tuple(components))
+
+
+def test_forced_post_all_in_is_not_treated_as_pending_action() -> None:
+    request = route_request()
+    components = list(request.components)
+    prior_actions = components[2]
+    assert isinstance(prior_actions, PriorActionsRoute)
+    components[2] = PriorActionsRoute(actions=prior_actions.actions[:-1])
+    stack_payload = components[3].model_dump(mode="python")
+    stack_payload["active_player_stacks"] = (
+        PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
+        PositionedStack(position="BTN", remaining_stack_bb=Decimal("97.5")),
+        PositionedStack(position="SB", remaining_stack_bb=Decimal("0")),
+    )
+    components[3] = StackWagerPotRoute.model_validate(stack_payload)
+    components[4] = TablePositionRoute(
+        dealt_in_player_count=6,
+        hero_position="BB",
+        hero_button_distance=2,
+        hero_action_index=5,
+        active_player_positions=("BB", "BTN", "SB"),
+        relative_position="not_applicable",
+    )
+
+    result = route_request(components=tuple(components))
+
+    table = result.components[4]
+    assert isinstance(table, TablePositionRoute)
+    assert table.active_player_positions == ("BB", "BTN", "SB")
 
 
 def repeated_raise_request(
@@ -1459,7 +1560,7 @@ def test_only_a_current_dispatch_candidate_can_record_failure() -> None:
         mode="local_only",
         policy=None,
         consent=None,
-        request=None,
+        route=None,
         now=NOW,
     )
     with pytest.raises(ValueError, match="only a dispatch candidate"):

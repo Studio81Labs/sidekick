@@ -18,6 +18,7 @@ from app.domain.remote_references.models import (
     RemoteReferenceLookupUnavailable,
     RemoteReferenceMode,
     RemoteReferenceProviderPolicy,
+    RemoteReferenceRouteDerivation,
     RemoteReferenceRouteRequest,
     UtilityConfigurationBinding,
 )
@@ -29,7 +30,7 @@ def evaluate_remote_reference_preflight(
     mode: RemoteReferenceMode,
     policy: RemoteReferenceProviderPolicy | None,
     consent: RemoteReferenceConsent | None,
-    request: RemoteReferenceRouteRequest | None,
+    route: RemoteReferenceRouteDerivation | None,
     now: datetime,
 ) -> RemoteReferenceDispatchPreflight:
     """Evaluate snapshots into a candidate, never final transport authority."""
@@ -133,13 +134,26 @@ def evaluate_remote_reference_preflight(
             policy=policy,
             consent=consent,
         )
-    if request is None:
+    if route is None:
         return _unavailable(
             decision,
             now=now,
             reason="route_unavailable",
             policy=policy,
             consent=consent,
+        )
+    route = RemoteReferenceRouteDerivation.model_validate(
+        route.model_dump(mode="python")
+    )
+    request = route.outbound_request
+    if route.decision != decision:
+        return _unavailable(
+            decision,
+            now=now,
+            reason="route_binding_mismatch",
+            policy=policy,
+            consent=consent,
+            request=request,
         )
     request = RemoteReferenceRouteRequest.model_validate(
         request.model_dump(mode="python")

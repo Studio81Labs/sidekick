@@ -550,7 +550,10 @@ letting a broad economics or abstraction declaration imply provider coverage.
 Closed component models
 make raw histories, hand/site/session and canonical-record identities, player
 names, timestamps, screenshots, and learning/profile state unrepresentable in
-the outbound DTO. Route revisions, abstraction digests, and range digests must
+the outbound DTO. A local immutable route-derivation envelope binds each closed
+request to the canonical decision revision and index that produced it; preflight
+rejects an envelope associated with any other decision before constructing a
+candidate. Route revisions, abstraction digests, and range digests must
 match that independently selected provider manifest, never player data. Active
 players and their position-bound remaining stacks are explicit, so multiway
 routes cannot collapse materially different stack configurations.
@@ -559,7 +562,10 @@ position-bound commitments and a reconstructed running wager rather than
 accepted as independent claims. Check, call, bet, raise, minimum-raise, and
 short-all-in reopening semantics are validated across the action line; active
 players are derived from its folds while all-in survivors remain visible with
-zero remaining stack. A route cannot claim another decision after all pending
+zero remaining stack. Players exhausted by represented forced contributions are
+excluded from pending action, and a stackless hero cannot become a candidate.
+Unordered hole cards are canonicalized before exact-route hashing. A route
+cannot claim another decision after all pending
 responders have matched or left the hand. Pot-limit routes remain unavailable
 until their running-pot maximum sizing can be reconstructed; tournament routes
 remain unavailable until payout, field, stack, and bounty state is representable.
