@@ -74,6 +74,15 @@ EDUCATIONAL_GUIDANCE_PREFIX = (
     "Conditional educational reference guidance, not a guarantee of optimal play"
     " or outcomes: "
 )
+FramedPrincipleText = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=4000 + len(EDUCATIONAL_GUIDANCE_PREFIX),
+        strict=True,
+    ),
+]
 
 
 class LearningContentModel(BaseModel):
@@ -584,7 +593,7 @@ class PrincipleReveal(LearningContentModel):
     principle_id: Identifier
     principle_revision: Identifier
     framing: PrincipleFraming = "conditional_educational_reference_guidance"
-    display_text: NonEmptyText
+    display_text: FramedPrincipleText
 
     @field_validator("display_text")
     @classmethod

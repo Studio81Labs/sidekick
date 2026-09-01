@@ -104,6 +104,10 @@ def principle(
     definition_revision: str = "definition-v1",
     reference_revision: str = "reference-v1",
     author_kind: str = "llm",
+    content: str = (
+        "Against this pinned reference, continue ranges depend on the"
+        " opener, sizing, stack depth, and intervening action."
+    ),
 ) -> PrincipleRevision:
     return PrincipleRevision(
         principle_id="bb-defense-guidance",
@@ -115,10 +119,7 @@ def principle(
         author_kind=author_kind,
         author_id="principle-author",
         authored_at=NOW,
-        content=(
-            "Against this pinned reference, continue ranges depend on the"
-            " opener, sizing, stack depth, and intervening action."
-        ),
+        content=content,
     )
 
 
@@ -423,7 +424,7 @@ def test_taxonomy_successor_cannot_rewrite_an_immutable_definition() -> None:
         definition="A different meaning under the same immutable revision.",
     )
     with pytest.raises(LearningContentCompatibilityError, match="immutable"):
-        validate_taxonomy_successor(previous, rewritten)
+        validate_taxonomy_successor((previous,), rewritten)
 
     revised = taxonomy(
         revision="taxonomy-v2",
@@ -431,7 +432,7 @@ def test_taxonomy_successor_cannot_rewrite_an_immutable_definition() -> None:
         definition_revision="definition-v2",
         definition="A deliberately revised, separately pinned definition.",
     )
-    validate_taxonomy_successor(previous, revised)
+    validate_taxonomy_successor((previous,), revised)
 
 
 def test_taxonomy_successor_requires_a_distinct_revision_identity() -> None:
@@ -443,7 +444,22 @@ def test_taxonomy_successor_requires_a_distinct_revision_identity() -> None:
         definition="A changed definition under a reused taxonomy identity.",
     )
     with pytest.raises(LearningContentCompatibilityError, match="new revision"):
-        validate_taxonomy_successor(taxonomy(), reused_identity)
+        validate_taxonomy_successor((taxonomy(),), reused_identity)
+
+    second = taxonomy(
+        revision="taxonomy-v2",
+        predecessor="taxonomy-v1",
+        definition_revision="definition-v2",
+        definition="A deliberately revised definition.",
+    )
+    recycled = taxonomy(
+        revision="taxonomy-v1",
+        predecessor="taxonomy-v2",
+        definition_revision="definition-v3",
+        definition="A third definition under a recycled taxonomy identity.",
+    )
+    with pytest.raises(LearningContentCompatibilityError, match="new revision"):
+        validate_taxonomy_successor((taxonomy(), second), recycled)
 
 
 def test_mapping_successor_requires_distinct_identity_and_continuity() -> None:
@@ -455,7 +471,7 @@ def test_mapping_successor_requires_distinct_identity_and_continuity() -> None:
         matching_rule(selector=DecisionSelector(street="river")),
     )
     with pytest.raises(LearningContentCompatibilityError, match="new revision"):
-        validate_mapping_successor(previous, reused_identity)
+        validate_mapping_successor((previous,), reused_identity)
 
     skipped_predecessor = mapping(
         matching_rule(),
@@ -466,10 +482,27 @@ def test_mapping_successor_requires_distinct_identity_and_continuity() -> None:
         LearningContentCompatibilityError,
         match="active predecessor",
     ):
-        validate_mapping_successor(previous, skipped_predecessor)
+        validate_mapping_successor((previous,), skipped_predecessor)
+
+    second = mapping(
+        matching_rule(),
+        revision="mapping-v2",
+        predecessor="mapping-v1",
+    )
+    validate_mapping_successor(
+        (previous,),
+        second,
+    )
+    recycled = mapping(
+        matching_rule(selector=DecisionSelector(street="river")),
+        revision="mapping-v1",
+        predecessor="mapping-v2",
+    )
+    with pytest.raises(LearningContentCompatibilityError, match="new revision"):
+        validate_mapping_successor((previous, second), recycled)
 
     validate_mapping_successor(
-        previous,
+        (previous,),
         mapping(
             matching_rule(),
             revision="mapping-v2",
@@ -653,6 +686,34 @@ def test_reveal_requires_approved_compatible_principle_and_exact_versions() -> N
     assert reveal.principle_revision == "principle-v1"
     assert reveal.display_text.startswith(EDUCATIONAL_GUIDANCE_PREFIX)
     assert "not a guarantee of optimal play or outcomes" in reveal.display_text.lower()
+
+
+def test_reveal_allows_the_maximum_principle_content_after_framing() -> None:
+    authored = principle(content="x" * 4000)
+    record = principle_draft(
+        authored,
+        actor_id="draft-generator",
+        created_at=NOW,
+    )
+    approved = append_principle_lifecycle_event(
+        record,
+        PrincipleLifecycleEvent(
+            sequence=1,
+            status="approved",
+            actor_kind="human",
+            actor_id="reviewer-1",
+            occurred_at=NOW + timedelta(minutes=5),
+            review_basis="Reviewed the maximum-length principle.",
+        ),
+    )
+
+    reveal = build_principle_reveal(
+        tagged_decision(),
+        reference_policy_revision="reference-v1",
+        record=approved,
+    )
+    assert len(reveal.display_text) == 4000 + len(EDUCATIONAL_GUIDANCE_PREFIX)
+    assert reveal.display_text.endswith("x" * 4000)
 
 
 def test_cache_key_changes_with_every_semantic_revision() -> None:

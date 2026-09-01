@@ -24,7 +24,9 @@ Versioned learning content lives under `app/domain/learning_content`, separate
 from imported-hand extraction and persistence.
 
 - A taxonomy revision is an immutable hierarchy of stable concept IDs and
-  immutable concept-definition revisions.
+  immutable concept-definition revisions. Successor validation consumes the
+  complete lineage so neither taxonomy, mapping, nor definition identities can
+  be recycled after more than one generation.
 - A mapping revision targets exactly one taxonomy revision. Rules are
   versioned data over canonical decision-state fields. Selectors can bind the
   full ordered pre-decision route, structural actors, BB-normalized action

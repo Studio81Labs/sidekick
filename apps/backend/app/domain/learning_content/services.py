@@ -34,12 +34,37 @@ class ApprovedPrincipleUnavailableError(LearningContentCompatibilityError):
 
 
 def validate_taxonomy_successor(
-    previous: TaxonomyRevision,
+    lineage: tuple[TaxonomyRevision, ...],
     candidate: TaxonomyRevision,
 ) -> None:
-    """Protect immutable definition revisions across one taxonomy series."""
+    """Protect identities and definitions across a complete taxonomy lineage."""
 
-    if candidate.taxonomy_revision == previous.taxonomy_revision:
+    if not lineage:
+        raise LearningContentCompatibilityError(
+            "taxonomy successor validation requires the complete active lineage"
+        )
+    revision_ids = tuple(revision.taxonomy_revision for revision in lineage)
+    if len(set(revision_ids)) != len(revision_ids):
+        raise LearningContentCompatibilityError(
+            "taxonomy lineage revision identifiers must be unique"
+        )
+    root = lineage[0]
+    if root.predecessor_taxonomy_revision is not None:
+        raise LearningContentCompatibilityError(
+            "a complete taxonomy lineage must begin at its root revision"
+        )
+    for earlier, later in zip(lineage, lineage[1:], strict=False):
+        if later.series_id != root.series_id:
+            raise LearningContentCompatibilityError(
+                "a taxonomy lineage must remain in one concept series"
+            )
+        if later.predecessor_taxonomy_revision != earlier.taxonomy_revision:
+            raise LearningContentCompatibilityError(
+                "taxonomy lineage predecessor revisions must be contiguous"
+            )
+
+    previous = lineage[-1]
+    if candidate.taxonomy_revision in revision_ids:
         raise LearningContentCompatibilityError(
             "a taxonomy successor must use a new revision identifier"
         )
@@ -51,17 +76,24 @@ def validate_taxonomy_successor(
         raise LearningContentCompatibilityError(
             "a taxonomy successor must pin the active predecessor revision"
         )
-    previous_concepts = {
-        concept.concept_id: concept for concept in previous.concepts
-    }
+    historical_definitions = {}
+    for revision in lineage:
+        for concept in revision.concepts:
+            key = (concept.concept_id, concept.definition_revision)
+            historical = historical_definitions.get(key)
+            if historical is not None and historical != concept:
+                raise LearningContentCompatibilityError(
+                    f"taxonomy lineage rewrites concept {concept.concept_id}"
+                    f" definition revision {concept.definition_revision}"
+                )
+            historical_definitions[key] = concept
     for concept in candidate.concepts:
-        prior = previous_concepts.get(concept.concept_id)
+        prior = historical_definitions.get(
+            (concept.concept_id, concept.definition_revision)
+        )
         if prior is None:
             continue
-        if (
-            concept.definition_revision == prior.definition_revision
-            and concept != prior
-        ):
+        if concept != prior:
             raise LearningContentCompatibilityError(
                 f"concept {concept.concept_id} changes an immutable definition"
                 f" revision {concept.definition_revision}"
@@ -69,12 +101,33 @@ def validate_taxonomy_successor(
 
 
 def validate_mapping_successor(
-    previous: ConceptMappingRevision,
+    lineage: tuple[ConceptMappingRevision, ...],
     candidate: ConceptMappingRevision,
 ) -> None:
-    """Protect mapping revision identity and predecessor continuity."""
+    """Protect identity and continuity across a complete mapping lineage."""
 
-    if candidate.mapping_revision == previous.mapping_revision:
+    if not lineage:
+        raise LearningContentCompatibilityError(
+            "mapping successor validation requires the complete active lineage"
+        )
+    revision_ids = tuple(revision.mapping_revision for revision in lineage)
+    if len(set(revision_ids)) != len(revision_ids):
+        raise LearningContentCompatibilityError(
+            "mapping lineage revision identifiers must be unique"
+        )
+    root = lineage[0]
+    if root.predecessor_mapping_revision is not None:
+        raise LearningContentCompatibilityError(
+            "a complete mapping lineage must begin at its root revision"
+        )
+    for earlier, later in zip(lineage, lineage[1:], strict=False):
+        if later.predecessor_mapping_revision != earlier.mapping_revision:
+            raise LearningContentCompatibilityError(
+                "mapping lineage predecessor revisions must be contiguous"
+            )
+
+    previous = lineage[-1]
+    if candidate.mapping_revision in revision_ids:
         raise LearningContentCompatibilityError(
             "a mapping successor must use a new revision identifier"
         )
