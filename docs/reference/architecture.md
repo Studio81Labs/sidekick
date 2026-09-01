@@ -450,10 +450,28 @@ The state also carries the wager and full-increment yardstick from the hero's
 prior action, allowing rehydration to verify the short-all-in reopening verdict
 through the aggregate's shared rule without replaying the betting line.
 Decision points are `Decimal`-native and N-player rather than reusing
-`app/domain/poker`'s `float`-typed, single-opponent `CanonicalState`. No
-concept tag is attached until the versioned taxonomy lands in #417. The
-application lifecycle boundary atomically supersedes or deactivates current
-decision artifacts and permanently purges them with their imported hand.
+`app/domain/poker`'s `float`-typed, single-opponent `CanonicalState`. The
+versioned learning-content contracts live separately under
+`app/domain/learning_content`: immutable taxonomy and mapping revisions produce
+an explicit absent result or one primary tag pinned to the decision, taxonomy
+series and revision, mapping revision, and concept-definition revision.
+Overlapping rules fail closed.
+Versioned selectors may bind the full ordered pre-decision route, structural
+actor positions, BB-normalized action sizing, and stack-depth ranges; unresolved
+action sizing remains unresolved and cannot satisfy a numeric range.
+Principle revisions begin as drafts, retain append-only reviewer provenance,
+and become activation- or reveal-eligible only after compatible human approval.
+Complete-lineage successor validation prevents principle revision identities
+from being recycled. Activation checks cover every concept reachable from the
+mapping; principle reveals and cache keys bind the exact taxonomy series,
+taxonomy revision, mapping, definition, reference, principle version, and
+immutable principle-content digest and apply conditional educational framing.
+These pure contracts do not attach live taxonomy state to
+`HandDecisionExtraction` or yet
+publish persisted learning artifacts; ADR 0057 records that boundary and the
+remaining #417 persistence/migration work. The application lifecycle boundary
+atomically supersedes or deactivates current decision artifacts and permanently
+purges them with their imported hand.
 
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact
