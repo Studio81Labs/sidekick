@@ -54,7 +54,8 @@ explicitly. A new occurrence cannot precede the latest import time anywhere in
 the aggregate; an exact retry remains a no-op even after later imports. Source
 occurrence IDs and import IDs are unique across the aggregate. They participate
 in lifecycle chronology, deletion ordering, backup/restore, and monotonic
-restore comparison.
+restore comparison. Every non-idempotent append strictly advances the lifecycle
+change marker, even when multiple source occurrences share one event timestamp.
 
 An unchanged-meaning reimport detection remains tied to its nested source
 occurrence and is audit-only. It can be inspected but cannot become a canonical

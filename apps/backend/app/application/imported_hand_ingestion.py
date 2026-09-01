@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Literal
 from uuid import uuid4
 
@@ -558,10 +558,17 @@ def _updated_record(
     changed_at: datetime,
 ) -> ImportedHandRecord:
     lifecycle_payload = record.lifecycle.model_dump(mode="python")
-    lifecycle_payload["changed_at"] = max(
-        record.lifecycle.changed_at,
-        changed_at,
-    )
+    if changed_at > record.lifecycle.changed_at:
+        lifecycle_payload["changed_at"] = changed_at
+    else:
+        try:
+            lifecycle_payload["changed_at"] = (
+                record.lifecycle.changed_at + timedelta(microseconds=1)
+            )
+        except OverflowError as exc:
+            raise ImportedHandIngestionError(
+                "the imported hand lifecycle timestamp cannot advance"
+            ) from exc
     return ImportedHandRecord(
         identity=record.identity,
         raw_sources=raw_sources if raw_sources is not None else record.raw_sources,

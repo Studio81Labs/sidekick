@@ -559,6 +559,32 @@ def test_exact_reimport_is_a_monotonic_restore_candidate(tmp_path) -> None:
     assert classify_restore(updated, current).kind == "stale_record"
 
 
+def test_equal_time_reimports_strictly_advance_the_restore_marker(tmp_path) -> None:
+    store = FileImportedHandStore(tmp_path)
+    service = ImportedHandIngestionService(store=store)
+    service.ingest(parsed_candidate(1))
+    second = parsed_candidate(2)
+    first_append = service.ingest(second).record
+    third = parsed_candidate(3)
+    raw_payload = third.raw.model_dump(mode="python")
+    raw_payload["provenance"]["imported_at"] = second.raw.provenance.imported_at
+    detection_payload = third.detection.model_dump(mode="python")
+    detection_payload["detected_at"] = second.detection.detected_at
+
+    second_append = service.ingest(
+        ParsedImportedHandCandidate(
+            raw=RawHandHistory.model_validate(raw_payload),
+            detection=DetectedImportedHand.model_validate(detection_payload),
+        )
+    ).record
+
+    assert second_append.lifecycle.changed_at == (
+        first_append.lifecycle.changed_at + timedelta(microseconds=1)
+    )
+    assert classify_restore(first_append, second_append).kind == "allow"
+    assert classify_restore(second_append, first_append).kind == "stale_record"
+
+
 def test_exact_reimport_enriches_a_legacy_raw_semantic_binding(tmp_path) -> None:
     store = FileImportedHandStore(tmp_path)
     current = approved_record()
