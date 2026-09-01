@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 from hashlib import sha256
+from ipaddress import ip_address
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -21,13 +22,16 @@ import tempfile
 from time import monotonic, sleep
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
+from urllib.request import ProxyHandler, Request, build_opener
 import zipfile
 
 
+ROOT = Path(__file__).resolve().parents[1]
 PLAYER_ORIGIN = "http://127.0.0.1:8765"
 PLAYER_AUTHORITY = "127.0.0.1:8765"
 PLAYER_WORKSPACE_MANIFEST = ".poker-hero-player-workspace.json"
+LAUNCH_CAPTURE_HELPER = ROOT / "scripts" / "capture-player-launch-url.sh"
 
 
 class PlayerPackageSmokeError(RuntimeError):
@@ -360,13 +364,25 @@ def _verify_archive_checksum(archive_path: Path) -> None:
         raise PlayerPackageSmokeError("Runtime archive failed its checksum")
 
 
-def _request(path: str) -> tuple[int, bytes, dict[str, str]]:
+def _request_url(
+    url: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    body: bytes | None = None,
+) -> tuple[int, bytes, dict[str, str]]:
+    request_headers = {"Host": PLAYER_AUTHORITY}
+    if headers is not None:
+        request_headers.update(headers)
     request = Request(
-        f"{PLAYER_ORIGIN}{path}",
-        headers={"Host": PLAYER_AUTHORITY},
+        url,
+        data=body,
+        headers=request_headers,
+        method=method,
     )
+    opener = build_opener(ProxyHandler({}))
     try:
-        with urlopen(request, timeout=1) as response:
+        with opener.open(request, timeout=1) as response:
             return (
                 response.status,
                 response.read(),
@@ -378,6 +394,47 @@ def _request(path: str) -> tuple[int, bytes, dict[str, str]]:
             exc.read(),
             {key.lower(): value for key, value in exc.headers.items()},
         )
+
+
+def _request(
+    path: str,
+    *,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    body: bytes | None = None,
+) -> tuple[int, bytes, dict[str, str]]:
+    return _request_url(
+        f"{PLAYER_ORIGIN}{path}",
+        method=method,
+        headers=headers,
+        body=body,
+    )
+
+
+def _require_response(
+    response: tuple[int, bytes, dict[str, str]],
+    *,
+    status: int,
+    description: str,
+) -> bytes:
+    actual_status, body, headers = response
+    if actual_status != status:
+        raise PlayerPackageSmokeError(
+            f"{description} returned HTTP {actual_status}, expected {status}"
+        )
+    if headers.get("cache-control") != "no-store":
+        raise PlayerPackageSmokeError(f"{description} did not preserve no-store")
+    return body
+
+
+def _decode_json_object(body: bytes, *, description: str) -> dict[str, Any]:
+    try:
+        value = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise PlayerPackageSmokeError(f"{description} returned invalid JSON") from exc
+    if not isinstance(value, dict):
+        raise PlayerPackageSmokeError(f"{description} did not return an object")
+    return value
 
 
 def _require_player_port_available() -> None:
@@ -434,6 +491,226 @@ def _wait_for_runtime(
     raise PlayerPackageSmokeError("Packaged runtime did not become ready")
 
 
+def _wait_for_launch_ticket(capture_path: Path) -> str:
+    deadline = monotonic() + 5
+    while not capture_path.exists() and monotonic() < deadline:
+        sleep(0.05)
+    if capture_path.is_symlink():
+        raise PlayerPackageSmokeError("Player launch URL capture is a symlink")
+    try:
+        metadata = capture_path.stat()
+    except FileNotFoundError as exc:
+        raise PlayerPackageSmokeError(
+            "Packaged runtime did not invoke the browser capture helper"
+        ) from exc
+    if not S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+        raise PlayerPackageSmokeError("Player launch URL capture is not private")
+    if metadata.st_size > 1024:
+        raise PlayerPackageSmokeError("Player launch URL capture is oversized")
+    try:
+        launch_url = capture_path.read_text(encoding="utf-8").strip()
+    finally:
+        capture_path.unlink(missing_ok=True)
+    parsed = urlsplit(launch_url)
+    fragment_name, separator, ticket = parsed.fragment.partition("=")
+    if (
+        parsed.scheme != "http"
+        or parsed.netloc != PLAYER_AUTHORITY
+        or parsed.path != "/"
+        or parsed.query
+        or fragment_name != "ticket"
+        or separator != "="
+        or re.fullmatch(r"[A-Za-z0-9_-]{32,128}", ticket) is None
+    ):
+        raise PlayerPackageSmokeError("Packaged runtime launch URL is invalid")
+    return ticket
+
+
+def _non_loopback_ipv4() -> str | None:
+    candidates: set[str] = set()
+    try:
+        candidates.update(
+            address[4][0]
+            for address in socket.getaddrinfo(
+                socket.gethostname(),
+                None,
+                family=socket.AF_INET,
+            )
+        )
+    except OSError:
+        pass
+    route_probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        route_probe.connect(("192.0.2.1", 9))
+        candidates.add(route_probe.getsockname()[0])
+    except OSError:
+        pass
+    finally:
+        route_probe.close()
+    return next(
+        (
+            candidate
+            for candidate in sorted(candidates)
+            if not ip_address(candidate).is_loopback
+        ),
+        None,
+    )
+
+
+def _require_lan_refusal() -> None:
+    lan_address = _non_loopback_ipv4()
+    if lan_address is None:
+        if platform.system() == "Linux":
+            raise PlayerPackageSmokeError(
+                "Linux bundle smoke requires a non-loopback IPv4 address"
+            )
+        print(
+            "SKIP: no non-loopback IPv4 interface is available for LAN refusal",
+            file=sys.stderr,
+        )
+        return
+    try:
+        response = _request_url(f"http://{lan_address}:8765/")
+    except (OSError, URLError):
+        return
+    raise PlayerPackageSmokeError(
+        "Packaged runtime accepted a direct LAN request "
+        f"with HTTP {response[0]}"
+    )
+
+
+def _exercise_runtime_security(ticket: str) -> None:
+    _require_response(
+        _request("/", headers={"Host": "localhost:8765"}),
+        status=400,
+        description="Wrong-Host request",
+    )
+    _require_response(
+        _request("/", headers={"Origin": "https://attacker.example"}),
+        status=403,
+        description="Cross-origin request",
+    )
+    _require_response(
+        _request("/", headers={"X-Forwarded-For": "127.0.0.1"}),
+        status=400,
+        description="Proxy-header request",
+    )
+
+    exchange_headers = {
+        "Authorization": f"Bearer {ticket}",
+        "Origin": PLAYER_ORIGIN,
+    }
+    session_body = _require_response(
+        _request(
+            "/api/player/session",
+            method="POST",
+            headers=exchange_headers,
+            body=b"",
+        ),
+        status=200,
+        description="Bootstrap ticket exchange",
+    )
+    session = _decode_json_object(
+        session_body,
+        description="Bootstrap ticket exchange",
+    )
+    if (
+        set(session) != {"csrf_token", "expires_in_seconds", "session_token"}
+        or not isinstance(session.get("session_token"), str)
+        or not session["session_token"]
+        or not isinstance(session.get("csrf_token"), str)
+        or not session["csrf_token"]
+        or session.get("expires_in_seconds") != 86400
+    ):
+        raise PlayerPackageSmokeError(
+            "Bootstrap ticket exchange returned an invalid session"
+        )
+    _require_response(
+        _request(
+            "/api/player/session",
+            method="POST",
+            headers=exchange_headers,
+            body=b"",
+        ),
+        status=401,
+        description="Bootstrap ticket replay",
+    )
+
+    session_headers = {"Authorization": f"Bearer {session['session_token']}"}
+    _require_response(
+        _request("/api/player/storage"),
+        status=401,
+        description="Missing-session storage request",
+    )
+    _require_response(
+        _request(
+            "/api/player/storage",
+            headers={"Authorization": "Bearer forged-session"},
+        ),
+        status=401,
+        description="Forged-session storage request",
+    )
+    _require_response(
+        _request("/api/player/storage", headers=session_headers),
+        status=200,
+        description="Authenticated storage request",
+    )
+    health_body = _require_response(
+        _request("/api/player/health", headers=session_headers),
+        status=200,
+        description="Authenticated health request",
+    )
+    if _decode_json_object(
+        health_body,
+        description="Authenticated health request",
+    ) != {"runtime": "local-player", "status": "ok"}:
+        raise PlayerPackageSmokeError(
+            "Authenticated health request returned the wrong runtime identity"
+        )
+
+    mutation_headers = {**session_headers, "Origin": PLAYER_ORIGIN}
+    _require_response(
+        _request(
+            "/api/player/session",
+            method="DELETE",
+            headers=mutation_headers,
+        ),
+        status=403,
+        description="Missing-CSRF session mutation",
+    )
+    _require_response(
+        _request(
+            "/api/player/session",
+            method="DELETE",
+            headers={**mutation_headers, "X-Poker-CSRF-Token": "forged-csrf"},
+        ),
+        status=403,
+        description="Forged-CSRF session mutation",
+    )
+    revoked_body = _require_response(
+        _request(
+            "/api/player/session",
+            method="DELETE",
+            headers={
+                **mutation_headers,
+                "X-Poker-CSRF-Token": str(session["csrf_token"]),
+            },
+        ),
+        status=204,
+        description="Authenticated session revocation",
+    )
+    if revoked_body:
+        raise PlayerPackageSmokeError(
+            "Authenticated session revocation returned an unexpected body"
+        )
+    _require_response(
+        _request("/api/player/health", headers=session_headers),
+        status=401,
+        description="Revoked-session health request",
+    )
+    _require_lan_refusal()
+
+
 def _stop_runtime(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
         return
@@ -460,10 +737,13 @@ def main(argv: list[str] | None = None) -> int:
         raise PlayerPackageSmokeError("Runtime archive must be a regular file")
     _verify_archive_checksum(archive_path)
 
-    true_command = shutil.which("true")
-    if true_command is None:
+    if (
+        LAUNCH_CAPTURE_HELPER.is_symlink()
+        or not LAUNCH_CAPTURE_HELPER.is_file()
+        or not os.access(LAUNCH_CAPTURE_HELPER, os.X_OK)
+    ):
         raise PlayerPackageSmokeError(
-            "The runtime smoke test requires the POSIX true command"
+            "The player launch URL capture helper is missing"
         )
 
     with tempfile.TemporaryDirectory(prefix="poker-hero-player-smoke-") as raw:
@@ -475,15 +755,15 @@ def main(argv: list[str] | None = None) -> int:
         backup_dir = temporary / "backup"
         backup_dir.mkdir(mode=0o700)
         backup_path = backup_dir / "player-backup.zip"
+        capture_dir = temporary / "browser-capture"
+        capture_dir.mkdir(mode=0o700)
+        launch_capture_path = capture_dir / "launch-url"
         environment = {
-            "BROWSER": true_command,
-            "PATH": os.pathsep.join(
-                path
-                for path in (str(Path(true_command).parent), "/usr/bin", "/bin")
-                if path
-            ),
+            "BROWSER": str(LAUNCH_CAPTURE_HELPER),
+            "PATH": os.pathsep.join(("/usr/bin", "/bin")),
             "POKER_DATA_DIR": str(data_dir),
             "POKER_DEPLOYMENT_ENVIRONMENT": "local",
+            "POKER_HERO_PLAYER_LAUNCH_URL_FILE": str(launch_capture_path),
         }
         _require_player_port_available()
         process = subprocess.Popen(
@@ -495,12 +775,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         try:
             _wait_for_runtime(process, data_dir=data_dir)
-            status, _body, headers = _request("/api/player/storage")
-            if status != 401 or headers.get("cache-control") != "no-store":
-                raise PlayerPackageSmokeError(
-                    "Packaged runtime did not preserve authenticated storage denial"
-                )
+            ticket = _wait_for_launch_ticket(launch_capture_path)
+            _exercise_runtime_security(ticket)
         finally:
+            launch_capture_path.unlink(missing_ok=True)
             _stop_runtime(process)
 
         result = subprocess.run(
