@@ -5,11 +5,15 @@ on:
     branches: [main]
     paths:
       - "apps/backend/**"
+      - "apps/pwa/**"
       - "packages/openapi/**"
       - "packages/openapi-client/**"
       - "solver-plugins/postflop/**"
       - "scripts/bootstrap.sh"
+      - "scripts/build-player-runtime.py"
       - "scripts/ci/**"
+      - "scripts/run-player-python.sh"
+      - "scripts/smoke-player-runtime.py"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -20,11 +24,15 @@ on:
     branches: [main]
     paths:
       - "apps/backend/**"
+      - "apps/pwa/**"
       - "packages/openapi/**"
       - "packages/openapi-client/**"
       - "solver-plugins/postflop/**"
       - "scripts/bootstrap.sh"
+      - "scripts/build-player-runtime.py"
       - "scripts/ci/**"
+      - "scripts/run-player-python.sh"
+      - "scripts/smoke-player-runtime.py"
       - "package.json"
       - "pnpm-lock.yaml"
       - "pnpm-workspace.yaml"
@@ -96,6 +104,47 @@ jobs:
           -w /work
           rust:1.85-slim-bookworm@sha256:9f841bbe9e7d8e37ceb96ed907265a3a0df7f44e3737d0b100e7907a679acb36
           cargo test --locked
+
+  player-bundle:
+    name: "player: runtime bundle (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/backend/requirements-dev.txt
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install workspace contract tooling
+        run: pnpm install --frozen-lockfile
+
+      - name: Install backend and bundle tooling
+        run: |
+          python -m pip install --require-hashes -r apps/backend/requirements-dev.txt
+          python -m pip install --no-deps --no-build-isolation apps/backend
+          python -m pip check
+
+      - name: Build player runtime release bundle
+        run: pnpm player:package -- --output-dir "$RUNNER_TEMP/player-runtime"
+
+      - name: Smoke-test player runtime release bundle
+        run: |
+          set -- "$RUNNER_TEMP"/player-runtime/*.tar.gz
+          test "$#" -eq 1
+          python scripts/smoke-player-runtime.py "$1"
 
   image:
     name: "backend: immutable image"

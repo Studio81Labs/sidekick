@@ -78,6 +78,52 @@ completed, quarantined, and failed recovery identifiers separately. A
 quarantined or failed recovery is shown as requiring attention; completed
 roll-forward recovery alone remains ready.
 
+## Build and verify a release bundle
+
+The release-bundle checkpoint produces one self-contained archive for the
+current Darwin or Linux build host:
+
+```bash
+pnpm player:package
+```
+
+The output under `dist/player-runtime/` is named with the root product version,
+host operating system, architecture, and Python ABI. It contains the Python
+runtime and dependencies plus the already verified player PWA assets. It does
+not require a repository checkout, Node, pnpm, or a separately installed Python
+runtime after extraction. It never contains the player workspace, installation
+credential, backup, or other user data.
+
+Verify the archive checksum, complete internal file manifest, clean-extraction
+launch, local shell/authentication boundary, and packaged export/remove handoff:
+
+```bash
+pnpm player:package:test -- /absolute/path/poker-hero-player-*.tar.gz
+```
+
+After verification, extract the archive and run `./poker-hero-player`. The
+packaged runtime keeps the fixed `127.0.0.1:8765` origin and opens the browser in
+the same way as `pnpm player:start`. Its default data locations are:
+
+- macOS: `~/Library/Application Support/Poker Hero/data`
+- Linux: `${XDG_DATA_HOME:-~/.local/share}/poker-hero/player/data`
+
+Set `POKER_DATA_DIR` before launch to select a different private player-owned
+directory. The data root remains outside the extracted application directory,
+so replacing or deleting an extracted bundle does not update, migrate, export,
+or remove player data. Export and remove it through the packaged executable:
+
+```bash
+./poker-hero-player export-and-remove \
+  /absolute/private/player-backup.zip \
+  --confirm-remove-data
+```
+
+These archives are unsigned release-engineering artifacts. They are not yet a
+supported end-user installer or update channel. The supported platform,
+signing/notarization, publication, application-file installation/removal, and
+browser-PWA removal steps require a separate product and release decision.
+
 ## Imported-hand backup and restore
 
 The authenticated player API can export the current V2 imported-hand store as a
@@ -203,9 +249,11 @@ the conflict-safe transaction for an already-parsed hand-history candidate, but
 there is still no player hand-history upload route or corpus-backed PokerStars
 adapter. The workspace now has a version 1 compatibility marker, safe
 manifestless-store adoption, and a verified export-before-remove command for
-player data. Future learning-store migrations, remote lookup, an
-operating-system installer/uninstaller that also removes application and
-browser installation state, and the complete player workflow remain absent.
+player data. A host-platform release archive now embeds the runtime and verified
+PWA and is exercised without a repository checkout, but it remains unsigned and
+does not choose or implement an operating-system installer, application update
+channel, or browser installation lifecycle. Future learning-store migrations,
+remote lookup, and the complete player workflow also remain absent.
 Future grade, mastery, drill, and proof stores do not yet exist, so they are not
 part of the version 1 archive. The hosted Worker and V1 FastAPI deployment deny
 the namespace, and the direct-network checkpoint verifies that denial without

@@ -45,6 +45,14 @@ failures, and layout drift fail closed. A stable sibling lifetime lease excludes
 the running player process across the whole transaction and makes retained
 post-rename paths discoverable on retry; application and browser installation
 removal remain outside this checkpoint.
+[ADR 0061](../decisions/0061-build-platform-scoped-player-runtime-bundles.md)
+defines an unsigned host-platform release-bundle contract. The archive embeds
+the Python runtime and verified player PWA, inventories application files with
+SHA-256 digests, and exposes the existing export-before-remove transaction from
+the same executable. Its clean-extraction smoke test proves repository-free
+loopback launch and data removal. A supported OS installer, signing/publishing,
+automatic updates, application-file removal, and browser-PWA removal remain
+outside this checkpoint.
 [ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md) replaces
 the inline readiness document with a separately built local recovery PWA. It
 exposes storage/recovery status and the existing player backup/restore workflow
