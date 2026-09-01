@@ -432,8 +432,8 @@ class GameEconomicsRoute(RemoteReferenceModel):
             )
         if self.big_blind_bb != Decimal(1):
             raise ValueError("BB-normalized routes require big_blind_bb equal to one")
-        if self.small_blind_bb >= self.big_blind_bb:
-            raise ValueError("small blind must be less than the big blind")
+        if self.small_blind_bb > self.big_blind_bb:
+            raise ValueError("small blind cannot exceed the big blind")
         if (self.ante_bb == 0) != (self.ante_mode == "none"):
             raise ValueError("ante amount and ante mode must agree")
         if self.economic_model != "cash_rake":
@@ -1076,6 +1076,7 @@ class RemoteReferenceDispatchPreflight(RemoteReferenceModel):
     """One single-dispatch candidate or explicit fail-closed unavailable result."""
 
     decision: DecisionBinding
+    decision_state_sha256: Sha256Digest | None = None
     evaluated_at: AwareDatetime | None
     outcome: RemoteDispatchOutcome
     reason: RemoteDispatchReason
@@ -1108,6 +1109,7 @@ class RemoteReferenceDispatchPreflight(RemoteReferenceModel):
         if candidate != (self.reason == "preflight_passed"):
             raise ValueError("only a passing preflight is a dispatch candidate")
         candidate_fields = (
+            self.decision_state_sha256,
             self.provider_id,
             self.provider_configuration_revision,
             self.provider_policy_revision,
@@ -1151,6 +1153,7 @@ class RemoteReferenceLookupUnavailable(RemoteReferenceModel):
     """Auditable failure after a passing preflight; never solved evidence."""
 
     decision: DecisionBinding
+    decision_state_sha256: Sha256Digest
     preflight_evaluated_at: AwareDatetime
     occurred_at: AwareDatetime
     reason: RemoteLookupUnavailableReason

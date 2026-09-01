@@ -8,7 +8,11 @@ from hashlib import sha256
 import pytest
 from pydantic import ValidationError
 
-from app.domain.imported_hands import HeroDecisionPoint, extract_hero_decision_points
+from app.domain.imported_hands import (
+    HeroDecisionPoint,
+    ImportedHandState,
+    extract_hero_decision_points,
+)
 from app.domain.learning_content import DecisionBinding
 from app.domain.remote_references import (
     AbstractionSchemaBinding,
@@ -38,6 +42,12 @@ from app.domain.remote_references import (
     record_remote_reference_unavailable,
 )
 from test_imported_hand_decisions import baseline_decision_record
+from test_imported_hand_models import (
+    automatic_action,
+    extraction_ready_state_payload,
+    extraction_record_for_state,
+    wager_action,
+)
 
 
 NOW = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
@@ -56,6 +66,44 @@ CATEGORIES = (
 
 def decision_point() -> HeroDecisionPoint:
     extraction = extract_hero_decision_points(baseline_decision_record())
+    assert extraction.outcome == "decisions"
+    return extraction.decision_points[0]
+
+
+def equal_blind_decision_point() -> HeroDecisionPoint:
+    payload = extraction_ready_state_payload()
+    payload["game"]["blinds"]["small_blind"] = Decimal("1")
+    payload["game"]["blinds"]["big_blind"] = Decimal("1")
+    payload["results"] = {"stated_pot": {"gross_total": Decimal("2")}}
+    payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "post_small_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "post_big_blind",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+                wager_action(2, "hero", "check", total=Decimal("1")),
+                automatic_action(3, "villain", total=Decimal("1")),
+            ],
+        },
+        {
+            "street": "flop",
+            "actions": [automatic_action(0, "villain", "fold")],
+        },
+    ]
+    state = ImportedHandState.model_validate(payload)
+    extraction = extract_hero_decision_points(extraction_record_for_state(state))
     assert extraction.outcome == "decisions"
     return extraction.decision_points[0]
 
@@ -326,6 +374,53 @@ def canonical_route_request(**updates: object) -> RemoteReferenceRouteRequest:
     return RemoteReferenceRouteRequest.model_validate(values)
 
 
+def equal_blind_route_request(
+    decision: HeroDecisionPoint,
+) -> RemoteReferenceRouteRequest:
+    request = canonical_route_request()
+    economics = request.components[0]
+    assert isinstance(economics, GameEconomicsRoute)
+    economic_binding = derive_cash_economic_configuration(decision)
+    assert economic_binding is not None
+    components = list(request.components)
+    components[0] = GameEconomicsRoute.model_validate(
+        {
+            **economics.model_dump(mode="python"),
+            "economic_configuration_sha256": (
+                economic_binding.economic_configuration_sha256
+            ),
+            "small_blind_bb": Decimal("1"),
+        }
+    )
+    components[3] = StackWagerPotRoute(
+        hero_stack_bb=Decimal("99"),
+        active_player_stacks=(
+            PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
+            PositionedStack(
+                position="BTN/SB",
+                remaining_stack_bb=Decimal("99"),
+            ),
+        ),
+        committed_pot_before_street_bb=Decimal("0"),
+        current_street_commitments=(
+            PositionedCommitment(position="BB", committed_bb=Decimal("1")),
+            PositionedCommitment(
+                position="BTN/SB",
+                committed_bb=Decimal("1"),
+            ),
+        ),
+        pot_bb=Decimal("2"),
+        current_wager_bb=Decimal("1"),
+        amount_to_call_bb=Decimal("0"),
+    )
+    return RemoteReferenceRouteRequest.model_validate(
+        {
+            **request.model_dump(mode="python"),
+            "components": tuple(components),
+        }
+    )
+
+
 def route_derivation(
     *,
     decision: HeroDecisionPoint | None = None,
@@ -481,6 +576,10 @@ def test_exact_active_consent_yields_only_a_dispatch_candidate() -> None:
     assert result.resolved_reference is None
     assert result.outbound_request == canonical_route_request()
     assert result.request_sha256 == canonical_route_request().semantic_digest()
+    assert result.decision_state_sha256 == route_derivation().decision_state_sha256
+    assert "decision_state_sha256" not in result.outbound_request.model_dump(
+        mode="json"
+    )
     assert result.provider_policy_sha256 == provider_policy().semantic_digest()
     assert result.route_manifest_sha256 == route_manifest().semantic_digest()
     assert result.commercial_serving_rights_revision == "commercial-rights-v1"
@@ -495,6 +594,17 @@ def test_route_factory_binds_the_full_canonical_decision_state() -> None:
     assert route.decision == DecisionBinding.from_decision(decision)
     assert route.outbound_request == canonical_route_request()
     assert len(route.decision_state_sha256) == 64
+
+
+def test_route_factory_accepts_equal_blind_cash_game() -> None:
+    decision = equal_blind_decision_point()
+    request = equal_blind_route_request(decision)
+
+    route = bind_remote_reference_route(decision, request)
+
+    economics = route.outbound_request.components[0]
+    assert isinstance(economics, GameEconomicsRoute)
+    assert economics.small_blind_bb == economics.big_blind_bb == Decimal("1")
 
 
 def test_cash_economic_configuration_is_derived_from_approved_state() -> None:
@@ -989,7 +1099,6 @@ def test_route_requires_complete_structural_state() -> None:
             "economic_model": "tournament_icm",
             "utility_model": "icm_equity",
         },
-        {"small_blind_bb": Decimal("1")},
         {"betting_limit": "pot_limit"},
     ],
 )
@@ -1906,6 +2015,7 @@ def test_remote_failures_remain_ungraded_without_fallback() -> None:
     assert failure.fallback_behavior == "forbidden"
     assert failure.resolved_reference is None
     assert failure.request_sha256 == candidate.request_sha256
+    assert failure.decision_state_sha256 == candidate.decision_state_sha256
     assert failure.provider_policy_sha256 == candidate.provider_policy_sha256
     assert failure.route_manifest_sha256 == candidate.route_manifest_sha256
     assert failure.commercial_serving_rights_revision == (

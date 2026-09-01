@@ -585,8 +585,9 @@ line, position, and derivation context instead of a global digest allowlist.
 Provider configuration, policy, reference-source, commercial
 serving-rights, derived-output-rights, disclosure, consent, request, economics,
 utility, and abstraction revisions remain pinned in local audit provenance;
-the canonical decision binding and state digest remain local and are never
-promoted to an outbound identifier or digest.
+the canonical decision binding and state digest remain pinned through dispatch
+preflight and recorded lookup failures, but stay local and are never promoted
+to an outbound identifier or digest.
 The candidate is not transport authorization: a future application boundary
 must atomically re-read authoritative provider status, consent status, and the
 current consent generation immediately before each dispatch or retry. Revocation,

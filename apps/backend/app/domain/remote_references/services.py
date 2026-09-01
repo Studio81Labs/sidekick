@@ -287,6 +287,7 @@ def evaluate_remote_reference_preflight(
 
     return RemoteReferenceDispatchPreflight(
         decision=decision,
+        decision_state_sha256=route.decision_state_sha256,
         evaluated_at=now,
         outcome="dispatch_candidate",
         reason="preflight_passed",
@@ -550,6 +551,7 @@ def record_remote_reference_unavailable(
     if occurred_at < preflight.evaluated_at:
         raise ValueError("remote unavailability cannot predate its preflight")
     assert preflight.provider_id is not None
+    assert preflight.decision_state_sha256 is not None
     assert preflight.provider_configuration_revision is not None
     assert preflight.provider_policy_revision is not None
     assert preflight.provider_policy_sha256 is not None
@@ -568,6 +570,7 @@ def record_remote_reference_unavailable(
     assert preflight.outbound_request is not None
     return RemoteReferenceLookupUnavailable(
         decision=preflight.decision,
+        decision_state_sha256=preflight.decision_state_sha256,
         preflight_evaluated_at=preflight.evaluated_at,
         occurred_at=occurred_at,
         reason=reason,
