@@ -744,6 +744,95 @@ describe("PlayerApp", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it.each(["canonical revision", "deletion generation"] as const)(
+    "does not attribute another withdrawal with a newer %s to the stale request",
+    async (mismatch) => {
+      const user = userEvent.setup();
+      const reason = "Remove from study";
+      const inactive = inactiveApprovedHandDetail("withdrawn");
+      const refreshed =
+        mismatch === "canonical revision"
+          ? {
+              ...inactive,
+              summary: {
+                ...inactive.summary,
+                canonical_revision_count: 2,
+              },
+              canonical_revisions: [
+                ...inactive.canonical_revisions,
+                {
+                  ...inactive.canonical_revisions[0],
+                  revision: 2,
+                  approved_at: "2026-08-30T12:20:00Z",
+                },
+              ],
+              lifecycle: { ...inactive.lifecycle, reason },
+            }
+          : {
+              ...inactive,
+              summary: {
+                ...inactive.summary,
+                deletion_generation: 1,
+              },
+              lifecycle: {
+                ...inactive.lifecycle,
+                deletion_generation: 1,
+                reason,
+              },
+            };
+      window.location.hash = "#ticket=one-use-ticket";
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            session_token: "player-session",
+            csrf_token: "csrf-token",
+            expires_in_seconds: 86400,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(readyStorage))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            items: [activeHand],
+            unreadable: [],
+            next_cursor: null,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+        .mockResolvedValueOnce(
+          jsonResponse({ detail: "The hand lifecycle changed" }, 409),
+        )
+        .mockResolvedValueOnce(jsonResponse(refreshed));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<PlayerApp />);
+      await screen.findByText("Ready on this machine");
+      await user.click(
+        screen.getByRole("button", { name: "Load hand records" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "View audit detail" }),
+      );
+      await user.type(screen.getByRole("textbox", { name: "Reason" }), reason);
+      await user.click(
+        screen.getByRole("button", { name: "Withdraw approval" }),
+      );
+
+      expect(
+        await screen.findByText(
+          /Approval state was not changed.*audit detail was refreshed/,
+        ),
+      ).toHaveTextContent("The hand lifecycle changed");
+      expect(
+        screen.queryByText(/state committed.*response was interrupted/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText(/previously approved.*now withdrawn/),
+      ).toBeInTheDocument();
+    },
+  );
+
   it.each([
     ["withdrawn", /previously approved, but its approval is now withdrawn/],
     ["rejected", /previously approved, then rejected/],

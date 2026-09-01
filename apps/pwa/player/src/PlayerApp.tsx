@@ -613,9 +613,17 @@ export default function PlayerApp() {
           replaceHandDetail(refreshed);
           const expectedStatus =
             action === "withdraw" ? "withdrawn" : "rejected";
+          const refreshedRevision =
+            refreshed.canonical_revisions[
+              refreshed.canonical_revisions.length - 1
+            ]?.revision ?? null;
           if (
             refreshed.summary.lifecycle_status === expectedStatus &&
-            refreshed.lifecycle.reason === reason
+            refreshed.lifecycle.reason === reason &&
+            refreshedRevision ===
+              requestedDetail.summary.active_canonical_revision &&
+            refreshed.summary.deletion_generation ===
+              requestedDetail.summary.deletion_generation
           ) {
             setCloseReason("");
             setActionNotice(

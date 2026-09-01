@@ -39,21 +39,26 @@ The player workspace serializes each transition in this order:
 
 1. a stable in-process record stripe;
 2. the matching named process-shared `flock` stripe;
-3. the store's shared data-volume hold; and
-4. the cascade journal's leaf lock.
+3. a shared data-volume hold spanning the request precondition read and
+   lifecycle transition;
+4. the store's nested shared data-volume hold; and
+5. the cascade journal's leaf lock.
 
 The stable stripe is derived from the identity-based record key, so separate
-local-runtime processes use the same lock. The named lock is separate from the
-data-volume lock: nesting the store's shared volume hold under an exclusive hold
-of that same file would deadlock. The existing asynchronous restore gate remains
-outside this sequence, preventing a same-runtime restore and lifecycle write
-from overlapping.
+local-runtime processes use the same lock. The outer shared volume hold prevents
+a restore in another process from replacing the record after the precondition
+check but before the lifecycle service rereads it. The named lock is separate
+from the data-volume lock: nesting the store's shared volume hold under an
+exclusive hold of that same file would deadlock. The existing asynchronous
+restore gate remains outside this sequence, preventing a same-runtime restore
+and lifecycle write from overlapping.
 
 The player PWA shows the actions only for an active detail, requires a reason
 and explicit confirmation, sends the stored precondition with session and CSRF
 credentials, and replaces both list summary and detail with the returned audit.
-After an error or interrupted response it rereads the detail before reporting
-whether the inactive state committed.
+After an error or interrupted response it rereads the detail and requires the
+requested status, reason, canonical revision, and deletion generation before
+reporting that the inactive state committed.
 
 ## Consequences
 

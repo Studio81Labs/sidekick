@@ -318,8 +318,10 @@ class PlayerWorkspace:
 
         The in-process stripe orders request threads. The matching named flock
         uses the same stable stripe in every local-runtime process, closing the
-        cross-process gap before the store takes its shared volume hold and
-        leaf journal lock.
+        cross-process gap. The outer shared volume hold keeps backup/restore
+        publication from replacing the record between the request precondition
+        read and the service's cascade; the store then takes its own nested
+        shared hold before the leaf journal lock.
         """
 
         lock_index = self.imported_hand_lock_index(record_key)
@@ -328,54 +330,58 @@ class PlayerWorkspace:
                 exclusive=True,
                 timeout_seconds=lock_timeout_seconds,
             ):
-                record = self.imported_hands.get(record_key)
-                latest_revision = (
-                    record.canonical_revisions[-1].revision
-                    if record.canonical_revisions
-                    else None
-                )
-                lifecycle = record.lifecycle
-                same_target = (
-                    lifecycle.status
-                    == ("withdrawn" if action == "withdraw" else "rejected")
-                    and lifecycle.reason == request.reason
-                    and lifecycle.deletion_generation
-                    == request.expected_deletion_generation
-                    and latest_revision
-                    == request.expected_active_canonical_revision
-                    and lifecycle.changed_at
-                    >= request.expected_lifecycle_changed_at
-                )
-                if same_target:
-                    return get_player_hand(self.imported_hands, record_key)
-
-                if (
-                    lifecycle.status != "active"
-                    or lifecycle.active_canonical_revision
-                    != request.expected_active_canonical_revision
-                    or lifecycle.deletion_generation
-                    != request.expected_deletion_generation
-                    or lifecycle.changed_at
-                    != request.expected_lifecycle_changed_at
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
                 ):
-                    raise PlayerHandTransitionConflict(
-                        "The hand lifecycle changed after this audit detail was "
-                        "loaded; refresh it before changing approval state"
+                    record = self.imported_hands.get(record_key)
+                    latest_revision = (
+                        record.canonical_revisions[-1].revision
+                        if record.canonical_revisions
+                        else None
                     )
+                    lifecycle = record.lifecycle
+                    same_target = (
+                        lifecycle.status
+                        == ("withdrawn" if action == "withdraw" else "rejected")
+                        and lifecycle.reason == request.reason
+                        and lifecycle.deletion_generation
+                        == request.expected_deletion_generation
+                        and latest_revision
+                        == request.expected_active_canonical_revision
+                        and lifecycle.changed_at
+                        >= request.expected_lifecycle_changed_at
+                    )
+                    if same_target:
+                        return get_player_hand(self.imported_hands, record_key)
 
-                lifecycle_service = ImportedHandLifecycleService(
-                    store=self.imported_hands,
-                    extract=extract_hero_decision_points,
-                    now=lambda: at,
-                )
-                transition = (
-                    lifecycle_service.withdraw
-                    if action == "withdraw"
-                    else lifecycle_service.reject
-                )
-                transition(
-                    record_key,
-                    reason=request.reason,
-                    at=max(at, lifecycle.changed_at),
-                )
-                return get_player_hand(self.imported_hands, record_key)
+                    if (
+                        lifecycle.status != "active"
+                        or lifecycle.active_canonical_revision
+                        != request.expected_active_canonical_revision
+                        or lifecycle.deletion_generation
+                        != request.expected_deletion_generation
+                        or lifecycle.changed_at
+                        != request.expected_lifecycle_changed_at
+                    ):
+                        raise PlayerHandTransitionConflict(
+                            "The hand lifecycle changed after this audit detail "
+                            "was loaded; refresh it before changing approval state"
+                        )
+
+                    lifecycle_service = ImportedHandLifecycleService(
+                        store=self.imported_hands,
+                        extract=extract_hero_decision_points,
+                        now=lambda: at,
+                    )
+                    transition = (
+                        lifecycle_service.withdraw
+                        if action == "withdraw"
+                        else lifecycle_service.reject
+                    )
+                    transition(
+                        record_key,
+                        reason=request.reason,
+                        at=max(at, lifecycle.changed_at),
+                    )
+                    return get_player_hand(self.imported_hands, record_key)

@@ -8,16 +8,18 @@ import shutil
 import socket
 import subprocess
 import sys
-from threading import Thread
+from threading import Event, Thread
 from time import monotonic, sleep
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
+from app.data_lock import DataLockTimeoutError, InterprocessDataLock
 from app.player_main import build_player_server, configured_player_runtime
 from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
 from app.player_namespace import (
@@ -937,6 +939,58 @@ def test_player_hand_close_route_reports_a_busy_process_lock(tmp_path: Path) -> 
     assert response.status_code == 409
     assert "player hand lifecycle lock" in response.json()["detail"]
     assert runtime.workspace.imported_hands.get(key) == record
+
+
+def test_player_hand_close_holds_the_volume_snapshot_through_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    transition_started = Event()
+    allow_transition = Event()
+    real_withdraw = ImportedHandLifecycleService.withdraw
+
+    def delayed_withdraw(
+        service: ImportedHandLifecycleService,
+        record_key: str,
+        *,
+        reason: str,
+        at,
+    ):
+        transition_started.set()
+        assert allow_transition.wait(2)
+        return real_withdraw(service, record_key, reason=reason, at=at)
+
+    monkeypatch.setattr(ImportedHandLifecycleService, "withdraw", delayed_withdraw)
+    responses = []
+    request_thread = Thread(
+        target=lambda: responses.append(
+            client.post(
+                f"/api/player/hands/{key}/withdraw",
+                json=hand_close_payload(record, reason="Reviewed"),
+                headers=player_mutation_headers(session),
+            )
+        )
+    )
+    request_thread.start()
+    try:
+        assert transition_started.wait(2)
+        with pytest.raises(DataLockTimeoutError, match="exclusive hold"):
+            InterprocessDataLock(tmp_path).acquire(
+                exclusive=True,
+                timeout_seconds=0,
+            )
+    finally:
+        allow_transition.set()
+        request_thread.join(timeout=5)
+
+    assert not request_thread.is_alive()
+    assert responses[0].status_code == 200
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
 
 
 def test_player_storage_status_preserves_quarantine_across_restarts(

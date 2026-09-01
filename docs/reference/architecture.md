@@ -303,10 +303,12 @@ confirmed withdrawal/rejection controls; interrupted mutation responses are
 reconciled by rereading the audit before the UI reports the outcome. Reads and
 writes serialize behind restore. Reads take the shared data-volume lock before
 opening records. Lifecycle writes take a stable per-record thread stripe and a
-matching named process-shared flock before the store's shared volume hold and
-leaf cascade journal, preventing concurrent local-runtime processes from
-publishing successors built from the same record. V1 screenshot and benchmark
-stores are neither constructed nor reachable from this composition.
+matching named process-shared flock, then keep a shared data-volume hold across
+the request precondition read and lifecycle cascade. The store's nested shared
+hold and leaf journal lock follow. This prevents either another local-runtime
+process or a concurrent restore from replacing the record between validation
+and transition. V1 screenshot and benchmark stores are neither constructed nor
+reachable from this composition.
 
 The loopback backend serves the verified `apps/pwa/dist-player` build from the
 same local origin. Only its document, manifest, service worker,
