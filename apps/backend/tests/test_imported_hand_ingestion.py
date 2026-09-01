@@ -278,15 +278,22 @@ def test_import_retry_cannot_change_recognition_audit(tmp_path) -> None:
         service.ingest(changed)
 
 
-def test_exact_reimport_detection_cannot_precede_its_occurrence(tmp_path) -> None:
+@pytest.mark.parametrize("hero_player_id", [None, "hero"])
+def test_candidate_detection_cannot_precede_its_occurrence(
+    tmp_path,
+    hero_player_id: str | None,
+) -> None:
     store = FileImportedHandStore(tmp_path)
     service = ImportedHandIngestionService(store=store)
     service.ingest(parsed_candidate(1))
-    candidate = parsed_candidate(2)
+    candidate = parsed_candidate(2, hero_player_id=hero_player_id)
     detection_payload = candidate.detection.model_dump(mode="python")
     detection_payload["detected_at"] = NOW + timedelta(minutes=1)
 
-    with pytest.raises(ValueError, match="precede referenced source occurrence"):
+    with pytest.raises(
+        ImportedHandIngestionError,
+        match="candidate detection cannot precede",
+    ):
         service.ingest(
             ParsedImportedHandCandidate(
                 raw=candidate.raw,

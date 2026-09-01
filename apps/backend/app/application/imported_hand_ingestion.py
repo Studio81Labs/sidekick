@@ -167,6 +167,10 @@ def _validated_candidate(
         raise ImportedHandIngestionError(
             "candidate raw and detected state must share source chronology"
         )
+    if detection.detected_at < raw.provenance.imported_at:
+        raise ImportedHandIngestionError(
+            "candidate detection cannot precede its raw source import"
+        )
     if raw.reimports:
         raise ImportedHandIngestionError(
             "an adapter candidate cannot pre-author retained reimport audit"
