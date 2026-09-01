@@ -535,6 +535,33 @@ reference, authorize a remote provider, persist grades, calculate aggregate
 mixing deviations, move mastery, or schedule drills. Those application and
 Phase 0 gates remain open under issues #412, #414, #416, and #418.
 
+Optional remote-reference preflight contracts live under
+`app/domain/remote_references`. This pure, non-networking boundary is local-only
+by default and evaluates a dispatch candidate only when active provider-policy
+snapshots, the semantic policy digest, exact disclosure, explicit unexpired
+consent generation, canonical DNS-only HTTPS origin, route schema, and sorted
+field-category allowlist all match. Closed component models
+make raw histories, hand/site/session and canonical-record identities, player
+names, timestamps, screenshots, and learning/profile state unrepresentable in
+the outbound DTO. Route revisions, abstraction digests, and range digests must
+come only from the independently selected provider manifest, never player data.
+Provider configuration, policy, reference-source, commercial
+serving-rights, derived-output-rights, disclosure, consent, request, economics,
+utility, and abstraction revisions remain pinned in local audit provenance;
+local decision identity is never promoted to an outbound identifier or digest.
+The candidate is not transport authorization: a future application boundary
+must atomically re-read authoritative provider status, consent status, and the
+current consent generation immediately before each dispatch or retry. Revocation,
+policy drift, missing routes, and provider, network, or response failure remain
+visibly unavailable and ungraded, with no remote or heuristic-to-solved fallback;
+response digests are computed locally instead of accepted as provider claims.
+There is intentionally no provider selection, HTTP adapter, credential loading,
+persistence, source activation, or resolved-reference promotion yet, so this
+checkpoint does not close the source qualification and lifecycle work in issues
+#412 and #416. A future transport must also enforce its configured-origin
+allowlist after DNS resolution and reject private, loopback, link-local, and
+redirected destinations.
+
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact
 whose filename matches the record's active revision and deletion generation,

@@ -1,0 +1,53 @@
+"""Consent and minimization contracts for optional remote solved references."""
+
+from app.domain.remote_references.models import (
+    BoardAbstractionRoute,
+    BoardCardsRoute,
+    ConditionedRange,
+    ConditionedRangesRoute,
+    GameEconomicsRoute,
+    HoleCardAbstractionRoute,
+    HoleCardsRoute,
+    PriorActionsRoute,
+    RemoteLookupUnavailableReason,
+    RemoteOutboundCategory,
+    RemotePriorAction,
+    RemoteReferenceConsent,
+    RemoteReferenceDisclosure,
+    RemoteReferenceDispatchPreflight,
+    RemoteReferenceLookupUnavailable,
+    RemoteReferenceMode,
+    RemoteReferenceProviderPolicy,
+    RemoteReferenceRouteRequest,
+    StackWagerPotRoute,
+    TablePositionRoute,
+)
+from app.domain.remote_references.services import (
+    evaluate_remote_reference_preflight,
+    record_remote_reference_unavailable,
+)
+
+__all__ = [
+    "BoardAbstractionRoute",
+    "BoardCardsRoute",
+    "ConditionedRange",
+    "ConditionedRangesRoute",
+    "GameEconomicsRoute",
+    "HoleCardAbstractionRoute",
+    "HoleCardsRoute",
+    "PriorActionsRoute",
+    "RemoteLookupUnavailableReason",
+    "RemoteOutboundCategory",
+    "RemotePriorAction",
+    "RemoteReferenceConsent",
+    "RemoteReferenceDisclosure",
+    "RemoteReferenceDispatchPreflight",
+    "RemoteReferenceLookupUnavailable",
+    "RemoteReferenceMode",
+    "RemoteReferenceProviderPolicy",
+    "RemoteReferenceRouteRequest",
+    "StackWagerPotRoute",
+    "TablePositionRoute",
+    "evaluate_remote_reference_preflight",
+    "record_remote_reference_unavailable",
+]
