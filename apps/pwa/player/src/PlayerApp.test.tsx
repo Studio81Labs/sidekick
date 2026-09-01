@@ -238,6 +238,31 @@ const activeHandDetail = {
   ],
 };
 
+const conflictedActiveHand = {
+  ...activeHand,
+  raw_source_count: 2,
+  detection_count: 2,
+  unresolved_conflict_count: 1,
+};
+
+const conflictedActiveHandDetail = {
+  ...activeHandDetail,
+  summary: conflictedActiveHand,
+  raw_sources: pendingHandDetail.raw_sources,
+  detections: pendingHandDetail.detections,
+  conflicts: [
+    {
+      conflict_id: "conflict-1",
+      raw_source_ids: ["file-1", "file-2"],
+      detected_ids: ["detection-1", "detection-2"],
+      active_canonical_revision_at_creation: 1,
+      status: "unresolved",
+      selected_raw_source_id: null,
+      resolved_at: null,
+    },
+  ],
+};
+
 function inactiveApprovedHandDetail(status: "withdrawn" | "rejected") {
   return {
     ...activeHandDetail,
@@ -604,6 +629,55 @@ describe("PlayerApp", () => {
         }) as HTMLTextAreaElement
       ).value,
     ).toContain('"hero_cards": [\n    "As",');
+  });
+
+  it("allows same-source reapproval while blocking an unresolved source switch", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [conflictedActiveHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(conflictedActiveHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    const approvalButton = screen.getByRole("button", {
+      name: "Approve new canonical revision",
+    });
+    expect(approvalButton).toBeEnabled();
+    expect(
+      screen.getByText(/reapproval stays on the preserved canonical source/),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Detection to review" }),
+      "detection-2",
+    );
+
+    expect(approvalButton).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Resolve the retained source conflict before switching the canonical revision",
+    );
   });
 
   it("approves an explicitly corrected detection with exact audit preconditions", async () => {

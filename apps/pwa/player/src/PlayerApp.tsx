@@ -140,6 +140,28 @@ function normalizedJson(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 
+function approvalRequiresConflictResolution(
+  detail: PlayerHandDetail,
+  detectionId: string,
+): boolean {
+  if (detail.summary.unresolved_conflict_count === 0) return false;
+  const selectedDetection = detail.detections.find(
+    (detection) => detection.detection_id === detectionId,
+  );
+  const latestRevision =
+    detail.canonical_revisions[detail.canonical_revisions.length - 1];
+  const canonicalDetection = latestRevision
+    ? detail.detections.find(
+        (detection) => detection.detection_id === latestRevision.detection_id,
+      )
+    : null;
+  return (
+    !selectedDetection ||
+    !canonicalDetection ||
+    selectedDetection.raw_source_id !== canonicalDetection.raw_source_id
+  );
+}
+
 interface HandDetailProps {
   approvalDraft: HandApprovalDraft | null;
   busy: BusyAction;
@@ -195,6 +217,9 @@ function HandDetail({
     })),
   );
   const deletionRequest = detail.lifecycle.deletion_request;
+  const approvalBlockedByConflict = approvalDraft
+    ? approvalRequiresConflictResolution(detail, approvalDraft.detectionId)
+    : false;
   return (
     <article className="hand-detail" aria-labelledby="hand-detail-heading">
       <div>
@@ -283,10 +308,18 @@ function HandDetail({
             separately and becomes the only state eligible for learning.
           </p>
           {summary.unresolved_conflict_count > 0 ? (
-            <p className="deletion-failure" role="alert">
-              Resolve the retained source conflict before approving a canonical
-              revision.
-            </p>
+            approvalBlockedByConflict ? (
+              <p className="deletion-failure" role="alert">
+                Resolve the retained source conflict before switching the
+                canonical revision to this detection's source.
+              </p>
+            ) : (
+              <p className="field-help">
+                A competing source remains unresolved. This reapproval stays on
+                the preserved canonical source and does not resolve or replace
+                it.
+              </p>
+            )
           ) : null}
           <label>
             <span>Detection to review</span>
@@ -338,7 +371,7 @@ function HandDetail({
           <button
             className="primary-button"
             type="button"
-            disabled={busy !== null || summary.unresolved_conflict_count > 0}
+            disabled={busy !== null || approvalBlockedByConflict}
             onClick={onApprove}
           >
             {busy === "approve"
@@ -800,6 +833,14 @@ export default function PlayerApp() {
 
   const approveReviewedHand = async () => {
     if (!credentials || !handDetail || !approvalDraft) return;
+    if (
+      approvalRequiresConflictResolution(handDetail, approvalDraft.detectionId)
+    ) {
+      setError(
+        "Resolve the retained source conflict before switching canonical source.",
+      );
+      return;
+    }
     let approvedState: Record<string, unknown>;
     try {
       const parsed = JSON.parse(approvalDraft.reviewedState) as unknown;

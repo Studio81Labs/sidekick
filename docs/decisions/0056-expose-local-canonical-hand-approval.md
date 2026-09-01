@@ -69,11 +69,13 @@ matching canonical revision or that detection, and requires explicit
 confirmation before publishing. It validates that the reviewed value is a JSON
 object and requires a reason for a visible JSON difference. On an error or
 interrupted response it reloads the audit detail and reports success only when
-the latest active revision carries the attempted UUID. When no exact commit is
-found, a still-applicable reviewed draft remains in the editor against the
-refreshed preconditions. A durable ready cascade returns recovery-required; the
-PWA clears its projections and credentials and requires runtime restart before
-retrying.
+the latest active revision carries the attempted UUID. An unresolved competing
+source blocks switching canonical source, but it does not block a correction or
+reapproval whose selected detection belongs to the latest canonical source.
+When no exact commit is found, a still-applicable reviewed draft remains in the
+editor against the refreshed preconditions. A durable ready cascade returns
+recovery-required; the PWA clears its projections and credentials and requires
+runtime restart before retrying.
 
 ## Consequences
 
