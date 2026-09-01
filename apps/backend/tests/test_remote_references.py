@@ -1249,6 +1249,15 @@ def test_forced_post_all_in_is_not_treated_as_pending_action() -> None:
         PositionedStack(position="BTN", remaining_stack_bb=Decimal("97.5")),
         PositionedStack(position="SB", remaining_stack_bb=Decimal("0")),
     )
+    stack_payload["current_street_commitments"] = (
+        PositionedCommitment(position="BB", committed_bb=Decimal("1")),
+        PositionedCommitment(position="BTN", committed_bb=Decimal("2.5")),
+        PositionedCommitment(position="CO", committed_bb=Decimal("0")),
+        PositionedCommitment(position="HJ", committed_bb=Decimal("0")),
+        PositionedCommitment(position="SB", committed_bb=Decimal("0.3")),
+        PositionedCommitment(position="UTG", committed_bb=Decimal("0")),
+    )
+    stack_payload["pot_bb"] = Decimal("3.8")
     components[3] = StackWagerPotRoute.model_validate(stack_payload)
     components[4] = TablePositionRoute(
         dealt_in_player_count=6,
@@ -1264,6 +1273,51 @@ def test_forced_post_all_in_is_not_treated_as_pending_action() -> None:
     table = result.components[4]
     assert isinstance(table, TablePositionRoute)
     assert table.active_player_positions == ("BB", "BTN", "SB")
+
+
+def test_short_big_blind_all_in_keeps_the_nominal_betting_wager() -> None:
+    base = route_request()
+    components = (
+        base.components[0],
+        base.components[1],
+        PriorActionsRoute(actions=()),
+        StackWagerPotRoute(
+            hero_stack_bb=Decimal("99.5"),
+            active_player_stacks=(
+                PositionedStack(position="BB", remaining_stack_bb=Decimal("0")),
+                PositionedStack(
+                    position="BTN/SB",
+                    remaining_stack_bb=Decimal("99.5"),
+                ),
+            ),
+            committed_pot_before_street_bb=Decimal("0"),
+            current_street_commitments=(
+                PositionedCommitment(position="BB", committed_bb=Decimal("0.3")),
+                PositionedCommitment(
+                    position="BTN/SB",
+                    committed_bb=Decimal("0.5"),
+                ),
+            ),
+            pot_bb=Decimal("0.8"),
+            current_wager_bb=Decimal("1"),
+            amount_to_call_bb=Decimal("0.5"),
+        ),
+        TablePositionRoute(
+            dealt_in_player_count=2,
+            hero_position="BTN/SB",
+            hero_button_distance=0,
+            hero_action_index=0,
+            active_player_positions=("BB", "BTN/SB"),
+            relative_position="not_applicable",
+        ),
+    )
+
+    result = route_request(components=components)
+
+    stack = result.components[3]
+    assert isinstance(stack, StackWagerPotRoute)
+    assert stack.pot_bb == Decimal("0.8")
+    assert stack.current_wager_bb == Decimal("1")
 
 
 def test_betting_closes_when_the_only_chipped_player_already_matches() -> None:

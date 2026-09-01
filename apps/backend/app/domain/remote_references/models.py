@@ -507,8 +507,8 @@ class StackWagerPotRoute(RemoteReferenceModel):
         derived_wager = max(
             item.committed_bb for item in self.current_street_commitments
         )
-        if self.current_wager_bb != derived_wager:
-            raise ValueError("current wager must match position commitments")
+        if self.current_wager_bb < derived_wager:
+            raise ValueError("current wager cannot trail position commitments")
         derived_pot = self.committed_pot_before_street_bb + sum(
             (item.committed_bb for item in self.current_street_commitments),
             start=Decimal(0),
@@ -834,9 +834,15 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
             pending_action_positions = live_positions - all_in_positions
             if street == "preflop":
                 simulated_commitments[small_blind_position] = (
-                    economics.small_blind_bb
+                    commitment_by_position[small_blind_position]
+                    if small_blind_position in initial_all_in_positions
+                    else economics.small_blind_bb
                 )
-                simulated_commitments["BB"] = economics.big_blind_bb
+                simulated_commitments["BB"] = (
+                    commitment_by_position["BB"]
+                    if "BB" in initial_all_in_positions
+                    else economics.big_blind_bb
+                )
                 running_wager = economics.big_blind_bb
                 minimum_raise_increment = economics.big_blind_bb
 
@@ -938,6 +944,10 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                     raise ValueError(
                         "action totals must match current-street commitments"
                     )
+                if running_wager != stacks.current_wager_bb:
+                    raise ValueError(
+                        "current wager must match the reconstructed betting wager"
+                    )
                 if table.hero_position not in pending_action_positions:
                     raise ValueError(
                         "the action line ended after the betting round closed"
@@ -964,13 +974,18 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
             )
             if stacks.committed_pot_before_street_bb != expected_ante_pot:
                 raise ValueError("preflop prior pot must match the configured antes")
-            if (
-                commitment_by_position[small_blind_position]
-                < economics.small_blind_bb
+            for position, nominal_blind in (
+                (small_blind_position, economics.small_blind_bb),
+                ("BB", economics.big_blind_bb),
             ):
-                raise ValueError("small-blind commitment is missing")
-            if commitment_by_position["BB"] < economics.big_blind_bb:
-                raise ValueError("big-blind commitment is missing")
+                contribution = commitment_by_position[position]
+                if position in initial_all_in_positions:
+                    if contribution > nominal_blind:
+                        raise ValueError(
+                            "an initial all-in blind cannot exceed its nominal blind"
+                        )
+                elif contribution < nominal_blind:
+                    raise ValueError(f"{position} blind commitment is missing")
             ordered_positions = sorted(
                 valid_positions,
                 key=lambda position: (

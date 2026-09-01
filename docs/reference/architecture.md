@@ -567,7 +567,9 @@ accepted as independent claims. Check, call, bet, raise, minimum-raise, and
 short-all-in reopening semantics are validated across the action line; active
 players are derived from its folds while all-in survivors remain visible with
 zero remaining stack. Players exhausted by represented forced contributions are
-excluded from pending action, and a stackless hero cannot become a candidate.
+excluded from pending action; a short all-in blind contributes its exact posted
+amount to the pot while the nominal blind remains the betting bring-in, and a
+stackless hero cannot become a candidate.
 Unordered hole cards are canonicalized before exact-route hashing. A route
 cannot claim another decision after all pending
 responders have matched or left the hand. Pot-limit routes remain unavailable
