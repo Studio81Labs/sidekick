@@ -6,6 +6,8 @@ from _thread import LockType
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import errno
+from hashlib import sha256
+import json
 import os
 from pathlib import Path
 from stat import S_ISDIR
@@ -22,14 +24,16 @@ from app.data_lock import (
     InterprocessDataLock,
     InterprocessFileLock,
 )
-from app.domain.imported_hands import extract_hero_decision_points
+from app.domain.imported_hands import DeletionReceipt, extract_hero_decision_points
 from app.player_hands import (
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
+    PlayerHandDeleteRequest,
     PlayerHandDetail,
     PlayerHandList,
     get_player_hand,
     list_player_hands,
+    player_hand_record_version,
 )
 from app.storage.imported_hand_store import (
     IMPORTED_HANDS_DIRNAME,
@@ -66,6 +70,43 @@ def _advanced_lifecycle_time(observed_at: datetime, current: datetime) -> dateti
         raise PlayerHandTransitionConflict(
             "The hand lifecycle timestamp cannot advance beyond its stored value"
         ) from exc
+
+
+def _deletion_target_generation(request: PlayerHandDeleteRequest) -> int:
+    if request.expected_lifecycle_status == "deletion_pending":
+        return request.expected_deletion_generation
+    return request.expected_deletion_generation + 1
+
+
+def _deletion_receipt(
+    record_key: str,
+    request: PlayerHandDeleteRequest,
+    *,
+    deleted_at: datetime,
+) -> DeletionReceipt:
+    generation = _deletion_target_generation(request)
+    payload = json.dumps(
+        {
+            "schema": "player-hand-deletion-intent/v1",
+            "record_key": record_key,
+            "request_id": request.request_id,
+            "reason": request.reason,
+            "record_version": request.expected_record_version,
+            "source_lifecycle_status": request.expected_lifecycle_status,
+            "source_deletion_generation": request.expected_deletion_generation,
+            "target_deletion_generation": generation,
+            "deleted_at": deleted_at.isoformat(),
+        },
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return DeletionReceipt(
+        receipt_id=request.request_id,
+        generation=generation,
+        deleted_at=deleted_at,
+        tombstone_sha256=sha256(payload).hexdigest(),
+    )
 
 
 def _macos_extended_acl_has_entries(path: Path, *, library=None) -> bool:
@@ -418,6 +459,103 @@ class PlayerWorkspace:
                             record_key,
                             reason=request.reason,
                             at=_advanced_lifecycle_time(at, lifecycle.changed_at),
+                        )
+                    except (DataLockError, OSError) as exc:
+                        if self.imported_hands.has_interrupted_write(record_key):
+                            raise PlayerHandRecoveryRequired(
+                                "This hand has an interrupted lifecycle write; "
+                                "restart the local player runtime so recovery "
+                                "can finish"
+                            ) from exc
+                        raise
+                    self._require_final_hand_record(record_key)
+                    return get_player_hand(self.imported_hands, record_key)
+
+    def delete_hand_record(
+        self,
+        record_key: str,
+        *,
+        request: PlayerHandDeleteRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerHandDetail:
+        """Deactivate, purge, and receipt-bind one exact retained snapshot."""
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self._require_final_hand_record(record_key)
+                    record = self.imported_hands.get(record_key)
+                    lifecycle = record.lifecycle
+                    if lifecycle.status == "deleted":
+                        receipt = record.deletion_receipt
+                        if receipt is not None and receipt == _deletion_receipt(
+                            record_key,
+                            request,
+                            deleted_at=receipt.deleted_at,
+                        ):
+                            return get_player_hand(self.imported_hands, record_key)
+                        raise PlayerHandTransitionConflict(
+                            "This hand was permanently deleted by another request"
+                        )
+
+                    if (
+                        player_hand_record_version(record)
+                        != request.expected_record_version
+                        or lifecycle.status != request.expected_lifecycle_status
+                        or lifecycle.active_canonical_revision
+                        != request.expected_active_canonical_revision
+                        or lifecycle.deletion_generation
+                        != request.expected_deletion_generation
+                        or lifecycle.changed_at
+                        != request.expected_lifecycle_changed_at
+                    ):
+                        raise PlayerHandTransitionConflict(
+                            "The retained hand changed after this audit detail was "
+                            "loaded; refresh it before permanently deleting it"
+                        )
+                    if (
+                        lifecycle.status == "deletion_pending"
+                        and lifecycle.reason != request.reason
+                    ):
+                        raise PlayerHandTransitionConflict(
+                            "A deletion cleanup retry must use the retained request reason"
+                        )
+
+                    lifecycle_service = ImportedHandLifecycleService(
+                        store=self.imported_hands,
+                        extract=extract_hero_decision_points,
+                        now=lambda: at,
+                    )
+                    try:
+                        pending = record
+                        if lifecycle.status != "deletion_pending":
+                            pending = lifecycle_service.request_deletion(
+                                record_key,
+                                reason=request.reason,
+                                at=_advanced_lifecycle_time(
+                                    at,
+                                    lifecycle.changed_at,
+                                ),
+                            )
+                        deleted_at = _advanced_lifecycle_time(
+                            at,
+                            pending.lifecycle.changed_at,
+                        )
+                        lifecycle_service.purge(
+                            record_key,
+                            receipt=_deletion_receipt(
+                                record_key,
+                                request,
+                                deleted_at=deleted_at,
+                            ),
                         )
                     except (DataLockError, OSError) as exc:
                         if self.imported_hands.has_interrupted_write(record_key):

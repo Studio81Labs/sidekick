@@ -25,6 +25,7 @@ const readyStorage = {
 
 const pendingHand = {
   record_key: "a".repeat(64),
+  record_version: "9".repeat(64),
   identity: {
     namespace: "site-hand-id/v1",
     site: "pokerstars",
@@ -1050,6 +1051,444 @@ describe("PlayerApp", () => {
       ).not.toBeInTheDocument();
     },
   );
+
+  it("permanently deletes an exact retained snapshot with CSRF protection", async () => {
+    const user = userEvent.setup();
+    const reason = "Remove all retained hand evidence";
+    const requestId = "11111111-1111-4111-8111-111111111111" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    const committed = {
+      ...deletedHandDetail,
+      summary: {
+        ...deletedHand,
+        record_version: "8".repeat(64),
+        deletion_generation: 1,
+        lifecycle_changed_at: "2026-08-30T12:30:00Z",
+      },
+      lifecycle: {
+        ...deletedHandDetail.lifecycle,
+        deletion_generation: 1,
+        changed_at: "2026-08-30T12:30:00Z",
+        reason,
+      },
+      deletion_receipt: {
+        ...deletedHandDetail.deletion_receipt,
+        receipt_id: requestId,
+        generation: 1,
+        deleted_at: "2026-08-30T12:30:00Z",
+      },
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockResolvedValueOnce(jsonResponse(committed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Permanent deletion reason" }),
+      reason,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete permanently" }),
+    );
+
+    expect(
+      await screen.findByText(/Permanent deletion completed/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Deletion receipt 11111111/)).toHaveTextContent(
+      "generation 1",
+    );
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringMatching(/cannot be undone by restoring an older backup/),
+    );
+    const deleteRequest = fetchMock.mock.calls[4];
+    expect(deleteRequest?.[0]).toBe(
+      `/api/player/hands/${activeHand.record_key}/delete`,
+    );
+    expect(deleteRequest?.[1]?.method).toBe("POST");
+    const deleteHeaders = new Headers(deleteRequest?.[1]?.headers);
+    expect(deleteHeaders.get("Authorization")).toBe("Bearer player-session");
+    expect(deleteHeaders.get("X-Poker-CSRF-Token")).toBe("csrf-token");
+    expect(deleteHeaders.get("Content-Type")).toBe("application/json");
+    expect(JSON.parse(String(deleteRequest?.[1]?.body))).toEqual({
+      request_id: requestId,
+      reason,
+      expected_record_version: activeHand.record_version,
+      expected_lifecycle_status: "active",
+      expected_active_canonical_revision: 1,
+      expected_deletion_generation: 0,
+      expected_lifecycle_changed_at: "2026-08-30T12:00:00Z",
+    });
+  });
+
+  it("does not send permanent deletion when confirmation is cancelled", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Permanent deletion reason" }),
+      "Keep this after all",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete permanently" }),
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(
+      screen.getByText(/Canonical revision 1 is active/),
+    ).toBeInTheDocument();
+  });
+
+  it("refreshes and retries cleanup after the logical deletion already committed", async () => {
+    const user = userEvent.setup();
+    const reason = "Remove all retained hand evidence";
+    const firstRequestId = "11111111-1111-4111-8111-111111111111" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    const retryRequestId = "22222222-2222-4222-8222-222222222222" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    const pendingCleanup = {
+      ...failedDeletionHandDetail,
+      summary: {
+        ...failedDeletionHand,
+        record_version: "8".repeat(64),
+        deletion_generation: 1,
+        lifecycle_changed_at: "2026-08-30T12:30:00Z",
+      },
+      lifecycle: {
+        ...failedDeletionHandDetail.lifecycle,
+        deletion_generation: 1,
+        changed_at: "2026-08-30T12:30:00Z",
+        reason,
+        deletion_request: {
+          generation: 1,
+          requested_at: "2026-08-30T12:30:00Z",
+          cleanup_status: "pending",
+          last_error: null,
+        },
+      },
+    };
+    const committed = {
+      ...deletedHandDetail,
+      summary: {
+        ...deletedHand,
+        record_version: "7".repeat(64),
+        deletion_generation: 1,
+        lifecycle_changed_at: "2026-08-30T12:31:00Z",
+      },
+      lifecycle: {
+        ...deletedHandDetail.lifecycle,
+        deletion_generation: 1,
+        changed_at: "2026-08-30T12:31:00Z",
+        reason,
+      },
+      deletion_receipt: {
+        ...deletedHandDetail.deletion_receipt,
+        receipt_id: retryRequestId,
+        generation: 1,
+        deleted_at: "2026-08-30T12:31:00Z",
+      },
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window.crypto, "randomUUID")
+      .mockReturnValueOnce(firstRequestId)
+      .mockReturnValueOnce(retryRequestId);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockResolvedValueOnce(
+        jsonResponse({ detail: "Retained artifact cleanup failed" }, 500),
+      )
+      .mockResolvedValueOnce(jsonResponse(pendingCleanup))
+      .mockResolvedValueOnce(jsonResponse(committed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Permanent deletion reason" }),
+      reason,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete permanently" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "deletion cleanup is pending",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Retained artifact cleanup failed",
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Permanent deletion reason" }),
+    ).toHaveValue(reason);
+    await user.click(
+      screen.getByRole("button", { name: "Retry deletion cleanup" }),
+    );
+
+    expect(
+      await screen.findByText(/Permanent deletion completed/),
+    ).toBeInTheDocument();
+    const retryRequest = fetchMock.mock.calls[6];
+    expect(JSON.parse(String(retryRequest?.[1]?.body))).toEqual({
+      request_id: retryRequestId,
+      reason,
+      expected_record_version: pendingCleanup.summary.record_version,
+      expected_lifecycle_status: "deletion_pending",
+      expected_active_canonical_revision: null,
+      expected_deletion_generation: 1,
+      expected_lifecycle_changed_at: "2026-08-30T12:30:00Z",
+    });
+  });
+
+  it("recognizes an exact deletion receipt after the mutation response is lost", async () => {
+    const user = userEvent.setup();
+    const requestId = "11111111-1111-4111-8111-111111111111" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    const committed = {
+      ...deletedHandDetail,
+      summary: {
+        ...deletedHand,
+        deletion_generation: 1,
+      },
+      lifecycle: {
+        ...deletedHandDetail.lifecycle,
+        deletion_generation: 1,
+      },
+      deletion_receipt: {
+        ...deletedHandDetail.deletion_receipt,
+        receipt_id: requestId,
+        generation: 1,
+      },
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockRejectedValueOnce(new TypeError("connection interrupted"))
+      .mockResolvedValueOnce(jsonResponse(committed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Permanent deletion reason" }),
+      "Remove all retained hand evidence",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete permanently" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /Permanent deletion committed.*receipt was refreshed/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("does not attribute another deletion receipt to the interrupted request", async () => {
+    const user = userEvent.setup();
+    const requestId = "11111111-1111-4111-8111-111111111111" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockResolvedValueOnce(
+        jsonResponse({ detail: "The retained hand changed" }, 409),
+      )
+      .mockResolvedValueOnce(jsonResponse(deletedHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Permanent deletion reason" }),
+      "Remove all retained hand evidence",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete permanently" }),
+    );
+
+    expect(
+      await screen.findByText(/Permanent deletion was not confirmed/),
+    ).toHaveTextContent("The retained hand changed");
+    expect(
+      screen.queryByText(/Permanent deletion committed.*receipt was refreshed/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("requires restart recovery after an interrupted deletion cascade", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { detail: "This hand has an interrupted lifecycle write" },
+          503,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Permanent deletion reason" }),
+      "Remove all retained hand evidence",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Delete permanently" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /lifecycle outcome is unresolved.*Restart the local player runtime/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(PLAYER_CSRF_STORAGE_KEY)).toBeNull();
+  });
 
   it("surfaces a failed deletion cleanup instead of generic inactive copy", async () => {
     const user = userEvent.setup();

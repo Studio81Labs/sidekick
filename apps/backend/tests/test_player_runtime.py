@@ -24,6 +24,7 @@ from app.data_lock import DataLockTimeoutError, InterprocessDataLock
 from app.domain.imported_hands import extract_hero_decision_points
 from app.player_main import build_player_server, configured_player_runtime
 from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
+from app.player_hands import player_hand_record_version
 from app.player_namespace import (
     DenyHostedPlayerNamespaceMiddleware,
     is_player_api_path,
@@ -61,6 +62,8 @@ from test_imported_hand_store import (
 
 
 TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
+DELETE_REQUEST_ID = "11111111-1111-4111-8111-111111111111"
+DELETE_RETRY_REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 
 
 def _create_player_runtime(data_dir: Path, **kwargs) -> PlayerRuntime:
@@ -111,6 +114,24 @@ def hand_close_payload(record, *, reason: str) -> dict[str, object]:
     assert lifecycle.active_canonical_revision is not None
     return {
         "reason": reason,
+        "expected_active_canonical_revision": lifecycle.active_canonical_revision,
+        "expected_deletion_generation": lifecycle.deletion_generation,
+        "expected_lifecycle_changed_at": lifecycle.changed_at.isoformat(),
+    }
+
+
+def hand_delete_payload(
+    record,
+    *,
+    reason: str,
+    request_id: str = DELETE_REQUEST_ID,
+) -> dict[str, object]:
+    lifecycle = record.lifecycle
+    return {
+        "request_id": request_id,
+        "reason": reason,
+        "expected_record_version": player_hand_record_version(record),
+        "expected_lifecycle_status": lifecycle.status,
         "expected_active_canonical_revision": lifecycle.active_canonical_revision,
         "expected_deletion_generation": lifecycle.deletion_generation,
         "expected_lifecycle_changed_at": lifecycle.changed_at.isoformat(),
@@ -972,6 +993,302 @@ def test_player_hand_close_routes_refuse_stale_or_inactive_records(
     assert runtime.workspace.imported_hands.get(pending_key) == pending
 
 
+def test_player_hand_delete_routes_purge_and_are_idempotent(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(
+        key,
+        extract_hero_decision_points(record),
+    )
+    session = exchange_session(client, runtime)
+    authorization = {"Authorization": f"Bearer {session['session_token']}"}
+    backup = client.get("/api/player/backups/export", headers=authorization)
+    assert backup.status_code == 200
+    payload = hand_delete_payload(
+        record,
+        reason="  Remove all retained hand evidence  ",
+    )
+
+    assert (
+        client.post(
+            f"/api/player/hands/{key}/delete",
+            json=payload,
+            headers={"Origin": PLAYER_ORIGIN},
+        ).status_code
+        == 401
+    )
+    missing_csrf = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=payload,
+        headers={**authorization, "Origin": PLAYER_ORIGIN},
+    )
+    first = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+    retry = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+    different_retry = client.post(
+        f"/api/player/hands/{key}/delete",
+        json={**payload, "request_id": DELETE_RETRY_REQUEST_ID},
+        headers=player_mutation_headers(session),
+    )
+
+    assert missing_csrf.status_code == 403
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    assert different_retry.status_code == 409
+    assert "deleted by another request" in different_retry.json()["detail"]
+    detail = first.json()
+    assert detail["summary"]["identity"] is None
+    assert detail["summary"]["lifecycle_status"] == "deleted"
+    assert detail["summary"]["deletion_generation"] == 1
+    assert detail["summary"]["learning_eligible"] is False
+    assert detail["raw_sources"] == []
+    assert detail["detections"] == []
+    assert detail["conflicts"] == []
+    assert detail["canonical_revisions"] == []
+    assert detail["deletion_receipt"]["receipt_id"] == DELETE_REQUEST_ID
+    assert len(detail["deletion_receipt"]["tombstone_sha256"]) == 64
+    assert RAW_TEXT not in first.text
+    assert runtime.workspace.imported_hands.list_decision_artifacts(key) == []
+
+    restored = client.post(
+        "/api/player/backups/restore",
+        content=backup.content,
+        headers={
+            **player_mutation_headers(session),
+            "Content-Type": "application/zip",
+        },
+    )
+    assert restored.status_code == 200
+    assert restored.json()["skipped_stale_records"] == 1
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "deleted"
+
+
+def test_player_hand_delete_purges_an_unapproved_record(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=hand_delete_payload(
+            record,
+            reason="Remove this unapproved import",
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["lifecycle_status"] == "deleted"
+    assert response.json()["summary"]["deletion_generation"] == 1
+    assert response.json()["summary"]["active_canonical_revision"] is None
+
+
+def test_player_hand_delete_refuses_a_stale_retained_record_version(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    payload = hand_delete_payload(record, reason="Delete retained evidence")
+    changed = record.model_copy(
+        update={
+            "lifecycle": record.lifecycle.model_copy(
+                update={"reason": "Newer retained audit event"}
+            )
+        }
+    )
+    runtime.workspace.imported_hands.save(key, changed)
+
+    response = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 409
+    assert "retained hand changed" in response.json()["detail"]
+    assert runtime.workspace.imported_hands.get(key) == changed
+
+
+def test_player_hand_delete_retries_a_precommit_cleanup_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(
+        key,
+        extract_hero_decision_points(record),
+    )
+    session = exchange_session(client, runtime)
+    reason = "Remove retained evidence"
+    real_purge = ImportedHandLifecycleService.purge
+
+    def fail_before_purge_intent(*_args, **_kwargs):
+        raise OSError("simulated cleanup staging failure")
+
+    monkeypatch.setattr(
+        ImportedHandLifecycleService,
+        "purge",
+        fail_before_purge_intent,
+    )
+    first = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=hand_delete_payload(record, reason=reason),
+        headers=player_mutation_headers(session),
+    )
+
+    assert first.status_code == 500
+    pending = runtime.workspace.imported_hands.get(key)
+    assert pending.lifecycle.status == "deletion_pending"
+    assert pending.lifecycle.reason == reason
+    assert pending.lifecycle.deletion_generation == 1
+    assert runtime.workspace.imported_hands.active_decisions(key) is None
+    assert runtime.workspace.imported_hands.list_decision_artifacts(key)
+
+    monkeypatch.setattr(ImportedHandLifecycleService, "purge", real_purge)
+    wrong_reason = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=hand_delete_payload(
+            pending,
+            reason="A different deletion reason",
+            request_id=DELETE_RETRY_REQUEST_ID,
+        ),
+        headers=player_mutation_headers(session),
+    )
+    assert wrong_reason.status_code == 409
+    assert "retained request reason" in wrong_reason.json()["detail"]
+    assert runtime.workspace.imported_hands.get(key) == pending
+
+    retry = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=hand_delete_payload(
+            pending,
+            reason=reason,
+            request_id=DELETE_RETRY_REQUEST_ID,
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert retry.status_code == 200
+    assert retry.json()["summary"]["lifecycle_status"] == "deleted"
+    assert retry.json()["summary"]["deletion_generation"] == 1
+    assert retry.json()["deletion_receipt"]["receipt_id"] == DELETE_RETRY_REQUEST_ID
+    assert runtime.workspace.imported_hands.list_decision_artifacts(key) == []
+
+
+def test_player_hand_delete_keeps_an_interrupted_purge_unresolved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(
+        key,
+        extract_hero_decision_points(record),
+    )
+    session = exchange_session(client, runtime)
+    real_commit_delete = CascadeJournal._commit_delete
+
+    def fail_artifact_deletion(
+        journal: CascadeJournal,
+        record_key: str,
+        relative: Path,
+    ) -> None:
+        raise OSError("simulated purge publication failure")
+
+    monkeypatch.setattr(
+        CascadeJournal,
+        "_commit_delete",
+        fail_artifact_deletion,
+    )
+    response = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=hand_delete_payload(record, reason="Remove retained evidence"),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 503
+    assert "interrupted deletion write" in response.json()["detail"]
+    assert runtime.workspace.imported_hands.has_interrupted_write(key)
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "deleted"
+    assert runtime.workspace.imported_hands.list_decision_artifacts(key)
+    detail = client.get(
+        f"/api/player/hands/{key}",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    assert detail.status_code == 503
+
+    monkeypatch.setattr(CascadeJournal, "_commit_delete", real_commit_delete)
+    recovered = _create_player_runtime(tmp_path)
+    assert recovered.workspace.imported_hand_recovery.completed
+    assert recovered.workspace.imported_hands.get(key).lifecycle.status == "deleted"
+    assert recovered.workspace.imported_hands.list_decision_artifacts(key) == []
+
+
+@pytest.mark.parametrize(
+    "payload_update",
+    [
+        {"request_id": "   "},
+        {"request_id": "meaningful-personal-data"},
+        {"reason": "   "},
+        {"expected_record_version": "not-a-sha256"},
+        {"expected_lifecycle_status": "deleted"},
+        {"expected_active_canonical_revision": None},
+        {
+            "expected_lifecycle_status": "withdrawn",
+            "expected_active_canonical_revision": 1,
+        },
+        {"expected_deletion_generation": -1},
+        {"expected_lifecycle_changed_at": "2026-08-30T12:00:00"},
+        {"unexpected": True},
+    ],
+)
+def test_player_hand_delete_validates_the_complete_precondition(
+    tmp_path: Path,
+    payload_update: dict[str, object],
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        f"/api/player/hands/{key}/delete",
+        json={
+            **hand_delete_payload(record, reason="Delete retained evidence"),
+            **payload_update,
+        },
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 422
+    assert runtime.workspace.imported_hands.get(key) == record
+
+
 def test_player_hand_close_advances_a_future_lifecycle_timestamp(
     tmp_path: Path,
 ) -> None:
@@ -1543,6 +1860,7 @@ def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
         "/api/player",
         "/api/player/imports",
         f"/api/player/hands/{'a' * 64}/reject",
+        f"/api/player/hands/{'a' * 64}/delete",
         "/api%2Fplayer%2Fimports",
         "/%61pi/%70layer/imports",
         "/%2561pi%252Fplayer%252Fimports",

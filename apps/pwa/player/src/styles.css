@@ -397,6 +397,15 @@ code {
   background: #fff;
 }
 
+.permanent-deletion {
+  border-color: rgb(125 49 41 / 32%);
+  background: rgb(255 246 244 / 82%);
+}
+
+.permanent-deletion h4 {
+  color: #762f25;
+}
+
 .lifecycle-action-buttons {
   display: flex;
   flex-wrap: wrap;

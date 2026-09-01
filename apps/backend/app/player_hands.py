@@ -6,7 +6,8 @@ from bisect import bisect_right
 from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated, Literal, cast
+from hashlib import sha256
+from typing import Annotated, Literal, Self, cast
 
 from pydantic import (
     AwareDatetime,
@@ -16,6 +17,7 @@ from pydantic import (
     JsonValue,
     StringConstraints,
     ValidationError,
+    model_validator,
 )
 
 from app.domain.imported_hands import (
@@ -55,6 +57,7 @@ class PlayerHandIdentity(PlayerHandProjection):
 
 class PlayerHandSummary(PlayerHandProjection):
     record_key: str
+    record_version: str
     identity: PlayerHandIdentity | None
     played_at: datetime | None
     lifecycle_status: str
@@ -158,6 +161,71 @@ class PlayerHandCloseRequest(PlayerHandProjection):
     expected_lifecycle_changed_at: AwareDatetime
 
 
+class PlayerHandDeleteRequest(PlayerHandProjection):
+    """Exact retained-record precondition for one permanent deletion."""
+
+    request_id: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            pattern=(
+                r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+                r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            ),
+            strict=True,
+        ),
+    ]
+    reason: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=256,
+            strict=True,
+        ),
+    ]
+    expected_record_version: Annotated[
+        str,
+        StringConstraints(pattern=r"^[a-f0-9]{64}$", strict=True),
+    ]
+    expected_lifecycle_status: Literal[
+        "pending_review",
+        "active",
+        "withdrawn",
+        "rejected",
+        "deletion_pending",
+    ]
+    expected_active_canonical_revision: int | None = Field(
+        default=None,
+        ge=1,
+        strict=True,
+    )
+    expected_deletion_generation: int = Field(ge=0, strict=True)
+    expected_lifecycle_changed_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_active_revision_precondition(self) -> Self:
+        if (
+            self.expected_lifecycle_status == "active"
+            and self.expected_active_canonical_revision is None
+        ):
+            raise ValueError("active deletion precondition requires active revision")
+        if (
+            self.expected_lifecycle_status != "active"
+            and self.expected_active_canonical_revision is not None
+        ):
+            raise ValueError(
+                "inactive deletion precondition cannot select an active revision"
+            )
+        return self
+
+
+def player_hand_record_version(record: ImportedHandRecord) -> str:
+    """Return an opaque version over every retained field, including source."""
+
+    return sha256(record.model_dump_json().encode("utf-8")).hexdigest()
+
+
 def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:
     retained_revision = (
         record.canonical_revisions[-1] if record.canonical_revisions else None
@@ -190,6 +258,7 @@ def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:
     )
     return PlayerHandSummary(
         record_key=record_key,
+        record_version=player_hand_record_version(record),
         identity=identity,
         played_at=played_at,
         lifecycle_status=record.lifecycle.status,

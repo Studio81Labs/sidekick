@@ -46,6 +46,7 @@ from app.player_hands import (
     MAX_PLAYER_HAND_PAGE_SIZE,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
+    PlayerHandDeleteRequest,
 )
 from app.player_namespace import (
     PLAYER_API_PREFIX,
@@ -840,6 +841,43 @@ def create_player_runtime(
             body,
             action="reject",
         )
+
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/delete")
+    async def delete_player_hand(
+        request: Request,
+        record_key: str,
+        body: PlayerHandDeleteRequest,
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.delete_hand_record,
+                    record_key,
+                    request=body,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except (PlayerHandTransitionConflict, LifecycleCascadeError) as exc:
+                return _json_denial(409, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (PendingCascadeError, PlayerHandRecoveryRequired):
+                return _json_denial(
+                    503,
+                    "This hand has an interrupted deletion write; restart the "
+                    "local player runtime so recovery can finish",
+                )
+            except (DataLockError, OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "Permanent deletion did not finish safely; refresh the hand "
+                    "to inspect whether cleanup is pending before retrying",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
 
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
     async def export_player_backup(request: Request) -> Response:
