@@ -73,6 +73,15 @@ New local drafts and non-replayable operations must register before they ship.
 The information dialog cannot close while an MCP mutation is active or a
 one-time credential remains unacknowledged, so the MCP safety owner stays
 mounted for the full operation lifetime.
+
+The separately built local player PWA owns an equivalent coordinator inside
+its isolated source tree. Its one-use session bootstrap and every player API
+operation are busy work. A selected backup, edited canonical approval, approval
+state reason, and permanent-deletion reason are dirty drafts. Its worker waits
+for the same explicit, revision-bound handoff and uses a player-specific
+activation message; it does not import the hosted application or expose a
+player API response to Cache Storage.
+
 The same aggregate state guards browser unloads. When a worker is waiting, the
 UI announces the update but never activates it while an operation is active.
 With dirty state, activation requires an explicit discard confirmation. With no
@@ -126,7 +135,9 @@ out of scope.
 
 Rollout requires manifest and icon validation, desktop and mobile worker-scope
 tests, an online-to-offline shell test, Cache Storage inspection for private
-routes, and dirty/busy update tests before deployment.
+routes, and dirty/busy update tests before deployment. The dedicated player
+build additionally verifies its explicit activation protocol and player-only
+cache namespace.
 
 Normal rollback redeploys the last known-good application build. Its distinct
 worker digest installs beside the current worker and follows the same safe update

@@ -394,11 +394,19 @@ The loopback backend serves the verified `apps/pwa/dist-player` build from the
 same local origin. Only its document, manifest, service worker,
 content-addressed assets, and icons are public; player data remains behind the
 authenticated API. The player service worker precaches only the static shell
-and treats `/api` and encoded equivalents as network-only. `pnpm player:start`
-builds this dedicated entry before launching the backend, which refuses missing
-or symlinked asset roots rather than falling back to an inline shell. Startup
-snapshots every served asset into process memory before the workspace opens, so
-later filesystem replacement cannot change code on the authenticated origin.
+and treats `/api` and encoded equivalents as network-only. A player-only update
+coordinator detects a waiting worker but never activates it during session
+bootstrap or an authenticated player operation. Selected backups and edited
+approval, lifecycle, or deletion fields require an explicit, revision-bound
+discard confirmation. The coordinator reloads only after controller handoff
+and rechecks that no new busy work or draft revision appeared; otherwise it
+leaves the new shell installed and asks for a later safe reload. This governs
+browser-shell replacement only and does not install, update, or remove the
+packaged runtime. `pnpm player:start` builds this dedicated entry before
+launching the backend, which refuses missing or symlinked asset roots rather
+than falling back to an inline shell. Startup snapshots every served asset into
+process memory before the workspace opens, so later filesystem replacement
+cannot change code on the authenticated origin.
 
 The local runtime's imported-hand backup contract is a separate V2-only
 `poker-hero-player-backup` ZIP, not the hosted application's V1 job/benchmark

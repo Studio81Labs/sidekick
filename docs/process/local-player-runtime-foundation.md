@@ -78,6 +78,27 @@ completed, quarantined, and failed recovery identifiers separately. A
 quarantined or failed recovery is shown as requiring attention; completed
 roll-forward recovery alone remains ready.
 
+## Browser shell updates
+
+When the same loopback origin serves a newer verified player PWA, its service
+worker installs beside the controlling version and waits. The local page shows
+an update notice; it never activates the waiting worker during the one-use
+session bootstrap, backup export or restore, hand reads, lifecycle mutations,
+permanent deletion, or session revocation. It also protects a selected backup
+and edited approval, lifecycle, or deletion fields as local drafts.
+
+Finish the active operation first. If drafts remain, either save or clear them,
+or choose **Discard and reload** and confirm their loss. The page rechecks the
+operation state and exact draft revision after the new worker takes control. If
+anything changed during activation, it defers the reload and keeps the notice
+visible until a later safe, explicit reload.
+
+This is only the browser PWA shell handoff. It does not download, replace,
+install, sign, or remove the runtime archive or migrate player data. Stop the
+old runtime, verify and replace its application bundle through the applicable
+release procedure, and start the new runtime; the separate player workspace
+continues to follow the manifest and migration rules above.
+
 ## Build and verify a release bundle
 
 The release-bundle checkpoint produces one self-contained archive for the
@@ -246,7 +267,8 @@ route, or production credential transport.
 The local runtime now exposes authenticated session lifecycle, health, store
 status, conflict-safe backup/restore, sanitized imported-hand audit reads,
 approval/reapproval, withdrawal/rejection, and permanent deletion under
-`/api/player`, with an installable player PWA. The local workspace also composes
+`/api/player`, with an installable player PWA and an explicit draft- and
+operation-safe browser-shell update handoff. The local workspace also composes
 the conflict-safe transaction for an already-parsed hand-history candidate, but
 there is still no player hand-history upload route or corpus-backed PokerStars
 adapter. The workspace now has a version 1 compatibility marker, safe
@@ -254,8 +276,9 @@ manifestless-store adoption, and a verified export-before-remove command for
 player data. A host-platform release archive now embeds the runtime and verified
 PWA and is exercised without a repository checkout, but it remains unsigned and
 does not choose or implement an operating-system installer, application update
-channel, or browser installation lifecycle. Future learning-store migrations,
-remote lookup, and the complete player workflow also remain absent.
+channel, application-file update, or browser installation/removal lifecycle.
+Future learning-store migrations, remote lookup, and the complete player
+workflow also remain absent.
 Future grade, mastery, drill, and proof stores do not yet exist, so they are not
 part of the version 1 archive. The hosted Worker and V1 FastAPI deployment deny
 the namespace, and the direct-network checkpoint verifies that denial without
