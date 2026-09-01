@@ -47,8 +47,10 @@ supported operating-system installer.
   failure-path behavior as the source command.
 - CI builds the host artifact from hash-locked development dependencies,
   extracts it into a clean temporary directory, verifies the complete manifest,
-  starts it without a checkout or Node/Python toolchain, checks the embedded
-  shell and unauthenticated API denial, then stops it and exercises packaged
+  starts it without a checkout or Node/Python toolchain, captures the one-use
+  launch URL through a private test-only browser shim, and checks ticket replay,
+  session authentication, Host, Origin, proxy-header, CSRF, no-store, and direct
+  LAN-refusal boundaries. It then stops the runtime and exercises packaged
   export-before-remove.
 
 The archive is deliberately unsigned and has no installer, auto-updater,

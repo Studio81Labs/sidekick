@@ -50,7 +50,8 @@ defines an unsigned host-platform release-bundle contract. The archive embeds
 the Python runtime and verified player PWA, inventories application files with
 SHA-256 digests, and exposes the existing export-before-remove transaction from
 the same executable. Its clean-extraction smoke test proves repository-free
-loopback launch and data removal. A supported OS installer, signing/publishing,
+loopback launch, one-use bootstrap/session security, Host/Origin/CSRF and LAN
+boundaries, and data removal. A supported OS installer, signing/publishing,
 automatic updates, application-file removal, and browser-PWA removal remain
 outside this checkpoint.
 [ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md) replaces

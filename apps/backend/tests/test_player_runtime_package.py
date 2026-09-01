@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import subprocess
 import tarfile
 from types import ModuleType
 
@@ -32,6 +33,28 @@ smoke_player_runtime = _load_script(
     "smoke_player_runtime_script",
     "smoke-player-runtime.py",
 )
+
+
+def test_launch_capture_helper_writes_a_private_single_use_ticket(
+    tmp_path: Path,
+) -> None:
+    capture_path = tmp_path / "launch-url"
+    ticket = "a" * 43
+    launch_url = f"http://127.0.0.1:8765/#ticket={ticket}"
+    helper = ROOT / "scripts" / "capture-player-launch-url.sh"
+
+    subprocess.run(
+        [str(helper), launch_url],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "POKER_HERO_PLAYER_LAUNCH_URL_FILE": str(capture_path),
+        },
+        check=True,
+    )
+
+    assert capture_path.stat().st_mode & 0o777 == 0o600
+    assert smoke_player_runtime._wait_for_launch_ticket(capture_path) == ticket
+    assert not capture_path.exists()
 
 
 def test_archive_publication_stages_on_the_destination_filesystem(

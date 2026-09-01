@@ -95,7 +95,9 @@ runtime after extraction. It never contains the player workspace, installation
 credential, backup, or other user data.
 
 Verify the archive checksum, complete internal file manifest, clean-extraction
-launch, local shell/authentication boundary, and packaged export/remove handoff:
+launch, one-use bootstrap and session flow, Host/Origin/CSRF and direct-LAN
+boundaries, local shell/authentication boundary, and packaged export/remove
+handoff:
 
 ```bash
 pnpm player:package:test -- /absolute/path/poker-hero-player-*.tar.gz
