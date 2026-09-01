@@ -1,5 +1,6 @@
 import asyncio
 import ctypes
+from datetime import timedelta
 import errno
 from ipaddress import ip_address
 import os
@@ -20,6 +21,7 @@ from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
 from app.data_lock import DataLockTimeoutError, InterprocessDataLock
+from app.domain.imported_hands import extract_hero_decision_points
 from app.player_main import build_player_server, configured_player_runtime
 from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
 from app.player_namespace import (
@@ -879,6 +881,55 @@ def test_player_hand_close_routes_refuse_stale_or_inactive_records(
         "withdrawn"
     )
     assert runtime.workspace.imported_hands.get(pending_key) == pending
+
+
+def test_player_hand_close_advances_a_future_lifecycle_timestamp(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    future_changed_at = record.lifecycle.changed_at + timedelta(days=3650)
+    future_record = record.model_copy(
+        update={
+            "lifecycle": record.lifecycle.model_copy(
+                update={"changed_at": future_changed_at}
+            )
+        }
+    )
+    key = imported_hand_record_key(future_record.identity)
+    runtime.workspace.imported_hands.save(key, future_record)
+    runtime.workspace.imported_hands.save_decisions(
+        key,
+        extract_hero_decision_points(future_record),
+    )
+    session = exchange_session(client, runtime)
+    backup = client.get(
+        "/api/player/backups/export",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    assert backup.status_code == 200
+
+    closed = client.post(
+        f"/api/player/hands/{key}/withdraw",
+        json=hand_close_payload(future_record, reason="Reviewed"),
+        headers=player_mutation_headers(session),
+    )
+
+    assert closed.status_code == 200
+    assert closed.json()["lifecycle"]["changed_at"] == (
+        future_changed_at + timedelta(microseconds=1)
+    ).isoformat().replace("+00:00", "Z")
+    restored = client.post(
+        "/api/player/backups/restore",
+        content=backup.content,
+        headers={
+            **player_mutation_headers(session),
+            "Content-Type": "application/zip",
+        },
+    )
+    assert restored.status_code == 200
+    assert restored.json()["skipped_stale_records"] == 1
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
 
 
 @pytest.mark.parametrize(

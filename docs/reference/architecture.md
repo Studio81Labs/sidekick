@@ -295,7 +295,9 @@ lifecycle timestamp from the loaded detail plus a non-empty player reason.
 Stale requests fail without writing; a retry whose exact requested inactive
 state is already current returns that retained state idempotently. The server
 supplies the transition instant and never accepts a client-authored canonical
-state. The player renders parser proposals, approved revisions,
+state. That instant advances strictly beyond the stored lifecycle marker even
+when restored data is ahead of local wall time, keeping the successor orderable
+against older backups. The player renders parser proposals, approved revisions,
 field-level confidence, retained conflict resolutions, and cleanup failures
 with source/detection/revision lineage rather than collapsing uncertain or
 failed records into generic inactive copy. Active details expose explicit,

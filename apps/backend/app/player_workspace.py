@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from _thread import LockType
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 import errno
 import os
 from pathlib import Path
@@ -55,6 +55,17 @@ class PlayerStorageRecoveryRequired(RuntimeError):
 
 DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
 PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
+
+
+def _advanced_lifecycle_time(observed_at: datetime, current: datetime) -> datetime:
+    if observed_at > current:
+        return observed_at
+    try:
+        return current + timedelta(microseconds=1)
+    except OverflowError as exc:
+        raise PlayerHandTransitionConflict(
+            "The hand lifecycle timestamp cannot advance beyond its stored value"
+        ) from exc
 
 
 def _macos_extended_acl_has_entries(path: Path, *, library=None) -> bool:
@@ -405,7 +416,7 @@ class PlayerWorkspace:
                         transition(
                             record_key,
                             reason=request.reason,
-                            at=max(at, lifecycle.changed_at),
+                            at=_advanced_lifecycle_time(at, lifecycle.changed_at),
                         )
                     except (DataLockError, OSError) as exc:
                         if self.imported_hands.has_interrupted_write(record_key):

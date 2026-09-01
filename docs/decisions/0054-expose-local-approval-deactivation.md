@@ -33,7 +33,10 @@ an active record. It supplies the transition time, calls the existing lifecycle
 cascade, and returns the same sanitized detail projection used by the read
 route. A retry returns the already-current inactive record only when the target
 status, reason, canonical revision, and deletion generation still match; other
-stale requests fail without writing.
+stale requests fail without writing. The supplied lifecycle time is strictly
+later than the stored marker: if wall time is equal or behind because restored
+data came from a faster clock, the server advances the marker by one microsecond
+so the inactive successor remains orderable against its active predecessor.
 
 The player workspace serializes each transition in this order:
 
