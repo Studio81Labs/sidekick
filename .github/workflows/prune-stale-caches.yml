@@ -30,13 +30,18 @@ name: Prune Stale Caches
 #
 # NOT handled here, deliberately: action-managed families whose exact current
 # key cannot be derived from repository inputs (setup-java and ruby/setup-ruby)
-# are left untouched rather than guessed at. A whole family going obsolete is
-# also out of scope. The Flutter
-# version is part of its family name (`flutter-linux-stable-3.41.9-x64`), so
-# bumping the pin starts a new family and leaves the old one intact as its own
-# single entry — around 1.7 GB per superseded SDK. Both repos are on one
-# version today, so there is nothing to collect; when that changes, the fix is
-# to read the pin from renovate.json and drop families that do not match it.
+# are left untouched rather than guessed at.
+#
+# A whole family going obsolete IS handled, as of the 3.41.9 -> 3.47.1 bump.
+# The Flutter version is part of its family name
+# (`flutter-linux-stable-3.41.9-x64`), so bumping the pin starts a new family
+# and leaves the old one intact as its own single entry — around 1.7 GB per
+# superseded SDK, which the "2+ entries in a family" rule can never reach.
+# The pruner reads the pin from renovate.json — the same value
+# scripts/check-flutter-pin.py holds every `subosito/flutter-action` step to,
+# so the pruner and the build cannot disagree about which SDK is current — and
+# drops `flutter-*` families whose version does not match it. A pin it cannot
+# read collects NOTHING rather than guessing.
 
 on:
   schedule:
