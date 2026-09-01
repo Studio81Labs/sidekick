@@ -270,7 +270,8 @@ conflict evidence and therefore fail decision extraction closed. Deleted and
 deletion-pending records require a separate authorized lifecycle reimport and
 cannot be resurrected by this boundary. ADR 0058 records why the
 parsed-candidate transaction lands before the #409 PokerStars adapter and
-player upload route.
+player upload route. Sanitized player audit detail nests these later occurrences
+under their retained raw source, and its source count includes every occurrence.
 
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit

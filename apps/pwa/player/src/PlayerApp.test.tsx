@@ -43,7 +43,7 @@ const pendingHand = {
   active_canonical_revision: null,
   learning_eligible: false,
   deletion_generation: 0,
-  raw_source_count: 2,
+  raw_source_count: 3,
   detection_count: 2,
   warning_count: 2,
   unresolved_conflict_count: 0,
@@ -80,6 +80,28 @@ const pendingHandDetail = {
         source_filename: "HH20260830.txt",
       },
       content_sha256: "b".repeat(64),
+      reimports: [
+        {
+          raw_source_id: "file-1-reimport",
+          chronology: {
+            played_at: null,
+            source_timezone: null,
+            source_session_id: "session-2",
+            source_file_id: "file-1-reimport",
+            hand_ordinal: 9,
+          },
+          provenance: {
+            source_kind: "hand_history",
+            import_id: "import-file-1-reimport",
+            imported_at: "2026-08-31T12:00:00Z",
+            adapter_id: "pokerstars",
+            adapter_version: "1.1.0",
+            format_revision: "pokerstars-text/v1",
+            source_filename: "HH20260831.txt",
+          },
+          detected_semantic_sha256: "6".repeat(64),
+        },
+      ],
     },
     {
       raw_source_id: "file-2",
@@ -100,6 +122,7 @@ const pendingHandDetail = {
         source_filename: "HH20260830-corrected.txt",
       },
       content_sha256: "c".repeat(64),
+      reimports: [],
     },
   ],
   detections: [
@@ -195,7 +218,7 @@ const activeHand = {
   active_canonical_revision: 1,
   learning_eligible: true,
   canonical_revision_count: 1,
-  raw_source_count: 1,
+  raw_source_count: 2,
   detection_count: 1,
 };
 
@@ -240,7 +263,7 @@ const activeHandDetail = {
 
 const conflictedActiveHand = {
   ...activeHand,
-  raw_source_count: 2,
+  raw_source_count: 3,
   detection_count: 2,
   unresolved_conflict_count: 1,
 };
@@ -508,11 +531,15 @@ describe("PlayerApp", () => {
       screen.getByText(/source timezone Europe\/Prague/),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/source session session-1/)).toHaveLength(2);
-    expect(screen.getByText(/source file file-1/)).toBeInTheDocument();
+    expect(screen.getByText(/source file file-1 ·/)).toBeInTheDocument();
     expect(screen.getByText(/hand ordinal 7/)).toBeInTheDocument();
     expect(screen.getByText(/2026-08-30T11:00:00Z/)).toBeInTheDocument();
-    expect(screen.getByText(/import-file-1/)).toBeInTheDocument();
-    expect(screen.getAllByText(/format pokerstars-text\/v1/)).toHaveLength(2);
+    expect(screen.getByText("import-file-1")).toBeInTheDocument();
+    expect(screen.getByText(/HH20260831.txt/)).toBeInTheDocument();
+    expect(screen.getByText("import-file-1-reimport")).toBeInTheDocument();
+    expect(screen.getByText(/source file file-1-reimport/)).toBeInTheDocument();
+    expect(screen.getByText("6".repeat(64))).toBeInTheDocument();
+    expect(screen.getAllByText(/format pokerstars-text\/v1/)).toHaveLength(3);
     expect(screen.getByText(/source excerpt redacted/)).toBeInTheDocument();
     expect(screen.getByText("d".repeat(64))).toBeInTheDocument();
     expect(screen.getByText("b".repeat(64))).toBeInTheDocument();

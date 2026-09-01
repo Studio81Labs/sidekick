@@ -279,7 +279,7 @@ function HandDetail({
       </div>
       <dl className="audit-facts">
         <div>
-          <dt>Raw sources</dt>
+          <dt>Source occurrences</dt>
           <dd>{summary.raw_source_count}</dd>
         </div>
         <div>
@@ -519,6 +519,36 @@ function HandDetail({
                 {` · hand ordinal ${source.chronology.hand_ordinal ?? "not retained"}`}
                 {" · raw source checksum "}
                 <code>{source.content_sha256}</code>
+                {source.reimports.length > 0 ? (
+                  <ul>
+                    {source.reimports.map((reimport) => (
+                      <li key={reimport.raw_source_id}>
+                        Reimport <code>{reimport.raw_source_id}</code> ·{" "}
+                        {reimport.provenance.source_filename ??
+                          "Unnamed source"}
+                        {" · "}
+                        {reimport.provenance.source_kind} import{" "}
+                        <code>{reimport.provenance.import_id}</code> · format{" "}
+                        {reimport.provenance.format_revision} ·{" "}
+                        {reimport.provenance.adapter_id}{" "}
+                        {reimport.provenance.adapter_version}
+                        {" · "}
+                        {new Date(
+                          reimport.provenance.imported_at,
+                        ).toLocaleString()}
+                        {reimport.chronology.played_at
+                          ? ` · played ${new Date(reimport.chronology.played_at).toLocaleString()} (${reimport.chronology.played_at})`
+                          : " · played time not retained"}
+                        {` · source timezone ${reimport.chronology.source_timezone ?? "not retained"}`}
+                        {` · source session ${reimport.chronology.source_session_id ?? "not retained"}`}
+                        {` · source file ${reimport.chronology.source_file_id}`}
+                        {` · hand ordinal ${reimport.chronology.hand_ordinal ?? "not retained"}`}
+                        {" · detected meaning checksum "}
+                        <code>{reimport.detected_semantic_sha256}</code>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
               </li>
             ))}
           </ul>

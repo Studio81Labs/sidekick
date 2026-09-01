@@ -99,6 +99,26 @@ export interface PlayerHandDetail {
       source_filename: string | null;
     };
     content_sha256: string;
+    reimports: Array<{
+      raw_source_id: string;
+      chronology: {
+        played_at: string | null;
+        source_timezone: string | null;
+        source_session_id: string | null;
+        source_file_id: string;
+        hand_ordinal: number | null;
+      };
+      provenance: {
+        source_kind: "hand_history";
+        import_id: string;
+        imported_at: string;
+        adapter_id: string;
+        adapter_version: string;
+        format_revision: string;
+        source_filename: string | null;
+      };
+      detected_semantic_sha256: string;
+    }>;
   }>;
   detections: Array<{
     detection_id: string;

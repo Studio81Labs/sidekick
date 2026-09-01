@@ -26,6 +26,7 @@ from app.domain.imported_hands import (
     extract_hero_decision_points,
     imported_hand_state_sha256,
 )
+from app.player_hands import get_player_hand
 from app.player_workspace import PlayerWorkspace
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
@@ -125,6 +126,18 @@ def test_exact_reimport_appends_occurrence_without_duplicate_learning_data(
     )
     assert len(result.record.detections) == 1
     assert result.record.canonical_revisions == first.record.canonical_revisions
+    detail = get_player_hand(store, result.record_key)
+    assert detail.summary.raw_source_count == 2
+    assert len(detail.raw_sources) == 1
+    projected_reimport = detail.raw_sources[0].reimports[0]
+    retained_reimport = result.record.raw_sources[0].reimports[0]
+    assert projected_reimport.raw_source_id == "source-2"
+    assert projected_reimport.chronology == retained_reimport.chronology
+    assert projected_reimport.provenance == retained_reimport.provenance
+    assert (
+        projected_reimport.detected_semantic_sha256
+        == retained_reimport.detected_semantic_sha256
+    )
 
 
 def test_same_import_request_is_idempotent(tmp_path) -> None:
