@@ -340,12 +340,14 @@ reactivation, and a tombstone not bound to the same deletion-pending generation
 reject the request before writes. Accepted records and missing artifacts publish
 through one multi-record cascade, preserving local audit artifacts the archive
 does not contain. A bound tombstone removes every retained artifact in that same
-cascade (ADR 0052). Within the local runtime, storage-status reads serialize
-behind the full restore request, including upload and archive parsing, then take
-the shared data-volume lock for the filesystem snapshot. Status waits on the
-restore gate asynchronously before dispatching filesystem work, preventing
-queued refreshes from exhausting the worker pool needed to finish restore. A
-browser refresh after an ambiguous transport failure therefore waits for the
+cascade (ADR 0052). Within the local runtime, ordinary status, hand, lifecycle,
+and export requests share an asynchronous access gate and remain concurrent
+until their record and data-volume locks require narrower serialization. Restore
+owns that gate exclusively for the full request, including upload and archive
+parsing, and a waiting restore prevents new ordinary entrants from starving it.
+Status therefore waits asynchronously before dispatching filesystem work,
+preventing queued refreshes from exhausting the worker pool needed to finish
+restore. A browser refresh after an ambiguous transport failure waits for the
 restore to finish rather than presenting a stale or intermediate count; if a
 stable refresh fails, stale status and backup controls are hidden until restart.
 A restore storage failure remains unresolved even when returned explicitly as

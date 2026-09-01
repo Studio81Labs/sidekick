@@ -44,6 +44,7 @@ from app.player_runtime import (
 )
 from app.player_workspace import (
     PlayerDataDirectoryError,
+    PlayerWorkspace,
     _macos_extended_acl_has_entries,
 )
 from app.storage.cascade_journal import CascadeJournal
@@ -776,6 +777,94 @@ def test_player_hand_routes_report_corrupt_records_explicitly(tmp_path: Path) ->
     assert detail.json() == {
         "detail": "Stored imported hand record could not be read safely"
     }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_unrelated_hand_requests_do_not_wait_for_a_lifecycle_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    anyio_backend: str,
+) -> None:
+    assert anyio_backend == "asyncio"
+    runtime = _create_player_runtime(tmp_path)
+    blocked_record = approved_record(sample_identity(hand_ordinal=31))
+    unrelated_record = approved_record(sample_identity(hand_ordinal=32))
+    blocked_key = imported_hand_record_key(blocked_record.identity)
+    unrelated_key = imported_hand_record_key(unrelated_record.identity)
+    runtime.workspace.imported_hands.save(blocked_key, blocked_record)
+    runtime.workspace.imported_hands.save(unrelated_key, unrelated_record)
+    blocked_write_started = Event()
+    allow_blocked_write = Event()
+    real_close = PlayerWorkspace.close_hand_record
+
+    def close_with_one_blocked_record(
+        workspace: PlayerWorkspace,
+        record_key: str,
+        *args: object,
+        **kwargs: object,
+    ):
+        if record_key == blocked_key:
+            blocked_write_started.set()
+            if not allow_blocked_write.wait(2):
+                raise AssertionError("blocked lifecycle write was not released")
+        return real_close(workspace, record_key, *args, **kwargs)
+
+    monkeypatch.setattr(
+        PlayerWorkspace,
+        "close_hand_record",
+        close_with_one_blocked_record,
+    )
+    transport = httpx.ASGITransport(
+        app=runtime.app,
+        client=("127.0.0.1", 50000),
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url=PLAYER_ORIGIN,
+    ) as client:
+        ticket = runtime.issue_launch_url().split("#ticket=", 1)[1]
+        session_response = await client.post(
+            "/api/player/session",
+            headers={
+                "Authorization": f"Bearer {ticket}",
+                "Origin": PLAYER_ORIGIN,
+            },
+        )
+        assert session_response.status_code == 200
+        session = session_response.json()
+        blocked_close = asyncio.create_task(
+            client.post(
+                f"/api/player/hands/{blocked_key}/withdraw",
+                json=hand_close_payload(blocked_record, reason="Blocked review"),
+                headers=player_mutation_headers(session),
+            )
+        )
+        assert await asyncio.to_thread(blocked_write_started.wait, 2)
+        try:
+            unrelated_response = await asyncio.wait_for(
+                client.post(
+                    f"/api/player/hands/{unrelated_key}/withdraw",
+                    json=hand_close_payload(
+                        unrelated_record,
+                        reason="Unrelated review",
+                    ),
+                    headers=player_mutation_headers(session),
+                ),
+                1,
+            )
+        except BaseException:
+            allow_blocked_write.set()
+            await blocked_close
+            raise
+        allow_blocked_write.set()
+        blocked_response = await asyncio.wait_for(blocked_close, 2)
+
+    assert unrelated_response.status_code == 200
+    assert unrelated_response.json()["summary"]["record_key"] == unrelated_key
+    assert unrelated_response.json()["lifecycle"]["status"] == "withdrawn"
+    assert blocked_response.status_code == 200
+    assert blocked_response.json()["lifecycle"]["status"] == "withdrawn"
 
 
 @pytest.mark.parametrize(

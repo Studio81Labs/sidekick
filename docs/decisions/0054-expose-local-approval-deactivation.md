@@ -52,9 +52,11 @@ local-runtime processes use the same lock. The outer shared volume hold prevents
 a restore in another process from replacing the record after the precondition
 check but before the lifecycle service rereads it. The named lock is separate
 from the data-volume lock: nesting the store's shared volume hold under an
-exclusive hold of that same file would deadlock. The existing asynchronous
-restore gate remains outside this sequence, preventing a same-runtime restore
-and lifecycle write from overlapping.
+exclusive hold of that same file would deadlock. An asynchronous shared/exclusive
+restore gate remains outside this sequence: ordinary status, hand, lifecycle,
+and export requests share the gate and may proceed concurrently, while restore
+owns it exclusively from upload through publication. A waiting restore blocks
+new ordinary entrants so a steady stream of hand work cannot starve it.
 
 The player PWA shows the actions only for an active detail, requires a reason
 and explicit confirmation, sends the stored precondition with session and CSRF

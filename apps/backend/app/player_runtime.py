@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -86,6 +87,54 @@ PROXY_HEADERS = frozenset(
         b"x-forwarded-proto",
     }
 )
+
+
+class _RestoreAccessGate:
+    """Exclude restores without serializing ordinary player operations."""
+
+    def __init__(self) -> None:
+        self._condition = asyncio.Condition()
+        self._active_operations = 0
+        self._active_restore = False
+        self._waiting_restores = 0
+
+    @asynccontextmanager
+    async def operation(self) -> AsyncIterator[None]:
+        async with self._condition:
+            await self._condition.wait_for(
+                lambda: not self._active_restore and self._waiting_restores == 0
+            )
+            self._active_operations += 1
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._active_operations -= 1
+                if self._active_operations == 0:
+                    self._condition.notify_all()
+
+    @asynccontextmanager
+    async def restore(self) -> AsyncIterator[None]:
+        acquired = False
+        async with self._condition:
+            self._waiting_restores += 1
+            try:
+                await self._condition.wait_for(
+                    lambda: not self._active_restore
+                    and self._active_operations == 0
+                )
+                self._active_restore = True
+                acquired = True
+            finally:
+                self._waiting_restores -= 1
+                if not acquired:
+                    self._condition.notify_all()
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._active_restore = False
+                self._condition.notify_all()
 
 
 class PlayerCredentialError(RuntimeError):
@@ -611,7 +660,7 @@ def create_player_runtime(
         load_or_create_installation_secret(workspace.data_dir),
         clock=clock,
     )
-    restore_access_gate = asyncio.Lock()
+    restore_access_gate = _RestoreAccessGate()
     restore_in_progress = False
     app = FastAPI(
         title="Poker Hero Local Player Runtime",
@@ -661,7 +710,7 @@ def create_player_runtime(
     async def player_storage(request: Request) -> JSONResponse:
         # Wait without occupying the shared AnyIO thread pool: the restore
         # needs a worker after it finishes reading and parsing the upload.
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -685,7 +734,7 @@ def create_player_runtime(
         ),
         cursor: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
     ) -> JSONResponse:
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -706,7 +755,7 @@ def create_player_runtime(
 
     @app.get(f"{PLAYER_API_PREFIX}/hands/{{record_key}}")
     async def player_hand_detail(request: Request, record_key: str) -> JSONResponse:
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -735,7 +784,7 @@ def create_player_runtime(
         *,
         action: PlayerHandCloseAction,
     ) -> JSONResponse:
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -794,7 +843,7 @@ def create_player_runtime(
 
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
     async def export_player_backup(request: Request) -> Response:
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -830,7 +879,7 @@ def create_player_runtime(
             return _json_denial(409, "Another player restore is already in progress")
         restore_in_progress = True
         try:
-            async with restore_access_gate:
+            async with restore_access_gate.restore():
                 media_type = request.headers.get("content-type", "").partition(";")[0]
                 if media_type.strip().lower() not in {
                     "application/zip",
