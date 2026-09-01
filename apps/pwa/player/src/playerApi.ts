@@ -9,6 +9,7 @@ export interface PlayerCredentials {
 export interface PlayerStorageStatus {
   status: "ready" | "attention_required";
   storage: "player-local-file";
+  layout_version: 1;
   data_directory: string;
   imported_hand_record_count: number;
   recovery: {

@@ -24,7 +24,11 @@ from app.player_backup import (
     restore_player_backup,
 )
 from app.player_runtime import PLAYER_ORIGIN, PlayerCredentialError
-from app.player_workspace import PlayerWorkspace
+from app.player_workspace import (
+    PLAYER_WORKSPACE_MANIFEST_FILENAME,
+    PlayerDataDirectoryError,
+    PlayerWorkspace,
+)
 from app.storage.cascade_journal import CascadeJournal
 from app.storage.imported_hand_store import (
     ImportedHandNotFoundError,
@@ -81,9 +85,18 @@ def restore(
     )
 
 
+def write_future_workspace_manifest(workspace: PlayerWorkspace) -> None:
+    (workspace.data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
+        '{"layout_version":2,"schema":"poker-hero-player-workspace"}\n',
+        encoding="utf-8",
+    )
+
+
 def test_empty_player_backup_round_trips(tmp_path: Path) -> None:
     source = workspace_at(tmp_path / "source")
     payload = archive_bytes(source)
+    with ZipFile(BytesIO(payload)) as archive:
+        assert PLAYER_WORKSPACE_MANIFEST_FILENAME not in archive.namelist()
 
     parsed = parse_player_backup_archive(
         payload,
@@ -102,6 +115,34 @@ def test_empty_player_backup_round_trips(tmp_path: Path) -> None:
         "removed_decision_artifacts": 0,
         "total_records": 0,
     }
+
+
+def test_player_backup_export_rejects_a_changed_workspace_layout(
+    tmp_path: Path,
+) -> None:
+    workspace = workspace_at(tmp_path)
+    write_future_workspace_manifest(workspace)
+
+    with pytest.raises(
+        PlayerDataDirectoryError,
+        match="layout changed while this runtime was open",
+    ):
+        archive_bytes(workspace)
+
+
+def test_player_backup_restore_rejects_a_changed_workspace_layout(
+    tmp_path: Path,
+) -> None:
+    source = workspace_at(tmp_path / "source")
+    payload = archive_bytes(source)
+    target = workspace_at(tmp_path / "target")
+    write_future_workspace_manifest(target)
+
+    with pytest.raises(
+        PlayerDataDirectoryError,
+        match="layout changed while this runtime was open",
+    ):
+        restore(target, payload)
 
 
 def test_player_backup_preserves_records_and_retained_decisions(

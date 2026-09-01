@@ -54,6 +54,7 @@ from app.player_namespace import (
     is_player_api_scope,
 )
 from app.player_workspace import (
+    PlayerDataDirectoryError,
     PlayerHandApprovalInvalid,
     PlayerHandRecoveryRequired,
     PlayerHandTransitionConflict,
@@ -671,6 +672,13 @@ def create_player_runtime(
         redoc_url=None,
         openapi_url=None,
     )
+
+    @app.exception_handler(PlayerDataDirectoryError)
+    async def incompatible_player_workspace(
+        _request: Request,
+        exc: PlayerDataDirectoryError,
+    ) -> JSONResponse:
+        return _json_denial(503, str(exc))
 
     @app.get("/")
     async def player_shell() -> Response:

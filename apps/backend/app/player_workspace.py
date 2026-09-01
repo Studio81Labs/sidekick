@@ -10,11 +10,19 @@ from hashlib import sha256
 import json
 import os
 from pathlib import Path
-from stat import S_ISDIR
+from stat import S_ISDIR, S_ISREG
 import sys
+import tempfile
 from threading import Lock
+from typing import Literal
 
-from pydantic import ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+)
 
 from app.application.imported_hand_ingestion import (
     ImportedHandIngestionResult,
@@ -76,6 +84,24 @@ class PlayerStorageRecoveryRequired(RuntimeError):
 
 DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
 PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
+PLAYER_WORKSPACE_MANIFEST_FILENAME = ".poker-hero-player-workspace.json"
+PLAYER_WORKSPACE_SCHEMA = "poker-hero-player-workspace"
+PLAYER_WORKSPACE_LAYOUT_VERSION = 1
+MAX_PLAYER_WORKSPACE_MANIFEST_BYTES = 4096
+
+
+class _PlayerWorkspaceManifest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_name: Literal[PLAYER_WORKSPACE_SCHEMA] = Field(alias="schema")
+    layout_version: Literal[PLAYER_WORKSPACE_LAYOUT_VERSION]
+
+    @field_validator("layout_version", mode="before")
+    @classmethod
+    def validate_layout_version_type(cls, value: object) -> object:
+        if type(value) is not int:
+            raise ValueError("layout version must be a JSON integer")
+        return value
 
 
 def _advanced_lifecycle_time(observed_at: datetime, current: datetime) -> datetime:
@@ -203,18 +229,27 @@ def _private_player_data_dir(data_dir: Path) -> Path:
     return resolved
 
 
-def _prepare_imported_hands_dir(data_dir: Path) -> None:
+def _require_imported_hands_dir(
+    data_dir: Path,
+    *,
+    create_if_missing: bool,
+) -> None:
     records_dir = data_dir / IMPORTED_HANDS_DIRNAME
-    try:
-        os.mkdir(records_dir, mode=0o700)
-    except FileExistsError:
-        pass
-    except OSError as exc:
-        raise PlayerDataDirectoryError(
-            f"Cannot safely open the imported-hand store: {exc}"
-        ) from exc
+    if create_if_missing:
+        try:
+            os.mkdir(records_dir, mode=0o700)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            raise PlayerDataDirectoryError(
+                f"Cannot safely open the imported-hand store: {exc}"
+            ) from exc
     try:
         records_stat = records_dir.stat(follow_symlinks=False)
+    except FileNotFoundError as exc:
+        raise PlayerDataDirectoryError(
+            "The versioned player workspace is missing its imported-hand store"
+        ) from exc
     except OSError as exc:
         raise PlayerDataDirectoryError(
             f"Cannot safely inspect the imported-hand store: {exc}"
@@ -234,6 +269,156 @@ def _prepare_imported_hands_dir(data_dir: Path) -> None:
     _reject_macos_extended_acl(records_dir)
 
 
+def _read_player_workspace_manifest(
+    data_dir: Path,
+) -> _PlayerWorkspaceManifest | None:
+    manifest_path = data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME
+    # A hostile FIFO must not be able to wedge startup before fstat() rejects
+    # it. O_NONBLOCK is inert for regular files and makes that type check safe.
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(manifest_path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise PlayerDataDirectoryError(
+            f"Cannot safely open the player workspace manifest: {exc}"
+        ) from exc
+
+    try:
+        manifest_stat = os.fstat(descriptor)
+        if not S_ISREG(manifest_stat.st_mode):
+            raise PlayerDataDirectoryError(
+                "The player workspace manifest must be a regular file"
+            )
+        if manifest_stat.st_mode & 0o077:
+            raise PlayerDataDirectoryError(
+                "The player workspace manifest must be readable only by its owner"
+            )
+        if hasattr(os, "getuid") and manifest_stat.st_uid != os.getuid():
+            raise PlayerDataDirectoryError(
+                "The player workspace manifest must be owned by the current user"
+            )
+        chunks: list[bytes] = []
+        total_bytes = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                MAX_PLAYER_WORKSPACE_MANIFEST_BYTES + 1 - total_bytes,
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total_bytes += len(chunk)
+            if total_bytes > MAX_PLAYER_WORKSPACE_MANIFEST_BYTES:
+                raise PlayerDataDirectoryError(
+                    "The player workspace manifest exceeds its size limit"
+                )
+        payload = b"".join(chunks)
+    except OSError as exc:
+        raise PlayerDataDirectoryError(
+            f"Cannot safely inspect the player workspace manifest: {exc}"
+        ) from exc
+    finally:
+        os.close(descriptor)
+
+    try:
+        return _PlayerWorkspaceManifest.model_validate_json(payload)
+    except ValidationError as exc:
+        raise PlayerDataDirectoryError(
+            "The player workspace manifest is malformed or uses an unsupported"
+            " layout version"
+        ) from exc
+
+
+def _player_workspace_manifest_payload() -> bytes:
+    return (
+        json.dumps(
+            {
+                "layout_version": PLAYER_WORKSPACE_LAYOUT_VERSION,
+                "schema": PLAYER_WORKSPACE_SCHEMA,
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
+def _fsync_player_data_dir(data_dir: Path) -> None:
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    descriptor = os.open(data_dir, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _require_durable_player_workspace_manifest(data_dir: Path) -> None:
+    try:
+        _fsync_player_data_dir(data_dir)
+    except OSError as exc:
+        raise PlayerDataDirectoryError(
+            "Cannot make the player workspace manifest durable"
+        ) from exc
+
+
+def _publish_player_workspace_manifest(data_dir: Path) -> None:
+    manifest_path = data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME
+    temp_path: Path | None = None
+    publication_error: OSError | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=data_dir,
+            prefix=".poker-hero-player-workspace.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            os.fchmod(temp_file.fileno(), 0o600)
+            temp_file.write(_player_workspace_manifest_payload())
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        try:
+            os.link(temp_path, manifest_path)
+        except FileExistsError:
+            pass
+    except OSError as exc:
+        publication_error = exc
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError as exc:
+                if publication_error is None:
+                    publication_error = exc
+
+    if publication_error is not None:
+        raise PlayerDataDirectoryError(
+            "Cannot durably create the player workspace manifest:"
+            f" {publication_error}"
+        ) from publication_error
+
+    if _read_player_workspace_manifest(data_dir) is None:
+        raise PlayerDataDirectoryError(
+            "The player workspace manifest was not durably created"
+        )
+    try:
+        # Sync after removing the hard-link source so publication and normal
+        # temporary-file cleanup share one durable directory boundary.
+        _fsync_player_data_dir(data_dir)
+    except OSError as exc:
+        raise PlayerDataDirectoryError(
+            f"Cannot durably create the player workspace manifest: {exc}"
+        ) from exc
+
+
 @dataclass(frozen=True)
 class PlayerWorkspace:
     """The stores the local player runtime may open.
@@ -245,6 +430,7 @@ class PlayerWorkspace:
     """
 
     data_dir: Path
+    layout_version: int
     data_lock: InterprocessDataLock
     imported_hands: FileImportedHandStore
     imported_hand_recovery: ImportedHandRecoveryReport
@@ -261,31 +447,97 @@ class PlayerWorkspace:
         write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     ) -> "PlayerWorkspace":
         private_data_dir = _private_player_data_dir(Path(data_dir))
-        _prepare_imported_hands_dir(private_data_dir)
         data_lock = InterprocessDataLock(private_data_dir)
-        imported_hands = FileImportedHandStore(
-            private_data_dir,
-            write_lock_timeout_seconds=write_lock_timeout_seconds,
-        )
         recovery = ImportedHandRecoveryReport()
-        if imported_hands.has_interrupted_writes():
+        manifest_hint = _read_player_workspace_manifest(private_data_dir)
+        if manifest_hint is not None:
+            # Re-read and construct beneath the shared hold. A future layout
+            # migration must take the exclusive side, so it cannot publish a
+            # new layout between validation and store construction.
             with data_lock.hold(
-                exclusive=True,
-                timeout_seconds=recovery_lock_timeout_seconds,
+                exclusive=False,
+                timeout_seconds=startup_lock_timeout_seconds,
             ):
-                recovery = imported_hands.recover()
+                manifest = _read_player_workspace_manifest(private_data_dir)
+                if manifest is None:
+                    raise PlayerDataDirectoryError(
+                        "The player workspace manifest changed during startup"
+                    )
+                _require_durable_player_workspace_manifest(private_data_dir)
+                _require_imported_hands_dir(
+                    private_data_dir,
+                    create_if_missing=False,
+                )
+                imported_hands = FileImportedHandStore(
+                    private_data_dir,
+                    write_lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+                if not imported_hands.has_interrupted_writes():
+                    return cls._from_opened_store(
+                        data_dir=private_data_dir,
+                        manifest=manifest,
+                        data_lock=data_lock,
+                        imported_hands=imported_hands,
+                        recovery=recovery,
+                    )
 
-        # Do not declare the player store ready while an exclusive backup or
-        # recovery operation owns the volume. Like the hosted startup path,
-        # this bounded shared hold waits for legitimate exclusive work to
-        # drain and turns a genuinely wedged volume into an explicit failure.
+        # A missing legacy marker or an interrupted store requires the
+        # exclusive side. Re-read everything after acquiring it so a future
+        # migration or another adopter cannot leave this process with stale
+        # layout assumptions.
         with data_lock.hold(
-            exclusive=False,
-            timeout_seconds=startup_lock_timeout_seconds,
+            exclusive=True,
+            timeout_seconds=recovery_lock_timeout_seconds,
         ):
-            pass
+            manifest = _read_player_workspace_manifest(private_data_dir)
+            if manifest is None:
+                if manifest_hint is not None:
+                    raise PlayerDataDirectoryError(
+                        "The player workspace manifest changed during startup"
+                    )
+                _require_imported_hands_dir(
+                    private_data_dir,
+                    create_if_missing=True,
+                )
+                _publish_player_workspace_manifest(private_data_dir)
+                manifest = _read_player_workspace_manifest(private_data_dir)
+                if manifest is None:
+                    raise PlayerDataDirectoryError(
+                        "The player workspace manifest is missing after migration"
+                    )
+            else:
+                _require_durable_player_workspace_manifest(private_data_dir)
+                _require_imported_hands_dir(
+                    private_data_dir,
+                    create_if_missing=False,
+                )
+            imported_hands = FileImportedHandStore(
+                private_data_dir,
+                write_lock_timeout_seconds=write_lock_timeout_seconds,
+            )
+            if imported_hands.has_interrupted_writes():
+                recovery = imported_hands.recover()
+            return cls._from_opened_store(
+                data_dir=private_data_dir,
+                manifest=manifest,
+                data_lock=data_lock,
+                imported_hands=imported_hands,
+                recovery=recovery,
+            )
+
+    @classmethod
+    def _from_opened_store(
+        cls,
+        *,
+        data_dir: Path,
+        manifest: _PlayerWorkspaceManifest,
+        data_lock: InterprocessDataLock,
+        imported_hands: FileImportedHandStore,
+        recovery: ImportedHandRecoveryReport,
+    ) -> "PlayerWorkspace":
         return cls(
-            data_dir=private_data_dir,
+            data_dir=data_dir,
+            layout_version=manifest.layout_version,
             data_lock=data_lock,
             imported_hands=imported_hands,
             imported_hand_recovery=recovery,
@@ -294,7 +546,7 @@ class PlayerWorkspace:
             ),
             imported_hand_process_locks=tuple(
                 InterprocessFileLock(
-                    private_data_dir
+                    data_dir
                     / f"{PLAYER_HAND_LOCK_PREFIX}-{index:02d}.lock",
                     subject="player hand lifecycle lock",
                     contention_hint=(
@@ -315,6 +567,20 @@ class PlayerWorkspace:
             prefix = 0
         return prefix % len(self.imported_hand_locks)
 
+    def require_current_layout(self) -> None:
+        try:
+            manifest = _read_player_workspace_manifest(self.data_dir)
+        except PlayerDataDirectoryError as exc:
+            raise PlayerDataDirectoryError(
+                "The player workspace layout changed while this runtime was open;"
+                " restart with a compatible version"
+            ) from exc
+        if manifest is None or manifest.layout_version != self.layout_version:
+            raise PlayerDataDirectoryError(
+                "The player workspace layout changed while this runtime was open;"
+                " restart with a compatible version"
+            )
+
     def status_payload(
         self,
         *,
@@ -327,6 +593,7 @@ class PlayerWorkspace:
             exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
+            self.require_current_layout()
             if self.imported_hands.has_pending_recovery():
                 raise PlayerStorageRecoveryRequired(
                     "Player storage has an interrupted lifecycle write; "
@@ -346,6 +613,7 @@ class PlayerWorkspace:
                     else "ready"
                 ),
                 "storage": "player-local-file",
+                "layout_version": self.layout_version,
                 "data_directory": str(self.data_dir),
                 "imported_hand_record_count": len(self.imported_hands.list_keys()),
                 "recovery": {
@@ -368,6 +636,7 @@ class PlayerWorkspace:
             exclusive=False,
             timeout_seconds=lock_timeout_seconds,
         ):
+            self.require_current_layout()
             return list_player_hands(
                 self.imported_hands,
                 limit=limit,
@@ -393,6 +662,7 @@ class PlayerWorkspace:
                     exclusive=False,
                     timeout_seconds=lock_timeout_seconds,
                 ):
+                    self.require_current_layout()
                     self._require_final_hand_record(record_key)
                     return get_player_hand(self.imported_hands, record_key)
 
@@ -415,6 +685,7 @@ class PlayerWorkspace:
                     exclusive=False,
                     timeout_seconds=lock_timeout_seconds,
                 ):
+                    self.require_current_layout()
                     self._require_final_hand_record(record_key)
                     return ImportedHandIngestionService(
                         store=self.imported_hands,
@@ -449,6 +720,7 @@ class PlayerWorkspace:
                     exclusive=False,
                     timeout_seconds=lock_timeout_seconds,
                 ):
+                    self.require_current_layout()
                     self._require_final_hand_record(record_key)
                     record = self.imported_hands.get(record_key)
                     latest_revision = (
@@ -532,6 +804,7 @@ class PlayerWorkspace:
                     exclusive=False,
                     timeout_seconds=lock_timeout_seconds,
                 ):
+                    self.require_current_layout()
                     self._require_final_hand_record(record_key)
                     record = self.imported_hands.get(record_key)
                     lifecycle = record.lifecycle
@@ -679,6 +952,7 @@ class PlayerWorkspace:
                     exclusive=False,
                     timeout_seconds=lock_timeout_seconds,
                 ):
+                    self.require_current_layout()
                     self._require_final_hand_record(record_key)
                     record = self.imported_hands.get(record_key)
                     lifecycle = record.lifecycle

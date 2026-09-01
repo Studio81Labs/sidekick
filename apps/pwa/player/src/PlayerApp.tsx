@@ -1354,6 +1354,10 @@ export default function PlayerApp() {
                 <dd>{storage.imported_hand_record_count}</dd>
               </div>
               <div>
+                <dt>Storage layout</dt>
+                <dd>Version {storage.layout_version}</dd>
+              </div>
+              <div>
                 <dt>Recovery alerts</dt>
                 <dd>{attentionItems}</dd>
               </div>

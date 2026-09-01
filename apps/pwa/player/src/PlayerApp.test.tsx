@@ -24,6 +24,7 @@ function jsonResponse(payload: unknown, status = 200): Response {
 const readyStorage = {
   status: "ready",
   storage: "player-local-file",
+  layout_version: 1,
   data_directory: "/private/player-data",
   imported_hand_record_count: 3,
   recovery: { completed: [], quarantined: [], failed: [] },
@@ -431,6 +432,8 @@ describe("PlayerApp", () => {
       await screen.findByText("Ready on this machine"),
     ).toBeInTheDocument();
     expect(screen.getByText("/private/player-data")).toBeInTheDocument();
+    expect(screen.getByText("Storage layout")).toBeInTheDocument();
+    expect(screen.getByText("Version 1")).toBeInTheDocument();
     expect(window.location.hash).toBe("");
     expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBe(
       "player-session",
