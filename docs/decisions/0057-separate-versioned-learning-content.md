@@ -28,29 +28,35 @@ from imported-hand extraction and persistence.
   complete lineage so neither taxonomy, mapping, nor definition identities can
   be recycled after more than one generation.
 - A mapping revision targets exactly one taxonomy revision. Rules are
-  versioned data over canonical decision-state fields. Selectors can bind the
+  also pinned to the taxonomy series so equal revision labels in independent
+  series cannot alias. Rules are versioned data over canonical decision-state
+  fields. Selectors can bind the
   full ordered pre-decision route, structural actors, BB-normalized action
   sizes, and stack-depth ranges without using player identity or inventing an
   effective stack in ambiguous multiway spots. Every selector is explicit;
   catch-all rules are invalid.
 - Tagging returns either no tag with an explicit reason or exactly one primary
-  tag. A present tag binds the decision identity, canonical revision, deletion
-  generation, decision index, taxonomy revision, mapping revision,
-  concept-definition revision, and matched rule. Overlapping rules fail rather
-  than selecting one by order.
-- A principle revision pins one concept, taxonomy, definition, and grading
-  reference-policy revision. Its status history is append-only. Every revision
-  begins as a draft, including LLM-authored text, and approval requires a human
-  actor plus review provenance.
+  tag. Every result binds the decision identity, canonical revision, deletion
+  generation, decision index, taxonomy series and revision, and mapping
+  revision, so an unsupported result remains attributable. A present tag also
+  binds the concept-definition revision and matched rule. Overlapping rules
+  fail rather than selecting one by order.
+- A principle revision pins one concept, taxonomy series and revision,
+  definition, and grading reference-policy revision. Successor validation
+  consumes the complete principle lineage, forbids revision-identity reuse,
+  and requires a contiguous predecessor chain. Its status history is
+  append-only. Every revision begins as a draft, including LLM-authored text,
+  and approval requires a human actor plus review provenance.
 - Activation derives affected concepts from the mapping and succeeds only when
   each has at least one exactly compatible approved principle. Draft,
   superseded, retired, and differently pinned principles do not satisfy the
   gate.
-- Principle reveals retain the exact decision, taxonomy, mapping, definition,
-  reference, and principle versions. Reusable cache keys retain the exact
-  semantic taxonomy, mapping, definition, reference, and principle versions.
-  Reveal text is structurally prefixed as conditional educational reference
-  guidance.
+- Principle reveals retain the exact decision, taxonomy series and revision,
+  mapping, definition, reference, and principle versions. Reveals, activation
+  bindings, and reusable cache keys also retain a digest of all immutable
+  principle content and compatibility pins, preventing rewritten content from
+  aliasing even at a defensive read boundary. Reveal text is structurally
+  prefixed as conditional educational reference guidance.
 
 The package is a pure domain boundary in this change. It does not mutate
 `HeroDecisionPoint`, publish tags, activate a taxonomy, schedule a drill, or

@@ -410,6 +410,7 @@ class ConceptMappingRevision(LearningContentModel):
     """Immutable versioned rules for zero-or-one primary concept tagging."""
 
     mapping_revision: Identifier
+    taxonomy_series_id: Identifier
     taxonomy_revision: Identifier
     predecessor_mapping_revision: Identifier | None = None
     rules: tuple[ConceptMappingRule, ...] = ()
@@ -459,6 +460,7 @@ class PrimaryConceptTag(LearningContentModel):
 
     decision: DecisionBinding
     concept_id: Identifier
+    taxonomy_series_id: Identifier
     taxonomy_revision: Identifier
     mapping_revision: Identifier
     concept_definition_revision: Identifier
@@ -469,6 +471,9 @@ class DecisionConceptTagging(LearningContentModel):
     """Explicit mapped or unsupported result; absence never invents a tag."""
 
     decision: DecisionBinding
+    taxonomy_series_id: Identifier
+    taxonomy_revision: Identifier
+    mapping_revision: Identifier
     tag: PrimaryConceptTag | None = None
     absence_reason: Literal["no_matching_rule"] | None = None
 
@@ -480,6 +485,16 @@ class DecisionConceptTagging(LearningContentModel):
             )
         if self.tag is not None and self.tag.decision != self.decision:
             raise ValueError("primary tag decision binding must match its result")
+        if self.tag is not None and (
+            self.tag.taxonomy_series_id,
+            self.tag.taxonomy_revision,
+            self.tag.mapping_revision,
+        ) != (
+            self.taxonomy_series_id,
+            self.taxonomy_revision,
+            self.mapping_revision,
+        ):
+            raise ValueError("primary tag content revisions must match its result")
         return self
 
 
@@ -489,6 +504,7 @@ class PrincipleRevision(LearningContentModel):
     principle_id: Identifier
     principle_revision: Identifier
     concept_id: Identifier
+    taxonomy_series_id: Identifier
     taxonomy_revision: Identifier
     concept_definition_revision: Identifier
     reference_policy_revision: Identifier
@@ -498,6 +514,17 @@ class PrincipleRevision(LearningContentModel):
     content: NonEmptyText
     framing: PrincipleFraming = "conditional_educational_reference_guidance"
     supersedes_principle_revision: Identifier | None = None
+
+    def semantic_digest(self) -> str:
+        """Bind authored content and every compatibility pin to one digest."""
+
+        payload = json.dumps(
+            self.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return sha256(payload).hexdigest()
 
 
 class PrincipleLifecycleEvent(LearningContentModel):
@@ -564,11 +591,13 @@ class ApprovedPrincipleBinding(LearningContentModel):
     concept_id: Identifier
     principle_id: Identifier
     principle_revision: Identifier
+    principle_semantic_digest: Identifier
 
 
 class LearningContentActivationCheck(LearningContentModel):
     """Compatibility evidence for activating one taxonomy/reference pair."""
 
+    taxonomy_series_id: Identifier
     taxonomy_revision: Identifier
     mapping_revision: Identifier
     reference_policy_revision: Identifier
@@ -586,12 +615,14 @@ class PrincipleReveal(LearningContentModel):
 
     decision: DecisionBinding
     concept_id: Identifier
+    taxonomy_series_id: Identifier
     taxonomy_revision: Identifier
     mapping_revision: Identifier
     concept_definition_revision: Identifier
     reference_policy_revision: Identifier
     principle_id: Identifier
     principle_revision: Identifier
+    principle_semantic_digest: Identifier
     framing: PrincipleFraming = "conditional_educational_reference_guidance"
     display_text: FramedPrincipleText
 
@@ -609,12 +640,14 @@ class PrincipleCacheKey(LearningContentModel):
     """All semantic inputs that can change one cached principle reveal."""
 
     concept_id: Identifier
+    taxonomy_series_id: Identifier
     taxonomy_revision: Identifier
     mapping_revision: Identifier
     concept_definition_revision: Identifier
     reference_policy_revision: Identifier
     principle_id: Identifier
     principle_revision: Identifier
+    principle_semantic_digest: Identifier
 
     def digest(self) -> str:
         payload = json.dumps(

@@ -33,6 +33,7 @@ from app.domain.learning_content import (
     tag_primary_concept,
     validate_mapping_revision,
     validate_mapping_successor,
+    validate_principle_successor,
     validate_taxonomy_successor,
 )
 from test_imported_hand_decisions import baseline_decision_record
@@ -51,19 +52,20 @@ def decision():
 def taxonomy(
     *,
     revision: str = "taxonomy-v1",
+    series_id: str = "preflop-core",
     predecessor: str | None = None,
     definition_revision: str = "definition-v1",
     definition: str = "Choose a response to a preflop wager from the big blind.",
 ) -> TaxonomyRevision:
     return TaxonomyRevision(
         taxonomy_revision=revision,
-        series_id="preflop-core",
+        series_id=series_id,
         predecessor_taxonomy_revision=predecessor,
         concepts=(
             ConceptDefinition(
                 concept_id="preflop.big-blind-defense",
                 definition_revision=definition_revision,
-                series_id="preflop-core",
+                series_id=series_id,
                 contexts=("preflop", "facing-wager"),
                 testable_definition=definition,
             ),
@@ -74,11 +76,13 @@ def taxonomy(
 def mapping(
     *rules: ConceptMappingRule,
     revision: str = "mapping-v1",
+    taxonomy_series_id: str = "preflop-core",
     taxonomy_revision: str = "taxonomy-v1",
     predecessor: str | None = None,
 ) -> ConceptMappingRevision:
     return ConceptMappingRevision(
         mapping_revision=revision,
+        taxonomy_series_id=taxonomy_series_id,
         taxonomy_revision=taxonomy_revision,
         predecessor_mapping_revision=predecessor,
         rules=rules,
@@ -99,7 +103,9 @@ def matching_rule(
 
 def principle(
     *,
+    principle_id: str = "bb-defense-guidance",
     principle_revision: str = "principle-v1",
+    taxonomy_series_id: str = "preflop-core",
     taxonomy_revision: str = "taxonomy-v1",
     definition_revision: str = "definition-v1",
     reference_revision: str = "reference-v1",
@@ -108,11 +114,13 @@ def principle(
         "Against this pinned reference, continue ranges depend on the"
         " opener, sizing, stack depth, and intervening action."
     ),
+    supersedes: str | None = None,
 ) -> PrincipleRevision:
     return PrincipleRevision(
-        principle_id="bb-defense-guidance",
+        principle_id=principle_id,
         principle_revision=principle_revision,
         concept_id="preflop.big-blind-defense",
+        taxonomy_series_id=taxonomy_series_id,
         taxonomy_revision=taxonomy_revision,
         concept_definition_revision=definition_revision,
         reference_policy_revision=reference_revision,
@@ -120,6 +128,7 @@ def principle(
         author_id="principle-author",
         authored_at=NOW,
         content=content,
+        supersedes_principle_revision=supersedes,
     )
 
 
@@ -150,13 +159,15 @@ def approved_record(**kwargs: str) -> PrincipleRecord:
 def tagged_decision(
     *,
     mapping_revision: str = "mapping-v1",
+    taxonomy_series_id: str = "preflop-core",
 ):
     result = tag_primary_concept(
         decision(),
-        taxonomy=taxonomy(),
+        taxonomy=taxonomy(series_id=taxonomy_series_id),
         mapping=mapping(
             matching_rule(),
             revision=mapping_revision,
+            taxonomy_series_id=taxonomy_series_id,
         ),
     )
     assert result.tag is not None
@@ -352,6 +363,7 @@ def test_tagging_is_optional_deterministic_and_revision_pinned() -> None:
     assert first.tag is not None
     assert first.absence_reason is None
     assert first.tag.concept_id == "preflop.big-blind-defense"
+    assert first.tag.taxonomy_series_id == "preflop-core"
     assert first.tag.taxonomy_revision == "taxonomy-v1"
     assert first.tag.mapping_revision == "mapping-v1"
     assert first.tag.concept_definition_revision == "definition-v1"
@@ -368,6 +380,9 @@ def test_tagging_is_optional_deterministic_and_revision_pinned() -> None:
     )
     assert unsupported.tag is None
     assert unsupported.absence_reason == "no_matching_rule"
+    assert unsupported.taxonomy_series_id == "preflop-core"
+    assert unsupported.taxonomy_revision == "taxonomy-v1"
+    assert unsupported.mapping_revision == "mapping-v1"
 
 
 def test_tagging_fails_on_multiple_primary_concepts() -> None:
@@ -389,12 +404,28 @@ def test_tagging_result_cannot_fabricate_or_mix_absence() -> None:
     point = decision()
     binding = tagged_decision().decision
     with pytest.raises(ValidationError, match="either one primary tag"):
-        DecisionConceptTagging(decision=binding)
+        DecisionConceptTagging(
+            decision=binding,
+            taxonomy_series_id="preflop-core",
+            taxonomy_revision="taxonomy-v1",
+            mapping_revision="mapping-v1",
+        )
     with pytest.raises(ValidationError, match="either one primary tag"):
         DecisionConceptTagging(
             decision=binding,
+            taxonomy_series_id="preflop-core",
+            taxonomy_revision="taxonomy-v1",
+            mapping_revision="mapping-v1",
             tag=tagged_decision(),
             absence_reason="no_matching_rule",
+        )
+    with pytest.raises(ValidationError, match="content revisions must match"):
+        DecisionConceptTagging(
+            decision=binding,
+            taxonomy_series_id="preflop-core",
+            taxonomy_revision="taxonomy-v1",
+            mapping_revision="mapping-v2",
+            tag=tagged_decision(),
         )
     assert point.identity.site == binding.identity.site
     assert point.identity.source_hand_id == binding.identity.source_hand_id
@@ -413,6 +444,11 @@ def test_mapping_rejects_unknown_or_mismatched_taxonomy_targets() -> None:
         validate_mapping_revision(
             taxonomy(),
             mapping(matching_rule(), taxonomy_revision="taxonomy-v2"),
+        )
+    with pytest.raises(LearningContentCompatibilityError, match="does not target"):
+        validate_mapping_revision(
+            taxonomy(),
+            mapping(matching_rule(), taxonomy_series_id="postflop-core"),
         )
 
 
@@ -509,6 +545,59 @@ def test_mapping_successor_requires_distinct_identity_and_continuity() -> None:
             predecessor="mapping-v1",
         ),
     )
+
+
+def test_principle_successor_requires_complete_immutable_lineage() -> None:
+    root = principle()
+    second = principle(
+        principle_revision="principle-v2",
+        content="A separately reviewed successor principle.",
+        supersedes="principle-v1",
+    )
+    validate_principle_successor((root,), second)
+
+    rewritten_identity = principle(
+        principle_revision="principle-v1",
+        content="Different content under a recycled revision identity.",
+        supersedes="principle-v2",
+    )
+    with pytest.raises(
+        LearningContentCompatibilityError,
+        match="new immutable revision",
+    ):
+        validate_principle_successor((root, second), rewritten_identity)
+
+    third = principle(
+        principle_revision="principle-v3",
+        content="A third reviewed revision.",
+        supersedes="principle-v2",
+    )
+    rewritten_root = principle(
+        content="A conflicting snapshot of the root revision."
+    )
+    with pytest.raises(
+        LearningContentCompatibilityError,
+        match="unique and immutable",
+    ):
+        validate_principle_successor((root, rewritten_root), third)
+
+    with pytest.raises(
+        LearningContentCompatibilityError,
+        match="begin at its root",
+    ):
+        validate_principle_successor((second,), third)
+
+    crossed_series = principle(
+        principle_revision="principle-v3",
+        taxonomy_series_id="postflop-core",
+        content="A successor cannot cross the taxonomy series boundary.",
+        supersedes="principle-v2",
+    )
+    with pytest.raises(
+        LearningContentCompatibilityError,
+        match="same taxonomy series",
+    ):
+        validate_principle_successor((root, second), crossed_series)
 
 
 def test_principle_lifecycle_requires_draft_then_human_review() -> None:
@@ -625,6 +714,20 @@ def test_activation_rejects_duplicate_principle_revision_snapshots() -> None:
             principles=(draft, approved),
         )
 
+    rewritten = approved_record(
+        content="Conflicting content under the same principle revision."
+    )
+    with pytest.raises(
+        LearningContentCompatibilityError,
+        match="different immutable content",
+    ):
+        evaluate_learning_content_activation(
+            taxonomy=taxonomy(),
+            mapping=mapping(matching_rule()),
+            reference_policy_revision="reference-v1",
+            principles=(approved, rewritten),
+        )
+
 
 def test_approval_boundaries_revalidate_forged_lifecycle_snapshots() -> None:
     draft = draft_record()
@@ -679,11 +782,16 @@ def test_reveal_requires_approved_compatible_principle_and_exact_versions() -> N
         record=approved_record(),
     )
     assert reveal.decision == tag.decision
+    assert reveal.taxonomy_series_id == tag.taxonomy_series_id
     assert reveal.taxonomy_revision == tag.taxonomy_revision
     assert reveal.mapping_revision == tag.mapping_revision
     assert reveal.concept_definition_revision == tag.concept_definition_revision
     assert reveal.reference_policy_revision == "reference-v1"
     assert reveal.principle_revision == "principle-v1"
+    assert (
+        reveal.principle_semantic_digest
+        == approved_record().principle.semantic_digest()
+    )
     assert reveal.display_text.startswith(EDUCATIONAL_GUIDANCE_PREFIX)
     assert "not a guarantee of optimal play or outcomes" in reveal.display_text.lower()
 
@@ -737,6 +845,16 @@ def test_cache_key_changes_with_every_semantic_revision() -> None:
         reference_policy_revision="reference-v1",
         record=approved_record(principle_revision="principle-v2"),
     )
+    content_changed_without_revision_change = principle_cache_key(
+        tagged_decision(),
+        reference_policy_revision="reference-v1",
+        record=approved_record(content="Changed content must never alias in cache."),
+    )
+    other_taxonomy_series = principle_cache_key(
+        tagged_decision(taxonomy_series_id="postflop-core"),
+        reference_policy_revision="reference-v1",
+        record=approved_record(taxonomy_series_id="postflop-core"),
+    )
 
     assert len(base.digest()) == 64
     assert len(
@@ -745,5 +863,7 @@ def test_cache_key_changes_with_every_semantic_revision() -> None:
             mapping_changed.digest(),
             reference_changed.digest(),
             principle_changed.digest(),
+            content_changed_without_revision_change.digest(),
+            other_taxonomy_series.digest(),
         }
-    ) == 4
+    ) == 6

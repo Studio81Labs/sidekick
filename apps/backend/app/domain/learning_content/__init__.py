@@ -35,6 +35,7 @@ from app.domain.learning_content.services import (
     tag_primary_concept,
     validate_mapping_revision,
     validate_mapping_successor,
+    validate_principle_successor,
     validate_taxonomy_successor,
 )
 
@@ -71,5 +72,6 @@ __all__ = [
     "tag_primary_concept",
     "validate_mapping_revision",
     "validate_mapping_successor",
+    "validate_principle_successor",
     "validate_taxonomy_successor",
 ]
