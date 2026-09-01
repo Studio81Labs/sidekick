@@ -69,6 +69,7 @@ RemoteProviderStatus = Literal["staged", "active", "disabled"]
 RemoteConsentStatus = Literal["active", "revoked"]
 RemoteDispatchOutcome = Literal["unavailable", "dispatch_candidate"]
 RemoteDispatchReason = Literal[
+    "clock_invalid",
     "mode_invalid",
     "local_only",
     "provider_unconfigured",
@@ -82,6 +83,7 @@ RemoteDispatchReason = Literal[
     "outbound_categories_mismatch",
     "route_unavailable",
     "route_schema_mismatch",
+    "route_manifest_mismatch",
     "preflight_passed",
 ]
 RemoteLookupUnavailableReason = Literal[
@@ -255,6 +257,64 @@ class RemoteReferenceDisclosure(RemoteReferenceModel):
         return _canonical_sha256(self)
 
 
+class EconomicConfigurationBinding(RemoteReferenceModel):
+    economic_model: EconomicModel
+    economic_model_revision: Identifier
+    economic_configuration_sha256: Sha256Digest
+
+
+class UtilityConfigurationBinding(RemoteReferenceModel):
+    utility_model: UtilityModel
+    utility_model_revision: Identifier
+    utility_configuration_sha256: Sha256Digest
+
+
+class AbstractionSchemaBinding(RemoteReferenceModel):
+    abstraction_schema_revision: Identifier
+    abstraction_schema_sha256: Sha256Digest
+
+
+class RemoteReferenceRouteManifest(RemoteReferenceModel):
+    """Provider-owned allowlist for every route-supplied revision and digest."""
+
+    manifest_revision: Identifier
+    economic_configurations: tuple[EconomicConfigurationBinding, ...] = Field(
+        min_length=1
+    )
+    utility_configurations: tuple[UtilityConfigurationBinding, ...] = Field(
+        min_length=1
+    )
+    hole_card_abstraction_schemas: tuple[AbstractionSchemaBinding, ...] = ()
+    board_abstraction_schemas: tuple[AbstractionSchemaBinding, ...] = ()
+    board_abstraction_artifacts: tuple[Sha256Digest, ...] = ()
+    conditioned_range_artifacts: tuple[Sha256Digest, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_manifest_order(self) -> Self:
+        model_bindings = (
+            self.economic_configurations,
+            self.utility_configurations,
+            self.hole_card_abstraction_schemas,
+            self.board_abstraction_schemas,
+        )
+        for bindings in model_bindings:
+            digests = [_canonical_sha256(binding) for binding in bindings]
+            if digests != sorted(digests) or len(digests) != len(set(digests)):
+                raise ValueError("route-manifest bindings must be sorted and unique")
+        for artifacts in (
+            self.board_abstraction_artifacts,
+            self.conditioned_range_artifacts,
+        ):
+            if artifacts != tuple(sorted(artifacts)):
+                raise ValueError("route-manifest artifacts must be sorted")
+            if len(artifacts) != len(set(artifacts)):
+                raise ValueError("route-manifest artifacts must be unique")
+        return self
+
+    def semantic_digest(self) -> str:
+        return _canonical_sha256(self)
+
+
 class RemoteReferenceProviderPolicy(RemoteReferenceModel):
     """Application-supplied provider policy; not proof that a source is solved."""
 
@@ -269,6 +329,7 @@ class RemoteReferenceProviderPolicy(RemoteReferenceModel):
     derived_output_rights_revision: Identifier
     derived_output_rights_sha256: Sha256Digest
     disclosure: RemoteReferenceDisclosure
+    route_manifest: RemoteReferenceRouteManifest
     delivery_mode: Literal["server_side_feed"] = "server_side_feed"
     transport_requirement: Literal["https"] = "https"
     credential_placement: Literal["authorization_header_only"] = (
@@ -412,10 +473,18 @@ class TablePositionRoute(RemoteReferenceModel):
         return self
 
 
+class PositionedStack(RemoteReferenceModel):
+    position: PositionLabel
+    remaining_stack_bb: NonNegativeDecimal
+
+
 class StackWagerPotRoute(RemoteReferenceModel):
     category: Literal["stack_wager_pot"] = "stack_wager_pot"
-    effective_stack_bb: PositiveDecimal
     hero_stack_bb: NonNegativeDecimal
+    active_player_stacks: tuple[PositionedStack, ...] = Field(
+        min_length=2,
+        max_length=10,
+    )
     pot_bb: NonNegativeDecimal
     current_wager_bb: NonNegativeDecimal
     amount_to_call_bb: NonNegativeDecimal
@@ -424,8 +493,11 @@ class StackWagerPotRoute(RemoteReferenceModel):
     def validate_wagers(self) -> Self:
         if self.amount_to_call_bb > self.hero_stack_bb:
             raise ValueError("amount to call cannot exceed the hero stack")
-        if self.effective_stack_bb > self.hero_stack_bb:
-            raise ValueError("effective stack cannot exceed the hero stack")
+        positions = [item.position for item in self.active_player_stacks]
+        if positions != sorted(positions):
+            raise ValueError("active player stacks must be sorted by position")
+        if len(positions) != len(set(positions)):
+            raise ValueError("active player stacks require unique positions")
         return self
 
 
@@ -675,6 +747,23 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                 raise ValueError(
                     "conditioned ranges must cover every active opponent exactly"
                 )
+        stacks = next(
+            component
+            for component in self.components
+            if isinstance(component, StackWagerPotRoute)
+        )
+        stack_positions = {
+            item.position for item in stacks.active_player_stacks
+        }
+        if stack_positions != set(table.active_player_positions):
+            raise ValueError("stacks must cover every active player exactly")
+        hero_stack = next(
+            item.remaining_stack_bb
+            for item in stacks.active_player_stacks
+            if item.position == table.hero_position
+        )
+        if hero_stack != stacks.hero_stack_bb:
+            raise ValueError("position-bound hero stack must match hero_stack_bb")
         return self
 
     @property
@@ -697,13 +786,15 @@ class RemoteReferenceDispatchPreflight(RemoteReferenceModel):
     """One single-dispatch candidate or explicit fail-closed unavailable result."""
 
     decision: DecisionBinding
-    evaluated_at: AwareDatetime
+    evaluated_at: AwareDatetime | None
     outcome: RemoteDispatchOutcome
     reason: RemoteDispatchReason
     provider_id: Identifier | None = None
     provider_configuration_revision: Identifier | None = None
     provider_policy_revision: Identifier | None = None
     provider_policy_sha256: Sha256Digest | None = None
+    route_manifest_revision: Identifier | None = None
+    route_manifest_sha256: Sha256Digest | None = None
     endpoint_origin: HttpsOrigin | None = None
     reference_source_revision: Identifier | None = None
     commercial_serving_rights_revision: Identifier | None = None
@@ -731,6 +822,8 @@ class RemoteReferenceDispatchPreflight(RemoteReferenceModel):
             self.provider_configuration_revision,
             self.provider_policy_revision,
             self.provider_policy_sha256,
+            self.route_manifest_revision,
+            self.route_manifest_sha256,
             self.endpoint_origin,
             self.reference_source_revision,
             self.commercial_serving_rights_revision,
@@ -746,6 +839,11 @@ class RemoteReferenceDispatchPreflight(RemoteReferenceModel):
         )
         if candidate and any(value is None for value in candidate_fields):
             raise ValueError("a dispatch candidate requires complete local provenance")
+        if self.reason == "clock_invalid":
+            if self.evaluated_at is not None:
+                raise ValueError("an invalid clock cannot claim an evaluation time")
+        elif self.evaluated_at is None:
+            raise ValueError("a valid preflight requires an evaluation time")
         if not candidate and (
             self.outbound_request is not None
             or self.fresh_consent_recheck is not None
@@ -770,6 +868,8 @@ class RemoteReferenceLookupUnavailable(RemoteReferenceModel):
     provider_configuration_revision: Identifier
     provider_policy_revision: Identifier
     provider_policy_sha256: Sha256Digest
+    route_manifest_revision: Identifier
+    route_manifest_sha256: Sha256Digest
     endpoint_origin: HttpsOrigin
     reference_source_revision: Identifier
     commercial_serving_rights_revision: Identifier

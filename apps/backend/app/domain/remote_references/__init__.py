@@ -1,14 +1,17 @@
 """Consent and minimization contracts for optional remote solved references."""
 
 from app.domain.remote_references.models import (
+    AbstractionSchemaBinding,
     BoardAbstractionRoute,
     BoardCardsRoute,
     ConditionedRange,
     ConditionedRangesRoute,
+    EconomicConfigurationBinding,
     GameEconomicsRoute,
     HoleCardAbstractionRoute,
     HoleCardsRoute,
     PriorActionsRoute,
+    PositionedStack,
     RemoteLookupUnavailableReason,
     RemoteOutboundCategory,
     RemotePriorAction,
@@ -18,9 +21,11 @@ from app.domain.remote_references.models import (
     RemoteReferenceLookupUnavailable,
     RemoteReferenceMode,
     RemoteReferenceProviderPolicy,
+    RemoteReferenceRouteManifest,
     RemoteReferenceRouteRequest,
     StackWagerPotRoute,
     TablePositionRoute,
+    UtilityConfigurationBinding,
 )
 from app.domain.remote_references.services import (
     evaluate_remote_reference_preflight,
@@ -28,14 +33,17 @@ from app.domain.remote_references.services import (
 )
 
 __all__ = [
+    "AbstractionSchemaBinding",
     "BoardAbstractionRoute",
     "BoardCardsRoute",
     "ConditionedRange",
     "ConditionedRangesRoute",
+    "EconomicConfigurationBinding",
     "GameEconomicsRoute",
     "HoleCardAbstractionRoute",
     "HoleCardsRoute",
     "PriorActionsRoute",
+    "PositionedStack",
     "RemoteLookupUnavailableReason",
     "RemoteOutboundCategory",
     "RemotePriorAction",
@@ -45,9 +53,11 @@ __all__ = [
     "RemoteReferenceLookupUnavailable",
     "RemoteReferenceMode",
     "RemoteReferenceProviderPolicy",
+    "RemoteReferenceRouteManifest",
     "RemoteReferenceRouteRequest",
     "StackWagerPotRoute",
     "TablePositionRoute",
+    "UtilityConfigurationBinding",
     "evaluate_remote_reference_preflight",
     "record_remote_reference_unavailable",
 ]

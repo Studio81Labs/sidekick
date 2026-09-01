@@ -540,11 +540,15 @@ Optional remote-reference preflight contracts live under
 by default and evaluates a dispatch candidate only when active provider-policy
 snapshots, the semantic policy digest, exact disclosure, explicit unexpired
 consent generation, canonical DNS-only HTTPS origin, route schema, and sorted
-field-category allowlist all match. Closed component models
+field-category allowlist all match. A provider-owned route manifest explicitly
+allowlists every outbound economics, utility, abstraction, and conditioned-range
+revision or digest. Closed component models
 make raw histories, hand/site/session and canonical-record identities, player
 names, timestamps, screenshots, and learning/profile state unrepresentable in
 the outbound DTO. Route revisions, abstraction digests, and range digests must
-come only from the independently selected provider manifest, never player data.
+match that independently selected provider manifest, never player data. Active
+players and their position-bound remaining stacks are explicit, so multiway
+routes cannot collapse materially different stack configurations.
 Provider configuration, policy, reference-source, commercial
 serving-rights, derived-output-rights, disclosure, consent, request, economics,
 utility, and abstraction revisions remain pinned in local audit provenance;

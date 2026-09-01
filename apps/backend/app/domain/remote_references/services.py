@@ -7,6 +7,12 @@ from hashlib import sha256
 
 from app.domain.learning_content.models import DecisionBinding
 from app.domain.remote_references.models import (
+    AbstractionSchemaBinding,
+    BoardAbstractionRoute,
+    ConditionedRangesRoute,
+    EconomicConfigurationBinding,
+    GameEconomicsRoute,
+    HoleCardAbstractionRoute,
     RemoteDispatchReason,
     RemoteLookupUnavailableReason,
     RemoteReferenceConsent,
@@ -15,6 +21,7 @@ from app.domain.remote_references.models import (
     RemoteReferenceMode,
     RemoteReferenceProviderPolicy,
     RemoteReferenceRouteRequest,
+    UtilityConfigurationBinding,
 )
 
 
@@ -30,6 +37,8 @@ def evaluate_remote_reference_preflight(
     """Evaluate snapshots into a candidate, never final transport authority."""
 
     decision = DecisionBinding.model_validate(decision.model_dump(mode="python"))
+    if not _is_aware(now):
+        return _unavailable(decision, now=None, reason="clock_invalid")
     if mode not in {"local_only", "remote_enabled"}:
         return _unavailable(decision, now=now, reason="mode_invalid")
     if mode == "local_only":
@@ -158,6 +167,15 @@ def evaluate_remote_reference_preflight(
             consent=consent,
             request=request,
         )
+    if not _request_matches_manifest(request, policy):
+        return _unavailable(
+            decision,
+            now=now,
+            reason="route_manifest_mismatch",
+            policy=policy,
+            consent=consent,
+            request=request,
+        )
 
     return RemoteReferenceDispatchPreflight(
         decision=decision,
@@ -168,6 +186,8 @@ def evaluate_remote_reference_preflight(
         provider_configuration_revision=policy.provider_configuration_revision,
         provider_policy_revision=policy.provider_policy_revision,
         provider_policy_sha256=policy.semantic_digest(),
+        route_manifest_revision=policy.route_manifest.manifest_revision,
+        route_manifest_sha256=policy.route_manifest.semantic_digest(),
         endpoint_origin=policy.endpoint_origin,
         reference_source_revision=policy.reference_source_revision,
         commercial_serving_rights_revision=(
@@ -201,12 +221,17 @@ def record_remote_reference_unavailable(
     )
     if preflight.outcome != "dispatch_candidate":
         raise ValueError("only a dispatch candidate can record remote unavailability")
+    if not _is_aware(occurred_at):
+        raise ValueError("remote unavailability requires an aware clock")
+    assert preflight.evaluated_at is not None
     if occurred_at < preflight.evaluated_at:
         raise ValueError("remote unavailability cannot predate its preflight")
     assert preflight.provider_id is not None
     assert preflight.provider_configuration_revision is not None
     assert preflight.provider_policy_revision is not None
     assert preflight.provider_policy_sha256 is not None
+    assert preflight.route_manifest_revision is not None
+    assert preflight.route_manifest_sha256 is not None
     assert preflight.endpoint_origin is not None
     assert preflight.reference_source_revision is not None
     assert preflight.commercial_serving_rights_revision is not None
@@ -229,6 +254,8 @@ def record_remote_reference_unavailable(
         ),
         provider_policy_revision=preflight.provider_policy_revision,
         provider_policy_sha256=preflight.provider_policy_sha256,
+        route_manifest_revision=preflight.route_manifest_revision,
+        route_manifest_sha256=preflight.route_manifest_sha256,
         endpoint_origin=preflight.endpoint_origin,
         reference_source_revision=preflight.reference_source_revision,
         commercial_serving_rights_revision=(
@@ -256,7 +283,7 @@ def record_remote_reference_unavailable(
 def _unavailable(
     decision: DecisionBinding,
     *,
-    now: datetime,
+    now: datetime | None,
     reason: RemoteDispatchReason,
     policy: RemoteReferenceProviderPolicy | None = None,
     consent: RemoteReferenceConsent | None = None,
@@ -279,6 +306,12 @@ def _unavailable(
         ),
         provider_policy_sha256=(
             policy.semantic_digest() if policy is not None else None
+        ),
+        route_manifest_revision=(
+            policy.route_manifest.manifest_revision if policy is not None else None
+        ),
+        route_manifest_sha256=(
+            policy.route_manifest.semantic_digest() if policy is not None else None
         ),
         endpoint_origin=policy.endpoint_origin if policy is not None else None,
         reference_source_revision=(
@@ -311,3 +344,64 @@ def _unavailable(
             request.semantic_digest() if request is not None else None
         ),
     )
+
+
+def _is_aware(value: datetime) -> bool:
+    return (
+        isinstance(value, datetime)
+        and value.tzinfo is not None
+        and value.utcoffset() is not None
+    )
+
+
+def _request_matches_manifest(
+    request: RemoteReferenceRouteRequest,
+    policy: RemoteReferenceProviderPolicy,
+) -> bool:
+    manifest = policy.route_manifest
+    for component in request.components:
+        if isinstance(component, GameEconomicsRoute):
+            economics = EconomicConfigurationBinding(
+                economic_model=component.economic_model,
+                economic_model_revision=component.economic_model_revision,
+                economic_configuration_sha256=(
+                    component.economic_configuration_sha256
+                ),
+            )
+            utility = UtilityConfigurationBinding(
+                utility_model=component.utility_model,
+                utility_model_revision=component.utility_model_revision,
+                utility_configuration_sha256=(
+                    component.utility_configuration_sha256
+                ),
+            )
+            if economics not in manifest.economic_configurations:
+                return False
+            if utility not in manifest.utility_configurations:
+                return False
+        elif isinstance(component, HoleCardAbstractionRoute):
+            schema = AbstractionSchemaBinding(
+                abstraction_schema_revision=component.abstraction_schema_revision,
+                abstraction_schema_sha256=component.abstraction_schema_sha256,
+            )
+            if schema not in manifest.hole_card_abstraction_schemas:
+                return False
+        elif isinstance(component, BoardAbstractionRoute):
+            schema = AbstractionSchemaBinding(
+                abstraction_schema_revision=component.abstraction_schema_revision,
+                abstraction_schema_sha256=component.abstraction_schema_sha256,
+            )
+            if schema not in manifest.board_abstraction_schemas:
+                return False
+            if component.abstraction_sha256 not in (
+                manifest.board_abstraction_artifacts
+            ):
+                return False
+        elif isinstance(component, ConditionedRangesRoute):
+            if any(
+                item.range_artifact_sha256
+                not in manifest.conditioned_range_artifacts
+                for item in component.ranges
+            ):
+                return False
+    return True

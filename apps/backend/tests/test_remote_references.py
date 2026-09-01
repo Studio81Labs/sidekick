@@ -11,20 +11,25 @@ from pydantic import ValidationError
 from app.domain.imported_hands import extract_hero_decision_points
 from app.domain.learning_content import DecisionBinding
 from app.domain.remote_references import (
+    AbstractionSchemaBinding,
     BoardCardsRoute,
     ConditionedRange,
     ConditionedRangesRoute,
+    EconomicConfigurationBinding,
     GameEconomicsRoute,
     HoleCardAbstractionRoute,
     HoleCardsRoute,
     PriorActionsRoute,
+    PositionedStack,
     RemotePriorAction,
     RemoteReferenceConsent,
     RemoteReferenceDisclosure,
     RemoteReferenceProviderPolicy,
+    RemoteReferenceRouteManifest,
     RemoteReferenceRouteRequest,
     StackWagerPotRoute,
     TablePositionRoute,
+    UtilityConfigurationBinding,
     evaluate_remote_reference_preflight,
     record_remote_reference_unavailable,
 )
@@ -72,6 +77,34 @@ def disclosure(**updates: object) -> RemoteReferenceDisclosure:
     return RemoteReferenceDisclosure.model_validate(values)
 
 
+def route_manifest(**updates: object) -> RemoteReferenceRouteManifest:
+    values = {
+        "manifest_revision": "manifest-v1",
+        "economic_configurations": (
+            EconomicConfigurationBinding(
+                economic_model="cash_rake",
+                economic_model_revision="cash-ev-v1",
+                economic_configuration_sha256=DIGEST_A,
+            ),
+        ),
+        "utility_configurations": (
+            UtilityConfigurationBinding(
+                utility_model="chip_ev",
+                utility_model_revision="chip-ev-v1",
+                utility_configuration_sha256=DIGEST_B,
+            ),
+        ),
+        "hole_card_abstraction_schemas": (
+            AbstractionSchemaBinding(
+                abstraction_schema_revision="class-v1",
+                abstraction_schema_sha256=DIGEST_C,
+            ),
+        ),
+    }
+    values.update(updates)
+    return RemoteReferenceRouteManifest.model_validate(values)
+
+
 def provider_policy(**updates: object) -> RemoteReferenceProviderPolicy:
     values = {
         "provider_id": "vendor-a",
@@ -85,6 +118,7 @@ def provider_policy(**updates: object) -> RemoteReferenceProviderPolicy:
         "derived_output_rights_revision": "derived-rights-v1",
         "derived_output_rights_sha256": DIGEST_D,
         "disclosure": disclosure(),
+        "route_manifest": route_manifest(),
     }
     values.update(updates)
     return RemoteReferenceProviderPolicy.model_validate(values)
@@ -153,8 +187,11 @@ def route_request(**updates: object) -> RemoteReferenceRouteRequest:
             ),
         ),
         StackWagerPotRoute(
-            effective_stack_bb=Decimal("99"),
             hero_stack_bb=Decimal("99"),
+            active_player_stacks=(
+                PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
+                PositionedStack(position="BTN", remaining_stack_bb=Decimal("97")),
+            ),
             pot_bb=Decimal("2.5"),
             current_wager_bb=Decimal("1"),
             amount_to_call_bb=Decimal("1"),
@@ -230,6 +267,22 @@ def test_preflight_fails_closed_before_consent(
     assert result.policy_grade_eligibility == "ungraded"
 
 
+def test_preflight_rejects_a_naive_clock_without_crashing() -> None:
+    result = evaluate_remote_reference_preflight(
+        decision_binding(),
+        mode="remote_enabled",
+        policy=provider_policy(),
+        consent=consent(),
+        request=route_request(),
+        now=datetime(2026, 9, 1, 8, 0),
+    )
+
+    assert result.outcome == "unavailable"
+    assert result.reason == "clock_invalid"
+    assert result.evaluated_at is None
+    assert result.outbound_request is None
+
+
 def test_exact_active_consent_yields_only_a_dispatch_candidate() -> None:
     result = preflight()
 
@@ -243,6 +296,7 @@ def test_exact_active_consent_yields_only_a_dispatch_candidate() -> None:
     assert result.outbound_request == route_request()
     assert result.request_sha256 == route_request().semantic_digest()
     assert result.provider_policy_sha256 == provider_policy().semantic_digest()
+    assert result.route_manifest_sha256 == route_manifest().semantic_digest()
     assert result.commercial_serving_rights_revision == "commercial-rights-v1"
     assert result.derived_output_rights_revision == "derived-rights-v1"
 
@@ -408,6 +462,29 @@ def test_categories_and_route_schema_are_exactly_bound() -> None:
     assert schema_mismatch.outbound_request is None
 
 
+def test_route_revisions_and_digests_require_provider_manifest_membership() -> None:
+    policy = provider_policy()
+    components = list(route_request().components)
+    components[1] = HoleCardAbstractionRoute(
+        abstraction_schema_revision="class-v2",
+        abstraction_schema_sha256=DIGEST_D,
+        starting_hand_class="AKs",
+    )
+
+    result = evaluate_remote_reference_preflight(
+        decision_binding(),
+        mode="remote_enabled",
+        policy=policy,
+        consent=consent(policy=policy),
+        request=route_request(components=tuple(components)),
+        now=NOW,
+    )
+
+    assert result.outcome == "unavailable"
+    assert result.reason == "route_manifest_mismatch"
+    assert result.outbound_request is None
+
+
 @pytest.mark.parametrize(
     "origin",
     [
@@ -421,6 +498,7 @@ def test_categories_and_route_schema_are_exactly_bound() -> None:
         "https://[::1]",
         "https://127.0.0.1",
         "https://localhost",
+        "https://reference.vendor.example:0",
         "https://reference.vendor.example:99999",
     ],
 )
@@ -487,8 +565,11 @@ def test_request_digest_binds_exact_route_content() -> None:
     original = route_request()
     changed_components = list(original.components)
     changed_components[3] = StackWagerPotRoute(
-        effective_stack_bb=Decimal("98"),
         hero_stack_bb=Decimal("98"),
+        active_player_stacks=(
+            PositionedStack(position="BB", remaining_stack_bb=Decimal("98")),
+            PositionedStack(position="BTN", remaining_stack_bb=Decimal("95")),
+        ),
         pot_bb=Decimal("2.5"),
         current_wager_bb=Decimal("1"),
         amount_to_call_bb=Decimal("1"),
@@ -653,6 +734,22 @@ def test_postflop_ranges_cover_every_active_opponent_exactly() -> None:
         )
 
 
+def test_position_bound_stacks_cover_every_active_player() -> None:
+    request = route_request()
+    components = list(request.components)
+    components[4] = TablePositionRoute(
+        dealt_in_player_count=6,
+        hero_position="BB",
+        hero_button_distance=2,
+        hero_action_index=5,
+        active_player_positions=("BB", "BTN", "CO"),
+        relative_position="not_applicable",
+    )
+
+    with pytest.raises(ValidationError, match="every active player"):
+        route_request(components=tuple(components))
+
+
 @pytest.mark.parametrize("starting_hand_class", ["bob", "KAs", "AAs"])
 def test_hole_abstraction_is_a_closed_poker_class(
     starting_hand_class: str,
@@ -695,6 +792,7 @@ def test_remote_failures_remain_ungraded_without_fallback() -> None:
     assert failure.resolved_reference is None
     assert failure.request_sha256 == candidate.request_sha256
     assert failure.provider_policy_sha256 == candidate.provider_policy_sha256
+    assert failure.route_manifest_sha256 == candidate.route_manifest_sha256
     assert failure.commercial_serving_rights_revision == (
         candidate.commercial_serving_rights_revision
     )
