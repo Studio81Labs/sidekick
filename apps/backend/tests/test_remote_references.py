@@ -600,9 +600,15 @@ def test_route_revisions_and_digests_require_provider_manifest_membership() -> N
 def test_provider_manifest_binds_the_exact_route_context() -> None:
     policy = provider_policy()
     components = list(route_request().components)
-    economics_payload = components[0].model_dump(mode="python")
-    economics_payload["betting_limit"] = "pot_limit"
-    components[0] = GameEconomicsRoute.model_validate(economics_payload)
+    stack = components[3]
+    assert isinstance(stack, StackWagerPotRoute)
+    stack_payload = stack.model_dump(mode="python")
+    stack_payload["hero_stack_bb"] = Decimal("98")
+    stack_payload["active_player_stacks"] = (
+        PositionedStack(position="BB", remaining_stack_bb=Decimal("98")),
+        PositionedStack(position="BTN", remaining_stack_bb=Decimal("97.5")),
+    )
+    components[3] = StackWagerPotRoute.model_validate(stack_payload)
     changed_request = route_request(components=tuple(components))
 
     result = evaluate_remote_reference_preflight(
@@ -784,6 +790,7 @@ def test_route_requires_complete_structural_state() -> None:
             "utility_model": "icm_equity",
         },
         {"small_blind_bb": Decimal("1")},
+        {"betting_limit": "pot_limit"},
     ],
 )
 def test_economics_reject_incompatible_or_impossible_inputs(
@@ -1295,6 +1302,56 @@ def test_cumulative_short_all_ins_reopen_a_prior_actors_raise() -> None:
     result = route_request(components=tuple(components))
 
     assert result.decision_street == "preflop"
+
+
+def test_completed_betting_round_cannot_fabricate_another_decision() -> None:
+    request = route_request()
+    components = list(request.components)
+    prior_actions = components[2]
+    assert isinstance(prior_actions, PriorActionsRoute)
+    components[2] = PriorActionsRoute(
+        actions=(
+            *prior_actions.actions,
+            RemotePriorAction(
+                street="preflop",
+                sequence=5,
+                actor_position="BB",
+                action="call",
+                total_committed_bb=Decimal("2.5"),
+                all_in=False,
+            ),
+        )
+    )
+    components[3] = StackWagerPotRoute(
+        hero_stack_bb=Decimal("97.5"),
+        active_player_stacks=(
+            PositionedStack(position="BB", remaining_stack_bb=Decimal("97.5")),
+            PositionedStack(position="BTN", remaining_stack_bb=Decimal("97.5")),
+        ),
+        committed_pot_before_street_bb=Decimal("0"),
+        current_street_commitments=(
+            PositionedCommitment(position="BB", committed_bb=Decimal("2.5")),
+            PositionedCommitment(position="BTN", committed_bb=Decimal("2.5")),
+            PositionedCommitment(position="CO", committed_bb=Decimal("0")),
+            PositionedCommitment(position="HJ", committed_bb=Decimal("0")),
+            PositionedCommitment(position="SB", committed_bb=Decimal("0.5")),
+            PositionedCommitment(position="UTG", committed_bb=Decimal("0")),
+        ),
+        pot_bb=Decimal("5.5"),
+        current_wager_bb=Decimal("2.5"),
+        amount_to_call_bb=Decimal("0"),
+    )
+    components[4] = TablePositionRoute(
+        dealt_in_player_count=6,
+        hero_position="BTN",
+        hero_button_distance=0,
+        hero_action_index=3,
+        active_player_positions=("BB", "BTN"),
+        relative_position="not_applicable",
+    )
+
+    with pytest.raises(ValidationError, match="betting round closed"):
+        route_request(components=tuple(components))
 
 
 def test_preflop_action_line_is_complete_and_structurally_ordered() -> None:

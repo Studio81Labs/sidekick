@@ -541,7 +541,8 @@ by default and evaluates a dispatch candidate only when active provider-policy
 snapshots, the semantic policy digest, exact disclosure, explicit unexpired
 consent generation, canonical DNS-only HTTPS origin, route schema, and sorted
 field-category allowlist all match. A provider-owned route manifest explicitly
-allowlists every revision or digest in a currently eligible cash-preflop route
+allowlists every revision or digest in a currently eligible cash no-limit
+preflop route
 and the internally computed semantic digest of each exact eligible request
 context. That exact context binding includes limit, table size, position,
 position-bound stacks and commitments, sizing, and action-line state rather than
@@ -558,8 +559,11 @@ position-bound commitments and a reconstructed running wager rather than
 accepted as independent claims. Check, call, bet, raise, minimum-raise, and
 short-all-in reopening semantics are validated across the action line; active
 players are derived from its folds while all-in survivors remain visible with
-zero remaining stack. Tournament routes remain unavailable until payout, field,
-stack, and bounty state is representable. Postflop routes remain unavailable
+zero remaining stack. A route cannot claim another decision after all pending
+responders have matched or left the hand. Pot-limit routes remain unavailable
+until their running-pot maximum sizing can be reconstructed; tournament routes
+remain unavailable until payout, field, stack, and bounty state is representable.
+Postflop routes remain unavailable
 until each conditioned-range artifact can be bound to its exact board, action
 line, position, and derivation context instead of a global digest allowlist.
 Provider configuration, policy, reference-source, commercial

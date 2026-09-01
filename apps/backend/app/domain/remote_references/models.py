@@ -386,7 +386,7 @@ class RemoteReferenceConsent(RemoteReferenceModel):
 class GameEconomicsRoute(RemoteReferenceModel):
     category: Literal["game_economics"] = "game_economics"
     game_variant: Literal["texas_holdem"]
-    betting_limit: Literal["no_limit", "pot_limit"]
+    betting_limit: Literal["no_limit"]
     game_format: Literal["cash", "tournament"]
     economic_model: EconomicModel
     economic_model_revision: Identifier
@@ -809,6 +809,7 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
             running_wager = Decimal(0)
             minimum_raise_increment = Decimal(0)
             last_action_wager_by_position: dict[str, Decimal] = {}
+            pending_action_positions = live_positions - all_in_positions
             if street == "preflop":
                 simulated_commitments[small_blind_position] = (
                     economics.small_blind_bb
@@ -823,15 +824,21 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                 actor = action.actor_position
                 if actor in folded_positions or actor in all_in_positions:
                     raise ValueError("folded or all-in players cannot act again")
+                if actor not in pending_action_positions:
+                    raise ValueError(
+                        "the action line cannot continue after betting closes"
+                    )
                 actor_commitment = simulated_commitments[actor]
                 if action.action == "fold":
                     folded_positions.add(actor)
                     live_positions.remove(actor)
+                    pending_action_positions.remove(actor)
                     continue
                 if action.action == "check":
                     if actor_commitment != running_wager:
                         raise ValueError("a player facing a wager cannot check")
                     last_action_wager_by_position[actor] = running_wager
+                    pending_action_positions.remove(actor)
                     continue
 
                 assert action.total_committed_bb is not None
@@ -846,11 +853,13 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                             raise ValueError("an all-in call cannot exceed the wager")
                     elif new_commitment != running_wager:
                         raise ValueError("a call must match the running wager")
+                    full_wager_change = False
                 elif action.action == "bet":
                     if running_wager != 0:
                         raise ValueError("a bet cannot be made into an existing wager")
                     minimum_raise_increment = new_commitment - actor_commitment
                     running_wager = new_commitment
+                    full_wager_change = True
                 else:
                     last_action_wager = last_action_wager_by_position.get(actor)
                     if (
@@ -871,18 +880,39 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                         raise ValueError("a non-all-in raise must meet the minimum")
                     if raise_increment >= minimum_raise_increment:
                         minimum_raise_increment = raise_increment
+                        full_wager_change = True
+                    else:
+                        full_wager_change = False
                     running_wager = new_commitment
                 simulated_commitments[actor] = new_commitment
                 last_action_wager_by_position[actor] = running_wager
                 if action.all_in:
                     all_in_positions.add(actor)
+                if action.action == "call":
+                    pending_action_positions.remove(actor)
+                elif full_wager_change:
+                    pending_action_positions = (
+                        live_positions - all_in_positions - {actor}
+                    )
+                else:
+                    pending_action_positions = {
+                        position
+                        for position in live_positions - all_in_positions - {actor}
+                        if simulated_commitments[position] < running_wager
+                    }
 
             if street == self.decision_street:
                 if simulated_commitments != commitment_by_position:
                     raise ValueError(
                         "action totals must match current-street commitments"
                     )
+                if table.hero_position not in pending_action_positions:
+                    raise ValueError(
+                        "the action line ended after the betting round closed"
+                    )
                 break
+            if pending_action_positions:
+                raise ValueError("a prior-street betting round is incomplete")
 
         if live_positions != set(table.active_player_positions):
             raise ValueError("active players must match action-line survivors")
