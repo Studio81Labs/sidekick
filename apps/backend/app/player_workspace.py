@@ -314,6 +314,7 @@ class PlayerWorkspace:
                 self.imported_hands,
                 limit=limit,
                 cursor=cursor,
+                is_record_unavailable=self.imported_hands.has_interrupted_write,
             )
 
     def get_hand_record(

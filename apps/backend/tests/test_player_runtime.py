@@ -1166,6 +1166,7 @@ def test_pending_lifecycle_recovery_blocks_volume_operations_only(
     assert failed_close.status_code == 503
     monkeypatch.setattr(CascadeJournal, "_commit_replace", real_commit_replace)
 
+    listing = client.get("/api/player/hands", headers=authorization)
     storage = client.get("/api/player/storage", headers=authorization)
     blocked_export = client.get("/api/player/backups/export", headers=authorization)
     blocked_restore = client.post(
@@ -1177,6 +1178,19 @@ def test_pending_lifecycle_recovery_blocks_volume_operations_only(
         },
     )
 
+    assert listing.status_code == 200
+    assert [item["record_key"] for item in listing.json()["items"]] == [
+        unrelated_key
+    ]
+    assert listing.json()["unreadable"] == [
+        {
+            "record_key": pending_key,
+            "detail": (
+                "Stored imported hand record is unavailable until lifecycle "
+                "recovery finishes"
+            ),
+        }
+    ]
     assert storage.status_code == 503
     assert "interrupted lifecycle write" in storage.json()["detail"]
     assert blocked_export.status_code == 503

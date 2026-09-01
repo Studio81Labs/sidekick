@@ -63,9 +63,11 @@ After an error or interrupted response it rereads the detail and requires the
 requested status, reason, canonical revision, and deletion generation before
 reporting that the inactive state committed. If a storage failure leaves a
 durable ready cascade, both the mutation and detail read return recovery
-required instead of exposing the pre-replay record as final. The PWA discards
-its stale hand projections and session, keeps the lifecycle outcome unresolved,
-and requires a local-runtime restart before the hand can be loaded or retried.
+required instead of exposing the pre-replay record as final. Collection pages
+report that affected key as unavailable rather than projecting its pre-replay
+lifecycle summary. The PWA discards its stale hand projections and session,
+keeps the lifecycle outcome unresolved, and requires a local-runtime restart
+before the hand can be loaded or retried.
 Volume-wide storage status, backup export, and backup restore take an exclusive
 volume snapshot and return recovery required while any durable ready cascade
 remains. The gate is not global to hand work: unrelated record keys remain

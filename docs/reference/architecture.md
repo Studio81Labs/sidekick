@@ -304,11 +304,12 @@ failed records into generic inactive copy. Active details expose explicit,
 confirmed withdrawal/rejection controls; interrupted mutation responses are
 reconciled by rereading the audit before the UI reports the outcome. A durable
 ready cascade makes both its failed mutation and subsequent detail reads return
-recovery-required, so the pre-replay record cannot be mistaken for a final
-outcome. Storage status and backup export/restore take an exclusive volume
-snapshot and refuse any durable ready cascade, preventing backup of a lifecycle
-state that startup recovery will supersede. This volume-wide gate does not
-close unrelated hand keys. Detail reads and lifecycle writes take the stable
+recovery-required, while collection pages report that key as unavailable, so
+the pre-replay record cannot be mistaken for a final outcome. Storage status
+and backup export/restore take an exclusive volume snapshot and refuse any
+durable ready cascade, preventing backup of a lifecycle state that startup
+recovery will supersede. This volume-wide gate does not close unrelated hand
+keys. Detail reads and lifecycle writes take the stable
 per-record thread stripe, matching named process-shared flock, and shared
 data-volume hold. Lifecycle writes retain that volume hold across the request
 precondition read and cascade; the store's nested shared hold and leaf journal
