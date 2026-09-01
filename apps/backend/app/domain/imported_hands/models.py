@@ -5565,19 +5565,25 @@ def _detected_action_for_review_confirmation(
     *,
     action_index: int,
 ) -> ImportedAction:
-    approved_document = json.loads(approved_actions[action_index].model_dump_json())
-    approved_identity = _review_list_item_identity(approved_document)
-    if approved_identity is not None:
-        candidates = [
-            detected_action
-            for detected_action in detected_actions
-            if _review_list_item_identity(
-                json.loads(detected_action.model_dump_json())
-            )
-            == approved_identity
-        ]
-        if len(candidates) == 1:
-            return candidates[0]
+    approved_signatures = [
+        _review_action_confirmation_signature(action)
+        for action in approved_actions
+    ]
+    approved_signature = approved_signatures[action_index]
+    detected_candidates = [
+        detected_action
+        for detected_action in detected_actions
+        if _json_values_equal(
+            _review_action_confirmation_signature(detected_action),
+            approved_signature,
+        )
+    ]
+    approved_matches = sum(
+        _json_values_equal(signature, approved_signature)
+        for signature in approved_signatures
+    )
+    if len(detected_candidates) == 1 and approved_matches == 1:
+        return detected_candidates[0]
     if (
         action_index < len(detected_actions)
         and _review_action_order_preserves_origin_binding(
@@ -5589,6 +5595,18 @@ def _detected_action_for_review_confirmation(
     raise ValueError(
         "user-confirmed origin must map unambiguously to a detected action"
     )
+
+
+def _review_action_confirmation_signature(action: ImportedAction) -> JsonValue:
+    """Bind confirmation to immutable meaning and provenance, not one locator."""
+
+    document = _without_review_excerpts(json.loads(action.model_dump_json()))
+    assert isinstance(document, dict)
+    document.pop("sequence", None)
+    origin = document.get("origin")
+    if isinstance(origin, dict):
+        document["origin"] = {"evidence": origin.get("evidence")}
+    return document
 
 
 def _review_action_order_preserves_origin_binding(

@@ -15124,6 +15124,76 @@ def test_reordered_confirmation_remains_bound_to_action_evidence(
     assert record.canonical_revisions[0] == approved
 
 
+def test_user_confirmation_cannot_copy_another_actions_visible_evidence() -> None:
+    state_payload = hand_state().model_dump()
+    unresolved_action = wager_action(0, "hero", "check", total=Decimal(0))
+    unresolved_locator = {
+        "raw_source_id": "file-1",
+        "line_start": 2,
+    }
+    unresolved_action["evidence"] = [unresolved_locator]
+    unresolved_action["origin"] = {
+        "kind": "unknown",
+        "basis": "unresolved",
+        "evidence": [unresolved_locator],
+    }
+    automatic = automatic_action(1, "hero")
+    automatic_locator = {
+        "raw_source_id": "file-1",
+        "line_start": 3,
+    }
+    automatic["evidence"] = [automatic_locator]
+    automatic["origin"]["evidence"] = [automatic_locator]
+    state_payload["streets"][0]["actions"] = [unresolved_action, automatic]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_actions = reviewed_payload["streets"][0]["actions"]
+    for action in reviewed_actions:
+        del action["evidence"][0]["excerpt"]
+        del action["origin"]["evidence"][0]["excerpt"]
+    copied_locator = dict(reviewed_actions[0]["evidence"][0])
+    reviewed_actions[1]["evidence"] = [copied_locator]
+    reviewed_actions[1]["origin"] = {
+        "kind": "player_selected",
+        "basis": "user_confirmed",
+        "review_reference": "review-action-1",
+        "evidence": [copied_locator],
+    }
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Confirmed the hero action",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="user-confirmed origin must map unambiguously to a detected action",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[
+                raw_source(
+                    raw_text=(
+                        "PokerStars Hand #123456789\n"
+                        "hero unresolved check\n"
+                        "hero automatic check\n"
+                    )
+                )
+            ],
+            detections=[source_detection],
+            canonical_revisions=[approved],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": approved.approved_at,
+            },
+        )
+
+
 def test_explicit_marker_origin_remains_valid_without_a_correction() -> None:
     explicit = state_with_reviewed_action_origin(
         kind="player_selected",
