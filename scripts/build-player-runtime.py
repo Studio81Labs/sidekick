@@ -139,6 +139,28 @@ def _write_archive(bundle_root: Path, archive_path: Path) -> None:
                 archive.addfile(info)
 
 
+def _publish_archive(
+    bundle_root: Path,
+    archive_path: Path,
+    checksum_path: Path,
+) -> None:
+    with tempfile.TemporaryDirectory(
+        prefix=".poker-hero-player-publish-",
+        dir=archive_path.parent,
+    ) as raw:
+        staging_dir = Path(raw)
+        temporary_archive = staging_dir / archive_path.name
+        temporary_checksum = staging_dir / checksum_path.name
+        _write_archive(bundle_root, temporary_archive)
+        archive_digest = _sha256_file(temporary_archive)
+        temporary_checksum.write_text(
+            f"{archive_digest}  {archive_path.name}\n",
+            encoding="ascii",
+        )
+        os.replace(temporary_archive, archive_path)
+        os.replace(temporary_checksum, checksum_path)
+
+
 def _require_player_assets() -> None:
     if PLAYER_ASSETS.is_symlink() or not PLAYER_ASSETS.is_dir():
         raise PlayerPackageError(
@@ -273,16 +295,7 @@ def main(argv: list[str] | None = None) -> int:
             entrypoint=executable_name,
         )
 
-        temporary_archive = temporary / archive_path.name
-        _write_archive(bundle_root, temporary_archive)
-        archive_digest = _sha256_file(temporary_archive)
-        temporary_checksum = temporary / checksum_path.name
-        temporary_checksum.write_text(
-            f"{archive_digest}  {archive_path.name}\n",
-            encoding="ascii",
-        )
-        os.replace(temporary_archive, archive_path)
-        os.replace(temporary_checksum, checksum_path)
+        _publish_archive(bundle_root, archive_path, checksum_path)
 
     print(archive_path)
     print(checksum_path)

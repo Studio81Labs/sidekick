@@ -206,11 +206,12 @@ def _bundle_manifest(bundle_root: Path) -> dict[str, Any]:
         python_version,
     ) is None:
         raise PlayerPackageSmokeError("Runtime bundle Python binding is invalid")
-    if python_version != platform.python_version():
-        raise PlayerPackageSmokeError(
-            "Runtime bundle Python binding does not match the smoke-test host"
-        )
     python_parts = python_version.split(".")
+    host_python_parts = platform.python_version().split(".")
+    if python_parts[:2] != host_python_parts[:2]:
+        raise PlayerPackageSmokeError(
+            "Runtime bundle Python ABI does not match the smoke-test host"
+        )
     expected_artifact_name = "-".join(
         (
             "poker-hero-player",

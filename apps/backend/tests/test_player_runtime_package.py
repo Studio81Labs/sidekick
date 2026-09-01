@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from hashlib import sha256
 from importlib import util
 import json
+import os
 from pathlib import Path
 import platform
 import tarfile
@@ -30,6 +32,36 @@ smoke_player_runtime = _load_script(
     "smoke_player_runtime_script",
     "smoke-player-runtime.py",
 )
+
+
+def test_archive_publication_stages_on_the_destination_filesystem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bundle = tmp_path / "work" / "bundle"
+    bundle.mkdir(parents=True)
+    (bundle / "payload").write_bytes(b"payload")
+    output = tmp_path / "output"
+    output.mkdir()
+    archive = output / "bundle.tar.gz"
+    checksum = output / "bundle.tar.gz.sha256"
+    observed_sources: list[Path] = []
+    original_replace = os.replace
+
+    def record_replace(source: str | Path, destination: str | Path) -> None:
+        observed_sources.append(Path(source))
+        original_replace(source, destination)
+
+    monkeypatch.setattr(build_player_runtime.os, "replace", record_replace)
+
+    build_player_runtime._publish_archive(bundle, archive, checksum)
+
+    assert archive.is_file()
+    assert checksum.read_text(encoding="ascii") == (
+        f"{sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n"
+    )
+    assert len(observed_sources) == 2
+    assert all(source.parent.parent == output for source in observed_sources)
 
 
 def test_bundle_inventory_includes_nested_manifests_and_directory_symlinks(
@@ -120,6 +152,57 @@ def test_smoke_rejects_unsafe_manifest_entrypoint(tmp_path: Path) -> None:
     with pytest.raises(
         smoke_player_runtime.PlayerPackageSmokeError,
         match="entrypoint path is unsafe",
+    ):
+        smoke_player_runtime._bundle_manifest(bundle)
+
+
+def test_smoke_accepts_matching_python_abi_with_a_different_patch(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    product_version = "0.1.0"
+    system = smoke_player_runtime._safe_tag(platform.system())
+    machine = smoke_player_runtime._safe_tag(platform.machine())
+    python_parts = platform.python_version().split(".")
+    bundle_python = ".".join(
+        (python_parts[0], python_parts[1], str(int(python_parts[2]) + 1))
+    )
+    artifact_name = (
+        f"poker-hero-player-0-1-0-{system}-{machine}-"
+        f"cp{python_parts[0]}{python_parts[1]}"
+    )
+    bundle = tmp_path / artifact_name
+    bundle.mkdir()
+    (bundle / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifact": "poker-hero-player-runtime",
+                "artifact_name": artifact_name,
+                "entrypoint": "poker-hero-player",
+                "files": [],
+                "platform": {
+                    "machine": machine,
+                    "python": bundle_python,
+                    "system": system,
+                },
+                "product_version": product_version,
+                "schema_version": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert smoke_player_runtime._bundle_manifest(bundle)["platform"]["python"] == (
+        bundle_python
+    )
+    monkeypatch.setattr(
+        smoke_player_runtime.platform,
+        "python_version",
+        lambda: f"{python_parts[0]}.{int(python_parts[1]) + 1}.0",
+    )
+    with pytest.raises(
+        smoke_player_runtime.PlayerPackageSmokeError,
+        match="Python ABI does not match",
     ):
         smoke_player_runtime._bundle_manifest(bundle)
 
