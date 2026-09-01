@@ -16,6 +16,7 @@ from pydantic import (
     ConfigDict,
     Field,
     StringConstraints,
+    TypeAdapter,
     field_validator,
     model_validator,
 )
@@ -93,6 +94,7 @@ RemoteLookupUnavailableReason = Literal[
     "response_invalid",
     "remote_coverage_unavailable",
 ]
+_JSON_VALUE_ADAPTER = TypeAdapter(object)
 RemoteStreet = Literal["preflop", "flop", "turn", "river"]
 RemoteAction = Literal["fold", "check", "call", "bet", "raise"]
 PositionLabel = Literal[
@@ -139,13 +141,35 @@ class RemoteReferenceModel(BaseModel):
 
 
 def _canonical_sha256(model: BaseModel) -> str:
+    return sha256(_canonical_json_bytes(model)).hexdigest()
+
+
+def _canonical_json_bytes(model: BaseModel) -> bytes:
     payload = json.dumps(
-        model.model_dump(mode="json"),
+        _JSON_VALUE_ADAPTER.dump_python(
+            _normalize_canonical_json_values(model.model_dump(mode="python")),
+            mode="json",
+        ),
         ensure_ascii=True,
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    return sha256(payload).hexdigest()
+    return payload
+
+
+def _normalize_canonical_json_values(value: object) -> object:
+    if isinstance(value, Decimal):
+        if value == 0:
+            return "0"
+        return format(value.normalize(), "f")
+    if isinstance(value, dict):
+        return {
+            key: _normalize_canonical_json_values(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_canonical_json_values(item) for item in value]
+    return value
 
 
 def _validate_sorted_unique_categories(
@@ -843,7 +867,11 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                     if "BB" in initial_all_in_positions
                     else economics.big_blind_bb
                 )
-                running_wager = economics.big_blind_bb
+                running_wager = (
+                    economics.big_blind_bb
+                    if table.dealt_in_player_count >= 3
+                    else max(simulated_commitments.values())
+                )
                 minimum_raise_increment = economics.big_blind_bb
 
             def close_completed_betting_round() -> None:
@@ -1030,12 +1058,7 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
         return tuple(component.category for component in self.components)
 
     def canonical_bytes(self) -> bytes:
-        return json.dumps(
-            self.model_dump(mode="json"),
-            ensure_ascii=True,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
+        return _canonical_json_bytes(self)
 
     def semantic_digest(self) -> str:
         return sha256(self.canonical_bytes()).hexdigest()

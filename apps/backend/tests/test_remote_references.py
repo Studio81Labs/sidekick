@@ -1107,6 +1107,22 @@ def test_hole_cards_are_canonicalized_before_exact_route_hashing() -> None:
     assert original.semantic_digest() == reversed_order.semantic_digest()
 
 
+def test_route_hash_normalizes_equivalent_decimal_exponents() -> None:
+    original = canonical_route_request()
+    components = list(original.components)
+    stack = components[3]
+    assert isinstance(stack, StackWagerPotRoute)
+    stack_payload = stack.model_dump(mode="python")
+    stack_payload["hero_stack_bb"] = Decimal("99.500")
+    stack_payload["pot_bb"] = Decimal("1.5000")
+    components[3] = StackWagerPotRoute.model_validate(stack_payload)
+    equivalent = canonical_route_request(components=tuple(components))
+
+    assert original == equivalent
+    assert original.canonical_bytes() == equivalent.canonical_bytes()
+    assert original.semantic_digest() == equivalent.semantic_digest()
+
+
 def test_postflop_ranges_cover_every_active_opponent_exactly() -> None:
     preflop = route_request()
     incomplete_ranges = (
@@ -1347,7 +1363,7 @@ def test_forced_post_all_in_is_not_treated_as_pending_action() -> None:
     assert table.active_player_positions == ("BB", "BTN", "SB")
 
 
-def test_short_big_blind_all_in_keeps_the_nominal_betting_wager() -> None:
+def test_heads_up_short_big_blind_uses_the_actual_posted_wager() -> None:
     base = route_request()
     components = (
         base.components[0],
@@ -1364,15 +1380,15 @@ def test_short_big_blind_all_in_keeps_the_nominal_betting_wager() -> None:
             ),
             committed_pot_before_street_bb=Decimal("0"),
             current_street_commitments=(
-                PositionedCommitment(position="BB", committed_bb=Decimal("0.3")),
+                PositionedCommitment(position="BB", committed_bb=Decimal("0.7")),
                 PositionedCommitment(
                     position="BTN/SB",
                     committed_bb=Decimal("0.5"),
                 ),
             ),
-            pot_bb=Decimal("0.8"),
-            current_wager_bb=Decimal("1"),
-            amount_to_call_bb=Decimal("0.5"),
+            pot_bb=Decimal("1.2"),
+            current_wager_bb=Decimal("0.7"),
+            amount_to_call_bb=Decimal("0.2"),
         ),
         TablePositionRoute(
             dealt_in_player_count=2,
@@ -1388,7 +1404,47 @@ def test_short_big_blind_all_in_keeps_the_nominal_betting_wager() -> None:
 
     stack = result.components[3]
     assert isinstance(stack, StackWagerPotRoute)
-    assert stack.pot_bb == Decimal("0.8")
+    assert stack.pot_bb == Decimal("1.2")
+    assert stack.current_wager_bb == Decimal("0.7")
+
+
+def test_multiway_short_big_blind_keeps_the_nominal_betting_wager() -> None:
+    base = route_request()
+    components = (
+        base.components[0],
+        base.components[1],
+        PriorActionsRoute(actions=()),
+        StackWagerPotRoute(
+            hero_stack_bb=Decimal("100"),
+            active_player_stacks=(
+                PositionedStack(position="BB", remaining_stack_bb=Decimal("0")),
+                PositionedStack(position="BTN", remaining_stack_bb=Decimal("100")),
+                PositionedStack(position="SB", remaining_stack_bb=Decimal("99.5")),
+            ),
+            committed_pot_before_street_bb=Decimal("0"),
+            current_street_commitments=(
+                PositionedCommitment(position="BB", committed_bb=Decimal("0.7")),
+                PositionedCommitment(position="BTN", committed_bb=Decimal("0")),
+                PositionedCommitment(position="SB", committed_bb=Decimal("0.5")),
+            ),
+            pot_bb=Decimal("1.2"),
+            current_wager_bb=Decimal("1"),
+            amount_to_call_bb=Decimal("1"),
+        ),
+        TablePositionRoute(
+            dealt_in_player_count=3,
+            hero_position="BTN",
+            hero_button_distance=0,
+            hero_action_index=0,
+            active_player_positions=("BB", "BTN", "SB"),
+            relative_position="not_applicable",
+        ),
+    )
+
+    result = route_request(components=components)
+
+    stack = result.components[3]
+    assert isinstance(stack, StackWagerPotRoute)
     assert stack.current_wager_bb == Decimal("1")
 
 
