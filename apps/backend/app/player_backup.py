@@ -78,6 +78,10 @@ class PlayerBackupStorageError(PlayerBackupError):
     status_code = 503
 
 
+class PlayerBackupRecoveryRequiredError(PlayerBackupError):
+    status_code = 503
+
+
 class _ArtifactManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -177,6 +181,12 @@ def build_player_backup_archive(
             exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
+            if workspace.imported_hands.has_pending_recovery():
+                raise PlayerBackupRecoveryRequiredError(
+                    "Player backup is unavailable while an interrupted "
+                    "lifecycle write awaits startup recovery; restart the "
+                    "local player runtime first"
+                )
             snapshots = workspace.imported_hands.backup_snapshot(
                 max_record_bytes=MAX_PLAYER_BACKUP_RECORD_BYTES,
                 max_artifact_bytes=MAX_PLAYER_BACKUP_ARTIFACT_BYTES,
@@ -296,6 +306,12 @@ def restore_player_backup(
             exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
+            if workspace.imported_hands.has_pending_recovery():
+                raise PlayerBackupRecoveryRequiredError(
+                    "Player backup restore is unavailable while an interrupted "
+                    "lifecycle write awaits startup recovery; restart the "
+                    "local player runtime first"
+                )
             return _restore_parsed_backup(backup, workspace.imported_hands)
     except (ImportedHandSnapshotError, ValidationError, ValueError) as exc:
         raise PlayerBackupConflictError(

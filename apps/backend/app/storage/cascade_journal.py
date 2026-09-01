@@ -420,6 +420,14 @@ class CascadeJournal:
         """
         return bool(self._sweepable_cascade_dirs())
 
+    def has_ready_cascades(self) -> bool:
+        """Whether startup recovery has durable roll-forward work pending."""
+
+        return any(
+            (cascade_dir / _READY_FILENAME).is_file()
+            for cascade_dir in self._sweepable_cascade_dirs()
+        )
+
     def quarantined_cascades(self) -> tuple[str, ...]:
         """Return every retained quarantine evidence directory name.
 

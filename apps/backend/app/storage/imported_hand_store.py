@@ -998,6 +998,24 @@ class FileImportedHandStore:
         """
         return self._journal.has_pending_cascades()
 
+    def has_interrupted_write(self, record_key: str) -> bool:
+        """Whether recovery has a ready cascade to replay over one record.
+
+        Unlike ``has_interrupted_writes``, this is safe for a request surface
+        deciding whether the currently visible record is final. A ready
+        cascade may already be partially published, so serving that live file
+        as a settled outcome would be incorrect until startup recovery finishes
+        the replay.
+        """
+
+        self._record_dir(record_key)
+        return self._journal.pending_cascade_for(record_key) is not None
+
+    def has_pending_recovery(self) -> bool:
+        """Whether a durable ready cascade makes a volume snapshot unsafe."""
+
+        return self._journal.has_ready_cascades()
+
     def list_quarantined_cascades(self) -> tuple[str, ...]:
         """Return retained recovery evidence that still needs human review."""
         return self._journal.quarantined_cascades()

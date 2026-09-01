@@ -1,13 +1,22 @@
-"""Read-only projections for player-local imported-hand records."""
+"""Player-local imported-hand API projections and lifecycle input."""
 
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Callable
 from datetime import datetime
 from decimal import Decimal
-from typing import cast
+from typing import Annotated, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    ValidationError,
+)
 
 from app.domain.imported_hands import (
     DeletionReceipt,
@@ -27,6 +36,9 @@ DEFAULT_PLAYER_HAND_PAGE_SIZE = 25
 MAX_PLAYER_HAND_PAGE_SIZE = 100
 REDACTED_SOURCE_EXCERPT = "[redacted source excerpt]"
 UNREADABLE_HAND_DETAIL = "Stored imported hand record could not be read safely"
+RECOVERY_PENDING_HAND_DETAIL = (
+    "Stored imported hand record is unavailable until lifecycle recovery finishes"
+)
 
 
 class PlayerHandProjection(BaseModel):
@@ -126,6 +138,26 @@ class PlayerHandDetail(PlayerHandProjection):
     deletion_receipt: DeletionReceipt | None
 
 
+PlayerHandCloseAction = Literal["withdraw", "reject"]
+
+
+class PlayerHandCloseRequest(PlayerHandProjection):
+    """Stale-write precondition and player reason for one approval close."""
+
+    reason: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=256,
+            strict=True,
+        ),
+    ]
+    expected_active_canonical_revision: int = Field(ge=1, strict=True)
+    expected_deletion_generation: int = Field(ge=0, strict=True)
+    expected_lifecycle_changed_at: AwareDatetime
+
+
 def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:
     retained_revision = (
         record.canonical_revisions[-1] if record.canonical_revisions else None
@@ -207,6 +239,7 @@ def list_player_hands(
     *,
     limit: int = DEFAULT_PLAYER_HAND_PAGE_SIZE,
     cursor: str | None = None,
+    is_record_unavailable: Callable[[str], bool] | None = None,
 ) -> PlayerHandList:
     """Return one deterministic, bounded page without exposing raw histories."""
 
@@ -218,10 +251,28 @@ def list_player_hands(
     items: list[PlayerHandSummary] = []
     unreadable: list[PlayerHandReadError] = []
     for record_key in visible_keys:
+        if is_record_unavailable is not None and is_record_unavailable(record_key):
+            unreadable.append(
+                PlayerHandReadError(
+                    record_key=record_key,
+                    detail=RECOVERY_PENDING_HAND_DETAIL,
+                )
+            )
+            continue
         try:
-            items.append(_summary(record_key, store.get(record_key)))
+            summary = _summary(record_key, store.get(record_key))
         except (ImportedHandNotFoundError, OSError, ValidationError):
             unreadable.append(PlayerHandReadError(record_key=record_key))
+            continue
+        if is_record_unavailable is not None and is_record_unavailable(record_key):
+            unreadable.append(
+                PlayerHandReadError(
+                    record_key=record_key,
+                    detail=RECOVERY_PENDING_HAND_DETAIL,
+                )
+            )
+        else:
+            items.append(summary)
     return PlayerHandList(
         items=items,
         unreadable=unreadable,

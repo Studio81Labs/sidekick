@@ -2,21 +2,30 @@
 
 from __future__ import annotations
 
+from _thread import LockType
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 import errno
 import os
 from pathlib import Path
 from stat import S_ISDIR
 import sys
+from threading import Lock
 
+from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.data_lock import (
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    DataLockError,
     InterprocessDataLock,
+    InterprocessFileLock,
 )
+from app.domain.imported_hands import extract_hero_decision_points
 from app.player_hands import (
+    PlayerHandCloseAction,
+    PlayerHandCloseRequest,
     PlayerHandDetail,
     PlayerHandList,
     get_player_hand,
@@ -30,6 +39,33 @@ from app.storage.imported_hand_store import (
 
 class PlayerDataDirectoryError(RuntimeError):
     """The configured player data directory is not private local storage."""
+
+
+class PlayerHandTransitionConflict(RuntimeError):
+    """A local lifecycle request no longer describes the stored record."""
+
+
+class PlayerHandRecoveryRequired(RuntimeError):
+    """A ready lifecycle cascade must be replayed before this hand is read."""
+
+
+class PlayerStorageRecoveryRequired(RuntimeError):
+    """A volume-wide view is unsafe until ready cascades are replayed."""
+
+
+DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
+PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
+
+
+def _advanced_lifecycle_time(observed_at: datetime, current: datetime) -> datetime:
+    if observed_at > current:
+        return observed_at
+    try:
+        return current + timedelta(microseconds=1)
+    except OverflowError as exc:
+        raise PlayerHandTransitionConflict(
+            "The hand lifecycle timestamp cannot advance beyond its stored value"
+        ) from exc
 
 
 def _macos_extended_acl_has_entries(path: Path, *, library=None) -> bool:
@@ -154,6 +190,8 @@ class PlayerWorkspace:
     data_lock: InterprocessDataLock
     imported_hands: FileImportedHandStore
     imported_hand_recovery: ImportedHandRecoveryReport
+    imported_hand_locks: tuple[LockType, ...]
+    imported_hand_process_locks: tuple[InterprocessFileLock, ...]
 
     @classmethod
     def open(
@@ -193,20 +231,49 @@ class PlayerWorkspace:
             data_lock=data_lock,
             imported_hands=imported_hands,
             imported_hand_recovery=recovery,
+            imported_hand_locks=tuple(
+                Lock() for _ in range(DEFAULT_PLAYER_HAND_LOCK_STRIPES)
+            ),
+            imported_hand_process_locks=tuple(
+                InterprocessFileLock(
+                    private_data_dir
+                    / f"{PLAYER_HAND_LOCK_PREFIX}-{index:02d}.lock",
+                    subject="player hand lifecycle lock",
+                    contention_hint=(
+                        "another local player process is changing a record in "
+                        "the same lifecycle lock stripe"
+                    ),
+                )
+                for index in range(DEFAULT_PLAYER_HAND_LOCK_STRIPES)
+            ),
         )
+
+    def imported_hand_lock_index(self, record_key: str) -> int:
+        """Return a process-stable stripe for this identity-derived key."""
+
+        try:
+            prefix = int(record_key[:16], 16)
+        except ValueError:
+            prefix = 0
+        return prefix % len(self.imported_hand_locks)
 
     def status_payload(
         self,
         *,
         lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     ) -> dict[str, object]:
-        # A restore publishes several files under an exclusive hold. Status
-        # must take the shared side so it can never report an intermediate
-        # filesystem view from another process.
+        # Status is volume-wide, so wait for every shared writer as well as an
+        # exclusive restore. Once isolated, a durable ready cascade means the
+        # live files are not a final snapshot and must not be reported as one.
         with self.data_lock.hold(
-            exclusive=False,
+            exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
+            if self.imported_hands.has_pending_recovery():
+                raise PlayerStorageRecoveryRequired(
+                    "Player storage has an interrupted lifecycle write; "
+                    "restart the local player runtime so recovery can finish"
+                )
             recovery = self.imported_hand_recovery
             quarantined = tuple(
                 sorted(
@@ -247,6 +314,7 @@ class PlayerWorkspace:
                 self.imported_hands,
                 limit=limit,
                 cursor=cursor,
+                is_record_unavailable=self.imported_hands.has_interrupted_write,
             )
 
     def get_hand_record(
@@ -255,10 +323,116 @@ class PlayerWorkspace:
         *,
         lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     ) -> PlayerHandDetail:
-        """Read one validated record projection under the shared volume lock."""
+        """Read one final record projection, refusing a pending replay."""
 
-        with self.data_lock.hold(
-            exclusive=False,
-            timeout_seconds=lock_timeout_seconds,
-        ):
-            return get_player_hand(self.imported_hands, record_key)
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=False,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self._require_final_hand_record(record_key)
+                    return get_player_hand(self.imported_hands, record_key)
+
+    def close_hand_record(
+        self,
+        record_key: str,
+        *,
+        action: PlayerHandCloseAction,
+        request: PlayerHandCloseRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerHandDetail:
+        """Withdraw or reject one active revision without losing audit state.
+
+        The in-process stripe orders request threads. The matching named flock
+        uses the same stable stripe in every local-runtime process, closing the
+        cross-process gap. The outer shared volume hold keeps backup/restore
+        publication from replacing the record between the request precondition
+        read and the service's cascade; the store then takes its own nested
+        shared hold before the leaf journal lock.
+        """
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self._require_final_hand_record(record_key)
+                    record = self.imported_hands.get(record_key)
+                    latest_revision = (
+                        record.canonical_revisions[-1].revision
+                        if record.canonical_revisions
+                        else None
+                    )
+                    lifecycle = record.lifecycle
+                    same_target = (
+                        lifecycle.status
+                        == ("withdrawn" if action == "withdraw" else "rejected")
+                        and lifecycle.reason == request.reason
+                        and lifecycle.deletion_generation
+                        == request.expected_deletion_generation
+                        and latest_revision
+                        == request.expected_active_canonical_revision
+                        and lifecycle.changed_at
+                        >= request.expected_lifecycle_changed_at
+                    )
+                    if same_target:
+                        return get_player_hand(self.imported_hands, record_key)
+
+                    if (
+                        lifecycle.status != "active"
+                        or lifecycle.active_canonical_revision
+                        != request.expected_active_canonical_revision
+                        or lifecycle.deletion_generation
+                        != request.expected_deletion_generation
+                        or lifecycle.changed_at
+                        != request.expected_lifecycle_changed_at
+                    ):
+                        raise PlayerHandTransitionConflict(
+                            "The hand lifecycle changed after this audit detail "
+                            "was loaded; refresh it before changing approval state"
+                        )
+
+                    lifecycle_service = ImportedHandLifecycleService(
+                        store=self.imported_hands,
+                        extract=extract_hero_decision_points,
+                        now=lambda: at,
+                    )
+                    transition = (
+                        lifecycle_service.withdraw
+                        if action == "withdraw"
+                        else lifecycle_service.reject
+                    )
+                    try:
+                        transition(
+                            record_key,
+                            reason=request.reason,
+                            at=_advanced_lifecycle_time(at, lifecycle.changed_at),
+                        )
+                    except (DataLockError, OSError) as exc:
+                        if self.imported_hands.has_interrupted_write(record_key):
+                            raise PlayerHandRecoveryRequired(
+                                "This hand has an interrupted lifecycle write; "
+                                "restart the local player runtime so recovery "
+                                "can finish"
+                            ) from exc
+                        raise
+                    self._require_final_hand_record(record_key)
+                    return get_player_hand(self.imported_hands, record_key)
+
+    def _require_final_hand_record(self, record_key: str) -> None:
+        if self.imported_hands.has_interrupted_write(record_key):
+            raise PlayerHandRecoveryRequired(
+                "This hand has an interrupted lifecycle write; restart the "
+                "local player runtime so recovery can finish"
+            )

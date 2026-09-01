@@ -62,6 +62,8 @@ export interface PlayerHandList {
   next_cursor: string | null;
 }
 
+export type PlayerHandCloseAction = "withdraw" | "reject";
+
 export interface PlayerHandDetail {
   summary: PlayerHandSummary;
   lifecycle: {
@@ -181,6 +183,15 @@ export class PlayerRestoreRecoveryRequiredError extends Error {
       "The restore did not complete and may have partially changed local data. Restart the local player runtime so journal recovery can finish before exporting a backup or retrying.",
     );
     this.name = "PlayerRestoreRecoveryRequiredError";
+  }
+}
+
+export class PlayerHandRecoveryRequiredError extends Error {
+  constructor() {
+    super(
+      "The hand lifecycle outcome is unresolved. Restart the local player runtime so journal recovery can finish, then reload the hand before retrying.",
+    );
+    this.name = "PlayerHandRecoveryRequiredError";
   }
 }
 
@@ -309,10 +320,54 @@ export async function loadPlayerHand(
   credentials: PlayerCredentials,
   recordKey: string,
 ): Promise<PlayerHandDetail> {
-  const response = await playerRequest(
-    credentials,
-    `/api/player/hands/${encodeURIComponent(recordKey)}`,
-  );
+  let response: Response;
+  try {
+    response = await playerRequest(
+      credentials,
+      `/api/player/hands/${encodeURIComponent(recordKey)}`,
+    );
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerHandRecoveryRequiredError();
+    }
+    throw error;
+  }
+  return (await response.json()) as PlayerHandDetail;
+}
+
+export async function closePlayerHand(
+  credentials: PlayerCredentials,
+  recordKey: string,
+  action: PlayerHandCloseAction,
+  reason: string,
+  expected: PlayerHandSummary,
+): Promise<PlayerHandDetail> {
+  if (expected.active_canonical_revision === null) {
+    throw new Error("Only an active approved hand can change approval state.");
+  }
+  let response: Response;
+  try {
+    response = await playerRequest(
+      credentials,
+      `/api/player/hands/${encodeURIComponent(recordKey)}/${action}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          reason,
+          expected_active_canonical_revision:
+            expected.active_canonical_revision,
+          expected_deletion_generation: expected.deletion_generation,
+          expected_lifecycle_changed_at: expected.lifecycle_changed_at,
+        }),
+      },
+    );
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerHandRecoveryRequiredError();
+    }
+    throw error;
+  }
   return (await response.json()) as PlayerHandDetail;
 }
 

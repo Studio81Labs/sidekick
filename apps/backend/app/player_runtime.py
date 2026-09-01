@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -23,11 +24,13 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.application.imported_hand_lifecycle import LifecycleCascadeError
 from app.data_lock import (
     DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    DataLockError,
     DataLockTimeoutError,
 )
 from app.player_backup import (
@@ -41,12 +44,20 @@ from app.player_backup import (
 from app.player_hands import (
     DEFAULT_PLAYER_HAND_PAGE_SIZE,
     MAX_PLAYER_HAND_PAGE_SIZE,
+    PlayerHandCloseAction,
+    PlayerHandCloseRequest,
 )
 from app.player_namespace import (
     PLAYER_API_PREFIX,
     is_player_api_scope,
 )
-from app.player_workspace import PlayerWorkspace
+from app.player_workspace import (
+    PlayerHandRecoveryRequired,
+    PlayerHandTransitionConflict,
+    PlayerStorageRecoveryRequired,
+    PlayerWorkspace,
+)
+from app.storage.cascade_journal import PendingCascadeError
 from app.storage.imported_hand_store import ImportedHandNotFoundError
 
 
@@ -76,6 +87,54 @@ PROXY_HEADERS = frozenset(
         b"x-forwarded-proto",
     }
 )
+
+
+class _RestoreAccessGate:
+    """Exclude restores without serializing ordinary player operations."""
+
+    def __init__(self) -> None:
+        self._condition = asyncio.Condition()
+        self._active_operations = 0
+        self._active_restore = False
+        self._waiting_restores = 0
+
+    @asynccontextmanager
+    async def operation(self) -> AsyncIterator[None]:
+        async with self._condition:
+            await self._condition.wait_for(
+                lambda: not self._active_restore and self._waiting_restores == 0
+            )
+            self._active_operations += 1
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._active_operations -= 1
+                if self._active_operations == 0:
+                    self._condition.notify_all()
+
+    @asynccontextmanager
+    async def restore(self) -> AsyncIterator[None]:
+        acquired = False
+        async with self._condition:
+            self._waiting_restores += 1
+            try:
+                await self._condition.wait_for(
+                    lambda: not self._active_restore
+                    and self._active_operations == 0
+                )
+                self._active_restore = True
+                acquired = True
+            finally:
+                self._waiting_restores -= 1
+                if not acquired:
+                    self._condition.notify_all()
+        try:
+            yield
+        finally:
+            async with self._condition:
+                self._active_restore = False
+                self._condition.notify_all()
 
 
 class PlayerCredentialError(RuntimeError):
@@ -601,7 +660,7 @@ def create_player_runtime(
         load_or_create_installation_secret(workspace.data_dir),
         clock=clock,
     )
-    restore_access_gate = asyncio.Lock()
+    restore_access_gate = _RestoreAccessGate()
     restore_in_progress = False
     app = FastAPI(
         title="Poker Hero Local Player Runtime",
@@ -651,7 +710,7 @@ def create_player_runtime(
     async def player_storage(request: Request) -> JSONResponse:
         # Wait without occupying the shared AnyIO thread pool: the restore
         # needs a worker after it finishes reading and parsing the upload.
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -661,6 +720,8 @@ def create_player_runtime(
                 )
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
+            except PlayerStorageRecoveryRequired as exc:
+                return _json_denial(503, str(exc))
         return JSONResponse(payload)
 
     @app.get(f"{PLAYER_API_PREFIX}/hands")
@@ -673,7 +734,7 @@ def create_player_runtime(
         ),
         cursor: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
     ) -> JSONResponse:
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -685,7 +746,7 @@ def create_player_runtime(
                 )
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
-            except (OSError, ValidationError):
+            except (DataLockError, OSError, ValidationError):
                 return _json_denial(
                     500,
                     "Stored imported hand records could not be read safely",
@@ -694,7 +755,7 @@ def create_player_runtime(
 
     @app.get(f"{PLAYER_API_PREFIX}/hands/{{record_key}}")
     async def player_hand_detail(request: Request, record_key: str) -> JSONResponse:
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -705,18 +766,84 @@ def create_player_runtime(
                 )
             except ImportedHandNotFoundError:
                 return _json_denial(404, "Imported hand record not found")
+            except PlayerHandRecoveryRequired as exc:
+                return _json_denial(503, str(exc))
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
-            except (OSError, ValidationError):
+            except (DataLockError, OSError, ValidationError):
                 return _json_denial(
                     500,
                     "Stored imported hand record could not be read safely",
                 )
         return JSONResponse(payload.model_dump(mode="json"))
 
+    async def close_player_hand(
+        request: Request,
+        record_key: str,
+        body: PlayerHandCloseRequest,
+        *,
+        action: PlayerHandCloseAction,
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.close_hand_record,
+                    record_key,
+                    action=action,
+                    request=body,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except (PlayerHandTransitionConflict, LifecycleCascadeError) as exc:
+                return _json_denial(409, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (PendingCascadeError, PlayerHandRecoveryRequired):
+                return _json_denial(
+                    503,
+                    "This hand has an interrupted lifecycle write; restart the "
+                    "local player runtime so recovery can finish",
+                )
+            except (DataLockError, OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "The hand approval state could not be changed safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/withdraw")
+    async def withdraw_player_hand(
+        request: Request,
+        record_key: str,
+        body: PlayerHandCloseRequest,
+    ) -> JSONResponse:
+        return await close_player_hand(
+            request,
+            record_key,
+            body,
+            action="withdraw",
+        )
+
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/reject")
+    async def reject_player_hand(
+        request: Request,
+        record_key: str,
+        body: PlayerHandCloseRequest,
+    ) -> JSONResponse:
+        return await close_player_hand(
+            request,
+            record_key,
+            body,
+            action="reject",
+        )
+
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
     async def export_player_backup(request: Request) -> Response:
-        async with restore_access_gate:
+        async with restore_access_gate.operation():
             if not sessions.authorize(request.state.player_session_token):
                 return _json_denial(401, "Unauthorized")
             try:
@@ -752,7 +879,7 @@ def create_player_runtime(
             return _json_denial(409, "Another player restore is already in progress")
         restore_in_progress = True
         try:
-            async with restore_access_gate:
+            async with restore_access_gate.restore():
                 media_type = request.headers.get("content-type", "").partition(";")[0]
                 if media_type.strip().lower() not in {
                     "application/zip",

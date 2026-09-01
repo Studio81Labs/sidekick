@@ -31,12 +31,14 @@ body {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+textarea:focus-visible {
   outline: 3px solid #d77836;
   outline-offset: 3px;
 }
@@ -370,6 +372,38 @@ code {
   display: inline;
 }
 
+.lifecycle-actions {
+  padding: 18px;
+  border: 1px solid rgb(23 34 31 / 14%);
+  border-radius: 14px;
+  background: rgb(255 255 255 / 72%);
+}
+
+.lifecycle-actions label {
+  display: grid;
+  gap: 8px;
+  color: #40534d;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.lifecycle-actions textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 11px;
+  border: 1px solid rgb(23 34 31 / 22%);
+  border-radius: 12px;
+  color: #17221f;
+  background: #fff;
+}
+
+.lifecycle-action-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 14px;
+}
+
 .state-block details {
   margin-top: 10px;
 }
@@ -415,6 +449,7 @@ code {
 
 .primary-button,
 .secondary-button,
+.danger-button,
 .quiet-button {
   min-height: 46px;
   border-radius: 999px;
@@ -435,6 +470,17 @@ code {
   color: #17352c;
   border-color: #7c9a8f;
   background: #e8f0eb;
+}
+
+.danger-button {
+  color: #fff;
+  border-color: #7d3129;
+  background: #8d3b31;
+}
+
+.lifecycle-action-buttons .secondary-button,
+.lifecycle-action-buttons .danger-button {
+  margin-top: 0;
 }
 
 .quiet-button {

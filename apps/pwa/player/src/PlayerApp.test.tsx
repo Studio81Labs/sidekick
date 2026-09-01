@@ -443,9 +443,7 @@ describe("PlayerApp", () => {
     ).toBe(false);
 
     await user.click(screen.getByRole("button", { name: "View audit detail" }));
-    expect(
-      await screen.findByText("Read-only audit detail"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Audit detail")).toBeInTheDocument();
     expect(
       screen.getByText(/This record is not approved for learning/),
     ).toBeInTheDocument();
@@ -497,6 +495,58 @@ describe("PlayerApp", () => {
     expect(document.body).not.toHaveTextContent("PokerStars Hand #123456789");
   });
 
+  it("requires restart recovery when loading an unresolved hand detail", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { detail: "This hand has an interrupted lifecycle write" },
+          503,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /lifecycle outcome is unresolved.*Restart the local player runtime.*journal recovery can finish/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("site-hand-id/v1 · pokerstars #123456789"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Download backup" }),
+    ).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(PLAYER_CSRF_STORAGE_KEY)).toBeNull();
+  });
+
   it("renders the approved canonical state retained by an active revision", async () => {
     const user = userEvent.setup();
     window.location.hash = "#ticket=one-use-ticket";
@@ -538,7 +588,415 @@ describe("PlayerApp", () => {
     expect(
       screen.getByText("Confirmed from dealt-to evidence"),
     ).toBeInTheDocument();
+    expect(screen.getByText("Change approval state")).toBeInTheDocument();
   });
+
+  it.each([
+    ["withdraw", "Withdraw approval", "withdrawn", "Approval withdrawn"],
+    ["reject", "Reject as incorrect", "rejected", "Hand rejected"],
+  ] as const)(
+    "%ss an active approval with CSRF and refreshes the retained audit",
+    async (action, buttonName, status, notice) => {
+      const user = userEvent.setup();
+      const reason =
+        action === "withdraw"
+          ? "Remove this hand from my study set"
+          : "The approved state is incorrect";
+      const closedDetail = {
+        ...inactiveApprovedHandDetail(status),
+        summary: {
+          ...inactiveApprovedHandDetail(status).summary,
+          lifecycle_changed_at: "2026-08-30T12:30:00Z",
+        },
+        lifecycle: {
+          ...inactiveApprovedHandDetail(status).lifecycle,
+          changed_at: "2026-08-30T12:30:00Z",
+          reason,
+        },
+      };
+      window.location.hash = "#ticket=one-use-ticket";
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            session_token: "player-session",
+            csrf_token: "csrf-token",
+            expires_in_seconds: 86400,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(readyStorage))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            items: [activeHand],
+            unreadable: [],
+            next_cursor: null,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+        .mockResolvedValueOnce(jsonResponse(closedDetail));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<PlayerApp />);
+      await screen.findByText("Ready on this machine");
+      await user.click(
+        screen.getByRole("button", { name: "Load hand records" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "View audit detail" }),
+      );
+      await user.type(screen.getByRole("textbox", { name: "Reason" }), reason);
+      await user.click(screen.getByRole("button", { name: buttonName }));
+
+      expect(await screen.findByText(new RegExp(notice))).toBeInTheDocument();
+      expect(screen.getByText(status)).toBeInTheDocument();
+      expect(
+        screen.getByText(`Lifecycle reason: ${reason}`),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Change approval state"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("Not used for learning")).toBeInTheDocument();
+      const closeRequest = fetchMock.mock.calls[4];
+      expect(closeRequest?.[0]).toBe(
+        `/api/player/hands/${activeHand.record_key}/${action}`,
+      );
+      expect(closeRequest?.[1]?.method).toBe("POST");
+      const closeHeaders = new Headers(closeRequest?.[1]?.headers);
+      expect(closeHeaders.get("Authorization")).toBe("Bearer player-session");
+      expect(closeHeaders.get("X-Poker-CSRF-Token")).toBe("csrf-token");
+      expect(closeHeaders.get("Content-Type")).toBe("application/json");
+      expect(JSON.parse(String(closeRequest?.[1]?.body))).toEqual({
+        reason,
+        expected_active_canonical_revision: 1,
+        expected_deletion_generation: 0,
+        expected_lifecycle_changed_at: "2026-08-30T12:00:00Z",
+      });
+    },
+  );
+
+  it("refreshes stale approval detail without overwriting the newer lifecycle", async () => {
+    const user = userEvent.setup();
+    const refreshed = {
+      ...activeHandDetail,
+      summary: {
+        ...activeHand,
+        lifecycle_changed_at: "2026-08-30T12:20:00Z",
+      },
+      lifecycle: {
+        ...activeHandDetail.lifecycle,
+        changed_at: "2026-08-30T12:20:00Z",
+      },
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockResolvedValueOnce(
+        jsonResponse({ detail: "The hand lifecycle changed" }, 409),
+      )
+      .mockResolvedValueOnce(jsonResponse(refreshed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Reason" }),
+      "Remove from study",
+    );
+    await user.click(screen.getByRole("button", { name: "Withdraw approval" }));
+
+    expect(
+      await screen.findByText(
+        /Approval state was not changed.*audit detail was refreshed/,
+      ),
+    ).toHaveTextContent("The hand lifecycle changed");
+    expect(
+      screen.getByText(/Canonical revision 1 is active/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Reason" })).toHaveValue(
+      "Remove from study",
+    );
+    expect(fetchMock.mock.calls[5]?.[0]).toBe(
+      `/api/player/hands/${activeHand.record_key}`,
+    );
+  });
+
+  it("recognizes a committed withdrawal after an interrupted mutation response", async () => {
+    const user = userEvent.setup();
+    const reason = "Remove from study";
+    const withdrawn = {
+      ...inactiveApprovedHandDetail("withdrawn"),
+      lifecycle: {
+        ...inactiveApprovedHandDetail("withdrawn").lifecycle,
+        reason,
+      },
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockRejectedValueOnce(new TypeError("connection interrupted"))
+      .mockResolvedValueOnce(jsonResponse(withdrawn));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(screen.getByRole("textbox", { name: "Reason" }), reason);
+    await user.click(screen.getByRole("button", { name: "Withdraw approval" }));
+
+    expect(
+      await screen.findByText(
+        /withdrawn state committed.*response was interrupted/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/previously approved.*now withdrawn/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("requires restart recovery instead of refreshing a ready cascade", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { detail: "This hand has an interrupted lifecycle write" },
+          503,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Reason" }),
+      "Remove from study",
+    );
+    await user.click(screen.getByRole("button", { name: "Withdraw approval" }));
+
+    expect(
+      await screen.findByText(
+        /lifecycle outcome is unresolved.*Restart the local player runtime.*journal recovery can finish/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Canonical revision 1 is active/),
+    ).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(PLAYER_CSRF_STORAGE_KEY)).toBeNull();
+  });
+
+  it("refuses a pre-replay detail after the mutation response is lost", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+      .mockRejectedValueOnce(new TypeError("connection interrupted"))
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { detail: "This hand has an interrupted lifecycle write" },
+          503,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Reason" }),
+      "Remove from study",
+    );
+    await user.click(screen.getByRole("button", { name: "Withdraw approval" }));
+
+    expect(
+      await screen.findByText(
+        /connection interrupted.*lifecycle outcome is unresolved.*Restart the local player runtime/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Canonical revision 1 is active/),
+    ).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(6);
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(PLAYER_CSRF_STORAGE_KEY)).toBeNull();
+  });
+
+  it.each(["canonical revision", "deletion generation"] as const)(
+    "does not attribute another withdrawal with a newer %s to the stale request",
+    async (mismatch) => {
+      const user = userEvent.setup();
+      const reason = "Remove from study";
+      const inactive = inactiveApprovedHandDetail("withdrawn");
+      const refreshed =
+        mismatch === "canonical revision"
+          ? {
+              ...inactive,
+              summary: {
+                ...inactive.summary,
+                canonical_revision_count: 2,
+              },
+              canonical_revisions: [
+                ...inactive.canonical_revisions,
+                {
+                  ...inactive.canonical_revisions[0],
+                  revision: 2,
+                  approved_at: "2026-08-30T12:20:00Z",
+                },
+              ],
+              lifecycle: { ...inactive.lifecycle, reason },
+            }
+          : {
+              ...inactive,
+              summary: {
+                ...inactive.summary,
+                deletion_generation: 1,
+              },
+              lifecycle: {
+                ...inactive.lifecycle,
+                deletion_generation: 1,
+                reason,
+              },
+            };
+      window.location.hash = "#ticket=one-use-ticket";
+      vi.spyOn(window, "confirm").mockReturnValue(true);
+      const fetchMock = vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(
+          jsonResponse({
+            session_token: "player-session",
+            csrf_token: "csrf-token",
+            expires_in_seconds: 86400,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(readyStorage))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            items: [activeHand],
+            unreadable: [],
+            next_cursor: null,
+          }),
+        )
+        .mockResolvedValueOnce(jsonResponse(activeHandDetail))
+        .mockResolvedValueOnce(
+          jsonResponse({ detail: "The hand lifecycle changed" }, 409),
+        )
+        .mockResolvedValueOnce(jsonResponse(refreshed));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<PlayerApp />);
+      await screen.findByText("Ready on this machine");
+      await user.click(
+        screen.getByRole("button", { name: "Load hand records" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "View audit detail" }),
+      );
+      await user.type(screen.getByRole("textbox", { name: "Reason" }), reason);
+      await user.click(
+        screen.getByRole("button", { name: "Withdraw approval" }),
+      );
+
+      expect(
+        await screen.findByText(
+          /Approval state was not changed.*audit detail was refreshed/,
+        ),
+      ).toHaveTextContent("The hand lifecycle changed");
+      expect(
+        screen.queryByText(/state committed.*response was interrupted/),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByText(/previously approved.*now withdrawn/),
+      ).toBeInTheDocument();
+    },
+  );
 
   it.each([
     ["withdrawn", /previously approved, but its approval is now withdrawn/],
@@ -587,6 +1045,9 @@ describe("PlayerApp", () => {
           new RegExp(`Lifecycle reason: ${detail.lifecycle.reason}`),
         ),
       ).toBeInTheDocument();
+      expect(
+        screen.queryByText("Change approval state"),
+      ).not.toBeInTheDocument();
     },
   );
 

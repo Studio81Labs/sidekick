@@ -1,5 +1,6 @@
 import asyncio
 import ctypes
+from datetime import timedelta
 import errno
 from ipaddress import ip_address
 import os
@@ -8,16 +9,19 @@ import shutil
 import socket
 import subprocess
 import sys
-from threading import Thread
+from threading import Event, Thread
 from time import monotonic, sleep
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
+from app.data_lock import DataLockTimeoutError, InterprocessDataLock
+from app.domain.imported_hands import extract_hero_decision_points
 from app.player_main import build_player_server, configured_player_runtime
 from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
 from app.player_namespace import (
@@ -40,13 +44,20 @@ from app.player_runtime import (
 )
 from app.player_workspace import (
     PlayerDataDirectoryError,
+    PlayerWorkspace,
     _macos_extended_acl_has_entries,
 )
+from app.storage.cascade_journal import CascadeJournal
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
     imported_hand_record_key,
 )
-from test_imported_hand_store import RAW_TEXT, pending_review_record
+from test_imported_hand_store import (
+    RAW_TEXT,
+    approved_record,
+    pending_review_record,
+    sample_identity,
+)
 
 
 TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
@@ -85,6 +96,25 @@ def exchange_session(
     )
     assert response.status_code == 200
     return response.json()
+
+
+def player_mutation_headers(session: dict[str, object]) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {session['session_token']}",
+        "Origin": PLAYER_ORIGIN,
+        "X-Poker-CSRF-Token": str(session["csrf_token"]),
+    }
+
+
+def hand_close_payload(record, *, reason: str) -> dict[str, object]:
+    lifecycle = record.lifecycle
+    assert lifecycle.active_canonical_revision is not None
+    return {
+        "reason": reason,
+        "expected_active_canonical_revision": lifecycle.active_canonical_revision,
+        "expected_deletion_generation": lifecycle.deletion_generation,
+        "expected_lifecycle_changed_at": lifecycle.changed_at.isoformat(),
+    }
 
 
 def test_installation_secret_is_stable_and_owner_only(tmp_path: Path) -> None:
@@ -639,7 +669,7 @@ def test_player_storage_reports_when_a_stable_snapshot_times_out(
         runtime.workspace.data_lock.release(descriptor)
 
     assert response.status_code == 409
-    assert "waiting for a shared hold" in response.json()["detail"]
+    assert "waiting for an exclusive hold" in response.json()["detail"]
 
 
 def test_player_hand_routes_require_auth_and_return_safe_review_projections(
@@ -747,6 +777,525 @@ def test_player_hand_routes_report_corrupt_records_explicitly(tmp_path: Path) ->
     assert detail.json() == {
         "detail": "Stored imported hand record could not be read safely"
     }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+async def test_unrelated_hand_requests_do_not_wait_for_a_lifecycle_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    anyio_backend: str,
+) -> None:
+    assert anyio_backend == "asyncio"
+    runtime = _create_player_runtime(tmp_path)
+    blocked_record = approved_record(sample_identity(hand_ordinal=31))
+    unrelated_record = approved_record(sample_identity(hand_ordinal=32))
+    blocked_key = imported_hand_record_key(blocked_record.identity)
+    unrelated_key = imported_hand_record_key(unrelated_record.identity)
+    runtime.workspace.imported_hands.save(blocked_key, blocked_record)
+    runtime.workspace.imported_hands.save(unrelated_key, unrelated_record)
+    blocked_write_started = Event()
+    allow_blocked_write = Event()
+    real_close = PlayerWorkspace.close_hand_record
+
+    def close_with_one_blocked_record(
+        workspace: PlayerWorkspace,
+        record_key: str,
+        *args: object,
+        **kwargs: object,
+    ):
+        if record_key == blocked_key:
+            blocked_write_started.set()
+            if not allow_blocked_write.wait(2):
+                raise AssertionError("blocked lifecycle write was not released")
+        return real_close(workspace, record_key, *args, **kwargs)
+
+    monkeypatch.setattr(
+        PlayerWorkspace,
+        "close_hand_record",
+        close_with_one_blocked_record,
+    )
+    transport = httpx.ASGITransport(
+        app=runtime.app,
+        client=("127.0.0.1", 50000),
+    )
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url=PLAYER_ORIGIN,
+    ) as client:
+        ticket = runtime.issue_launch_url().split("#ticket=", 1)[1]
+        session_response = await client.post(
+            "/api/player/session",
+            headers={
+                "Authorization": f"Bearer {ticket}",
+                "Origin": PLAYER_ORIGIN,
+            },
+        )
+        assert session_response.status_code == 200
+        session = session_response.json()
+        blocked_close = asyncio.create_task(
+            client.post(
+                f"/api/player/hands/{blocked_key}/withdraw",
+                json=hand_close_payload(blocked_record, reason="Blocked review"),
+                headers=player_mutation_headers(session),
+            )
+        )
+        assert await asyncio.to_thread(blocked_write_started.wait, 2)
+        try:
+            unrelated_response = await asyncio.wait_for(
+                client.post(
+                    f"/api/player/hands/{unrelated_key}/withdraw",
+                    json=hand_close_payload(
+                        unrelated_record,
+                        reason="Unrelated review",
+                    ),
+                    headers=player_mutation_headers(session),
+                ),
+                1,
+            )
+        except BaseException:
+            allow_blocked_write.set()
+            await blocked_close
+            raise
+        allow_blocked_write.set()
+        blocked_response = await asyncio.wait_for(blocked_close, 2)
+
+    assert unrelated_response.status_code == 200
+    assert unrelated_response.json()["summary"]["record_key"] == unrelated_key
+    assert unrelated_response.json()["lifecycle"]["status"] == "withdrawn"
+    assert blocked_response.status_code == 200
+    assert blocked_response.json()["lifecycle"]["status"] == "withdrawn"
+
+
+@pytest.mark.parametrize(
+    ("action", "expected_status"),
+    [("withdraw", "withdrawn"), ("reject", "rejected")],
+)
+def test_player_hand_close_routes_preserve_audit_and_are_idempotent(
+    tmp_path: Path,
+    action: str,
+    expected_status: str,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    payload = hand_close_payload(record, reason="  Player reviewed this hand  ")
+
+    assert (
+        client.post(
+            f"/api/player/hands/{key}/{action}",
+            json=payload,
+            headers={"Origin": PLAYER_ORIGIN},
+        ).status_code
+        == 401
+    )
+    missing_csrf = client.post(
+        f"/api/player/hands/{key}/{action}",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {session['session_token']}",
+            "Origin": PLAYER_ORIGIN,
+        },
+    )
+    first = client.post(
+        f"/api/player/hands/{key}/{action}",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+    retry = client.post(
+        f"/api/player/hands/{key}/{action}",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+
+    assert missing_csrf.status_code == 403
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    detail = first.json()
+    assert detail["summary"]["lifecycle_status"] == expected_status
+    assert detail["summary"]["active_canonical_revision"] is None
+    assert detail["summary"]["learning_eligible"] is False
+    assert detail["lifecycle"]["reason"] == "Player reviewed this hand"
+    assert len(detail["canonical_revisions"]) == 1
+    assert RAW_TEXT not in first.text
+    stored = runtime.workspace.imported_hands.get(key)
+    assert stored.lifecycle.status == expected_status
+    assert stored.lifecycle.reason == "Player reviewed this hand"
+    assert stored.canonical_revisions == record.canonical_revisions
+
+
+def test_player_hand_close_routes_refuse_stale_or_inactive_records(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    active = approved_record()
+    active_key = imported_hand_record_key(active.identity)
+    pending = pending_review_record(sample_identity(hand_ordinal=2))
+    pending_key = imported_hand_record_key(pending.identity)
+    runtime.workspace.imported_hands.save(active_key, active)
+    runtime.workspace.imported_hands.save(pending_key, pending)
+    session = exchange_session(client, runtime)
+    headers = player_mutation_headers(session)
+    original = hand_close_payload(active, reason="No longer part of my study set")
+
+    withdrawn = client.post(
+        f"/api/player/hands/{active_key}/withdraw",
+        json=original,
+        headers=headers,
+    )
+    stale_reject = client.post(
+        f"/api/player/hands/{active_key}/reject",
+        json={**original, "reason": "The approved state is incorrect"},
+        headers=headers,
+    )
+    pending_close = client.post(
+        f"/api/player/hands/{pending_key}/withdraw",
+        json={
+            "reason": "Not approved",
+            "expected_active_canonical_revision": 1,
+            "expected_deletion_generation": 0,
+            "expected_lifecycle_changed_at": pending.lifecycle.changed_at.isoformat(),
+        },
+        headers=headers,
+    )
+
+    assert withdrawn.status_code == 200
+    assert stale_reject.status_code == 409
+    assert "lifecycle changed" in stale_reject.json()["detail"]
+    assert pending_close.status_code == 409
+    assert runtime.workspace.imported_hands.get(active_key).lifecycle.status == (
+        "withdrawn"
+    )
+    assert runtime.workspace.imported_hands.get(pending_key) == pending
+
+
+def test_player_hand_close_advances_a_future_lifecycle_timestamp(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    future_changed_at = record.lifecycle.changed_at + timedelta(days=3650)
+    future_record = record.model_copy(
+        update={
+            "lifecycle": record.lifecycle.model_copy(
+                update={"changed_at": future_changed_at}
+            )
+        }
+    )
+    key = imported_hand_record_key(future_record.identity)
+    runtime.workspace.imported_hands.save(key, future_record)
+    runtime.workspace.imported_hands.save_decisions(
+        key,
+        extract_hero_decision_points(future_record),
+    )
+    session = exchange_session(client, runtime)
+    backup = client.get(
+        "/api/player/backups/export",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    assert backup.status_code == 200
+
+    closed = client.post(
+        f"/api/player/hands/{key}/withdraw",
+        json=hand_close_payload(future_record, reason="Reviewed"),
+        headers=player_mutation_headers(session),
+    )
+
+    assert closed.status_code == 200
+    assert closed.json()["lifecycle"]["changed_at"] == (
+        future_changed_at + timedelta(microseconds=1)
+    ).isoformat().replace("+00:00", "Z")
+    restored = client.post(
+        "/api/player/backups/restore",
+        content=backup.content,
+        headers={
+            **player_mutation_headers(session),
+            "Content-Type": "application/zip",
+        },
+    )
+    assert restored.status_code == 200
+    assert restored.json()["skipped_stale_records"] == 1
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+
+
+@pytest.mark.parametrize(
+    "payload_update",
+    [
+        {"reason": "   "},
+        {"expected_active_canonical_revision": 0},
+        {"expected_deletion_generation": -1},
+        {"expected_lifecycle_changed_at": "2026-08-30T12:00:00"},
+        {"unexpected": True},
+    ],
+)
+def test_player_hand_close_routes_validate_the_complete_precondition(
+    tmp_path: Path,
+    payload_update: dict[str, object],
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        f"/api/player/hands/{key}/withdraw",
+        json={**hand_close_payload(record, reason="Reviewed"), **payload_update},
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 422
+    assert runtime.workspace.imported_hands.get(key) == record
+
+
+def test_player_hand_close_route_reports_a_busy_process_lock(tmp_path: Path) -> None:
+    client, runtime = player_client(tmp_path, write_lock_timeout_seconds=0)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    lock_index = runtime.workspace.imported_hand_lock_index(key)
+    second_runtime = _create_player_runtime(tmp_path)
+    second_lock_index = second_runtime.workspace.imported_hand_lock_index(key)
+    assert second_lock_index == lock_index
+    process_lock = second_runtime.workspace.imported_hand_process_locks[
+        second_lock_index
+    ]
+    assert process_lock.lock_path == (
+        runtime.workspace.imported_hand_process_locks[lock_index].lock_path
+    )
+    descriptor = process_lock.acquire(exclusive=True)
+    try:
+        response = client.post(
+            f"/api/player/hands/{key}/withdraw",
+            json=hand_close_payload(record, reason="Reviewed"),
+            headers=player_mutation_headers(session),
+        )
+    finally:
+        process_lock.release(descriptor)
+
+    assert response.status_code == 409
+    assert "player hand lifecycle lock" in response.json()["detail"]
+    assert runtime.workspace.imported_hands.get(key) == record
+
+
+def test_player_hand_close_holds_the_volume_snapshot_through_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    transition_started = Event()
+    allow_transition = Event()
+    real_withdraw = ImportedHandLifecycleService.withdraw
+
+    def delayed_withdraw(
+        service: ImportedHandLifecycleService,
+        record_key: str,
+        *,
+        reason: str,
+        at,
+    ):
+        transition_started.set()
+        assert allow_transition.wait(2)
+        return real_withdraw(service, record_key, reason=reason, at=at)
+
+    monkeypatch.setattr(ImportedHandLifecycleService, "withdraw", delayed_withdraw)
+    responses = []
+    request_thread = Thread(
+        target=lambda: responses.append(
+            client.post(
+                f"/api/player/hands/{key}/withdraw",
+                json=hand_close_payload(record, reason="Reviewed"),
+                headers=player_mutation_headers(session),
+            )
+        )
+    )
+    request_thread.start()
+    try:
+        assert transition_started.wait(2)
+        with pytest.raises(DataLockTimeoutError, match="exclusive hold"):
+            InterprocessDataLock(tmp_path).acquire(
+                exclusive=True,
+                timeout_seconds=0,
+            )
+    finally:
+        allow_transition.set()
+        request_thread.join(timeout=5)
+
+    assert not request_thread.is_alive()
+    assert responses[0].status_code == 200
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+
+
+def test_player_hand_close_keeps_a_ready_cascade_outcome_unresolved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    real_commit_replace = CascadeJournal._commit_replace
+
+    def fail_record_publication(
+        journal: CascadeJournal,
+        record_key: str,
+        relative: Path,
+        staged_file: Path,
+    ) -> None:
+        if relative.as_posix() == "record.json":
+            raise OSError("simulated lifecycle publication failure")
+        real_commit_replace(journal, record_key, relative, staged_file)
+
+    monkeypatch.setattr(
+        CascadeJournal,
+        "_commit_replace",
+        fail_record_publication,
+    )
+    response = client.post(
+        f"/api/player/hands/{key}/withdraw",
+        json=hand_close_payload(record, reason="Reviewed"),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 503
+    assert "interrupted lifecycle write" in response.json()["detail"]
+    assert runtime.workspace.imported_hands.has_interrupted_write(key)
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "active"
+    detail = client.get(
+        f"/api/player/hands/{key}",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    assert detail.status_code == 503
+
+    monkeypatch.setattr(CascadeJournal, "_commit_replace", real_commit_replace)
+    recovered = _create_player_runtime(tmp_path)
+    assert recovered.workspace.imported_hand_recovery.completed
+    assert recovered.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+
+
+def test_player_hand_close_rechecks_a_ready_cascade_after_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    real_rmtree = shutil.rmtree
+
+    def retain_ready_cascade(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(shutil, "rmtree", retain_ready_cascade)
+    response = client.post(
+        f"/api/player/hands/{key}/withdraw",
+        json=hand_close_payload(record, reason="Reviewed"),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 503
+    assert "interrupted lifecycle write" in response.json()["detail"]
+    assert runtime.workspace.imported_hands.has_interrupted_write(key)
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+    detail = client.get(
+        f"/api/player/hands/{key}",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    assert detail.status_code == 503
+
+    monkeypatch.setattr(shutil, "rmtree", real_rmtree)
+    recovered = _create_player_runtime(tmp_path)
+    assert recovered.workspace.imported_hand_recovery.completed
+    assert recovered.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+
+
+def test_pending_lifecycle_recovery_blocks_volume_operations_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    pending_record = approved_record(sample_identity(hand_ordinal=21))
+    pending_key = imported_hand_record_key(pending_record.identity)
+    unrelated_record = approved_record(sample_identity(hand_ordinal=22))
+    unrelated_key = imported_hand_record_key(unrelated_record.identity)
+    session = exchange_session(client, runtime)
+    authorization = {"Authorization": f"Bearer {session['session_token']}"}
+    backup = client.get("/api/player/backups/export", headers=authorization)
+    assert backup.status_code == 200
+    runtime.workspace.imported_hands.save(pending_key, pending_record)
+    runtime.workspace.imported_hands.save(unrelated_key, unrelated_record)
+    real_commit_replace = CascadeJournal._commit_replace
+
+    def fail_pending_record(
+        journal: CascadeJournal,
+        record_key: str,
+        relative: Path,
+        staged_file: Path,
+    ) -> None:
+        if record_key == pending_key and relative.as_posix() == "record.json":
+            raise OSError("simulated lifecycle publication failure")
+        real_commit_replace(journal, record_key, relative, staged_file)
+
+    monkeypatch.setattr(CascadeJournal, "_commit_replace", fail_pending_record)
+    failed_close = client.post(
+        f"/api/player/hands/{pending_key}/withdraw",
+        json=hand_close_payload(pending_record, reason="Reviewed"),
+        headers=player_mutation_headers(session),
+    )
+    assert failed_close.status_code == 503
+    monkeypatch.setattr(CascadeJournal, "_commit_replace", real_commit_replace)
+
+    listing = client.get("/api/player/hands", headers=authorization)
+    storage = client.get("/api/player/storage", headers=authorization)
+    blocked_export = client.get("/api/player/backups/export", headers=authorization)
+    blocked_restore = client.post(
+        "/api/player/backups/restore",
+        content=backup.content,
+        headers={
+            **player_mutation_headers(session),
+            "Content-Type": "application/zip",
+        },
+    )
+
+    assert listing.status_code == 200
+    assert [item["record_key"] for item in listing.json()["items"]] == [
+        unrelated_key
+    ]
+    assert listing.json()["unreadable"] == [
+        {
+            "record_key": pending_key,
+            "detail": (
+                "Stored imported hand record is unavailable until lifecycle "
+                "recovery finishes"
+            ),
+        }
+    ]
+    assert storage.status_code == 503
+    assert "interrupted lifecycle write" in storage.json()["detail"]
+    assert blocked_export.status_code == 503
+    assert "startup recovery" in blocked_export.json()["detail"]
+    assert blocked_restore.status_code == 503
+    assert "startup recovery" in blocked_restore.json()["detail"]
+    assert client.get(
+        f"/api/player/hands/{unrelated_key}",
+        headers=authorization,
+    ).status_code == 200
+    unrelated_close = client.post(
+        f"/api/player/hands/{unrelated_key}/withdraw",
+        json=hand_close_payload(unrelated_record, reason="Unrelated review"),
+        headers=player_mutation_headers(session),
+    )
+    assert unrelated_close.status_code == 200
 
 
 def test_player_storage_status_preserves_quarantine_across_restarts(
@@ -993,6 +1542,7 @@ def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
     [
         "/api/player",
         "/api/player/imports",
+        f"/api/player/hands/{'a' * 64}/reject",
         "/api%2Fplayer%2Fimports",
         "/%61pi/%70layer/imports",
         "/%2561pi%252Fplayer%252Fimports",
