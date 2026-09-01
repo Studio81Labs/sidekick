@@ -535,6 +535,72 @@ reference, authorize a remote provider, persist grades, calculate aggregate
 mixing deviations, move mastery, or schedule drills. Those application and
 Phase 0 gates remain open under issues #412, #414, #416, and #418.
 
+Optional remote-reference preflight contracts live under
+`app/domain/remote_references`. This pure, non-networking boundary is local-only
+by default and evaluates a dispatch candidate only when active provider-policy
+snapshots, the semantic policy digest, exact disclosure, explicit unexpired
+consent generation, canonical DNS-only HTTPS origin, route schema, and sorted
+field-category allowlist all match. A provider-owned route manifest explicitly
+allowlists every revision or digest in a currently eligible cash no-limit
+preflop route
+and the internally computed semantic digest of each exact eligible request
+context. That exact context binding includes limit, table size, position,
+position-bound stacks and commitments, sizing, and action-line state rather than
+letting a broad economics or abstraction declaration imply provider coverage.
+Cash economic coverage is derived locally from the approved currency, complete
+rake/drop schedule, and absolute blind/ante level before BB normalization; a
+caller-supplied economic digest cannot substitute for that canonical binding.
+Closed component models
+make raw histories, hand/site/session and canonical-record identities, player
+names, timestamps, screenshots, and learning/profile state unrepresentable in
+the outbound DTO. A pure local factory accepts the full validated canonical
+decision point, derives its stable binding and local state digest, and
+reconstructs every route-critical field in BB units before it can create an
+immutable route envelope. Preflight independently repeats that reconstruction,
+so a caller cannot associate an allowlisted request from one decision with
+another decision even when it forges the envelope binding and state digest.
+Unsupported postflop, ante, straddle, or uncalled-return state fails closed at
+this derivation boundary. Route revisions, abstraction digests, and range digests must
+match that independently selected provider manifest, never player data. Active
+players and their position-bound remaining stacks are explicit, so multiway
+routes cannot collapse materially different stack configurations.
+Current wager, amount-to-call, and pot values are checked against the complete
+position-bound commitments and a reconstructed running wager rather than
+accepted as independent claims. Check, call, bet, raise, minimum-raise, and
+short-all-in reopening semantics are validated across the action line; active
+players are derived from its folds while all-in survivors remain visible with
+zero remaining stack. Players exhausted by represented forced contributions are
+excluded from pending action. A short all-in blind contributes its exact posted
+amount to the pot; heads-up uses the actual posted wager while multiway retains
+the nominal big-blind bring-in, and a stackless hero cannot become a candidate.
+Unordered hole cards and equivalent Decimal exponents are canonicalized before
+exact-route and local decision-state hashing. A route
+cannot claim another decision after all pending
+responders have matched or left the hand. Pot-limit routes remain unavailable
+until their running-pot maximum sizing can be reconstructed; tournament routes
+remain unavailable until payout, field, stack, and bounty state is representable.
+Postflop routes remain unavailable
+until each conditioned-range artifact can be bound to its exact board, action
+line, position, and derivation context instead of a global digest allowlist.
+Provider configuration, policy, reference-source, commercial
+serving-rights, derived-output-rights, disclosure, consent, request, economics,
+utility, and abstraction revisions remain pinned in local audit provenance;
+the canonical decision binding and state digest remain pinned through dispatch
+preflight and recorded lookup failures, but stay local and are never promoted
+to an outbound identifier or digest.
+The candidate is not transport authorization: a future application boundary
+must atomically re-read authoritative provider status, consent status, and the
+current consent generation immediately before each dispatch or retry. Revocation,
+policy drift, missing routes, and provider, network, or response failure remain
+visibly unavailable and ungraded, with no remote or heuristic-to-solved fallback;
+response digests are computed locally instead of accepted as provider claims.
+There is intentionally no provider selection, HTTP adapter, credential loading,
+persistence, source activation, or resolved-reference promotion yet, so this
+checkpoint does not close the source qualification and lifecycle work in issues
+#412 and #416. A future transport must also enforce its configured-origin
+allowlist after DNS resolution and reject private, loopback, link-local, and
+redirected destinations.
+
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact
 whose filename matches the record's active revision and deletion generation,

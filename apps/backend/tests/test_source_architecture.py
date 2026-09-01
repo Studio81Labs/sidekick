@@ -207,3 +207,31 @@ def test_grading_domain_does_not_import_provider_or_benchmark_execution() -> Non
         or any(module.startswith(prefix + ".") for prefix in forbidden)
     ]
     assert violations == []
+
+
+def test_remote_reference_domain_has_only_pure_dependencies() -> None:
+    allowed = {
+        "__future__",
+        "app.domain.imported_hands.decisions",
+        "app.domain.imported_hands.models",
+        "app.domain.learning_content.models",
+        "app.domain.remote_references.models",
+        "app.domain.remote_references.services",
+        "datetime",
+        "decimal",
+        "hashlib",
+        "ipaddress",
+        "json",
+        "pydantic",
+        "typing",
+        "urllib.parse",
+    }
+    violations = [
+        f"{path}: {module}"
+        for path in sorted(
+            (APP_ROOT / "domain" / "remote_references").glob("*.py")
+        )
+        for module in imported_modules(path)
+        if module not in allowed
+    ]
+    assert violations == []
