@@ -133,7 +133,7 @@ class ResolvedReferencePolicy(GradingModel):
     policy_complete: bool
     minimum_supported_frequency: PositiveProbability
     maximum_equivalent_ev_cost: NonNegativeDecimal
-    sizing_tolerance_bb: NonNegativeDecimal
+    sizing_tolerance_bb: PositiveDecimal
     policy_lines: tuple[PolicyLine, ...] = Field(min_length=1, max_length=64)
 
     @model_validator(mode="after")

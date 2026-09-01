@@ -499,6 +499,11 @@ def test_reference_policy_allows_sizes_exactly_two_tolerances_apart() -> None:
     assert len(solved.policy_lines) == 2
 
 
+def test_reference_policy_rejects_zero_sizing_tolerance() -> None:
+    with pytest.raises(ValidationError, match="greater than 0"):
+        reference(decision(), sizing_tolerance_bb="0")
+
+
 @pytest.mark.parametrize(
     ("kwargs", "expected_error"),
     [
