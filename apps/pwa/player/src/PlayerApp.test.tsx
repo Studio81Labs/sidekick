@@ -495,6 +495,58 @@ describe("PlayerApp", () => {
     expect(document.body).not.toHaveTextContent("PokerStars Hand #123456789");
   });
 
+  it("requires restart recovery when loading an unresolved hand detail", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [activeHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          { detail: "This hand has an interrupted lifecycle write" },
+          503,
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /lifecycle outcome is unresolved.*Restart the local player runtime.*journal recovery can finish/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("site-hand-id/v1 · pokerstars #123456789"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Download backup" }),
+    ).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(PLAYER_CSRF_STORAGE_KEY)).toBeNull();
+  });
+
   it("renders the approved canonical state retained by an active revision", async () => {
     const user = userEvent.setup();
     window.location.hash = "#ticket=one-use-ticket";

@@ -561,7 +561,11 @@ export default function PlayerApp() {
     try {
       setHandDetail(await loadPlayerHand(credentials, recordKey));
     } catch (reason) {
-      handleRequestError(reason);
+      if (reason instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(reason.message);
+      } else {
+        handleRequestError(reason);
+      }
     } finally {
       setLoadingHandKey(null);
       setBusy(null);
