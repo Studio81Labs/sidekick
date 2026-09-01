@@ -455,6 +455,9 @@ versioned learning-content contracts live separately under
 `app/domain/learning_content`: immutable taxonomy and mapping revisions produce
 an explicit absent result or one primary tag pinned to the decision, taxonomy,
 mapping, and concept-definition revisions. Overlapping rules fail closed.
+Versioned selectors may bind the full ordered pre-decision route, structural
+actor positions, BB-normalized action sizing, and stack-depth ranges; unresolved
+action sizing remains unresolved and cannot satisfy a numeric range.
 Principle revisions begin as drafts, retain append-only reviewer provenance,
 and become activation- or reveal-eligible only after compatible human approval.
 Activation checks cover every concept reachable from the mapping; principle

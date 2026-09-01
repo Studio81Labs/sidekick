@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from decimal import Decimal
 from hashlib import sha256
 from typing import Annotated, Literal, Self
 
@@ -17,7 +18,13 @@ from pydantic import (
     model_validator,
 )
 
-from app.domain.imported_hands import HeroDecisionPoint
+from app.domain.imported_hands import (
+    DecisionActionRecord,
+    HeroDecisionPoint,
+    SeatDecisionState,
+    SeatDecisionStatus,
+    StreetActionHistory,
+)
 from app.domain.imported_hands.models import ActionType, StreetName
 
 
@@ -37,6 +44,10 @@ NonEmptyText = Annotated[
 ]
 PositiveInteger = Annotated[int, Field(ge=1, strict=True)]
 NonNegativeInteger = Annotated[int, Field(ge=0, strict=True)]
+NonNegativeDecimal = Annotated[
+    Decimal,
+    Field(ge=0, allow_inf_nan=False, strict=True),
+]
 PositionLabel = Literal[
     "BTN/SB",
     "BTN",
@@ -57,6 +68,7 @@ PrincipleStatus = Literal["draft", "approved", "superseded", "retired"]
 PrincipleAuthorKind = Literal["human", "llm"]
 PrincipleActorKind = Literal["human", "system"]
 PrincipleFraming = Literal["conditional_educational_reference_guidance"]
+STREET_ORDER: tuple[StreetName, ...] = ("preflop", "flop", "turn", "river")
 
 EDUCATIONAL_GUIDANCE_PREFIX = (
     "Conditional educational reference guidance, not a guarantee of optimal play"
@@ -140,6 +152,151 @@ class TaxonomyRevision(LearningContentModel):
         )
 
 
+class DecimalRange(LearningContentModel):
+    """An inclusive range for versioned BB-normalized selector data."""
+
+    minimum: NonNegativeDecimal | None = None
+    maximum: NonNegativeDecimal | None = None
+
+    @model_validator(mode="after")
+    def validate_bounds(self) -> Self:
+        if self.minimum is None and self.maximum is None:
+            raise ValueError("a decimal range requires at least one bound")
+        if (
+            self.minimum is not None
+            and self.maximum is not None
+            and self.minimum > self.maximum
+        ):
+            raise ValueError("a decimal range minimum cannot exceed its maximum")
+        return self
+
+    def contains(self, value: Decimal) -> bool:
+        return (
+            (self.minimum is None or value >= self.minimum)
+            and (self.maximum is None or value <= self.maximum)
+        )
+
+
+class RouteActionSelector(LearningContentModel):
+    """One structurally identified action in an exact pre-decision route."""
+
+    actor_position: PositionLabel
+    action_type: ActionType
+    amount_big_blinds: DecimalRange | None = None
+    total_committed_big_blinds: DecimalRange | None = None
+    all_in: bool | None = None
+
+    def matches(
+        self,
+        action: DecisionActionRecord,
+        big_blind: Decimal | None,
+    ) -> bool:
+        return all(
+            (
+                self.actor_position == action.position.display_label,
+                self.action_type == action.action_type,
+                _matches_big_blind_range(
+                    self.amount_big_blinds,
+                    action.amount,
+                    big_blind,
+                ),
+                _matches_big_blind_range(
+                    self.total_committed_big_blinds,
+                    action.total_committed,
+                    big_blind,
+                ),
+                self.all_in is None or self.all_in == action.all_in,
+            )
+        )
+
+
+class RouteStreetSelector(LearningContentModel):
+    """Every observable action on one street of the pre-decision route."""
+
+    street: StreetName
+    actions: tuple[RouteActionSelector, ...]
+
+    def matches(
+        self,
+        history: StreetActionHistory,
+        big_blind: Decimal | None,
+    ) -> bool:
+        return (
+            self.street == history.street
+            and len(self.actions) == len(history.actions)
+            and all(
+                selector.matches(action, big_blind)
+                for selector, action in zip(
+                    self.actions,
+                    history.actions,
+                    strict=True,
+                )
+            )
+        )
+
+
+class PositionStackSelector(LearningContentModel):
+    """BB-normalized stack constraints for one structural table actor."""
+
+    position: PositionLabel
+    starting_stack_big_blinds: DecimalRange | None = None
+    stack_before_action_big_blinds: DecimalRange | None = None
+    status: SeatDecisionStatus | None = None
+
+    @model_validator(mode="after")
+    def require_stack_context(self) -> Self:
+        if (
+            self.starting_stack_big_blinds is None
+            and self.stack_before_action_big_blinds is None
+            and self.status is None
+        ):
+            raise ValueError("a position stack selector requires stack context")
+        return self
+
+    def matches(
+        self,
+        seats: list[SeatDecisionState],
+        big_blind: Decimal | None,
+    ) -> bool:
+        seat = next(
+            (
+                candidate
+                for candidate in seats
+                if candidate.position.display_label == self.position
+            ),
+            None,
+        )
+        return seat is not None and all(
+            (
+                _matches_big_blind_range(
+                    self.starting_stack_big_blinds,
+                    seat.starting_stack,
+                    big_blind,
+                ),
+                _matches_big_blind_range(
+                    self.stack_before_action_big_blinds,
+                    seat.stack_before_action,
+                    big_blind,
+                ),
+                self.status is None or self.status == seat.status,
+            )
+        )
+
+
+def _matches_big_blind_range(
+    expected: DecimalRange | None,
+    chips: Decimal | None,
+    big_blind: Decimal | None,
+) -> bool:
+    if expected is None:
+        return True
+    return (
+        chips is not None
+        and big_blind is not None
+        and expected.contains(chips / big_blind)
+    )
+
+
 class DecisionSelector(LearningContentModel):
     """A versioned, exact selector over canonical decision-state fields.
 
@@ -152,6 +309,9 @@ class DecisionSelector(LearningContentModel):
     dealt_in_player_count: Annotated[int, Field(ge=2, le=10, strict=True)] | None = None
     facing_wager: bool | None = None
     current_street_action_types: tuple[ActionType, ...] | None = None
+    hero_stack_before_action_big_blinds: DecimalRange | None = None
+    position_stack_depths: tuple[PositionStackSelector, ...] | None = None
+    action_route: tuple[RouteStreetSelector, ...] | None = None
 
     @model_validator(mode="after")
     def reject_catch_all(self) -> Self:
@@ -163,27 +323,70 @@ class DecisionSelector(LearningContentModel):
                 self.dealt_in_player_count,
                 self.facing_wager,
                 self.current_street_action_types,
+                self.hero_stack_before_action_big_blinds,
+                self.position_stack_depths,
+                self.action_route,
             )
         ):
             raise ValueError("a concept mapping selector cannot be a catch-all")
+        if self.position_stack_depths is not None:
+            positions = tuple(
+                selector.position for selector in self.position_stack_depths
+            )
+            if not positions:
+                raise ValueError("position stack selectors cannot be empty")
+            if len(set(positions)) != len(positions):
+                raise ValueError("position stack selectors must use unique positions")
+        if self.action_route is not None:
+            if not self.action_route:
+                raise ValueError("an action route selector cannot be empty")
+            streets = tuple(selector.street for selector in self.action_route)
+            if streets != STREET_ORDER[: len(streets)]:
+                raise ValueError(
+                    "an action route selector must be a contiguous street prefix"
+                )
         return self
 
     def matches(self, decision: HeroDecisionPoint) -> bool:
+        state = decision.state
+        big_blind = state.blinds.big_blind
         current_actions = tuple(
-            action.action_type for action in decision.state.action_history[-1].actions
+            action.action_type for action in state.action_history[-1].actions
         )
         return all(
             (
                 self.street is None or self.street == decision.street,
                 self.hero_position is None
-                or self.hero_position == decision.state.hero_position.display_label,
+                or self.hero_position == state.hero_position.display_label,
                 self.dealt_in_player_count is None
                 or self.dealt_in_player_count
-                == decision.state.dealt_in_player_count,
+                == state.dealt_in_player_count,
                 self.facing_wager is None
-                or self.facing_wager == (decision.state.amount_to_call > 0),
+                or self.facing_wager == (state.amount_to_call > 0),
                 self.current_street_action_types is None
                 or self.current_street_action_types == current_actions,
+                _matches_big_blind_range(
+                    self.hero_stack_before_action_big_blinds,
+                    state.hero_stack_before_action,
+                    big_blind,
+                ),
+                self.position_stack_depths is None
+                or all(
+                    selector.matches(state.seats, big_blind)
+                    for selector in self.position_stack_depths
+                ),
+                self.action_route is None
+                or (
+                    len(self.action_route) == len(state.action_history)
+                    and all(
+                        selector.matches(history, big_blind)
+                        for selector, history in zip(
+                            self.action_route,
+                            state.action_history,
+                            strict=True,
+                        )
+                    )
+                ),
             )
         )
 

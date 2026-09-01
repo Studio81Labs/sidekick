@@ -26,8 +26,11 @@ from imported-hand extraction and persistence.
 - A taxonomy revision is an immutable hierarchy of stable concept IDs and
   immutable concept-definition revisions.
 - A mapping revision targets exactly one taxonomy revision. Rules are
-  versioned data over canonical decision-state fields. Every selector is
-  explicit; catch-all rules are invalid.
+  versioned data over canonical decision-state fields. Selectors can bind the
+  full ordered pre-decision route, structural actors, BB-normalized action
+  sizes, and stack-depth ranges without using player identity or inventing an
+  effective stack in ambiguous multiway spots. Every selector is explicit;
+  catch-all rules are invalid.
 - Tagging returns either no tag with an explicit reason or exactly one primary
   tag. A present tag binds the decision identity, canonical revision, deletion
   generation, decision index, taxonomy revision, mapping revision,

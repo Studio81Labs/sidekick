@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from pydantic import ValidationError
@@ -13,12 +14,16 @@ from app.domain.learning_content import (
     ConceptDefinition,
     ConceptMappingRevision,
     ConceptMappingRule,
+    DecimalRange,
     DecisionConceptTagging,
     DecisionSelector,
     LearningContentCompatibilityError,
     PrincipleLifecycleEvent,
     PrincipleRecord,
     PrincipleRevision,
+    PositionStackSelector,
+    RouteActionSelector,
+    RouteStreetSelector,
     TaxonomyRevision,
     append_principle_lifecycle_event,
     build_principle_reveal,
@@ -31,6 +36,7 @@ from app.domain.learning_content import (
     validate_taxonomy_successor,
 )
 from test_imported_hand_decisions import baseline_decision_record
+from test_imported_hand_models import multi_street_decision_record
 
 
 NOW = datetime(2026, 9, 1, 8, 0, tzinfo=UTC)
@@ -177,6 +183,153 @@ def test_taxonomy_requires_a_valid_acyclic_hierarchy() -> None:
 def test_mapping_selector_rejects_a_catch_all() -> None:
     with pytest.raises(ValidationError, match="catch-all"):
         DecisionSelector()
+    with pytest.raises(ValidationError, match="contiguous street prefix"):
+        DecisionSelector(
+            action_route=(RouteStreetSelector(street="flop", actions=()),)
+        )
+
+
+def test_mapping_selector_matches_versioned_route_actor_stack_and_sizing() -> None:
+    point = decision()
+    route = (
+        RouteStreetSelector(
+            street="preflop",
+            actions=(
+                RouteActionSelector(
+                    actor_position="BTN/SB",
+                    action_type="post_small_blind",
+                    amount_big_blinds=DecimalRange(
+                        minimum=Decimal("0.5"),
+                        maximum=Decimal("0.5"),
+                    ),
+                ),
+                RouteActionSelector(
+                    actor_position="BB",
+                    action_type="post_big_blind",
+                    total_committed_big_blinds=DecimalRange(
+                        minimum=Decimal("1"),
+                        maximum=Decimal("1"),
+                    ),
+                ),
+            ),
+        ),
+    )
+    selector = DecisionSelector(
+        hero_stack_before_action_big_blinds=DecimalRange(
+            minimum=Decimal("99"),
+            maximum=Decimal("100"),
+        ),
+        position_stack_depths=(
+            PositionStackSelector(
+                position="BB",
+                stack_before_action_big_blinds=DecimalRange(
+                    minimum=Decimal("99"),
+                    maximum=Decimal("99"),
+                ),
+                status="live",
+            ),
+        ),
+        action_route=route,
+    )
+    assert selector.matches(point)
+
+    wrong_actor = selector.model_copy(
+        update={
+            "action_route": (
+                route[0].model_copy(
+                    update={
+                        "actions": (
+                            route[0].actions[0],
+                            route[0].actions[1].model_copy(
+                                update={"actor_position": "BTN/SB"}
+                            ),
+                        )
+                    }
+                ),
+            )
+        }
+    )
+    assert not wrong_actor.matches(point)
+
+    wrong_size = selector.model_copy(
+        update={
+            "action_route": (
+                route[0].model_copy(
+                    update={
+                        "actions": (
+                            route[0].actions[0],
+                            route[0].actions[1].model_copy(
+                                update={
+                                    "total_committed_big_blinds": DecimalRange(
+                                        minimum=Decimal("2"),
+                                        maximum=Decimal("2"),
+                                    )
+                                }
+                            ),
+                        )
+                    }
+                ),
+            )
+        }
+    )
+    assert not wrong_size.matches(point)
+
+    wrong_stack = selector.model_copy(
+        update={
+            "hero_stack_before_action_big_blinds": DecimalRange(
+                maximum=Decimal("20")
+            )
+        }
+    )
+    assert not wrong_stack.matches(point)
+
+
+def test_mapping_selector_preserves_unresolved_action_sizing() -> None:
+    extraction = extract_hero_decision_points(multi_street_decision_record())
+    assert extraction.outcome == "decisions"
+    point = extraction.decision_points[1]
+    assert point.street == "flop"
+    assert point.state.action_history[-1].actions[-1].amount is None
+
+    route_streets = tuple(
+        RouteStreetSelector(
+            street=history.street,
+            actions=tuple(
+                RouteActionSelector(
+                    actor_position=action.position.display_label,
+                    action_type=action.action_type,
+                )
+                for action in history.actions
+            ),
+        )
+        for history in point.state.action_history
+    )
+    route = DecisionSelector(action_route=route_streets)
+    current_street = route_streets[-1]
+    unresolved_action = current_street.actions[-1]
+    sized_route = route.model_copy(
+        update={
+            "action_route": (
+                *route_streets[:-1],
+                current_street.model_copy(
+                    update={
+                        "actions": (
+                            *current_street.actions[:-1],
+                            unresolved_action.model_copy(
+                                update={
+                                    "amount_big_blinds": DecimalRange(
+                                        minimum=Decimal("0")
+                                    )
+                                }
+                            ),
+                        ),
+                    }
+                ),
+            )
+        }
+    )
+    assert route.matches(point)
+    assert not sized_route.matches(point)
 
 
 def test_tagging_is_optional_deterministic_and_revision_pinned() -> None:
