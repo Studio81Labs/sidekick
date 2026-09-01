@@ -541,7 +541,11 @@ by default and evaluates a dispatch candidate only when active provider-policy
 snapshots, the semantic policy digest, exact disclosure, explicit unexpired
 consent generation, canonical DNS-only HTTPS origin, route schema, and sorted
 field-category allowlist all match. A provider-owned route manifest explicitly
-allowlists every revision or digest in a currently eligible cash-preflop route.
+allowlists every revision or digest in a currently eligible cash-preflop route
+and the internally computed semantic digest of each exact eligible request
+context. That exact context binding includes limit, table size, position,
+position-bound stacks and commitments, sizing, and action-line state rather than
+letting a broad economics or abstraction declaration imply provider coverage.
 Closed component models
 make raw histories, hand/site/session and canonical-record identities, player
 names, timestamps, screenshots, and learning/profile state unrepresentable in
@@ -550,8 +554,11 @@ match that independently selected provider manifest, never player data. Active
 players and their position-bound remaining stacks are explicit, so multiway
 routes cannot collapse materially different stack configurations.
 Current wager, amount-to-call, and pot values are checked against the complete
-position-bound commitments and prior-action totals rather than accepted as
-independent claims. Tournament routes remain unavailable until payout, field,
+position-bound commitments and a reconstructed running wager rather than
+accepted as independent claims. Check, call, bet, raise, minimum-raise, and
+short-all-in reopening semantics are validated across the action line; active
+players are derived from its folds while all-in survivors remain visible with
+zero remaining stack. Tournament routes remain unavailable until payout, field,
 stack, and bounty state is representable. Postflop routes remain unavailable
 until each conditioned-range artifact can be bound to its exact board, action
 line, position, and derivation context instead of a global digest allowlist.

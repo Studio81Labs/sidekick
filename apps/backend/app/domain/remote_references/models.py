@@ -278,6 +278,7 @@ class RemoteReferenceRouteManifest(RemoteReferenceModel):
     """Provider-owned allowlist for every eligible route revision and digest."""
 
     manifest_revision: Identifier
+    eligible_route_context_sha256s: tuple[Sha256Digest, ...] = Field(min_length=1)
     economic_configurations: tuple[EconomicConfigurationBinding, ...] = Field(
         min_length=1
     )
@@ -297,6 +298,12 @@ class RemoteReferenceRouteManifest(RemoteReferenceModel):
             digests = [_canonical_sha256(binding) for binding in bindings]
             if digests != sorted(digests) or len(digests) != len(set(digests)):
                 raise ValueError("route-manifest bindings must be sorted and unique")
+        if self.eligible_route_context_sha256s != tuple(
+            sorted(self.eligible_route_context_sha256s)
+        ) or len(self.eligible_route_context_sha256s) != len(
+            set(self.eligible_route_context_sha256s)
+        ):
+            raise ValueError("eligible route contexts must be sorted and unique")
         return self
 
     def semantic_digest(self) -> str:
@@ -801,6 +808,7 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
             }
             running_wager = Decimal(0)
             minimum_raise_increment = Decimal(0)
+            last_action_wager_by_position: dict[str, Decimal] = {}
             if street == "preflop":
                 simulated_commitments[small_blind_position] = (
                     economics.small_blind_bb
@@ -823,6 +831,7 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                 if action.action == "check":
                     if actor_commitment != running_wager:
                         raise ValueError("a player facing a wager cannot check")
+                    last_action_wager_by_position[actor] = running_wager
                     continue
 
                 assert action.total_committed_bb is not None
@@ -843,6 +852,15 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                     minimum_raise_increment = new_commitment - actor_commitment
                     running_wager = new_commitment
                 else:
+                    last_action_wager = last_action_wager_by_position.get(actor)
+                    if (
+                        last_action_wager is not None
+                        and running_wager - last_action_wager
+                        < minimum_raise_increment
+                    ):
+                        raise ValueError(
+                            "a short all-in did not reopen this player's raise"
+                        )
                     if running_wager == 0 or new_commitment <= running_wager:
                         raise ValueError("a raise must advance an existing wager")
                     raise_increment = new_commitment - running_wager
@@ -855,6 +873,7 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                         minimum_raise_increment = raise_increment
                     running_wager = new_commitment
                 simulated_commitments[actor] = new_commitment
+                last_action_wager_by_position[actor] = running_wager
                 if action.all_in:
                     all_in_positions.add(actor)
 

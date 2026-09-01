@@ -359,6 +359,8 @@ def _request_matches_manifest(
     if request.decision_street != "preflop":
         return False
     manifest = policy.route_manifest
+    if request.semantic_digest() not in manifest.eligible_route_context_sha256s:
+        return False
     for component in request.components:
         if isinstance(component, GameEconomicsRoute):
             economics = EconomicConfigurationBinding(

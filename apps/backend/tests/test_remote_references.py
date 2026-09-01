@@ -81,6 +81,7 @@ def disclosure(**updates: object) -> RemoteReferenceDisclosure:
 def route_manifest(**updates: object) -> RemoteReferenceRouteManifest:
     values = {
         "manifest_revision": "manifest-v1",
+        "eligible_route_context_sha256s": (route_request().semantic_digest(),),
         "economic_configurations": (
             EconomicConfigurationBinding(
                 economic_model="cash_rake",
@@ -596,6 +597,31 @@ def test_route_revisions_and_digests_require_provider_manifest_membership() -> N
     assert result.outbound_request is None
 
 
+def test_provider_manifest_binds_the_exact_route_context() -> None:
+    policy = provider_policy()
+    components = list(route_request().components)
+    economics_payload = components[0].model_dump(mode="python")
+    economics_payload["betting_limit"] = "pot_limit"
+    components[0] = GameEconomicsRoute.model_validate(economics_payload)
+    changed_request = route_request(components=tuple(components))
+
+    result = evaluate_remote_reference_preflight(
+        decision_binding(),
+        mode="remote_enabled",
+        policy=policy,
+        consent=consent(policy=policy),
+        request=changed_request,
+        now=NOW,
+    )
+
+    assert changed_request.semantic_digest() not in (
+        policy.route_manifest.eligible_route_context_sha256s
+    )
+    assert result.outcome == "unavailable"
+    assert result.reason == "route_manifest_mismatch"
+    assert result.outbound_request is None
+
+
 def test_postflop_ranges_remain_unavailable_until_context_bound() -> None:
     categories = (
         "board_cards",
@@ -1041,6 +1067,234 @@ def test_all_in_players_remain_active_with_no_remaining_stack() -> None:
     table = result.components[4]
     assert isinstance(table, TablePositionRoute)
     assert table.active_player_positions == ("BB", "BTN")
+
+
+def repeated_raise_request(
+    *,
+    bb_raise_total: Decimal,
+    bb_all_in: bool,
+    btn_reraise_total: Decimal,
+) -> RemoteReferenceRouteRequest:
+    request = route_request()
+    components = list(request.components)
+    components[2] = PriorActionsRoute(
+        actions=(
+            RemotePriorAction(
+                street="preflop",
+                sequence=0,
+                actor_position="UTG",
+                action="fold",
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=1,
+                actor_position="HJ",
+                action="fold",
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=2,
+                actor_position="CO",
+                action="fold",
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=3,
+                actor_position="BTN",
+                action="raise",
+                total_committed_bb=Decimal("2.5"),
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=4,
+                actor_position="SB",
+                action="call",
+                total_committed_bb=Decimal("2.5"),
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=5,
+                actor_position="BB",
+                action="raise",
+                total_committed_bb=bb_raise_total,
+                all_in=bb_all_in,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=6,
+                actor_position="BTN",
+                action="raise",
+                total_committed_bb=btn_reraise_total,
+                all_in=False,
+            ),
+        )
+    )
+    components[3] = StackWagerPotRoute(
+        hero_stack_bb=Decimal("97.5"),
+        active_player_stacks=(
+            PositionedStack(
+                position="BB",
+                remaining_stack_bb=(
+                    Decimal("0") if bb_all_in else Decimal("100") - bb_raise_total
+                ),
+            ),
+            PositionedStack(
+                position="BTN",
+                remaining_stack_bb=Decimal("100") - btn_reraise_total,
+            ),
+            PositionedStack(position="SB", remaining_stack_bb=Decimal("97.5")),
+        ),
+        committed_pot_before_street_bb=Decimal("0"),
+        current_street_commitments=(
+            PositionedCommitment(position="BB", committed_bb=bb_raise_total),
+            PositionedCommitment(position="BTN", committed_bb=btn_reraise_total),
+            PositionedCommitment(position="CO", committed_bb=Decimal("0")),
+            PositionedCommitment(position="HJ", committed_bb=Decimal("0")),
+            PositionedCommitment(position="SB", committed_bb=Decimal("2.5")),
+            PositionedCommitment(position="UTG", committed_bb=Decimal("0")),
+        ),
+        pot_bb=bb_raise_total + btn_reraise_total + Decimal("2.5"),
+        current_wager_bb=btn_reraise_total,
+        amount_to_call_bb=btn_reraise_total - Decimal("2.5"),
+    )
+    components[4] = TablePositionRoute(
+        dealt_in_player_count=6,
+        hero_position="SB",
+        hero_button_distance=1,
+        hero_action_index=4,
+        active_player_positions=("BB", "BTN", "SB"),
+        relative_position="not_applicable",
+    )
+    return route_request(components=tuple(components))
+
+
+def test_short_all_in_does_not_reopen_a_prior_actors_raise() -> None:
+    with pytest.raises(ValidationError, match="did not reopen"):
+        repeated_raise_request(
+            bb_raise_total=Decimal("3"),
+            bb_all_in=True,
+            btn_reraise_total=Decimal("4.5"),
+        )
+
+
+@pytest.mark.parametrize("bb_all_in", [False, True])
+def test_full_raise_reopens_a_prior_actors_raise(bb_all_in: bool) -> None:
+    request = repeated_raise_request(
+        bb_raise_total=Decimal("4"),
+        bb_all_in=bb_all_in,
+        btn_reraise_total=Decimal("5.5"),
+    )
+
+    assert request.decision_street == "preflop"
+
+
+def test_cumulative_short_all_ins_reopen_a_prior_actors_raise() -> None:
+    request = route_request()
+    components = list(request.components)
+    components[2] = PriorActionsRoute(
+        actions=(
+            RemotePriorAction(
+                street="preflop",
+                sequence=0,
+                actor_position="UTG",
+                action="call",
+                total_committed_bb=Decimal("1"),
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=1,
+                actor_position="HJ",
+                action="fold",
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=2,
+                actor_position="CO",
+                action="fold",
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=3,
+                actor_position="BTN",
+                action="raise",
+                total_committed_bb=Decimal("3"),
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=4,
+                actor_position="SB",
+                action="call",
+                total_committed_bb=Decimal("3"),
+                all_in=False,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=5,
+                actor_position="BB",
+                action="raise",
+                total_committed_bb=Decimal("4"),
+                all_in=True,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=6,
+                actor_position="UTG",
+                action="raise",
+                total_committed_bb=Decimal("5"),
+                all_in=True,
+            ),
+            RemotePriorAction(
+                street="preflop",
+                sequence=7,
+                actor_position="BTN",
+                action="raise",
+                total_committed_bb=Decimal("7"),
+                all_in=False,
+            ),
+        )
+    )
+    components[3] = StackWagerPotRoute(
+        hero_stack_bb=Decimal("97"),
+        active_player_stacks=(
+            PositionedStack(position="BB", remaining_stack_bb=Decimal("0")),
+            PositionedStack(position="BTN", remaining_stack_bb=Decimal("93")),
+            PositionedStack(position="SB", remaining_stack_bb=Decimal("97")),
+            PositionedStack(position="UTG", remaining_stack_bb=Decimal("0")),
+        ),
+        committed_pot_before_street_bb=Decimal("0"),
+        current_street_commitments=(
+            PositionedCommitment(position="BB", committed_bb=Decimal("4")),
+            PositionedCommitment(position="BTN", committed_bb=Decimal("7")),
+            PositionedCommitment(position="CO", committed_bb=Decimal("0")),
+            PositionedCommitment(position="HJ", committed_bb=Decimal("0")),
+            PositionedCommitment(position="SB", committed_bb=Decimal("3")),
+            PositionedCommitment(position="UTG", committed_bb=Decimal("5")),
+        ),
+        pot_bb=Decimal("19"),
+        current_wager_bb=Decimal("7"),
+        amount_to_call_bb=Decimal("4"),
+    )
+    components[4] = TablePositionRoute(
+        dealt_in_player_count=6,
+        hero_position="SB",
+        hero_button_distance=1,
+        hero_action_index=4,
+        active_player_positions=("BB", "BTN", "SB", "UTG"),
+        relative_position="not_applicable",
+    )
+
+    result = route_request(components=tuple(components))
+
+    assert result.decision_street == "preflop"
 
 
 def test_preflop_action_line_is_complete_and_structurally_ordered() -> None:
