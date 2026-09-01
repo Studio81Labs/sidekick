@@ -3557,6 +3557,8 @@ def canonical_revision_from_review(
     approved_document = json.loads(
         json.dumps(approved_state, ensure_ascii=False, separators=(",", ":"))
     )
+    if _contains_review_excerpt_field(approved_document):
+        raise ValueError("reviewed state cannot supply private source excerpts")
     _preserve_review_excerpts(detected_document, approved_document)
     approved_state = ImportedHandState.model_validate_json(
         json.dumps(approved_document, ensure_ascii=False, separators=(",", ":"))
@@ -3614,11 +3616,16 @@ def _preserve_review_excerpts(detected: JsonValue, approved: JsonValue) -> None:
             identity = _review_list_item_identity(approved_item)
             candidates = [
                 index
-                for index in private_indexes
+                for index in range(len(detected))
                 if index not in used_detected_indexes
                 and detected_identities[index] == identity
             ]
             if not candidates:
+                if identity is not None:
+                    raise ValueError(
+                        "reviewed list changes cannot map private source evidence "
+                        "unambiguously"
+                    )
                 continue
             if len(candidates) == 1:
                 detected_index = candidates[0]
@@ -3638,6 +3645,11 @@ def _preserve_review_excerpts(detected: JsonValue, approved: JsonValue) -> None:
                 detected[detected_index],
                 approved_item,
             )
+        if any(index not in used_detected_indexes for index in private_indexes):
+            raise ValueError(
+                "reviewed list changes cannot map private source evidence "
+                "unambiguously"
+            )
 
 
 def _contains_review_excerpt(value: JsonValue) -> bool:
@@ -3652,15 +3664,19 @@ def _contains_review_excerpt(value: JsonValue) -> bool:
     return False
 
 
+def _contains_review_excerpt_field(value: JsonValue) -> bool:
+    if isinstance(value, dict):
+        return "excerpt" in value or any(
+            _contains_review_excerpt_field(item) for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(_contains_review_excerpt_field(item) for item in value)
+    return False
+
+
 def _review_list_item_identity(value: JsonValue) -> tuple[Any, ...] | None:
     if not isinstance(value, dict):
         return None
-    if "street" in value:
-        return ("street", value["street"])
-    if "disposition" in value and "player_id" in value:
-        return ("showdown", value["player_id"])
-    if "pot_index" in value and "player_id" in value:
-        return ("award", value["player_id"], value["pot_index"])
     if {
         "raw_source_id",
         "line_start",
@@ -3677,6 +3693,12 @@ def _review_list_item_identity(value: JsonValue) -> tuple[Any, ...] | None:
     evidence_locations = _review_evidence_locations(value)
     if evidence_locations:
         return ("nested-evidence", *evidence_locations)
+    if "street" in value:
+        return ("street", value["street"])
+    if "disposition" in value and "player_id" in value:
+        return ("showdown", value["player_id"])
+    if "pot_index" in value and "player_id" in value:
+        return ("award", value["player_id"], value["pot_index"])
     return None
 
 

@@ -14295,6 +14295,81 @@ def test_review_factory_matches_reordered_actions_by_visible_evidence() -> None:
     ] == ["action line 2", "action line 1"]
 
 
+def test_review_factory_matches_changed_result_identity_by_visible_evidence() -> None:
+    state_payload = hand_state().model_dump()
+    state_payload["seats"][0]["starting_stack"] = Decimal("1")
+    state_payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                    all_in=True,
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        },
+        {"street": "flop", "actions": []},
+        {"street": "turn", "actions": []},
+        {"street": "river", "actions": []},
+    ]
+    state_payload["results"] = {
+        "showdown": [
+            {
+                "player_id": "hero",
+                "cards": [],
+                "disposition": "shown",
+                "evidence": [evidence()],
+            }
+        ],
+        "awards": [
+            {
+                "player_id": "hero",
+                "amount": Decimal("2"),
+                "evidence": [evidence()],
+            }
+        ],
+    }
+    source_state = ImportedHandState.model_validate(state_payload)
+    reviewed_payload = source_state.model_dump(mode="json")
+
+    def remove_excerpts(value: object) -> None:
+        if isinstance(value, dict):
+            value.pop("excerpt", None)
+            for item in value.values():
+                remove_excerpts(item)
+        elif isinstance(value, list):
+            for item in value:
+                remove_excerpts(item)
+
+    remove_excerpts(reviewed_payload)
+    reviewed_payload["results"]["showdown"][0]["player_id"] = "villain"
+
+    approved = canonical_revision_from_review(
+        detected(source_state),
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Corrected the showdown player",
+    )
+
+    assert approved.state.results is not None
+    showdown = approved.state.results.showdown[0]
+    assert showdown.player_id == "villain"
+    assert showdown.evidence[0].excerpt == "PokerStars Hand #123456789"
+
+
 def test_review_factory_allows_corrections_to_lists_without_private_evidence() -> None:
     source_payload = hand_state(hero_player_id="hero").model_dump()
     source_payload["hero_cards"] = [
@@ -14315,6 +14390,47 @@ def test_review_factory_allows_corrections_to_lists_without_private_evidence() -
     )
 
     assert [card.code for card in approved.state.hero_cards] == ["As", "Qh"]
+
+
+def test_review_factory_rejects_an_unmatched_private_evidence_item() -> None:
+    state_payload = hand_state().model_dump()
+    state_payload["streets"][0]["actions"] = [
+        wager_action(0, "hero", "check", total=Decimal(0))
+    ]
+    source_state = ImportedHandState.model_validate(state_payload)
+    reviewed_payload = source_state.model_dump(mode="json")
+    action = reviewed_payload["streets"][0]["actions"][0]
+    for locator in (action["evidence"][0], action["origin"]["evidence"][0]):
+        del locator["excerpt"]
+        locator["line_start"] = 2
+
+    with pytest.raises(ValueError, match="cannot map private source evidence"):
+        canonical_revision_from_review(
+            detected(source_state),
+            approval_id="33333333-3333-4333-8333-333333333333",
+            revision=1,
+            approved_at=NOW + timedelta(minutes=1),
+            approved_state=reviewed_payload,
+            correction_reason="Corrected the evidence location",
+        )
+
+
+def test_review_factory_rejects_client_supplied_private_excerpts() -> None:
+    state_payload = hand_state().model_dump()
+    state_payload["streets"][0]["actions"] = [
+        wager_action(0, "hero", "check", total=Decimal(0))
+    ]
+    source_state = ImportedHandState.model_validate(state_payload)
+
+    with pytest.raises(ValueError, match="cannot supply private source excerpts"):
+        canonical_revision_from_review(
+            detected(source_state),
+            approval_id="33333333-3333-4333-8333-333333333333",
+            revision=1,
+            approved_at=NOW + timedelta(minutes=1),
+            approved_state=source_state.model_dump(mode="json"),
+            correction_reason=None,
+        )
 
 
 def test_review_factory_rejects_ambiguous_private_evidence_reordering() -> None:

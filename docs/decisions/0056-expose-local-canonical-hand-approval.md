@@ -49,8 +49,9 @@ reviewed document. It restores source-evidence `excerpt` fields removed by the
 sanitized player projection before validating the complete hand state. List
 elements carrying private excerpts are matched through their visible provenance
 identity, including street, player, pot, and source-location fields; an
-ambiguous structural edit is rejected instead of attaching an excerpt to the
-wrong element. The server then derives the smallest non-overlapping JSON-pointer
+unmatched or ambiguous evidence edit is rejected instead of dropping an excerpt
+or attaching it to the wrong element. Reviewed payloads cannot supply excerpt
+fields. The server then derives the smallest non-overlapping JSON-pointer
 corrections. Detected values, approved values, correction timestamps, approval
 timestamp, and revision number are server-owned. An unchanged review records no
 corrections. A changed review without a reason is rejected without writing, and
