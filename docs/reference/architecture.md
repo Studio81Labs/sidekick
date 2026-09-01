@@ -303,14 +303,17 @@ confirmed withdrawal/rejection controls; interrupted mutation responses are
 reconciled by rereading the audit before the UI reports the outcome. A durable
 ready cascade makes both its failed mutation and subsequent detail reads return
 recovery-required, so the pre-replay record cannot be mistaken for a final
-outcome. Reads and writes serialize behind restore. Detail reads and lifecycle
-writes take the stable per-record thread stripe, matching named process-shared
-flock, and shared data-volume hold. Lifecycle writes retain that volume hold
-across the request precondition read and cascade; the store's nested shared hold
-and leaf journal lock follow. This prevents either another local-runtime process
-or a concurrent restore from replacing the record between validation and
-transition. V1 screenshot and benchmark stores are neither constructed nor
-reachable from this composition.
+outcome. Storage status and backup export/restore take an exclusive volume
+snapshot and refuse any durable ready cascade, preventing backup of a lifecycle
+state that startup recovery will supersede. This volume-wide gate does not
+close unrelated hand keys. Detail reads and lifecycle writes take the stable
+per-record thread stripe, matching named process-shared flock, and shared
+data-volume hold. Lifecycle writes retain that volume hold across the request
+precondition read and cascade; the store's nested shared hold and leaf journal
+lock follow. This prevents either another local-runtime process or a concurrent
+restore from replacing the record between validation and transition. V1
+screenshot and benchmark stores are neither constructed nor reachable from
+this composition.
 
 The loopback backend serves the verified `apps/pwa/dist-player` build from the
 same local origin. Only its document, manifest, service worker,

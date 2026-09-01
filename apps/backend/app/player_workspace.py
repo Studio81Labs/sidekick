@@ -49,6 +49,10 @@ class PlayerHandRecoveryRequired(RuntimeError):
     """A ready lifecycle cascade must be replayed before this hand is read."""
 
 
+class PlayerStorageRecoveryRequired(RuntimeError):
+    """A volume-wide view is unsafe until ready cascades are replayed."""
+
+
 DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
 PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
 
@@ -247,13 +251,18 @@ class PlayerWorkspace:
         *,
         lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     ) -> dict[str, object]:
-        # A restore publishes several files under an exclusive hold. Status
-        # must take the shared side so it can never report an intermediate
-        # filesystem view from another process.
+        # Status is volume-wide, so wait for every shared writer as well as an
+        # exclusive restore. Once isolated, a durable ready cascade means the
+        # live files are not a final snapshot and must not be reported as one.
         with self.data_lock.hold(
-            exclusive=False,
+            exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
+            if self.imported_hands.has_pending_recovery():
+                raise PlayerStorageRecoveryRequired(
+                    "Player storage has an interrupted lifecycle write; "
+                    "restart the local player runtime so recovery can finish"
+                )
             recovery = self.imported_hand_recovery
             quarantined = tuple(
                 sorted(

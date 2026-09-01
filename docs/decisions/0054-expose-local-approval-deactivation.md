@@ -63,6 +63,11 @@ durable ready cascade, both the mutation and detail read return recovery
 required instead of exposing the pre-replay record as final. The PWA discards
 its stale hand projections and session, keeps the lifecycle outcome unresolved,
 and requires a local-runtime restart before the hand can be loaded or retried.
+Volume-wide storage status, backup export, and backup restore take an exclusive
+volume snapshot and return recovery required while any durable ready cascade
+remains. The gate is not global to hand work: unrelated record keys remain
+readable and writable through their own stripes while the affected key stays
+closed.
 
 ## Consequences
 
@@ -71,7 +76,9 @@ it incorrect without destroying source, detection, correction, canonical, or
 derived audit evidence. Concurrent or stale requests cannot silently overwrite
 a newer lifecycle state. Ambiguous browser responses are reconciled against a
 final local record; a record with pending roll-forward work is deliberately not
-available for reconciliation until startup recovery completes it.
+available for reconciliation until startup recovery completes it. A backup
+cannot capture a pre-replay lifecycle state that could later reactivate an
+approval when restored elsewhere.
 
 This advances issue #415 but does not complete it. Hand-history import,
 correction, approval/reapproval, conflict resolution, deletion/purge, and the

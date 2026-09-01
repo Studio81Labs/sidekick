@@ -53,6 +53,7 @@ from app.player_namespace import (
 from app.player_workspace import (
     PlayerHandRecoveryRequired,
     PlayerHandTransitionConflict,
+    PlayerStorageRecoveryRequired,
     PlayerWorkspace,
 )
 from app.storage.cascade_journal import PendingCascadeError
@@ -670,6 +671,8 @@ def create_player_runtime(
                 )
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
+            except PlayerStorageRecoveryRequired as exc:
+                return _json_denial(503, str(exc))
         return JSONResponse(payload)
 
     @app.get(f"{PLAYER_API_PREFIX}/hands")

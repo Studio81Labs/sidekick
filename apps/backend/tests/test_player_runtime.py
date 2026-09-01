@@ -666,7 +666,7 @@ def test_player_storage_reports_when_a_stable_snapshot_times_out(
         runtime.workspace.data_lock.release(descriptor)
 
     assert response.status_code == 409
-    assert "waiting for a shared hold" in response.json()["detail"]
+    assert "waiting for an exclusive hold" in response.json()["detail"]
 
 
 def test_player_hand_routes_require_auth_and_return_safe_review_projections(
@@ -1077,6 +1077,71 @@ def test_player_hand_close_rechecks_a_ready_cascade_after_publication(
     recovered = _create_player_runtime(tmp_path)
     assert recovered.workspace.imported_hand_recovery.completed
     assert recovered.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+
+
+def test_pending_lifecycle_recovery_blocks_volume_operations_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    pending_record = approved_record(sample_identity(hand_ordinal=21))
+    pending_key = imported_hand_record_key(pending_record.identity)
+    unrelated_record = approved_record(sample_identity(hand_ordinal=22))
+    unrelated_key = imported_hand_record_key(unrelated_record.identity)
+    session = exchange_session(client, runtime)
+    authorization = {"Authorization": f"Bearer {session['session_token']}"}
+    backup = client.get("/api/player/backups/export", headers=authorization)
+    assert backup.status_code == 200
+    runtime.workspace.imported_hands.save(pending_key, pending_record)
+    runtime.workspace.imported_hands.save(unrelated_key, unrelated_record)
+    real_commit_replace = CascadeJournal._commit_replace
+
+    def fail_pending_record(
+        journal: CascadeJournal,
+        record_key: str,
+        relative: Path,
+        staged_file: Path,
+    ) -> None:
+        if record_key == pending_key and relative.as_posix() == "record.json":
+            raise OSError("simulated lifecycle publication failure")
+        real_commit_replace(journal, record_key, relative, staged_file)
+
+    monkeypatch.setattr(CascadeJournal, "_commit_replace", fail_pending_record)
+    failed_close = client.post(
+        f"/api/player/hands/{pending_key}/withdraw",
+        json=hand_close_payload(pending_record, reason="Reviewed"),
+        headers=player_mutation_headers(session),
+    )
+    assert failed_close.status_code == 503
+    monkeypatch.setattr(CascadeJournal, "_commit_replace", real_commit_replace)
+
+    storage = client.get("/api/player/storage", headers=authorization)
+    blocked_export = client.get("/api/player/backups/export", headers=authorization)
+    blocked_restore = client.post(
+        "/api/player/backups/restore",
+        content=backup.content,
+        headers={
+            **player_mutation_headers(session),
+            "Content-Type": "application/zip",
+        },
+    )
+
+    assert storage.status_code == 503
+    assert "interrupted lifecycle write" in storage.json()["detail"]
+    assert blocked_export.status_code == 503
+    assert "startup recovery" in blocked_export.json()["detail"]
+    assert blocked_restore.status_code == 503
+    assert "startup recovery" in blocked_restore.json()["detail"]
+    assert client.get(
+        f"/api/player/hands/{unrelated_key}",
+        headers=authorization,
+    ).status_code == 200
+    unrelated_close = client.post(
+        f"/api/player/hands/{unrelated_key}/withdraw",
+        json=hand_close_payload(unrelated_record, reason="Unrelated review"),
+        headers=player_mutation_headers(session),
+    )
+    assert unrelated_close.status_code == 200
 
 
 def test_player_storage_status_preserves_quarantine_across_restarts(
