@@ -450,10 +450,21 @@ The state also carries the wager and full-increment yardstick from the hero's
 prior action, allowing rehydration to verify the short-all-in reopening verdict
 through the aggregate's shared rule without replaying the betting line.
 Decision points are `Decimal`-native and N-player rather than reusing
-`app/domain/poker`'s `float`-typed, single-opponent `CanonicalState`. No
-concept tag is attached until the versioned taxonomy lands in #417. The
-application lifecycle boundary atomically supersedes or deactivates current
-decision artifacts and permanently purges them with their imported hand.
+`app/domain/poker`'s `float`-typed, single-opponent `CanonicalState`. The
+versioned learning-content contracts live separately under
+`app/domain/learning_content`: immutable taxonomy and mapping revisions produce
+an explicit absent result or one primary tag pinned to the decision, taxonomy,
+mapping, and concept-definition revisions. Overlapping rules fail closed.
+Principle revisions begin as drafts, retain append-only reviewer provenance,
+and become activation- or reveal-eligible only after compatible human approval.
+Activation checks cover every concept reachable from the mapping; principle
+reveals and cache keys bind the exact taxonomy, mapping, definition, reference,
+and principle versions and apply conditional educational framing. These pure
+contracts do not attach live taxonomy state to `HandDecisionExtraction` or yet
+publish persisted learning artifacts; ADR 0057 records that boundary and the
+remaining #417 persistence/migration work. The application lifecycle boundary
+atomically supersedes or deactivates current decision artifacts and permanently
+purges them with their imported hand.
 
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact
