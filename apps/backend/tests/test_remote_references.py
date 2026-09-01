@@ -33,6 +33,7 @@ from app.domain.remote_references import (
     TablePositionRoute,
     UtilityConfigurationBinding,
     bind_remote_reference_route,
+    derive_cash_economic_configuration,
     evaluate_remote_reference_preflight,
     record_remote_reference_unavailable,
 )
@@ -63,6 +64,12 @@ def decision_binding() -> DecisionBinding:
     return DecisionBinding.from_decision(decision_point())
 
 
+def canonical_economic_binding() -> EconomicConfigurationBinding:
+    binding = derive_cash_economic_configuration(decision_point())
+    assert binding is not None
+    return binding
+
+
 def disclosure(**updates: object) -> RemoteReferenceDisclosure:
     values = {
         "disclosure_revision": "disclosure-v1",
@@ -91,11 +98,7 @@ def route_manifest(**updates: object) -> RemoteReferenceRouteManifest:
             canonical_route_request().semantic_digest(),
         ),
         "economic_configurations": (
-            EconomicConfigurationBinding(
-                economic_model="cash_rake",
-                economic_model_revision="cash-ev-v1",
-                economic_configuration_sha256=DIGEST_A,
-            ),
+            canonical_economic_binding(),
         ),
         "utility_configurations": (
             UtilityConfigurationBinding(
@@ -163,14 +166,17 @@ def consent(
 
 
 def route_request(**updates: object) -> RemoteReferenceRouteRequest:
+    economic_binding = canonical_economic_binding()
     components = (
         GameEconomicsRoute(
             game_variant="texas_holdem",
             betting_limit="no_limit",
             game_format="cash",
-            economic_model="cash_rake",
-            economic_model_revision="cash-ev-v1",
-            economic_configuration_sha256=DIGEST_A,
+            economic_model=economic_binding.economic_model,
+            economic_model_revision=economic_binding.economic_model_revision,
+            economic_configuration_sha256=(
+                economic_binding.economic_configuration_sha256
+            ),
             utility_model="chip_ev",
             utility_model_revision="chip-ev-v1",
             utility_configuration_sha256=DIGEST_B,
@@ -498,6 +504,74 @@ def test_route_factory_binds_the_full_canonical_decision_state() -> None:
     ).hexdigest()
 
 
+def test_cash_economic_configuration_is_derived_from_approved_state() -> None:
+    decision = decision_point()
+    binding = derive_cash_economic_configuration(decision)
+
+    assert binding is not None
+    assert binding.economic_model == "cash_rake"
+    assert binding.economic_model_revision == "canonical-cash-economics-v1"
+    economics = canonical_route_request().components[0]
+    assert isinstance(economics, GameEconomicsRoute)
+    assert economics.economic_configuration_sha256 == (
+        binding.economic_configuration_sha256
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("currency", "EUR"),
+        ("percentage", Decimal("0.06")),
+        ("cap", Decimal("4")),
+        ("fixed_drop", Decimal("0.1")),
+        ("description", "time collection applies"),
+    ],
+)
+def test_route_factory_rejects_a_different_approved_cash_schedule(
+    field: str,
+    value: object,
+) -> None:
+    payload = decision_point().model_dump(mode="python")
+    economics = payload["state"]["economics"]
+    if field == "currency":
+        economics[field] = value
+    else:
+        economics["rake"][field] = value
+    changed_decision = HeroDecisionPoint.model_validate(payload)
+
+    changed_binding = derive_cash_economic_configuration(changed_decision)
+    assert changed_binding is not None
+    assert changed_binding != canonical_economic_binding()
+    with pytest.raises(ValueError, match="canonical decision state"):
+        bind_remote_reference_route(changed_decision, canonical_route_request())
+
+
+def test_route_factory_binds_the_absolute_blind_level() -> None:
+    payload = decision_point().model_dump(mode="python")
+    economics = payload["state"]["economics"]
+
+    def scale_chips(value: object) -> object:
+        if isinstance(value, Decimal):
+            return value * 2
+        if isinstance(value, list):
+            return [scale_chips(item) for item in value]
+        if isinstance(value, dict):
+            return {key: scale_chips(item) for key, item in value.items()}
+        return value
+
+    payload["state"] = scale_chips(payload["state"])
+    payload["state"]["economics"] = economics
+    payload["table_action"] = scale_chips(payload["table_action"])
+    changed_decision = HeroDecisionPoint.model_validate(payload)
+
+    changed_binding = derive_cash_economic_configuration(changed_decision)
+    assert changed_binding is not None
+    assert changed_binding != canonical_economic_binding()
+    with pytest.raises(ValueError, match="canonical decision state"):
+        bind_remote_reference_route(changed_decision, canonical_route_request())
+
+
 def test_route_derivation_must_match_the_canonical_decision() -> None:
     original_decision = decision_point()
     decision_payload = original_decision.model_dump(mode="python")
@@ -730,25 +804,23 @@ def test_route_revisions_and_digests_require_provider_manifest_membership() -> N
 
 
 def test_provider_manifest_binds_the_exact_route_context() -> None:
-    policy = provider_policy()
-    components = list(canonical_route_request().components)
-    economics = components[0]
-    assert isinstance(economics, GameEconomicsRoute)
-    economics_payload = economics.model_dump(mode="python")
-    economics_payload["economic_configuration_sha256"] = DIGEST_D
-    components[0] = GameEconomicsRoute.model_validate(economics_payload)
-    changed_request = canonical_route_request(components=tuple(components))
+    request = canonical_route_request()
+    policy = provider_policy(
+        route_manifest=route_manifest(
+            eligible_route_context_sha256s=(DIGEST_D,),
+        )
+    )
 
     result = evaluate_remote_reference_preflight(
         decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        route=route_derivation(request=changed_request),
+        route=route_derivation(request=request),
         now=NOW,
     )
 
-    assert changed_request.semantic_digest() not in (
+    assert request.semantic_digest() not in (
         policy.route_manifest.eligible_route_context_sha256s
     )
     assert result.outcome == "unavailable"

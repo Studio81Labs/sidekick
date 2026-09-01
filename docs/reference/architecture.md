@@ -547,6 +547,9 @@ and the internally computed semantic digest of each exact eligible request
 context. That exact context binding includes limit, table size, position,
 position-bound stacks and commitments, sizing, and action-line state rather than
 letting a broad economics or abstraction declaration imply provider coverage.
+Cash economic coverage is derived locally from the approved currency, complete
+rake/drop schedule, and absolute blind/ante level before BB normalization; a
+caller-supplied economic digest cannot substitute for that canonical binding.
 Closed component models
 make raw histories, hand/site/session and canonical-record identities, player
 names, timestamps, screenshots, and learning/profile state unrepresentable in

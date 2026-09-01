@@ -8,6 +8,7 @@ from decimal import Decimal
 from hashlib import sha256
 
 from app.domain.imported_hands.decisions import HeroDecisionPoint
+from app.domain.imported_hands.models import CashEconomics
 from app.domain.learning_content.models import DecisionBinding
 from app.domain.remote_references.models import (
     AbstractionSchemaBinding,
@@ -32,6 +33,82 @@ from app.domain.remote_references.models import (
     TablePositionRoute,
     UtilityConfigurationBinding,
 )
+
+
+_CASH_ECONOMIC_CONFIGURATION_REVISION = "canonical-cash-economics-v1"
+_CASH_ECONOMIC_CONFIGURATION_SCHEMA = (
+    "sidekick.remote_reference.cash_economics.v1"
+)
+
+
+def derive_cash_economic_configuration(
+    decision: HeroDecisionPoint,
+) -> EconomicConfigurationBinding | None:
+    """Bind provider cash coverage to the approved absolute economics."""
+
+    decision = HeroDecisionPoint.model_validate(decision.model_dump(mode="python"))
+    state = decision.state
+    economics = state.economics
+    if (
+        state.variant != "texas_holdem"
+        or state.betting_limit != "no_limit"
+        or not isinstance(economics, CashEconomics)
+        or economics.currency is None
+        or economics.rake is None
+        or economics.rake.percentage is None
+        or economics.rake.cap is None
+        or economics.rake.fixed_drop is None
+        or state.blinds.small_blind is None
+        or state.blinds.big_blind is None
+        or state.blinds.ante is None
+    ):
+        return None
+
+    payload = {
+        "schema": _CASH_ECONOMIC_CONFIGURATION_SCHEMA,
+        "game_variant": state.variant,
+        "betting_limit": state.betting_limit,
+        "economics": {
+            "kind": economics.kind,
+            "currency": economics.currency,
+            "rake": {
+                "percentage": _canonical_decimal(economics.rake.percentage),
+                "cap": _canonical_decimal(economics.rake.cap),
+                "fixed_drop": _canonical_decimal(economics.rake.fixed_drop),
+                "description": economics.rake.description,
+            },
+        },
+        "blinds": {
+            "small_blind": _canonical_decimal(state.blinds.small_blind),
+            "big_blind": _canonical_decimal(state.blinds.big_blind),
+            "ante": _canonical_decimal(state.blinds.ante),
+            "ante_mode": (
+                "none" if state.blinds.ante == 0 else state.blinds.ante_mode
+            ),
+            "straddle": (
+                None
+                if state.blinds.straddle is None
+                else _canonical_decimal(state.blinds.straddle)
+            ),
+        },
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return EconomicConfigurationBinding(
+        economic_model="cash_rake",
+        economic_model_revision=_CASH_ECONOMIC_CONFIGURATION_REVISION,
+        economic_configuration_sha256=sha256(encoded).hexdigest(),
+    )
+
+
+def _canonical_decimal(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    return format(value.normalize(), "f")
 
 
 def evaluate_remote_reference_preflight(
@@ -310,6 +387,9 @@ def _derive_request_from_decision(
         for component in template.components
         if isinstance(component, GameEconomicsRoute)
     )
+    economic_configuration = derive_cash_economic_configuration(decision)
+    if economic_configuration is None:
+        return None
     hole_template = next(
         component
         for component in template.components
@@ -373,12 +453,12 @@ def _derive_request_from_decision(
                     game_variant="texas_holdem",
                     betting_limit="no_limit",
                     game_format="cash",
-                    economic_model=economics_template.economic_model,
+                    economic_model=economic_configuration.economic_model,
                     economic_model_revision=(
-                        economics_template.economic_model_revision
+                        economic_configuration.economic_model_revision
                     ),
                     economic_configuration_sha256=(
-                        economics_template.economic_configuration_sha256
+                        economic_configuration.economic_configuration_sha256
                     ),
                     utility_model=economics_template.utility_model,
                     utility_model_revision=economics_template.utility_model_revision,

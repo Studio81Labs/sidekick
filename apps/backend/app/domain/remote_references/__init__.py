@@ -31,6 +31,7 @@ from app.domain.remote_references.models import (
 )
 from app.domain.remote_references.services import (
     bind_remote_reference_route,
+    derive_cash_economic_configuration,
     evaluate_remote_reference_preflight,
     record_remote_reference_unavailable,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "TablePositionRoute",
     "UtilityConfigurationBinding",
     "bind_remote_reference_route",
+    "derive_cash_economic_configuration",
     "evaluate_remote_reference_preflight",
     "record_remote_reference_unavailable",
 ]
