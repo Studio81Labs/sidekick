@@ -305,6 +305,24 @@ class ImportProvenance(ImportedHandModel):
     source_filename: str | None = Field(default=None, max_length=255, strict=True)
 
 
+class RawHandReimport(ImportedHandModel):
+    """One later source occurrence of already-retained identical hand bytes."""
+
+    raw_source_id: Identifier
+    chronology: SourceChronology
+    provenance: ImportProvenance
+    detection_id: Identifier
+    detected_semantic_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_file_identity(self) -> Self:
+        if self.chronology.source_file_id != self.raw_source_id:
+            raise ValueError(
+                "reimport chronology source_file_id must equal raw_source_id"
+            )
+        return self
+
+
 class RawHandHistory(ImportedHandModel):
     schema_version: Literal["raw-hand-history/v1"] = "raw-hand-history/v1"
     raw_source_id: Identifier
@@ -313,6 +331,9 @@ class RawHandHistory(ImportedHandModel):
     provenance: ImportProvenance
     content_sha256: Sha256
     raw_text: Annotated[str, StringConstraints(min_length=1, strict=True)]
+    initial_detection_id: Identifier | None = None
+    initial_detected_semantic_sha256: Sha256 | None = None
+    reimports: list[RawHandReimport] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_file_identity(self) -> Self:
@@ -321,6 +342,37 @@ class RawHandHistory(ImportedHandModel):
         actual_checksum = sha256(self.raw_text.encode("utf-8")).hexdigest()
         if self.content_sha256 != actual_checksum:
             raise ValueError("content_sha256 must match the UTF-8 raw history")
+        occurrence_ids = [
+            self.raw_source_id,
+            *(reimport.raw_source_id for reimport in self.reimports),
+        ]
+        if len(set(occurrence_ids)) != len(occurrence_ids):
+            raise ValueError("raw hand source occurrence ids must be unique")
+        import_ids = [
+            self.provenance.import_id,
+            *(reimport.provenance.import_id for reimport in self.reimports),
+        ]
+        if len(set(import_ids)) != len(import_ids):
+            raise ValueError("raw hand import ids must be unique")
+        imported_at = [
+            self.provenance.imported_at,
+            *(reimport.provenance.imported_at for reimport in self.reimports),
+        ]
+        if imported_at != sorted(imported_at):
+            raise ValueError("raw hand source occurrences must be import-time ordered")
+        if (self.initial_detection_id is None) != (
+            self.initial_detected_semantic_sha256 is None
+        ):
+            raise ValueError(
+                "initial detection id and semantic fingerprint must be bound together"
+            )
+        if self.reimports and (
+            self.initial_detection_id is None
+            or self.initial_detected_semantic_sha256 is None
+        ):
+            raise ValueError(
+                "reimport audit requires the initial detection binding"
+            )
         return self
 
 
@@ -2197,7 +2249,7 @@ class CanonicalHandRevision(ImportedHandModel):
 
 class ImportConflict(ImportedHandModel):
     conflict_id: Identifier
-    raw_source_ids: list[Identifier] = Field(min_length=2)
+    raw_source_ids: list[Identifier] = Field(min_length=1)
     detected_ids: list[Identifier] = Field(default_factory=list)
     active_canonical_revision_at_creation: PositiveInteger | None
     status: Literal["unresolved", "resolved_keep_active", "resolved_use_source"] = "unresolved"
@@ -2208,6 +2260,10 @@ class ImportConflict(ImportedHandModel):
     def validate_resolution(self) -> Self:
         if len(self.raw_source_ids) != len(set(self.raw_source_ids)):
             raise ValueError("conflict raw_source_ids must be unique")
+        if len(self.raw_source_ids) < 2 and len(self.detected_ids) < 2:
+            raise ValueError(
+                "a single-source conflict requires multiple detected meanings"
+            )
         if self.status != "unresolved":
             if self.selected_raw_source_id not in self.raw_source_ids:
                 raise ValueError("resolved source must belong to the conflict")
@@ -2456,21 +2512,75 @@ class ImportedHandRecord(ImportedHandModel):
                 raise ValueError("all raw sources must share the stable hand identity")
         _validate_unique(self.raw_sources, "raw_source_id", "raw source")
         _validate_unique(self.raw_sources, "content_sha256", "raw source content")
+        source_occurrence_ids = [
+            occurrence_id
+            for raw in self.raw_sources
+            for occurrence_id in (
+                raw.raw_source_id,
+                *(reimport.raw_source_id for reimport in raw.reimports),
+            )
+        ]
+        if len(set(source_occurrence_ids)) != len(source_occurrence_ids):
+            raise ValueError(
+                "raw source occurrence ids must be unique across an imported hand"
+            )
+        import_ids = [
+            import_id
+            for raw in self.raw_sources
+            for import_id in (
+                raw.provenance.import_id,
+                *(reimport.provenance.import_id for reimport in raw.reimports),
+            )
+        ]
+        if len(set(import_ids)) != len(import_ids):
+            raise ValueError("import ids must be unique across an imported hand")
         _validate_unique(self.detections, "detection_id", "detection")
+        occurrence_detection_ids = [
+            raw.initial_detection_id
+            for raw in self.raw_sources
+            if raw.initial_detection_id is not None
+        ]
+        occurrence_detection_ids.extend(
+            reimport.detection_id
+            for raw in self.raw_sources
+            for reimport in raw.reimports
+        )
+        if len(set(occurrence_detection_ids)) != len(occurrence_detection_ids):
+            raise ValueError(
+                "source occurrence detection bindings must be unique across an"
+                " imported hand"
+            )
         _validate_unique(self.conflicts, "conflict_id", "conflict")
 
         raw_by_id = {raw.raw_source_id: raw for raw in self.raw_sources}
         raw_ids = set(raw_by_id)
+        raw_by_occurrence_id: dict[str, RawHandHistory] = {}
+        occurrence_imported_at: dict[str, datetime] = {}
+        for raw in self.raw_sources:
+            raw_by_occurrence_id[raw.raw_source_id] = raw
+            occurrence_imported_at[raw.raw_source_id] = raw.provenance.imported_at
+            for reimport in raw.reimports:
+                raw_by_occurrence_id[reimport.raw_source_id] = raw
+                occurrence_imported_at[reimport.raw_source_id] = (
+                    reimport.provenance.imported_at
+                )
         detection_by_id = {detected.detection_id: detected for detected in self.detections}
         for detected in self.detections:
             _validate_detected_action_origins(detected.state)
-            if detected.raw_source_id not in raw_ids:
-                raise ValueError("detected hand must reference a retained raw source")
-            detected_raw_source = raw_by_id[detected.raw_source_id]
-            if detected.detected_at < detected_raw_source.provenance.imported_at:
+            if detected.raw_source_id not in raw_by_occurrence_id:
+                raise ValueError(
+                    "detected hand must reference a retained source occurrence"
+                )
+            detected_raw_source = raw_by_occurrence_id[detected.raw_source_id]
+            if detected.detected_at < occurrence_imported_at[detected.raw_source_id]:
+                source_kind = (
+                    "raw source"
+                    if detected.raw_source_id in raw_ids
+                    else "source occurrence"
+                )
                 raise ValueError(
                     f"detection {detected.detection_id} detected_at cannot"
-                    f" precede referenced raw source {detected.raw_source_id}"
+                    f" precede referenced {source_kind} {detected.raw_source_id}"
                     " imported_at"
                 )
             if detected.state.identity != self.identity:
@@ -2478,8 +2588,38 @@ class ImportedHandRecord(ImportedHandModel):
             for item in _detected_source_evidence(detected):
                 _validate_source_evidence_location(
                     item,
-                    raw_by_id[detected.raw_source_id],
+                    detected_raw_source,
                 )
+        for raw in self.raw_sources:
+            if raw.initial_detection_id is not None:
+                initial_detection = detection_by_id.get(raw.initial_detection_id)
+                if (
+                    initial_detection is None
+                    or initial_detection.raw_source_id != raw.raw_source_id
+                    or detected_imported_hand_semantic_sha256(
+                        initial_detection.state
+                    )
+                    != raw.initial_detected_semantic_sha256
+                ):
+                    raise ValueError(
+                        "initial detection binding must reference its retained raw"
+                        " source and semantic fingerprint"
+                    )
+            for reimport in raw.reimports:
+                reimport_detection = detection_by_id.get(reimport.detection_id)
+                if (
+                    reimport_detection is None
+                    or reimport_detection.raw_source_id
+                    not in {raw.raw_source_id, reimport.raw_source_id}
+                    or detected_imported_hand_semantic_sha256(
+                        reimport_detection.state
+                    )
+                    != reimport.detected_semantic_sha256
+                ):
+                    raise ValueError(
+                        "reimport detection binding must reference its retained"
+                        " occurrence and semantic fingerprint"
+                    )
         for conflict in self.conflicts:
             if not set(conflict.raw_source_ids).issubset(raw_ids):
                 raise ValueError("conflict must reference retained raw sources")
@@ -2509,6 +2649,10 @@ class ImportedHandRecord(ImportedHandModel):
             detected = detection_by_id.get(revision.detection_id)
             if detected is None:
                 raise ValueError("canonical revision must reference a retained detection")
+            if detected.raw_source_id not in raw_ids:
+                raise ValueError(
+                    "canonical revision cannot use an audit-only reimport detection"
+                )
             if revision.approved_at < detected.detected_at:
                 raise ValueError(
                     f"canonical revision {revision.revision} approved_at cannot"
@@ -2621,6 +2765,15 @@ class ImportedHandRecord(ImportedHandModel):
                         "deletion request requested_at cannot precede retained"
                         f" raw source {raw.raw_source_id} imported_at"
                     )
+                for reimport in raw.reimports:
+                    if (
+                        deletion_request.requested_at
+                        < reimport.provenance.imported_at
+                    ):
+                        raise ValueError(
+                            "deletion request requested_at cannot precede retained"
+                            f" reimport {reimport.raw_source_id} imported_at"
+                        )
             for detected in self.detections:
                 if deletion_request.requested_at < detected.detected_at:
                     raise ValueError(
@@ -3044,19 +3197,41 @@ def _restore_candidate_preserves_audit(
         return False
     if current.deletion_receipt != candidate.deletion_receipt:
         return False
-    for attribute, key in (
-        ("raw_sources", "raw_source_id"),
-        ("detections", "detection_id"),
-    ):
-        current_items = getattr(current, attribute)
-        candidate_by_id = {
-            getattr(item, key): item for item in getattr(candidate, attribute)
+    candidate_raw_by_id = {
+        raw.raw_source_id: raw for raw in candidate.raw_sources
+    }
+    for current_raw in current.raw_sources:
+        candidate_raw = candidate_raw_by_id.get(current_raw.raw_source_id)
+        if candidate_raw is None:
+            return False
+        preserved_fields: dict[str, Any] = {
+            "reimports": current_raw.reimports,
         }
-        if any(
-            candidate_by_id.get(getattr(item, key)) != item
-            for item in current_items
+        if current_raw.initial_detected_semantic_sha256 is None:
+            preserved_fields["initial_detection_id"] = None
+            preserved_fields["initial_detected_semantic_sha256"] = None
+        elif (
+            candidate_raw.initial_detection_id != current_raw.initial_detection_id
+            or candidate_raw.initial_detected_semantic_sha256
+            != current_raw.initial_detected_semantic_sha256
         ):
             return False
+        if candidate_raw.model_copy(update=preserved_fields) != current_raw:
+            return False
+        if (
+            candidate_raw.reimports[: len(current_raw.reimports)]
+            != current_raw.reimports
+        ):
+            return False
+
+    candidate_detections = {
+        detection.detection_id: detection for detection in candidate.detections
+    }
+    if any(
+        candidate_detections.get(detection.detection_id) != detection
+        for detection in current.detections
+    ):
+        return False
 
     candidate_conflicts = {
         conflict.conflict_id: conflict for conflict in candidate.conflicts
@@ -3460,6 +3635,14 @@ def _latest_retained_audit_event(
     ]
     events.extend(
         (
+            reimport.provenance.imported_at,
+            f"reimport {reimport.raw_source_id} imported_at",
+        )
+        for raw in record.raw_sources
+        for reimport in raw.reimports
+    )
+    events.extend(
+        (
             detected.detected_at,
             f"detection {detected.detection_id} detected_at",
         )
@@ -3796,6 +3979,12 @@ def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
     for field_name in ("source_file_id", "source_session_id", "hand_ordinal"):
         chronology.pop(field_name, None)
     return sha256(imported_hand_canonical_json(normalized)).hexdigest()
+
+
+def detected_imported_hand_semantic_sha256(state: ImportedHandState) -> str:
+    """Hash detected poker meaning independently of source occurrence evidence."""
+
+    return _detected_state_semantic_sha256(state)
 
 
 def _state_payload_for_hash(state: ImportedHandState) -> dict[str, Any]:

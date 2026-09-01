@@ -16,6 +16,11 @@ from threading import Lock
 
 from pydantic import ValidationError
 
+from app.application.imported_hand_ingestion import (
+    ImportedHandIngestionResult,
+    ImportedHandIngestionService,
+    ParsedImportedHandCandidate,
+)
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.data_lock import (
@@ -45,6 +50,7 @@ from app.player_hands import (
 from app.storage.imported_hand_store import (
     IMPORTED_HANDS_DIRNAME,
     FileImportedHandStore,
+    imported_hand_record_key,
 )
 
 
@@ -390,6 +396,30 @@ class PlayerWorkspace:
                     self._require_final_hand_record(record_key)
                     return get_player_hand(self.imported_hands, record_key)
 
+    def ingest_detected_hand(
+        self,
+        candidate: ParsedImportedHandCandidate,
+        *,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> ImportedHandIngestionResult:
+        """Serialize one adapter candidate through its full resolve/find/save."""
+
+        record_key = imported_hand_record_key(candidate.raw.identity)
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self._require_final_hand_record(record_key)
+                    return ImportedHandIngestionService(
+                        store=self.imported_hands,
+                    ).ingest(candidate)
+
     def close_hand_record(
         self,
         record_key: str,
@@ -582,6 +612,12 @@ class PlayerWorkspace:
                     if detection is None:
                         raise PlayerHandTransitionConflict(
                             "The selected detection is not retained by this hand"
+                        )
+                    if detection.raw_source_id not in {
+                        raw.raw_source_id for raw in record.raw_sources
+                    }:
+                        raise PlayerHandApprovalInvalid(
+                            "A reimport audit-only detection cannot be approved"
                         )
                     approved_at = _advanced_lifecycle_time(at, lifecycle.changed_at)
                     try:

@@ -83,11 +83,20 @@ class PlayerHandList(PlayerHandProjection):
     next_cursor: str | None
 
 
+class PlayerRawReimportAudit(PlayerHandProjection):
+    raw_source_id: str
+    chronology: SourceChronology
+    provenance: ImportProvenance
+    detection_id: str
+    detected_semantic_sha256: str
+
+
 class PlayerRawSourceAudit(PlayerHandProjection):
     raw_source_id: str
     chronology: SourceChronology
     provenance: ImportProvenance
     content_sha256: str
+    reimports: list[PlayerRawReimportAudit]
 
 
 class PlayerSourceEvidenceAudit(PlayerHandProjection):
@@ -113,6 +122,7 @@ class PlayerDetectionAudit(PlayerHandProjection):
     field_evidence: dict[str, PlayerDetectedFieldEvidenceAudit]
     warnings: list[str]
     content_sha256: str
+    approval_eligible: bool
 
 
 class PlayerUserCorrectionAudit(PlayerHandProjection):
@@ -332,7 +342,7 @@ def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:
         active_canonical_revision=record.lifecycle.active_canonical_revision,
         learning_eligible=record.lifecycle.learning_eligible,
         deletion_generation=record.lifecycle.deletion_generation,
-        raw_source_count=len(record.raw_sources),
+        raw_source_count=sum(1 + len(raw.reimports) for raw in record.raw_sources),
         detection_count=len(record.detections),
         warning_count=warning_count,
         unresolved_conflict_count=sum(
@@ -422,6 +432,9 @@ def get_player_hand(
     """Return review metadata for one record while keeping raw text private."""
 
     record = store.get(record_key)
+    approval_eligible_source_ids = {
+        raw.raw_source_id for raw in record.raw_sources
+    }
     return PlayerHandDetail(
         summary=_summary(record_key, record),
         lifecycle=record.lifecycle,
@@ -431,6 +444,16 @@ def get_player_hand(
                 chronology=raw.chronology,
                 provenance=raw.provenance,
                 content_sha256=raw.content_sha256,
+                reimports=[
+                    PlayerRawReimportAudit(
+                        raw_source_id=reimport.raw_source_id,
+                        chronology=reimport.chronology,
+                        provenance=reimport.provenance,
+                        detection_id=reimport.detection_id,
+                        detected_semantic_sha256=reimport.detected_semantic_sha256,
+                    )
+                    for reimport in raw.reimports
+                ],
             )
             for raw in record.raw_sources
         ],
@@ -465,6 +488,8 @@ def get_player_hand(
                 },
                 warnings=detection.warnings,
                 content_sha256=detection.content_sha256,
+                approval_eligible=detection.raw_source_id
+                in approval_eligible_source_ids,
             )
             for detection in record.detections
         ],

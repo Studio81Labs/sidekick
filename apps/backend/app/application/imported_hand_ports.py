@@ -30,8 +30,10 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from app.domain.imported_hands import (
+    DetectedImportedHand,
     HandDecisionExtraction,
     ImportedHandRecord,
+    RawHandHistory,
     StableHandIdentity,
 )
 
@@ -171,6 +173,16 @@ class ImportedHandRepository(Protocol):
         stored ``identity`` fields: a tombstone has none, so such a scan
         would silently miss exactly the case that matters.
         """
+        ...
+
+    def resolve_reimport(
+        self,
+        identity: StableHandIdentity,
+        raw: RawHandHistory,
+        candidate_detection: DetectedImportedHand | None = None,
+    ) -> ReimportResolution:
+        """Classify one candidate and return its opaque durable record key."""
+
         ...
 
     def list_keys(self) -> list[str]:
