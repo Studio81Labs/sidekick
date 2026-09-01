@@ -116,14 +116,16 @@ route, or production credential transport.
 
 ## Current limit
 
-This checkpoint exposes authenticated session lifecycle, health, store status,
-and imported-hand backup/restore under `/api/player`, with an installable local
-recovery PWA. The imported-hand store is opened and recovered, but there is no
-hand-history import, record read, approval, learning, migration, remote lookup,
-operating-system installer/uninstaller, or complete player workflow. Future
+The local runtime now exposes authenticated session lifecycle, health, store
+status, conflict-safe backup/restore, sanitized imported-hand audit reads,
+approval/reapproval, withdrawal/rejection, and permanent deletion under
+`/api/player`, with an installable player PWA. The local workspace also composes
+the conflict-safe transaction for an already-parsed hand-history candidate, but
+there is still no player hand-history upload route or corpus-backed PokerStars
+adapter. Learning, migration, remote lookup, operating-system
+installer/uninstaller, and the complete player workflow remain absent. Future
 grade, mastery, drill, and proof stores do not yet exist, so they are not part
 of the version 1 archive. The hosted Worker and V1 FastAPI deployment deny the
 namespace, and the direct-network checkpoint verifies that denial without
-proxying a request body. This closes only the network-evidence slice: do not use
-the runtime or its test command as evidence that the Phase 1 gate or issue #432
-is complete.
+proxying a request body. Do not use the runtime or its test command as evidence
+that the Phase 1 gate or issue #432 is complete.

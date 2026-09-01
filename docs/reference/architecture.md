@@ -259,6 +259,19 @@ validates a complete snapshot; an invalid graph cannot be persisted or exposed
 as learning evidence. Conflict resolutions are retained audit events, so a
 deletion request must be ordered after them before deletion can proceed.
 
+Parsed hand-history candidates enter this aggregate through
+`app/application/imported_hand_ingestion.py`, composed under the local
+workspace's stable thread/process record stripes and shared data-volume lock.
+New identities become pending review. Byte-identical reimports append a source
+occurrence with its own chronology and import provenance without copying raw
+text, detections, canonical revisions, or derived data. Materially different
+bytes, or a different detected meaning for identical bytes, append unresolved
+conflict evidence and therefore fail decision extraction closed. Deleted and
+deletion-pending records require a separate authorized lifecycle reimport and
+cannot be resurrected by this boundary. ADR 0058 records why the
+parsed-candidate transaction lands before the #409 PokerStars adapter and
+player upload route.
+
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit
 detail, while raw hand-history text stays inside the store.

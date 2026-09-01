@@ -918,6 +918,7 @@ def test_the_file_store_satisfies_every_call_the_repository_protocol_declares() 
         "list_decision_artifacts",
         "list_keys",
         "recover",
+        "resolve_reimport",
         "save",
     ]
 

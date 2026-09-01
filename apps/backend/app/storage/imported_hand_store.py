@@ -340,6 +340,19 @@ class FileImportedHandStore:
         except ImportedHandNotFoundError:
             return None
 
+    def resolve_reimport(
+        self,
+        identity: StableHandIdentity,
+        raw: RawHandHistory,
+        candidate_detection: DetectedImportedHand | None = None,
+    ) -> ReimportResolution:
+        return resolve_reimport(
+            self,
+            identity,
+            raw,
+            candidate_detection=candidate_detection,
+        )
+
     def list_keys(self) -> list[str]:
         try:
             entries = list(self.records_dir.iterdir())
