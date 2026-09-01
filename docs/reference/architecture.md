@@ -35,6 +35,16 @@ imported-hand layout is adopted under the exclusive data-volume lock without
 rewriting retained record, artifact, or recovery bytes. Unknown, malformed,
 insecure, or structurally incomplete layouts fail startup, and the authenticated
 storage view discloses the active layout version.
+[ADR 0060](../decisions/0060-export-before-removing-local-player-data.md)
+adds a local-only export-before-remove transaction for the versioned player
+workspace. It durably publishes and independently reparses a new portable
+player backup before atomically moving the exact workspace out of service,
+then cleans only that verified sibling path. Unsafe sources or destinations,
+unresolved recovery evidence, unexported workspace entries, publication
+failures, and layout drift fail closed. A stable sibling lifetime lease excludes
+the running player process across the whole transaction and makes retained
+post-rename paths discoverable on retry; application and browser installation
+removal remain outside this checkpoint.
 [ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md) replaces
 the inline readiness document with a separately built local recovery PWA. It
 exposes storage/recovery status and the existing player backup/restore workflow

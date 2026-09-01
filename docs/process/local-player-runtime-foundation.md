@@ -111,6 +111,60 @@ multi-record cascade; a tombstone bound to the same deletion-pending generation
 removes retained decision artifacts in that unit. The format deliberately
 excludes V1 screenshot jobs, parser benchmarks, and any hosted data.
 
+## Export and remove local player data
+
+Stop the local runtime before removing its workspace. From the repository
+checkout, choose a new archive path in an existing private directory outside
+`POKER_DATA_DIR`, then run:
+
+```bash
+pnpm player:export-and-remove /absolute/private/player-backup.zip --confirm-remove-data
+```
+
+Use `--data-dir /absolute/player-data` when the workspace is not selected by
+the current environment. The command is local-only and refuses to continue
+without `--confirm-remove-data`. It requires an existing versioned workspace;
+it never creates or silently adopts a missing or manifestless source, follows
+a workspace symlink, writes inside the workspace, or overwrites an archive.
+Source and output parents must be owned by the current user and must not be
+writable by another user or grant access through a macOS extended ACL. The
+production player launcher holds an external lifetime lease for the complete
+serve interval. The removal command acquires it exclusively and tells the
+operator to stop the runtime even when that runtime is idle. It rescans for a
+prior interrupted removal after acquiring the lease before it opens the active
+workspace.
+
+The command recovers an ordinary interrupted lifecycle write, then holds the
+whole data volume exclusively. Quarantined or failed recovery evidence blocks
+removal until it is repaired or separately preserved. The portable player
+inventory must also account for every workspace entry; orphan records,
+unrecognized decision artifacts, and other bytes omitted from the backup block
+removal instead of being silently deleted. The backup is written owner-only,
+synced, hashed, fully parsed, published without replacement, directory-synced,
+reread, rehashed, and reparsed before the active workspace is renamed. The
+renamed directory is verified as the exact source before best-effort cleanup.
+No network service receives the archive or player data.
+
+Exit status `0` means the verified archive is durable and player data removal
+completed. Status `1` means the archive is safe but a moved/recreated data path
+or final filesystem durability step requires the attention printed on stderr.
+Status `2` means removal did not complete. When backup publication fails the
+source remains active. When the later rename fails, both the source and the
+already verified archive remain; preserve that archive and select a different
+new output path before retrying. Never delete a reported retained removal
+directory until its contents and the archive have been inspected. A later run
+detects a path retained by an interruption after rename and reports it even
+when the active source is already absent.
+
+The player backup contains portable V2 imported-hand records and their retained
+decision artifacts. The installation credential, in-workspace data and record
+locks, workspace manifest, and recovered journal machinery are installation
+metadata and are removed with the workspace rather than copied into the
+archive. The empty sibling runtime-lease file contains no player data and may
+remain for future coordination. This command does not remove the
+repository/application binary or the browser's PWA installation; those remain
+operating-system and browser lifecycle steps.
+
 There is intentionally no player-runtime host or port flag. A non-loopback
 operator development service would be a different runtime and would require
 TLS plus its own server-enforced authorization design.
@@ -147,11 +201,13 @@ approval/reapproval, withdrawal/rejection, and permanent deletion under
 `/api/player`, with an installable player PWA. The local workspace also composes
 the conflict-safe transaction for an already-parsed hand-history candidate, but
 there is still no player hand-history upload route or corpus-backed PokerStars
-adapter. The workspace now has a version 1 compatibility marker and a safe
-manifestless-store adoption, but future learning-store migrations, remote
-lookup, an operating-system installer/uninstaller, and the complete player
-workflow remain absent. Future grade, mastery, drill, and proof stores do not
-yet exist, so they are not part of the version 1 archive. The hosted Worker and
-V1 FastAPI deployment deny the namespace, and the direct-network checkpoint
-verifies that denial without proxying a request body. Do not use the runtime or
-its test command as evidence that the Phase 1 gate or issue #432 is complete.
+adapter. The workspace now has a version 1 compatibility marker, safe
+manifestless-store adoption, and a verified export-before-remove command for
+player data. Future learning-store migrations, remote lookup, an
+operating-system installer/uninstaller that also removes application and
+browser installation state, and the complete player workflow remain absent.
+Future grade, mastery, drill, and proof stores do not yet exist, so they are not
+part of the version 1 archive. The hosted Worker and V1 FastAPI deployment deny
+the namespace, and the direct-network checkpoint verifies that denial without
+proxying a request body. Do not use the runtime or its test command as evidence
+that the Phase 1 gate or issue #432 is complete.

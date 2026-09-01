@@ -181,24 +181,41 @@ def build_player_backup_archive(
             exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
-            workspace.require_current_layout()
-            if workspace.imported_hands.has_pending_recovery():
-                raise PlayerBackupRecoveryRequiredError(
-                    "Player backup is unavailable while an interrupted "
-                    "lifecycle write awaits startup recovery; restart the "
-                    "local player runtime first"
-                )
-            snapshots = workspace.imported_hands.backup_snapshot(
-                max_record_bytes=MAX_PLAYER_BACKUP_RECORD_BYTES,
-                max_artifact_bytes=MAX_PLAYER_BACKUP_ARTIFACT_BYTES,
-                max_total_bytes=(
-                    max_archive_bytes * MAX_PLAYER_BACKUP_EXPANSION_RATIO
-                ),
-            )
-            return _build_archive(
-                snapshots,
+            return _build_player_backup_archive_from_locked_workspace(
+                workspace,
                 max_archive_bytes=max_archive_bytes,
             )
+    except ImportedHandSnapshotLimitError as exc:
+        raise PlayerBackupExportError(str(exc)) from exc
+    except (ImportedHandSnapshotError, OSError, ValidationError, ValueError) as exc:
+        raise PlayerBackupExportError(
+            "The player store cannot be exported until its invalid data is repaired"
+        ) from exc
+
+
+def _build_player_backup_archive_from_locked_workspace(
+    workspace: PlayerWorkspace,
+    *,
+    max_archive_bytes: int,
+) -> BinaryIO:
+    """Build a snapshot while the caller owns the exclusive data-volume lock."""
+
+    try:
+        workspace.require_current_layout()
+        if workspace.imported_hands.has_pending_recovery():
+            raise PlayerBackupRecoveryRequiredError(
+                "Player backup is unavailable while an interrupted lifecycle write"
+                " awaits startup recovery; restart the local player runtime first"
+            )
+        snapshots = workspace.imported_hands.backup_snapshot(
+            max_record_bytes=MAX_PLAYER_BACKUP_RECORD_BYTES,
+            max_artifact_bytes=MAX_PLAYER_BACKUP_ARTIFACT_BYTES,
+            max_total_bytes=(max_archive_bytes * MAX_PLAYER_BACKUP_EXPANSION_RATIO),
+        )
+        return _build_archive(
+            snapshots,
+            max_archive_bytes=max_archive_bytes,
+        )
     except ImportedHandSnapshotLimitError as exc:
         raise PlayerBackupExportError(str(exc)) from exc
     except (ImportedHandSnapshotError, OSError, ValidationError, ValueError) as exc:

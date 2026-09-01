@@ -197,7 +197,7 @@ def _macos_extended_acl_has_entries(path: Path, *, library=None) -> bool:
         libc.acl_free(acl)
 
 
-def _reject_macos_extended_acl(path: Path) -> None:
+def reject_macos_extended_acl(path: Path) -> None:
     if sys.platform != "darwin":
         return
     if _macos_extended_acl_has_entries(path):
@@ -206,11 +206,25 @@ def _reject_macos_extended_acl(path: Path) -> None:
         )
 
 
-def _private_player_data_dir(data_dir: Path) -> Path:
+def _private_player_data_dir(
+    data_dir: Path,
+    *,
+    create_if_missing: bool = True,
+) -> Path:
     try:
-        data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if create_if_missing:
+            data_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        else:
+            configured_stat = data_dir.stat(follow_symlinks=False)
+            if not S_ISDIR(configured_stat.st_mode):
+                raise PlayerDataDirectoryError(
+                    "The existing player data path must be a directory, not a"
+                    " symlink or other filesystem object"
+                )
         resolved = data_dir.resolve(strict=True)
         directory_stat = resolved.stat()
+    except PlayerDataDirectoryError:
+        raise
     except OSError as exc:
         raise PlayerDataDirectoryError(
             f"Cannot safely open the player data directory: {exc}"
@@ -225,8 +239,47 @@ def _private_player_data_dir(data_dir: Path) -> Path:
         raise PlayerDataDirectoryError(
             "The player data directory must be owned by the current user"
         )
-    _reject_macos_extended_acl(resolved)
+    reject_macos_extended_acl(resolved)
     return resolved
+
+
+def prepare_player_data_directory(
+    data_dir: Path,
+    *,
+    create_if_missing: bool,
+) -> Path:
+    """Validate (and optionally create) the private player data root."""
+
+    return _private_player_data_dir(
+        Path(data_dir),
+        create_if_missing=create_if_missing,
+    )
+
+
+def require_private_player_data_parent(data_dir: Path) -> Path:
+    """Validate the stable parent used for runtime/removal coordination."""
+
+    parent = Path(data_dir).parent
+    try:
+        parent_stat = parent.stat(follow_symlinks=False)
+    except OSError as exc:
+        raise PlayerDataDirectoryError(
+            "Cannot safely inspect the player data parent directory"
+        ) from exc
+    if not S_ISDIR(parent_stat.st_mode):
+        raise PlayerDataDirectoryError(
+            "The player data parent path must be a directory"
+        )
+    if parent_stat.st_mode & 0o022:
+        raise PlayerDataDirectoryError(
+            "The player data parent must not be writable by other users"
+        )
+    if hasattr(os, "getuid") and parent_stat.st_uid != os.getuid():
+        raise PlayerDataDirectoryError(
+            "The player data parent must be owned by the current user"
+        )
+    reject_macos_extended_acl(parent)
+    return parent
 
 
 def _require_imported_hands_dir(
@@ -266,7 +319,7 @@ def _require_imported_hands_dir(
         raise PlayerDataDirectoryError(
             "The imported-hand store must be owned by the current user"
         )
-    _reject_macos_extended_acl(records_dir)
+    reject_macos_extended_acl(records_dir)
 
 
 def _read_player_workspace_manifest(
@@ -446,10 +499,58 @@ class PlayerWorkspace:
         startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
         write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     ) -> "PlayerWorkspace":
-        private_data_dir = _private_player_data_dir(Path(data_dir))
+        return cls._open(
+            data_dir,
+            recovery_lock_timeout_seconds=recovery_lock_timeout_seconds,
+            startup_lock_timeout_seconds=startup_lock_timeout_seconds,
+            write_lock_timeout_seconds=write_lock_timeout_seconds,
+            create_if_missing=True,
+            adopt_manifestless=True,
+        )
+
+    @classmethod
+    def open_existing(
+        cls,
+        data_dir: Path,
+        *,
+        recovery_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
+        startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+        write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> "PlayerWorkspace":
+        """Open only an already-versioned workspace without creating or adopting."""
+
+        return cls._open(
+            data_dir,
+            recovery_lock_timeout_seconds=recovery_lock_timeout_seconds,
+            startup_lock_timeout_seconds=startup_lock_timeout_seconds,
+            write_lock_timeout_seconds=write_lock_timeout_seconds,
+            create_if_missing=False,
+            adopt_manifestless=False,
+        )
+
+    @classmethod
+    def _open(
+        cls,
+        data_dir: Path,
+        *,
+        recovery_lock_timeout_seconds: int,
+        startup_lock_timeout_seconds: int,
+        write_lock_timeout_seconds: int,
+        create_if_missing: bool,
+        adopt_manifestless: bool,
+    ) -> "PlayerWorkspace":
+        private_data_dir = prepare_player_data_directory(
+            data_dir,
+            create_if_missing=create_if_missing,
+        )
         data_lock = InterprocessDataLock(private_data_dir)
         recovery = ImportedHandRecoveryReport()
         manifest_hint = _read_player_workspace_manifest(private_data_dir)
+        if manifest_hint is None and not adopt_manifestless:
+            raise PlayerDataDirectoryError(
+                "The existing player data directory is missing its versioned"
+                " workspace manifest"
+            )
         if manifest_hint is not None:
             # Re-read and construct beneath the shared hold. A future layout
             # migration must take the exclusive side, so it cannot publish a
@@ -491,7 +592,7 @@ class PlayerWorkspace:
         ):
             manifest = _read_player_workspace_manifest(private_data_dir)
             if manifest is None:
-                if manifest_hint is not None:
+                if manifest_hint is not None or not adopt_manifestless:
                     raise PlayerDataDirectoryError(
                         "The player workspace manifest changed during startup"
                     )

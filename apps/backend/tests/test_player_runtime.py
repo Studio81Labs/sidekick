@@ -17,11 +17,16 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+import app.player_main as player_main_module
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.bootstrap import create_app
 from app.config import Settings
-from app.data_lock import DataLockTimeoutError, InterprocessDataLock
+from app.data_lock import (
+    DataLockTimeoutError,
+    InterprocessDataLock,
+    player_runtime_lease,
+)
 from app.domain.imported_hands import (
     ImportedHandState,
     extract_hero_decision_points,
@@ -2205,6 +2210,38 @@ def test_player_launcher_rejects_a_hosted_environment(tmp_path: Path) -> None:
         configured_player_runtime(
             Settings(data_dir=tmp_path, deployment_environment="production")
         )
+
+
+def test_player_launcher_holds_the_runtime_lifetime_lease_while_serving(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    data_dir = tmp_path / "player-data"
+    settings = Settings(data_dir=data_dir)
+    runtime = object()
+    observed: list[bool] = []
+
+    async def observe_lease(active_runtime: object) -> None:
+        assert active_runtime is runtime
+        competing = player_runtime_lease(data_dir.resolve())
+        with pytest.raises(DataLockTimeoutError):
+            competing.acquire(exclusive=True, timeout_seconds=0)
+        observed.append(True)
+
+    monkeypatch.setattr(player_main_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        player_main_module,
+        "configured_player_runtime",
+        lambda _settings: runtime,
+    )
+    monkeypatch.setattr(player_main_module, "serve_player_runtime", observe_lease)
+
+    player_main_module.main()
+
+    assert observed == [True]
+    lease = player_runtime_lease(data_dir.resolve())
+    descriptor = lease.acquire(exclusive=True, timeout_seconds=0)
+    lease.release(descriptor)
 
 
 def _non_loopback_ipv4() -> str | None:
