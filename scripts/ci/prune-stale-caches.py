@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ported from Studio81Labs/taven@71e82cd
+# ported from Studio81Labs/nexcue@c98544bb37a4e1b6cf785a95c164f2e14e3ffa41
 """Prune obsolete, source-derived GitHub Actions caches on main."""
 
 from __future__ import annotations
@@ -13,10 +13,21 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 HASH_SUFFIX = re.compile(r"-[0-9a-f]{16,}$")
 PNPM_KINDS = {"pnpm-linux", "pnpm-macos"}
+
+# subosito/flutter-action keys its SDK cache `flutter-:os-:channel-:version-:arch`
+# and its pub cache `flutter-pub-` on the same shape, so the pinned version is
+# part of the FAMILY name rather than a content hash. Bumping the pin therefore
+# does not supersede an entry within a family -- it strands the whole family,
+# which is why the size rule below (a family needs 2+ entries to have anything
+# to collect) can never reach it. ~1.7 GiB per stranded SDK.
+FLUTTER_FAMILY = re.compile(
+    r"^flutter-(?:pub-)?[a-z]+-[a-z]+-(?P<version>\d+\.\d+\.\d+)-\w+$"
+)
 
 
 class PruneError(RuntimeError):
@@ -36,6 +47,32 @@ def family(key: str) -> str:
     while HASH_SUFFIX.search(key):
         key = HASH_SUFFIX.sub("", key)
     return key
+
+
+def flutter_family_version(cache_family: str) -> str | None:
+    """Return the Flutter version a family name pins, or None if it is not one."""
+    match = FLUTTER_FAMILY.match(cache_family)
+    return match.group("version") if match else None
+
+
+def read_flutter_pin(root: Path) -> str | None:
+    """Read constraints.flutter from renovate.json.
+
+    This is the same value scripts/check-flutter-pin.py asserts every
+    `subosito/flutter-action` step is given, so it is the one place that already
+    has to be right for the workflows to build at all -- and it is repo-neutral,
+    which is what lets this file stay byte-identical across the family.
+
+    Returns None when the file, the key, or its type is not what we expect.
+    Callers must treat None as "collect nothing": deleting 1.7 GiB families on a
+    pin we failed to read is exactly the guess this script refuses to make.
+    """
+    try:
+        raw = json.loads((root / "renovate.json").read_text())
+    except (OSError, ValueError):
+        return None
+    pin = raw.get("constraints", {}).get("flutter")
+    return pin if isinstance(pin, str) and pin else None
 
 
 def cache_version(*paths: str, compression: str) -> str:
@@ -112,7 +149,15 @@ def plan_deletions(
     caches: Sequence[dict[str, Any]],
     current_hashes: Mapping[str, str],
     current_versions: Mapping[str, str],
+    flutter_pin: str | None = None,
 ) -> Plan:
+    """Plan deletions.
+
+    `flutter_pin` defaults to None meaning "pin unknown", under which no Flutter
+    family is collected. That default is the safe one on purpose: every caller
+    that cannot read renovate.json gets the pre-existing behaviour rather than a
+    deletion decided on a value nobody supplied.
+    """
     groups: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
     for cache in caches:
         if cache["ref"] == "refs/heads/main":
@@ -129,6 +174,28 @@ def plan_deletions(
     freed = 0
 
     for cache_family, items in sorted(groups.items()):
+        # Whole-family obsolescence, checked BEFORE the size rule below: a
+        # superseded SDK is the only entry in a family of its own, so the
+        # "needs 2+ entries to have anything to collect" rule can never see it.
+        family_version = flutter_family_version(cache_family)
+        if family_version is not None:
+            if flutter_pin is None:
+                messages.append(
+                    f"{cache_family}: flutter pin unreadable; "
+                    "leaving this family untouched"
+                )
+            elif family_version != flutter_pin:
+                plural = "entry" if len(items) == 1 else "entries"
+                messages.append(
+                    f"{cache_family}: obsolete flutter family, pin is "
+                    f"{flutter_pin}; deleting {len(items)} {plural}"
+                )
+                doomed.extend(items)
+                freed += sum(int(cache["size_in_bytes"]) for cache in items)
+            # The family matching the pin is left alone, which is what the
+            # unmanaged-kind path did before: flutter is not a managed kind, so
+            # select_keep() would decline it anyway.
+            continue
         if len(items) < 2:
             continue
         keep, reason = select_keep(items, current_hashes, current_versions)
@@ -276,8 +343,10 @@ def run(
     repo = environ["REPO"]
     dry_run = environ.get("DRY_RUN") == "true"
     hashes, versions = current_inputs(environ)
+    # Two levels up from scripts/ci/ is the repository root.
+    flutter_pin = read_flutter_pin(Path(__file__).resolve().parent.parent.parent)
     caches = list_caches(repo, api)
-    plan = plan_deletions(caches, hashes, versions)
+    plan = plan_deletions(caches, hashes, versions, flutter_pin)
 
     emit(
         f"::notice::found {plan.protected_count} source-derived current-main "
