@@ -1042,6 +1042,43 @@ def test_player_hand_close_keeps_a_ready_cascade_outcome_unresolved(
     assert recovered.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
 
 
+def test_player_hand_close_rechecks_a_ready_cascade_after_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    real_rmtree = shutil.rmtree
+
+    def retain_ready_cascade(*args, **kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(shutil, "rmtree", retain_ready_cascade)
+    response = client.post(
+        f"/api/player/hands/{key}/withdraw",
+        json=hand_close_payload(record, reason="Reviewed"),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 503
+    assert "interrupted lifecycle write" in response.json()["detail"]
+    assert runtime.workspace.imported_hands.has_interrupted_write(key)
+    assert runtime.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+    detail = client.get(
+        f"/api/player/hands/{key}",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    assert detail.status_code == 503
+
+    monkeypatch.setattr(shutil, "rmtree", real_rmtree)
+    recovered = _create_player_runtime(tmp_path)
+    assert recovered.workspace.imported_hand_recovery.completed
+    assert recovered.workspace.imported_hands.get(key).lifecycle.status == "withdrawn"
+
+
 def test_player_storage_status_preserves_quarantine_across_restarts(
     tmp_path: Path,
 ) -> None:

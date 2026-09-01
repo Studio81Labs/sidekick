@@ -406,6 +406,7 @@ class PlayerWorkspace:
                                 "can finish"
                             ) from exc
                         raise
+                    self._require_final_hand_record(record_key)
                     return get_player_hand(self.imported_hands, record_key)
 
     def _require_final_hand_record(self, record_key: str) -> None:
