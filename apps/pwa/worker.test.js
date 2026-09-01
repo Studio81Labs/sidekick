@@ -19,6 +19,7 @@ describe("API Worker proxy", () => {
     for (const path of [
       "/api/player",
       "/api/player/imports",
+      `/api/player/hands/${"a".repeat(64)}/withdraw`,
       "/api%2Fplayer%2Fimports",
       "/%61pi/%70layer/imports",
       "/%2561pi%252Fplayer%252Fimports",

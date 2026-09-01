@@ -2,21 +2,29 @@
 
 from __future__ import annotations
 
+from _thread import LockType
 from dataclasses import dataclass
+from datetime import datetime
 import errno
 import os
 from pathlib import Path
 from stat import S_ISDIR
 import sys
+from threading import Lock
 
+from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.data_lock import (
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     InterprocessDataLock,
+    InterprocessFileLock,
 )
+from app.domain.imported_hands import extract_hero_decision_points
 from app.player_hands import (
+    PlayerHandCloseAction,
+    PlayerHandCloseRequest,
     PlayerHandDetail,
     PlayerHandList,
     get_player_hand,
@@ -30,6 +38,14 @@ from app.storage.imported_hand_store import (
 
 class PlayerDataDirectoryError(RuntimeError):
     """The configured player data directory is not private local storage."""
+
+
+class PlayerHandTransitionConflict(RuntimeError):
+    """A local lifecycle request no longer describes the stored record."""
+
+
+DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
+PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
 
 
 def _macos_extended_acl_has_entries(path: Path, *, library=None) -> bool:
@@ -154,6 +170,8 @@ class PlayerWorkspace:
     data_lock: InterprocessDataLock
     imported_hands: FileImportedHandStore
     imported_hand_recovery: ImportedHandRecoveryReport
+    imported_hand_locks: tuple[LockType, ...]
+    imported_hand_process_locks: tuple[InterprocessFileLock, ...]
 
     @classmethod
     def open(
@@ -193,7 +211,31 @@ class PlayerWorkspace:
             data_lock=data_lock,
             imported_hands=imported_hands,
             imported_hand_recovery=recovery,
+            imported_hand_locks=tuple(
+                Lock() for _ in range(DEFAULT_PLAYER_HAND_LOCK_STRIPES)
+            ),
+            imported_hand_process_locks=tuple(
+                InterprocessFileLock(
+                    private_data_dir
+                    / f"{PLAYER_HAND_LOCK_PREFIX}-{index:02d}.lock",
+                    subject="player hand lifecycle lock",
+                    contention_hint=(
+                        "another local player process is changing a record in "
+                        "the same lifecycle lock stripe"
+                    ),
+                )
+                for index in range(DEFAULT_PLAYER_HAND_LOCK_STRIPES)
+            ),
         )
+
+    def imported_hand_lock_index(self, record_key: str) -> int:
+        """Return a process-stable stripe for this identity-derived key."""
+
+        try:
+            prefix = int(record_key[:16], 16)
+        except ValueError:
+            prefix = 0
+        return prefix % len(self.imported_hand_locks)
 
     def status_payload(
         self,
@@ -262,3 +304,78 @@ class PlayerWorkspace:
             timeout_seconds=lock_timeout_seconds,
         ):
             return get_player_hand(self.imported_hands, record_key)
+
+    def close_hand_record(
+        self,
+        record_key: str,
+        *,
+        action: PlayerHandCloseAction,
+        request: PlayerHandCloseRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerHandDetail:
+        """Withdraw or reject one active revision without losing audit state.
+
+        The in-process stripe orders request threads. The matching named flock
+        uses the same stable stripe in every local-runtime process, closing the
+        cross-process gap before the store takes its shared volume hold and
+        leaf journal lock.
+        """
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                record = self.imported_hands.get(record_key)
+                latest_revision = (
+                    record.canonical_revisions[-1].revision
+                    if record.canonical_revisions
+                    else None
+                )
+                lifecycle = record.lifecycle
+                same_target = (
+                    lifecycle.status
+                    == ("withdrawn" if action == "withdraw" else "rejected")
+                    and lifecycle.reason == request.reason
+                    and lifecycle.deletion_generation
+                    == request.expected_deletion_generation
+                    and latest_revision
+                    == request.expected_active_canonical_revision
+                    and lifecycle.changed_at
+                    >= request.expected_lifecycle_changed_at
+                )
+                if same_target:
+                    return get_player_hand(self.imported_hands, record_key)
+
+                if (
+                    lifecycle.status != "active"
+                    or lifecycle.active_canonical_revision
+                    != request.expected_active_canonical_revision
+                    or lifecycle.deletion_generation
+                    != request.expected_deletion_generation
+                    or lifecycle.changed_at
+                    != request.expected_lifecycle_changed_at
+                ):
+                    raise PlayerHandTransitionConflict(
+                        "The hand lifecycle changed after this audit detail was "
+                        "loaded; refresh it before changing approval state"
+                    )
+
+                lifecycle_service = ImportedHandLifecycleService(
+                    store=self.imported_hands,
+                    extract=extract_hero_decision_points,
+                    now=lambda: at,
+                )
+                transition = (
+                    lifecycle_service.withdraw
+                    if action == "withdraw"
+                    else lifecycle_service.reject
+                )
+                transition(
+                    record_key,
+                    reason=request.reason,
+                    at=max(at, lifecycle.changed_at),
+                )
+                return get_player_hand(self.imported_hands, record_key)

@@ -23,11 +23,13 @@ from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.application.imported_hand_lifecycle import LifecycleCascadeError
 from app.data_lock import (
     DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    DataLockError,
     DataLockTimeoutError,
 )
 from app.player_backup import (
@@ -41,12 +43,15 @@ from app.player_backup import (
 from app.player_hands import (
     DEFAULT_PLAYER_HAND_PAGE_SIZE,
     MAX_PLAYER_HAND_PAGE_SIZE,
+    PlayerHandCloseAction,
+    PlayerHandCloseRequest,
 )
 from app.player_namespace import (
     PLAYER_API_PREFIX,
     is_player_api_scope,
 )
-from app.player_workspace import PlayerWorkspace
+from app.player_workspace import PlayerHandTransitionConflict, PlayerWorkspace
+from app.storage.cascade_journal import PendingCascadeError
 from app.storage.imported_hand_store import ImportedHandNotFoundError
 
 
@@ -685,7 +690,7 @@ def create_player_runtime(
                 )
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
-            except (OSError, ValidationError):
+            except (DataLockError, OSError, ValidationError):
                 return _json_denial(
                     500,
                     "Stored imported hand records could not be read safely",
@@ -707,12 +712,76 @@ def create_player_runtime(
                 return _json_denial(404, "Imported hand record not found")
             except DataLockTimeoutError as exc:
                 return _json_denial(409, str(exc))
-            except (OSError, ValidationError):
+            except (DataLockError, OSError, ValidationError):
                 return _json_denial(
                     500,
                     "Stored imported hand record could not be read safely",
                 )
         return JSONResponse(payload.model_dump(mode="json"))
+
+    async def close_player_hand(
+        request: Request,
+        record_key: str,
+        body: PlayerHandCloseRequest,
+        *,
+        action: PlayerHandCloseAction,
+    ) -> JSONResponse:
+        async with restore_access_gate:
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.close_hand_record,
+                    record_key,
+                    action=action,
+                    request=body,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except (PlayerHandTransitionConflict, LifecycleCascadeError) as exc:
+                return _json_denial(409, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except PendingCascadeError:
+                return _json_denial(
+                    503,
+                    "This hand has an interrupted lifecycle write; restart the "
+                    "local player runtime so recovery can finish",
+                )
+            except (DataLockError, OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "The hand approval state could not be changed safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/withdraw")
+    async def withdraw_player_hand(
+        request: Request,
+        record_key: str,
+        body: PlayerHandCloseRequest,
+    ) -> JSONResponse:
+        return await close_player_hand(
+            request,
+            record_key,
+            body,
+            action="withdraw",
+        )
+
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/reject")
+    async def reject_player_hand(
+        request: Request,
+        record_key: str,
+        body: PlayerHandCloseRequest,
+    ) -> JSONResponse:
+        return await close_player_hand(
+            request,
+            record_key,
+            body,
+            action="reject",
+        )
 
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
     async def export_player_backup(request: Request) -> Response:

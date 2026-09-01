@@ -5,6 +5,7 @@ import fcntl
 import os
 import time
 from pathlib import Path
+from stat import S_ISREG
 
 
 DATA_LOCK_FILENAME = ".poker-hero-data.lock"
@@ -68,9 +69,19 @@ class DataLockTimeoutError(DataLockError):
     """
 
 
-class InterprocessDataLock:
-    def __init__(self, data_dir: Path) -> None:
-        self.lock_path = data_dir / DATA_LOCK_FILENAME
+class InterprocessFileLock:
+    """A bounded flock over one explicit local lock file."""
+
+    def __init__(
+        self,
+        lock_path: Path,
+        *,
+        subject: str = "file lock",
+        contention_hint: str | None = None,
+    ) -> None:
+        self.lock_path = Path(lock_path)
+        self.subject = subject
+        self.contention_hint = contention_hint
 
     def acquire(
         self,
@@ -87,18 +98,33 @@ class InterprocessDataLock:
             self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             raise DataLockError(
-                f"Could not create data directory: {self.lock_path.parent}"
+                f"Could not create lock directory: {self.lock_path.parent}"
             ) from exc
         try:
+            flags = os.O_RDONLY | os.O_CREAT
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
             descriptor = os.open(
                 self.lock_path,
-                os.O_RDONLY | os.O_CREAT,
+                flags,
                 0o644,
             )
         except OSError as exc:
             raise DataLockError(
-                f"Could not open data lock in {self.lock_path.parent}"
+                f"Could not open {self.subject} at {self.lock_path}"
             ) from exc
+        try:
+            lock_stat = os.fstat(descriptor)
+        except OSError as exc:
+            os.close(descriptor)
+            raise DataLockError(
+                f"Could not inspect {self.subject} at {self.lock_path}"
+            ) from exc
+        if not S_ISREG(lock_stat.st_mode):
+            os.close(descriptor)
+            raise DataLockError(
+                f"The {self.subject} at {self.lock_path} must be a regular file"
+            )
         operation = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
         try:
             if timeout_seconds is None:
@@ -113,7 +139,7 @@ class InterprocessDataLock:
         except OSError as exc:
             os.close(descriptor)
             raise DataLockError(
-                f"Could not acquire data lock in {self.lock_path.parent}"
+                f"Could not acquire {self.subject} at {self.lock_path}"
             ) from exc
         except BaseException:
             # DataLockTimeoutError is not an OSError, and neither is a
@@ -149,7 +175,7 @@ class InterprocessDataLock:
 
     def _timeout_message(self, *, timeout_seconds: int, exclusive: bool) -> str:
         wanted = "an exclusive" if exclusive else "a shared"
-        blocker = (
+        blocker = self.contention_hint or (
             "another process holds it, either shared (an in-flight mutating "
             "request, or startup workspace construction) or exclusively "
             "(startup recovery, or a backup export/restore)"
@@ -159,7 +185,7 @@ class InterprocessDataLock:
         )
         return (
             f"Timed out after {timeout_seconds}s waiting for {wanted} hold of "
-            f"the data lock at {self.lock_path}: {blocker}. flock() does not "
+            f"the {self.subject} at {self.lock_path}: {blocker}. flock() does not "
             "prioritise waiters, so this can persist for as long as the other "
             "holders overlap. Stop the other processes using this data "
             "directory, then retry."
@@ -221,3 +247,10 @@ class InterprocessDataLock:
             yield
         finally:
             self.release(descriptor)
+
+
+class InterprocessDataLock(InterprocessFileLock):
+    """The process-shared lock protecting one Poker Hero data volume."""
+
+    def __init__(self, data_dir: Path) -> None:
+        super().__init__(Path(data_dir) / DATA_LOCK_FILENAME, subject="data lock")

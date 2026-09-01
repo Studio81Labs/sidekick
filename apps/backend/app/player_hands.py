@@ -1,13 +1,21 @@
-"""Read-only projections for player-local imported-hand records."""
+"""Player-local imported-hand API projections and lifecycle input."""
 
 from __future__ import annotations
 
 from bisect import bisect_right
 from datetime import datetime
 from decimal import Decimal
-from typing import cast
+from typing import Annotated, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, JsonValue, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    StringConstraints,
+    ValidationError,
+)
 
 from app.domain.imported_hands import (
     DeletionReceipt,
@@ -124,6 +132,26 @@ class PlayerHandDetail(PlayerHandProjection):
     conflicts: list[ImportConflict]
     canonical_revisions: list[PlayerCanonicalRevisionAudit]
     deletion_receipt: DeletionReceipt | None
+
+
+PlayerHandCloseAction = Literal["withdraw", "reject"]
+
+
+class PlayerHandCloseRequest(PlayerHandProjection):
+    """Stale-write precondition and player reason for one approval close."""
+
+    reason: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=256,
+            strict=True,
+        ),
+    ]
+    expected_active_canonical_revision: int = Field(ge=1, strict=True)
+    expected_deletion_generation: int = Field(ge=0, strict=True)
+    expected_lifecycle_changed_at: AwareDatetime
 
 
 def _summary(record_key: str, record: ImportedHandRecord) -> PlayerHandSummary:

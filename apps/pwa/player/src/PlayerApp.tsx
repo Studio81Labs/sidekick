@@ -7,11 +7,13 @@ import {
   type PlayerBackupRestoreResult,
   type PlayerCredentials,
   type PlayerHandDetail,
+  type PlayerHandCloseAction,
   type PlayerHandList,
   type PlayerHandSummary,
   type PlayerStorageStatus,
   bootstrapPlayerSession,
   clearPlayerCredentials,
+  closePlayerHand,
   exportPlayerBackup,
   loadPlayerHand,
   loadPlayerHands,
@@ -25,6 +27,8 @@ type BusyAction =
   | "restore"
   | "records"
   | "detail"
+  | "withdraw"
+  | "reject"
   | "signout"
   | null;
 
@@ -77,7 +81,21 @@ function evidenceLocation(
   return `source ${evidence.raw_source_id} · ${locators.join(" · ")}`;
 }
 
-function HandDetail({ detail }: { detail: PlayerHandDetail }) {
+interface HandDetailProps {
+  busy: BusyAction;
+  closeReason: string;
+  detail: PlayerHandDetail;
+  onClose: (action: PlayerHandCloseAction) => void;
+  onReasonChange: (reason: string) => void;
+}
+
+function HandDetail({
+  busy,
+  closeReason,
+  detail,
+  onClose,
+  onReasonChange,
+}: HandDetailProps) {
   const { summary } = detail;
   const recognitionWarnings = detail.detections.flatMap((detection) => [
     ...detection.warnings.map((warning) => ({
@@ -105,7 +123,7 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
   return (
     <article className="hand-detail" aria-labelledby="hand-detail-heading">
       <div>
-        <p className="eyebrow">Read-only audit detail</p>
+        <p className="eyebrow">Audit detail</p>
         <h3 id="hand-detail-heading">{handLabel(summary)}</h3>
         <p>
           Record key <code>{summary.record_key}</code>
@@ -177,6 +195,45 @@ function HandDetail({ detail }: { detail: PlayerHandDetail }) {
           <dd>{summary.unresolved_conflict_count}</dd>
         </div>
       </dl>
+      {summary.lifecycle_status === "active" ? (
+        <div className="audit-block lifecycle-actions">
+          <h4>Change approval state</h4>
+          <p>
+            Both actions immediately remove this revision from local learning.
+            Raw sources, detections, corrections, and canonical revisions stay
+            retained for audit.
+          </p>
+          <label>
+            <span>Reason</span>
+            <textarea
+              required
+              maxLength={256}
+              rows={3}
+              value={closeReason}
+              disabled={busy !== null}
+              onChange={(event) => onReasonChange(event.target.value)}
+            />
+          </label>
+          <div className="lifecycle-action-buttons">
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy !== null || closeReason.trim().length === 0}
+              onClick={() => onClose("withdraw")}
+            >
+              {busy === "withdraw" ? "Withdrawing…" : "Withdraw approval"}
+            </button>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={busy !== null || closeReason.trim().length === 0}
+              onClick={() => onClose("reject")}
+            >
+              {busy === "reject" ? "Rejecting…" : "Reject as incorrect"}
+            </button>
+          </div>
+        </div>
+      ) : null}
       {detail.detections.length > 0 ? (
         <div className="audit-block state-block">
           <h4>Detected proposals</h4>
@@ -387,6 +444,8 @@ export default function PlayerApp() {
   const [handPage, setHandPage] = useState<PlayerHandList | null>(null);
   const [handDetail, setHandDetail] = useState<PlayerHandDetail | null>(null);
   const [loadingHandKey, setLoadingHandKey] = useState<string | null>(null);
+  const [closeReason, setCloseReason] = useState("");
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
 
@@ -428,6 +487,8 @@ export default function PlayerApp() {
       setStorage(null);
       setHandPage(null);
       setHandDetail(null);
+      setCloseReason("");
+      setActionNotice(null);
     }
     const message = friendlyError(reason);
     setError(context ? `${context} ${message}` : message);
@@ -437,6 +498,7 @@ export default function PlayerApp() {
     if (!credentials) return;
     setBusy("export");
     setError(null);
+    setActionNotice(null);
     try {
       await exportPlayerBackup(credentials);
     } catch (reason) {
@@ -450,6 +512,7 @@ export default function PlayerApp() {
     if (!credentials) return;
     setBusy("records");
     setError(null);
+    setActionNotice(null);
     try {
       const page = await loadPlayerHands(
         credentials,
@@ -464,7 +527,10 @@ export default function PlayerApp() {
             }
           : page,
       );
-      if (!append) setHandDetail(null);
+      if (!append) {
+        setHandDetail(null);
+        setCloseReason("");
+      }
     } catch (reason) {
       handleRequestError(reason);
     } finally {
@@ -476,7 +542,9 @@ export default function PlayerApp() {
     if (!credentials) return;
     setBusy("detail");
     setError(null);
+    setActionNotice(null);
     setHandDetail(null);
+    setCloseReason("");
     setLoadingHandKey(recordKey);
     try {
       setHandDetail(await loadPlayerHand(credentials, recordKey));
@@ -488,16 +556,102 @@ export default function PlayerApp() {
     }
   };
 
+  const replaceHandDetail = (detail: PlayerHandDetail) => {
+    setHandDetail(detail);
+    setHandPage((current) =>
+      current
+        ? {
+            ...current,
+            items: current.items.map((item) =>
+              item.record_key === detail.summary.record_key
+                ? detail.summary
+                : item,
+            ),
+          }
+        : current,
+    );
+  };
+
+  const closeHandApproval = async (action: PlayerHandCloseAction) => {
+    if (!credentials || !handDetail || closeReason.trim().length === 0) return;
+    const verb =
+      action === "withdraw" ? "withdraw approval" : "reject this hand";
+    const confirmed = window.confirm(
+      `Confirm ${verb}. The hand will stop contributing to local learning, while its audit evidence remains retained.`,
+    );
+    if (!confirmed) return;
+
+    const requestedDetail = handDetail;
+    const reason = closeReason.trim();
+    setBusy(action);
+    setError(null);
+    setActionNotice(null);
+    try {
+      const updated = await closePlayerHand(
+        credentials,
+        requestedDetail.summary.record_key,
+        action,
+        reason,
+        requestedDetail.summary,
+      );
+      replaceHandDetail(updated);
+      setCloseReason("");
+      setActionNotice(
+        action === "withdraw"
+          ? "Approval withdrawn. Retained evidence is now inactive."
+          : "Hand rejected. Retained evidence is now inactive.",
+      );
+    } catch (reasonError) {
+      if (reasonError instanceof PlayerApiError && reasonError.status === 401) {
+        handleRequestError(reasonError);
+      } else {
+        try {
+          const refreshed = await loadPlayerHand(
+            credentials,
+            requestedDetail.summary.record_key,
+          );
+          replaceHandDetail(refreshed);
+          const expectedStatus =
+            action === "withdraw" ? "withdrawn" : "rejected";
+          if (
+            refreshed.summary.lifecycle_status === expectedStatus &&
+            refreshed.lifecycle.reason === reason
+          ) {
+            setCloseReason("");
+            setActionNotice(
+              `The ${expectedStatus} state committed even though the original response was interrupted. The audit detail was refreshed.`,
+            );
+          } else {
+            handleRequestError(
+              reasonError,
+              "Approval state was not changed. The audit detail was refreshed.",
+            );
+          }
+        } catch (refreshError) {
+          setHandDetail(null);
+          handleRequestError(
+            refreshError,
+            `${friendlyError(reasonError)} The lifecycle outcome could not be refreshed; reload the records before retrying.`,
+          );
+        }
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const restoreBackup = async () => {
     if (!credentials || !selectedBackup) return;
     setBusy("restore");
     setError(null);
+    setActionNotice(null);
     setRestoreResult(null);
     try {
       const result = await restorePlayerBackup(credentials, selectedBackup);
       setRestoreResult(result);
       setHandPage(null);
       setHandDetail(null);
+      setCloseReason("");
       setSelectedBackup(null);
       if (backupInput.current) backupInput.current.value = "";
       try {
@@ -516,12 +670,14 @@ export default function PlayerApp() {
         setStorage(null);
         setHandPage(null);
         setHandDetail(null);
+        setCloseReason("");
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         setError(reason.message);
       } else if (reason instanceof PlayerRestoreAmbiguousError) {
         setHandPage(null);
         setHandDetail(null);
+        setCloseReason("");
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         try {
@@ -561,6 +717,8 @@ export default function PlayerApp() {
       setRestoreResult(null);
       setHandPage(null);
       setHandDetail(null);
+      setCloseReason("");
+      setActionNotice(null);
       if (backupInput.current) backupInput.current.value = "";
       setError(message);
       setBusy(null);
@@ -611,6 +769,12 @@ export default function PlayerApp() {
 
       {restoreResult ? <RestoreSummary result={restoreResult} /> : null}
 
+      {actionNotice ? (
+        <div className="notice restore-result" role="status">
+          {actionNotice}
+        </div>
+      ) : null}
+
       {storage ? (
         <>
           <section
@@ -658,7 +822,8 @@ export default function PlayerApp() {
                 <h2 id="records-heading">Local hand records</h2>
                 <p>
                   Inspect lifecycle and provenance without exposing raw hand
-                  histories in the collection response.
+                  histories in the collection response. Active approvals can be
+                  withdrawn or rejected from their audit detail.
                 </p>
               </div>
               {storage.imported_hand_record_count > 0 ? (
@@ -749,10 +914,18 @@ export default function PlayerApp() {
             ) : (
               <p className="empty-records">
                 {storage.imported_hand_record_count} retained records are ready
-                for authenticated, read-only inspection.
+                for authenticated audit inspection.
               </p>
             )}
-            {handDetail ? <HandDetail detail={handDetail} /> : null}
+            {handDetail ? (
+              <HandDetail
+                busy={busy}
+                closeReason={closeReason}
+                detail={handDetail}
+                onClose={(action) => void closeHandApproval(action)}
+                onReasonChange={setCloseReason}
+              />
+            ) : null}
           </section>
 
           <section className="backup-grid" aria-label="Backup and restore">
@@ -813,8 +986,9 @@ export default function PlayerApp() {
             <strong>Recovery checkpoint</strong>
             <span>
               Direct hand-history import, correction, approval, and learning are
-              not enabled in this build yet. Retained backup records can be
-              inspected read-only. Screenshot capture is not a player feature.
+              not enabled in this build yet. Existing active approvals can be
+              withdrawn or rejected locally while their evidence remains
+              auditable. Screenshot capture is not a player feature.
             </span>
           </aside>
         </>

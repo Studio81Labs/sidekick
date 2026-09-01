@@ -46,7 +46,12 @@ from app.storage.imported_hand_store import (
     FileImportedHandStore,
     imported_hand_record_key,
 )
-from test_imported_hand_store import RAW_TEXT, pending_review_record
+from test_imported_hand_store import (
+    RAW_TEXT,
+    approved_record,
+    pending_review_record,
+    sample_identity,
+)
 
 
 TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
@@ -85,6 +90,25 @@ def exchange_session(
     )
     assert response.status_code == 200
     return response.json()
+
+
+def player_mutation_headers(session: dict[str, object]) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {session['session_token']}",
+        "Origin": PLAYER_ORIGIN,
+        "X-Poker-CSRF-Token": str(session["csrf_token"]),
+    }
+
+
+def hand_close_payload(record, *, reason: str) -> dict[str, object]:
+    lifecycle = record.lifecycle
+    assert lifecycle.active_canonical_revision is not None
+    return {
+        "reason": reason,
+        "expected_active_canonical_revision": lifecycle.active_canonical_revision,
+        "expected_deletion_generation": lifecycle.deletion_generation,
+        "expected_lifecycle_changed_at": lifecycle.changed_at.isoformat(),
+    }
 
 
 def test_installation_secret_is_stable_and_owner_only(tmp_path: Path) -> None:
@@ -749,6 +773,172 @@ def test_player_hand_routes_report_corrupt_records_explicitly(tmp_path: Path) ->
     }
 
 
+@pytest.mark.parametrize(
+    ("action", "expected_status"),
+    [("withdraw", "withdrawn"), ("reject", "rejected")],
+)
+def test_player_hand_close_routes_preserve_audit_and_are_idempotent(
+    tmp_path: Path,
+    action: str,
+    expected_status: str,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    payload = hand_close_payload(record, reason="  Player reviewed this hand  ")
+
+    assert (
+        client.post(
+            f"/api/player/hands/{key}/{action}",
+            json=payload,
+            headers={"Origin": PLAYER_ORIGIN},
+        ).status_code
+        == 401
+    )
+    missing_csrf = client.post(
+        f"/api/player/hands/{key}/{action}",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {session['session_token']}",
+            "Origin": PLAYER_ORIGIN,
+        },
+    )
+    first = client.post(
+        f"/api/player/hands/{key}/{action}",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+    retry = client.post(
+        f"/api/player/hands/{key}/{action}",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+
+    assert missing_csrf.status_code == 403
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    detail = first.json()
+    assert detail["summary"]["lifecycle_status"] == expected_status
+    assert detail["summary"]["active_canonical_revision"] is None
+    assert detail["summary"]["learning_eligible"] is False
+    assert detail["lifecycle"]["reason"] == "Player reviewed this hand"
+    assert len(detail["canonical_revisions"]) == 1
+    assert RAW_TEXT not in first.text
+    stored = runtime.workspace.imported_hands.get(key)
+    assert stored.lifecycle.status == expected_status
+    assert stored.lifecycle.reason == "Player reviewed this hand"
+    assert stored.canonical_revisions == record.canonical_revisions
+
+
+def test_player_hand_close_routes_refuse_stale_or_inactive_records(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    active = approved_record()
+    active_key = imported_hand_record_key(active.identity)
+    pending = pending_review_record(sample_identity(hand_ordinal=2))
+    pending_key = imported_hand_record_key(pending.identity)
+    runtime.workspace.imported_hands.save(active_key, active)
+    runtime.workspace.imported_hands.save(pending_key, pending)
+    session = exchange_session(client, runtime)
+    headers = player_mutation_headers(session)
+    original = hand_close_payload(active, reason="No longer part of my study set")
+
+    withdrawn = client.post(
+        f"/api/player/hands/{active_key}/withdraw",
+        json=original,
+        headers=headers,
+    )
+    stale_reject = client.post(
+        f"/api/player/hands/{active_key}/reject",
+        json={**original, "reason": "The approved state is incorrect"},
+        headers=headers,
+    )
+    pending_close = client.post(
+        f"/api/player/hands/{pending_key}/withdraw",
+        json={
+            "reason": "Not approved",
+            "expected_active_canonical_revision": 1,
+            "expected_deletion_generation": 0,
+            "expected_lifecycle_changed_at": pending.lifecycle.changed_at.isoformat(),
+        },
+        headers=headers,
+    )
+
+    assert withdrawn.status_code == 200
+    assert stale_reject.status_code == 409
+    assert "lifecycle changed" in stale_reject.json()["detail"]
+    assert pending_close.status_code == 409
+    assert runtime.workspace.imported_hands.get(active_key).lifecycle.status == (
+        "withdrawn"
+    )
+    assert runtime.workspace.imported_hands.get(pending_key) == pending
+
+
+@pytest.mark.parametrize(
+    "payload_update",
+    [
+        {"reason": "   "},
+        {"expected_active_canonical_revision": 0},
+        {"expected_deletion_generation": -1},
+        {"expected_lifecycle_changed_at": "2026-08-30T12:00:00"},
+        {"unexpected": True},
+    ],
+)
+def test_player_hand_close_routes_validate_the_complete_precondition(
+    tmp_path: Path,
+    payload_update: dict[str, object],
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        f"/api/player/hands/{key}/withdraw",
+        json={**hand_close_payload(record, reason="Reviewed"), **payload_update},
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 422
+    assert runtime.workspace.imported_hands.get(key) == record
+
+
+def test_player_hand_close_route_reports_a_busy_process_lock(tmp_path: Path) -> None:
+    client, runtime = player_client(tmp_path, write_lock_timeout_seconds=0)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    lock_index = runtime.workspace.imported_hand_lock_index(key)
+    second_runtime = _create_player_runtime(tmp_path)
+    second_lock_index = second_runtime.workspace.imported_hand_lock_index(key)
+    assert second_lock_index == lock_index
+    process_lock = second_runtime.workspace.imported_hand_process_locks[
+        second_lock_index
+    ]
+    assert process_lock.lock_path == (
+        runtime.workspace.imported_hand_process_locks[lock_index].lock_path
+    )
+    descriptor = process_lock.acquire(exclusive=True)
+    try:
+        response = client.post(
+            f"/api/player/hands/{key}/withdraw",
+            json=hand_close_payload(record, reason="Reviewed"),
+            headers=player_mutation_headers(session),
+        )
+    finally:
+        process_lock.release(descriptor)
+
+    assert response.status_code == 409
+    assert "player hand lifecycle lock" in response.json()["detail"]
+    assert runtime.workspace.imported_hands.get(key) == record
+
+
 def test_player_storage_status_preserves_quarantine_across_restarts(
     tmp_path: Path,
 ) -> None:
@@ -993,6 +1183,7 @@ def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
     [
         "/api/player",
         "/api/player/imports",
+        f"/api/player/hands/{'a' * 64}/reject",
         "/api%2Fplayer%2Fimports",
         "/%61pi/%70layer/imports",
         "/%2561pi%252Fplayer%252Fimports",

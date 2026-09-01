@@ -20,20 +20,24 @@ local writable system of record.
 [ADR 0050](../decisions/0050-establish-local-player-runtime-security-substrate.md)
 implements the first runtime security substrate as a separate loopback-only
 application, one-use browser bootstrap, process-local authenticated session,
-CSRF boundary, and reserved hosted namespace. Later checkpoints add local
-storage status and whole-store backup/restore, but no V2 import, per-record,
-lifecycle, or learning routes, so this reference still describes V1 as the
-deployed product and the Phase 1 gate remains closed.
+CSRF boundary, and reserved hosted namespace. Later checkpoints extend this
+local composition, while V1 remains the deployed hosted product and the Phase 1
+gate remains closed.
 [ADR 0051](../decisions/0051-isolate-the-local-player-store-composition.md)
 attaches only the imported-hand store to that runtime, enforces a private
 player-owned data directory, performs interrupted-write recovery before
 startup, and exposes authenticated read-only storage status. It still adds no
-player-record or mutation route.
+player-record or mutation route at that checkpoint.
 [ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md) replaces
 the inline readiness document with a separately built local recovery PWA. It
 exposes storage/recovery status and the existing player backup/restore workflow
 without importing the hosted administrative application or adding player
-import, lifecycle, or learning routes.
+import, lifecycle, or learning routes at that checkpoint.
+[ADR 0054](../decisions/0054-expose-local-approval-deactivation.md) adds the
+first player-record mutations: stale-safe approval withdrawal and rejection
+through the imported-hand cascade, serialized by stable thread and
+process-shared record stripes. Import, correction, approval/reapproval,
+deletion, grading, and learning routes remain unwired.
 CI exercises that separation over real listeners. A browser consumes a one-use
 launch URL from the production Uvicorn player application, proves all player
 API traffic stays on its exact loopback origin, and verifies the service worker
@@ -284,12 +288,25 @@ warning metadata, conflicts, sanitized detected and approved state, lifecycle
 state including deletion-cleanup failures, and deletion receipts. Collection
 responses omit source content; detail responses also omit raw text and evidence
 excerpts, including scalar correction values whose JSON pointer directly names
-an excerpt. The player renders parser proposals, approved revisions,
+an excerpt. Authenticated `POST /api/player/hands/{record_key}/withdraw` and
+`POST /api/player/hands/{record_key}/reject` are the first player lifecycle
+writes. Each requires the active canonical revision, deletion generation, and
+lifecycle timestamp from the loaded detail plus a non-empty player reason.
+Stale requests fail without writing; a retry whose exact requested inactive
+state is already current returns that retained state idempotently. The server
+supplies the transition instant and never accepts a client-authored canonical
+state. The player renders parser proposals, approved revisions,
 field-level confidence, retained conflict resolutions, and cleanup failures
 with source/detection/revision lineage rather than collapsing uncertain or
-failed records into generic inactive copy. Both reads serialize behind restore
-and take the shared data-volume lock before opening records. V1 screenshot and
-benchmark stores are neither constructed nor reachable from this composition.
+failed records into generic inactive copy. Active details expose explicit,
+confirmed withdrawal/rejection controls; interrupted mutation responses are
+reconciled by rereading the audit before the UI reports the outcome. Reads and
+writes serialize behind restore. Reads take the shared data-volume lock before
+opening records. Lifecycle writes take a stable per-record thread stripe and a
+matching named process-shared flock before the store's shared volume hold and
+leaf cascade journal, preventing concurrent local-runtime processes from
+publishing successors built from the same record. V1 screenshot and benchmark
+stores are neither constructed nor reachable from this composition.
 
 The loopback backend serves the verified `apps/pwa/dist-player` build from the
 same local origin. Only its document, manifest, service worker,
@@ -359,13 +376,16 @@ Retries of the published request or completed purge are idempotent. Older
 backups remain subject to `classify_restore`, so they cannot reactivate a
 purged generation without an explicit authorized reimport.
 
-What is deliberately not wired yet: there is no imported-hand import or
-lifecycle mutation HTTP surface, and the hosted screenshot workflow is not a
-V2 player-data path. The local runtime constructs and recovers the player store
-and exposes authenticated storage metadata, read-only record projections, and
-whole-store V2 backup/restore. No import writer, lifecycle transition, or
-re-import resolution has a non-test caller. Future mutation routes inherit the
-session, Host/Origin, and CSRF boundary established by ADR 0050.
+What is deliberately not wired yet: there is no imported-hand import,
+correction/approval/reapproval, deletion, or re-import resolution HTTP surface,
+and the hosted screenshot workflow is not a V2 player-data path. The local
+runtime constructs and recovers the player store and exposes authenticated
+storage metadata, sanitized record projections, approval withdrawal/rejection,
+and whole-store V2 backup/restore. These first lifecycle mutations inherit the
+session, Host/Origin, and CSRF boundary established by ADR 0050; they deactivate
+the active pointer through the shared lifecycle cascade while retaining the
+inactive audit and derived artifacts. No player route can promote V1 screenshot
+state or submit a replacement canonical state.
 
 Hero decision-point extraction lives in
 `app/domain/imported_hands/decisions.py` and consumes the aggregate's
