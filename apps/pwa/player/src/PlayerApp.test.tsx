@@ -1,4 +1,10 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -206,6 +212,7 @@ const activeHandDetail = {
   conflicts: [],
   canonical_revisions: [
     {
+      approval_id: null,
       revision: 1,
       detection_id: "detection-1",
       approved_at: "2026-08-30T12:00:00Z",
@@ -227,6 +234,31 @@ const activeHandDetail = {
           reason: "Confirmed from dealt-to evidence",
         },
       ],
+    },
+  ],
+};
+
+const conflictedActiveHand = {
+  ...activeHand,
+  raw_source_count: 2,
+  detection_count: 2,
+  unresolved_conflict_count: 1,
+};
+
+const conflictedActiveHandDetail = {
+  ...activeHandDetail,
+  summary: conflictedActiveHand,
+  raw_sources: pendingHandDetail.raw_sources,
+  detections: pendingHandDetail.detections,
+  conflicts: [
+    {
+      conflict_id: "conflict-1",
+      raw_source_ids: ["file-1", "file-2"],
+      detected_ids: ["detection-1", "detection-2"],
+      active_canonical_revision_at_creation: 1,
+      status: "unresolved",
+      selected_raw_source_id: null,
+      resolved_at: null,
     },
   ],
 };
@@ -584,12 +616,439 @@ describe("PlayerApp", () => {
     expect(
       screen.getByText(/Revision 1 · detection detection-1/),
     ).toBeInTheDocument();
-    expect(screen.getByText(/"hero_player_id": "hero"/)).toBeInTheDocument();
+    expect(screen.getAllByText(/"hero_player_id": "hero"/)).toHaveLength(2);
     expect(screen.getByText("User corrections")).toBeInTheDocument();
     expect(
       screen.getByText("Confirmed from dealt-to evidence"),
     ).toBeInTheDocument();
     expect(screen.getByText("Change approval state")).toBeInTheDocument();
+    expect(
+      (
+        screen.getByRole("textbox", {
+          name: "Reviewed canonical state (JSON)",
+        }) as HTMLTextAreaElement
+      ).value,
+    ).toContain('"hero_cards": [\n    "As",');
+  });
+
+  it("allows same-source reapproval while blocking an unresolved source switch", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [conflictedActiveHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(conflictedActiveHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+
+    const approvalButton = screen.getByRole("button", {
+      name: "Approve new canonical revision",
+    });
+    expect(approvalButton).toBeEnabled();
+    expect(
+      screen.getByText(/reapproval stays on the preserved canonical source/),
+    ).toBeInTheDocument();
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Detection to review" }),
+      "detection-2",
+    );
+
+    expect(approvalButton).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Resolve the retained source conflict before switching the canonical revision",
+    );
+  });
+
+  it("approves an explicitly corrected detection with exact audit preconditions", async () => {
+    const user = userEvent.setup();
+    const requestId = "33333333-3333-4333-8333-333333333333" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    const correctionReason = "Confirmed the hero from retained evidence";
+    const approvedState = {
+      ...pendingHandDetail.detections[0].state,
+      hero_player_id: "hero",
+    };
+    const committed = {
+      ...pendingHandDetail,
+      summary: {
+        ...pendingHand,
+        record_version: "8".repeat(64),
+        lifecycle_status: "active",
+        lifecycle_changed_at: "2026-08-30T12:31:00Z",
+        active_canonical_revision: 1,
+        learning_eligible: true,
+        canonical_revision_count: 1,
+      },
+      lifecycle: {
+        ...pendingHandDetail.lifecycle,
+        status: "active",
+        active_canonical_revision: 1,
+        changed_at: "2026-08-30T12:31:00Z",
+      },
+      canonical_revisions: [
+        {
+          approval_id: requestId,
+          revision: 1,
+          detection_id: "detection-1",
+          approved_at: "2026-08-30T12:31:00Z",
+          state: approvedState,
+          corrections: [
+            {
+              field_pointer: "/hero_player_id",
+              detected_value: null,
+              approved_value: "hero",
+              corrected_at: "2026-08-30T12:31:00Z",
+              reason: correctionReason,
+            },
+          ],
+        },
+      ],
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [pendingHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(pendingHandDetail))
+      .mockResolvedValueOnce(jsonResponse(committed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Detection to review" }),
+      "detection-1",
+    );
+    const editor = screen.getByRole("textbox", {
+      name: "Reviewed canonical state (JSON)",
+    });
+    expect((editor as HTMLTextAreaElement).value).toContain(
+      '"hero_player_id": null',
+    );
+    fireEvent.change(editor, {
+      target: { value: JSON.stringify(approvedState, null, 2) },
+    });
+    await user.type(
+      screen.getByRole("textbox", { name: "Correction reason" }),
+      correctionReason,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Approve canonical state" }),
+    );
+
+    expect(
+      await screen.findByText(/Canonical revision 1 approved/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Canonical revision 1 is active/),
+    ).toBeInTheDocument();
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /explicit ground truth.*parser proposal remains retained/,
+      ),
+    );
+    const approvalRequest = fetchMock.mock.calls[4];
+    expect(approvalRequest?.[0]).toBe(
+      `/api/player/hands/${pendingHand.record_key}/approve`,
+    );
+    expect(approvalRequest?.[1]?.method).toBe("POST");
+    const approvalHeaders = new Headers(approvalRequest?.[1]?.headers);
+    expect(approvalHeaders.get("Authorization")).toBe("Bearer player-session");
+    expect(approvalHeaders.get("X-Poker-CSRF-Token")).toBe("csrf-token");
+    expect(JSON.parse(String(approvalRequest?.[1]?.body))).toEqual({
+      request_id: requestId,
+      detection_id: "detection-1",
+      approved_state: approvedState,
+      correction_reason: correctionReason,
+      expected_record_version: pendingHand.record_version,
+      expected_lifecycle_status: "pending_review",
+      expected_active_canonical_revision: null,
+      expected_canonical_revision_count: 0,
+      expected_deletion_generation: 0,
+      expected_lifecycle_changed_at: "2026-08-30T12:00:00Z",
+    });
+  });
+
+  it("keeps invalid or unexplained reviewed JSON local", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [pendingHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(pendingHandDetail));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    const editor = screen.getByRole("textbox", {
+      name: "Reviewed canonical state (JSON)",
+    });
+    fireEvent.change(editor, { target: { value: "{" } });
+    await user.click(
+      screen.getByRole("button", { name: "Approve canonical state" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "must be a valid JSON object",
+    );
+
+    fireEvent.change(editor, {
+      target: {
+        value: JSON.stringify(
+          {
+            ...pendingHandDetail.detections[1].state,
+            hero_player_id: "villain",
+          },
+          null,
+          2,
+        ),
+      },
+    });
+    await user.click(
+      screen.getByRole("button", { name: "Approve canonical state" }),
+    );
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Add a correction reason",
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(confirm).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "attributes a lost approval response to the exact active approval id",
+      "33333333-3333-4333-8333-333333333333",
+      true,
+    ],
+    [
+      "does not attribute another active approval to the lost request",
+      "44444444-4444-4444-8444-444444444444",
+      false,
+    ],
+  ] as const)("%s", async (_name, returnedApprovalId, exactMatch) => {
+    const user = userEvent.setup();
+    const requestId = "33333333-3333-4333-8333-333333333333" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    const committed = {
+      ...pendingHandDetail,
+      summary: {
+        ...pendingHand,
+        lifecycle_status: "active",
+        active_canonical_revision: 1,
+        learning_eligible: true,
+        canonical_revision_count: 1,
+      },
+      lifecycle: {
+        ...pendingHandDetail.lifecycle,
+        status: "active",
+        active_canonical_revision: 1,
+      },
+      canonical_revisions: [
+        {
+          approval_id: returnedApprovalId,
+          revision: 1,
+          detection_id: "detection-2",
+          approved_at: "2026-08-30T12:31:00Z",
+          state: pendingHandDetail.detections[1].state,
+          corrections: [],
+        },
+      ],
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [pendingHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(pendingHandDetail))
+      .mockRejectedValueOnce(new TypeError("connection interrupted"))
+      .mockResolvedValueOnce(jsonResponse(committed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    if (!exactMatch) {
+      fireEvent.change(
+        screen.getByRole("textbox", {
+          name: "Reviewed canonical state (JSON)",
+        }),
+        {
+          target: {
+            value: JSON.stringify(
+              {
+                ...pendingHandDetail.detections[1].state,
+                hero_player_id: "villain",
+              },
+              null,
+              2,
+            ),
+          },
+        },
+      );
+      await user.type(
+        screen.getByRole("textbox", { name: "Correction reason" }),
+        "Keep this proposed correction",
+      );
+    }
+    await user.click(
+      screen.getByRole("button", { name: "Approve canonical state" }),
+    );
+
+    if (exactMatch) {
+      expect(
+        await screen.findByText(
+          /committed even though the original response was interrupted/,
+        ),
+      ).toHaveTextContent("exact approval audit was refreshed");
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    } else {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Canonical approval was not confirmed. The audit detail was refreshed.",
+      );
+      expect(
+        screen.queryByText(
+          /committed even though the original response was interrupted/,
+        ),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("textbox", { name: "Correction reason" }),
+      ).toHaveValue("Keep this proposed correction");
+      expect(
+        (
+          screen.getByRole("textbox", {
+            name: "Reviewed canonical state (JSON)",
+          }) as HTMLTextAreaElement
+        ).value,
+      ).toContain('"hero_player_id": "villain"');
+    }
+    expect(fetchMock.mock.calls[5]?.[0]).toBe(
+      `/api/player/hands/${pendingHand.record_key}`,
+    );
+  });
+
+  it("requires runtime restart when canonical approval recovery is pending", async () => {
+    const user = userEvent.setup();
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [pendingHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(pendingHandDetail))
+      .mockResolvedValueOnce(
+        jsonResponse({ detail: "Interrupted approval write" }, 503),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Approve canonical state" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /lifecycle outcome is unresolved.*Restart the local player runtime/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Ready on this machine")).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(PLAYER_SESSION_STORAGE_KEY)).toBeNull();
+    expect(sessionStorage.getItem(PLAYER_CSRF_STORAGE_KEY)).toBeNull();
   });
 
   it.each([
@@ -1656,7 +2115,7 @@ describe("PlayerApp", () => {
     expect(screen.getByText("2", { selector: "dd" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Direct hand-history import, correction, approval, and learning are not enabled/,
+        /Correction and explicit approval are enabled.*Direct hand-history import and the V2 learning loop are not enabled/,
       ),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Load hand records" }));

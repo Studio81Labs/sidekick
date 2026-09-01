@@ -30,6 +30,7 @@ from app.domain.imported_hands import (
     StructuralPosition,
     TournamentEconomics,
     UserCorrection,
+    canonical_revision_from_review,
     classify_reimport,
     classify_restore,
     derive_structural_positions,
@@ -14176,6 +14177,417 @@ def test_active_record_enforces_user_corrections_and_round_trips() -> None:
         )
 
 
+def test_review_factory_derives_corrections_and_server_owned_audit() -> None:
+    approved_payload = hand_state().model_dump(mode="json")
+    approved_payload["hero_player_id"] = "hero"
+    approved_at = NOW + timedelta(minutes=1)
+
+    approved = canonical_revision_from_review(
+        detected(),
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=approved_at,
+        approved_state=approved_payload,
+        correction_reason="Confirmed from reviewed source evidence",
+    )
+    unchanged = canonical_revision_from_review(
+        detected(),
+        approval_id="44444444-4444-4444-8444-444444444444",
+        revision=2,
+        approved_at=approved_at,
+        approved_state=hand_state().model_dump(mode="json"),
+        correction_reason=None,
+    )
+
+    assert approved.approval_id == "33333333-3333-4333-8333-333333333333"
+    assert approved.state.hero_player_id == "hero"
+    assert approved.corrections == [
+        UserCorrection(
+            field_pointer="/hero_player_id",
+            detected_value=None,
+            approved_value="hero",
+            corrected_at=approved_at,
+            reason="Confirmed from reviewed source evidence",
+        )
+    ]
+    assert unchanged.corrections == []
+
+    with pytest.raises(ValueError, match="requires a correction reason"):
+        canonical_revision_from_review(
+            detected(),
+            approval_id="55555555-5555-4555-8555-555555555555",
+            revision=1,
+            approved_at=approved_at,
+            approved_state=approved_payload,
+            correction_reason=None,
+        )
+
+
+def test_review_factory_restores_private_source_excerpts_before_validation() -> None:
+    state_payload = hand_state().model_dump()
+    state_payload["streets"][0]["actions"] = [
+        wager_action(0, "hero", "check", total=Decimal(0))
+    ]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed_payload = source_state.model_dump(mode="json")
+    action = reviewed_payload["streets"][0]["actions"][0]
+    del action["evidence"][0]["excerpt"]
+    del action["origin"]["evidence"][0]["excerpt"]
+
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason=None,
+    )
+
+    assert approved.corrections == []
+    retained_action = approved.state.streets[0].actions[0]
+    assert retained_action.evidence[0].excerpt == "PokerStars Hand #123456789"
+    assert retained_action.origin.evidence[0].excerpt == (
+        "PokerStars Hand #123456789"
+    )
+
+
+def test_review_factory_matches_reordered_actions_by_visible_evidence() -> None:
+    state_payload = hand_state().model_dump()
+    actions = [
+        wager_action(0, "hero", "check", total=Decimal(0)),
+        wager_action(1, "villain", "check", total=Decimal(0)),
+    ]
+    for line, action in enumerate(actions, start=1):
+        locator = {
+            "raw_source_id": "file-1",
+            "line_start": line + 1,
+            "excerpt": f"action line {line}",
+        }
+        action["evidence"] = [locator]
+        action["origin"]["evidence"] = [locator]
+    state_payload["streets"][0]["actions"] = actions
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_actions = list(reversed(reviewed_payload["streets"][0]["actions"]))
+    for sequence, action in enumerate(reviewed_actions):
+        action["sequence"] = sequence
+        del action["evidence"][0]["excerpt"]
+        del action["origin"]["evidence"][0]["excerpt"]
+    reviewed_payload["streets"][0]["actions"] = reviewed_actions
+
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Corrected action order",
+    )
+
+    assert [action.actor_id for action in approved.state.streets[0].actions] == [
+        "villain",
+        "hero",
+    ]
+    assert [
+        action.evidence[0].excerpt for action in approved.state.streets[0].actions
+    ] == ["action line 2", "action line 1"]
+    serialized_corrections = json.dumps(
+        [correction.model_dump(mode="json") for correction in approved.corrections]
+    )
+    assert approved.corrections
+    assert all(
+        "excerpt" not in correction.field_pointer
+        for correction in approved.corrections
+    )
+    assert '"excerpt"' not in serialized_corrections
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(
+                raw_text=(
+                    "PokerStars Hand #123456789\n"
+                    "action line 1\n"
+                    "action line 2\n"
+                )
+            )
+        ],
+        detections=[source_detection],
+        canonical_revisions=[approved],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved.approved_at,
+        },
+    )
+
+    assert record.canonical_revisions[0] == approved
+
+
+def test_aggregate_accepts_legacy_exact_private_excerpt_corrections() -> None:
+    state_payload = hand_state().model_dump()
+    action = wager_action(0, "hero", "check", total=Decimal(0))
+    locator = {
+        "raw_source_id": "file-1",
+        "line_start": 2,
+        "excerpt": "original excerpt",
+    }
+    action["evidence"] = [locator]
+    action["origin"]["evidence"] = [locator]
+    state_payload["streets"][0]["actions"] = [action]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    approved_payload = source_state.model_dump()
+    approved_action = approved_payload["streets"][0]["actions"][0]
+    approved_action["evidence"][0]["excerpt"] = "approved excerpt"
+    approved_action["origin"]["evidence"][0]["excerpt"] = "approved excerpt"
+    approved_state = ImportedHandState.model_validate(approved_payload)
+    approved_at = NOW + timedelta(minutes=1)
+    legacy_revision = CanonicalHandRevision(
+        revision=1,
+        detection_id=source_detection.detection_id,
+        approved_at=approved_at,
+        state=approved_state,
+        corrections=[
+            UserCorrection(
+                field_pointer=f"/streets/0/actions/0/{pointer}/0/excerpt",
+                detected_value="original excerpt",
+                approved_value="approved excerpt",
+                corrected_at=approved_at,
+                reason="Legacy positional evidence correction",
+            )
+            for pointer in ("evidence", "origin/evidence")
+        ],
+    )
+
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[
+            raw_source(
+                raw_text=(
+                    "PokerStars Hand #123456789\n"
+                    "original excerpt and approved excerpt\n"
+                )
+            )
+        ],
+        detections=[source_detection],
+        canonical_revisions=[legacy_revision],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved_at,
+        },
+    )
+
+    assert record.canonical_revisions[0] == legacy_revision
+
+
+def test_review_factory_matches_changed_result_identity_by_visible_evidence() -> None:
+    state_payload = hand_state().model_dump()
+    state_payload["seats"][0]["starting_stack"] = Decimal("1")
+    state_payload["streets"] = [
+        {
+            "street": "preflop",
+            "actions": [
+                wager_action(
+                    0,
+                    "hero",
+                    "bet",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                    all_in=True,
+                ),
+                wager_action(
+                    1,
+                    "villain",
+                    "call",
+                    amount=Decimal("1"),
+                    total=Decimal("1"),
+                ),
+            ],
+        },
+        {"street": "flop", "actions": []},
+        {"street": "turn", "actions": []},
+        {"street": "river", "actions": []},
+    ]
+    state_payload["results"] = {
+        "showdown": [
+            {
+                "player_id": "hero",
+                "cards": [],
+                "disposition": "shown",
+                "evidence": [evidence()],
+            }
+        ],
+        "awards": [
+            {
+                "player_id": "hero",
+                "amount": Decimal("2"),
+                "evidence": [evidence()],
+            }
+        ],
+    }
+    source_state = ImportedHandState.model_validate(state_payload)
+    reviewed_payload = source_state.model_dump(mode="json")
+
+    def remove_excerpts(value: object) -> None:
+        if isinstance(value, dict):
+            value.pop("excerpt", None)
+            for item in value.values():
+                remove_excerpts(item)
+        elif isinstance(value, list):
+            for item in value:
+                remove_excerpts(item)
+
+    remove_excerpts(reviewed_payload)
+    reviewed_payload["results"]["showdown"][0]["player_id"] = "villain"
+
+    approved = canonical_revision_from_review(
+        detected(source_state),
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Corrected the showdown player",
+    )
+
+    assert approved.state.results is not None
+    showdown = approved.state.results.showdown[0]
+    assert showdown.player_id == "villain"
+    assert showdown.evidence[0].excerpt == "PokerStars Hand #123456789"
+
+
+def test_review_factory_allows_corrections_to_lists_without_private_evidence() -> None:
+    source_payload = hand_state(hero_player_id="hero").model_dump()
+    source_payload["hero_cards"] = [
+        {"rank": "A", "suit": "spades"},
+        {"rank": "K", "suit": "hearts"},
+    ]
+    source_state = ImportedHandState.model_validate(source_payload)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_payload["hero_cards"][1] = {"rank": "Q", "suit": "hearts"}
+
+    approved = canonical_revision_from_review(
+        detected(source_state),
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Corrected the second hole card",
+    )
+
+    assert [card.code for card in approved.state.hero_cards] == ["As", "Qh"]
+
+
+def test_review_factory_rejects_an_unmatched_private_evidence_item() -> None:
+    state_payload = hand_state().model_dump()
+    state_payload["streets"][0]["actions"] = [
+        wager_action(0, "hero", "check", total=Decimal(0))
+    ]
+    source_state = ImportedHandState.model_validate(state_payload)
+    reviewed_payload = source_state.model_dump(mode="json")
+    action = reviewed_payload["streets"][0]["actions"][0]
+    for locator in (action["evidence"][0], action["origin"]["evidence"][0]):
+        del locator["excerpt"]
+        locator["line_start"] = 2
+
+    with pytest.raises(ValueError, match="cannot map private source evidence"):
+        canonical_revision_from_review(
+            detected(source_state),
+            approval_id="33333333-3333-4333-8333-333333333333",
+            revision=1,
+            approved_at=NOW + timedelta(minutes=1),
+            approved_state=reviewed_payload,
+            correction_reason="Corrected the evidence location",
+        )
+
+
+def test_review_factory_rejects_client_supplied_private_excerpts() -> None:
+    state_payload = hand_state().model_dump()
+    state_payload["streets"][0]["actions"] = [
+        wager_action(0, "hero", "check", total=Decimal(0))
+    ]
+    source_state = ImportedHandState.model_validate(state_payload)
+
+    with pytest.raises(ValueError, match="cannot supply private source excerpts"):
+        canonical_revision_from_review(
+            detected(source_state),
+            approval_id="33333333-3333-4333-8333-333333333333",
+            revision=1,
+            approved_at=NOW + timedelta(minutes=1),
+            approved_state=source_state.model_dump(mode="json"),
+            correction_reason=None,
+        )
+
+
+def test_review_factory_rejects_ambiguous_private_evidence_reordering() -> None:
+    state_payload = hand_state().model_dump()
+    actions = [
+        wager_action(0, "hero", "check", total=Decimal(0)),
+        wager_action(1, "villain", "check", total=Decimal(0)),
+    ]
+    for index, action in enumerate(actions, start=1):
+        locator = {
+            "raw_source_id": "file-1",
+            "line_start": 1,
+            "excerpt": f"private action {index}",
+        }
+        action["evidence"] = [locator]
+        action["origin"]["evidence"] = [locator]
+    state_payload["streets"][0]["actions"] = actions
+    source_state = ImportedHandState.model_validate(state_payload)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_actions = list(reversed(reviewed_payload["streets"][0]["actions"]))
+    for sequence, action in enumerate(reviewed_actions):
+        action["sequence"] = sequence
+        del action["evidence"][0]["excerpt"]
+        del action["origin"]["evidence"][0]["excerpt"]
+    reviewed_payload["streets"][0]["actions"] = reviewed_actions
+
+    with pytest.raises(ValueError, match="cannot map private source evidence"):
+        canonical_revision_from_review(
+            detected(source_state),
+            approval_id="33333333-3333-4333-8333-333333333333",
+            revision=1,
+            approved_at=NOW + timedelta(minutes=1),
+            approved_state=reviewed_payload,
+            correction_reason="Corrected action order",
+        )
+
+
+def test_record_rejects_duplicate_non_null_approval_ids() -> None:
+    first = revision().model_copy(
+        update={"approval_id": "33333333-3333-4333-8333-333333333333"}
+    )
+    second = first.model_copy(
+        update={
+            "revision": 2,
+            "approved_at": NOW + timedelta(minutes=1),
+            "corrections": [
+                correction.model_copy(
+                    update={"corrected_at": NOW + timedelta(minutes=1)}
+                )
+                for correction in first.corrections
+            ],
+        }
+    )
+
+    with pytest.raises(ValidationError, match="canonical approval ids must be unique"):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[raw_source()],
+            detections=[detected()],
+            canonical_revisions=[first, second],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 2,
+                "changed_at": second.approved_at,
+            },
+        )
+
+
 def test_correction_cannot_be_recorded_after_its_approval() -> None:
     with pytest.raises(ValidationError, match="corrected_at cannot follow approved_at"):
         CanonicalHandRevision(
@@ -14624,6 +15036,162 @@ def test_user_confirmation_must_resolve_a_detected_unknown_origin() -> None:
         match="user-confirmed origin must resolve a detected unknown origin",
     ):
         origin_confirmation_record(explicit, confirmed, corrections)
+
+
+@pytest.mark.parametrize(
+    ("confirmed_index", "is_valid"),
+    [(0, False), (1, True)],
+)
+def test_reordered_confirmation_remains_bound_to_action_evidence(
+    confirmed_index: int,
+    is_valid: bool,
+) -> None:
+    state_payload = hand_state().model_dump()
+    unresolved_action = wager_action(0, "hero", "check", total=Decimal(0))
+    unresolved_action["origin"] = {
+        "kind": "unknown",
+        "basis": "unresolved",
+        "evidence": [
+            {
+                "raw_source_id": "file-1",
+                "line_start": 2,
+                "excerpt": "hero check",
+            }
+        ],
+    }
+    unresolved_action["evidence"] = unresolved_action["origin"]["evidence"]
+    automatic = automatic_action(1, "villain")
+    automatic_locator = {
+        "raw_source_id": "file-1",
+        "line_start": 3,
+        "excerpt": "villain automatic check",
+    }
+    automatic["evidence"] = [automatic_locator]
+    automatic["origin"]["evidence"] = [automatic_locator]
+    state_payload["streets"][0]["actions"] = [unresolved_action, automatic]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_actions = list(reversed(reviewed_payload["streets"][0]["actions"]))
+    for sequence, action in enumerate(reviewed_actions):
+        action["sequence"] = sequence
+        del action["evidence"][0]["excerpt"]
+        del action["origin"]["evidence"][0]["excerpt"]
+    reviewed_origin = reviewed_actions[confirmed_index]["origin"]
+    reviewed_origin["kind"] = "player_selected"
+    reviewed_origin["basis"] = "user_confirmed"
+    reviewed_origin["automatic_reason"] = None
+    reviewed_origin["review_reference"] = f"review-action-{confirmed_index}"
+    reviewed_payload["streets"][0]["actions"] = reviewed_actions
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Corrected action order and origin",
+    )
+
+    record_payload = {
+        "identity": IDENTITY,
+        "raw_sources": [
+            raw_source(
+                raw_text=(
+                    "PokerStars Hand #123456789\n"
+                    "hero check\n"
+                    "villain automatic check\n"
+                )
+            )
+        ],
+        "detections": [source_detection],
+        "canonical_revisions": [approved],
+        "lifecycle": {
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved.approved_at,
+        },
+    }
+    if not is_valid:
+        with pytest.raises(
+            ValidationError,
+            match="user-confirmed origin must resolve a detected unknown origin",
+        ):
+            ImportedHandRecord.model_validate(record_payload)
+        return
+
+    record = ImportedHandRecord.model_validate(record_payload)
+
+    assert record.canonical_revisions[0] == approved
+
+
+def test_user_confirmation_cannot_copy_another_actions_visible_evidence() -> None:
+    state_payload = hand_state().model_dump()
+    unresolved_action = wager_action(0, "hero", "check", total=Decimal(0))
+    unresolved_locator = {
+        "raw_source_id": "file-1",
+        "line_start": 2,
+    }
+    unresolved_action["evidence"] = [unresolved_locator]
+    unresolved_action["origin"] = {
+        "kind": "unknown",
+        "basis": "unresolved",
+        "evidence": [unresolved_locator],
+    }
+    automatic = automatic_action(1, "hero")
+    automatic_locator = {
+        "raw_source_id": "file-1",
+        "line_start": 3,
+    }
+    automatic["evidence"] = [automatic_locator]
+    automatic["origin"]["evidence"] = [automatic_locator]
+    state_payload["streets"][0]["actions"] = [unresolved_action, automatic]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_actions = reviewed_payload["streets"][0]["actions"]
+    for action in reviewed_actions:
+        del action["evidence"][0]["excerpt"]
+        del action["origin"]["evidence"][0]["excerpt"]
+    copied_locator = dict(reviewed_actions[0]["evidence"][0])
+    reviewed_actions[1]["evidence"] = [copied_locator]
+    reviewed_actions[1]["origin"] = {
+        "kind": "player_selected",
+        "basis": "user_confirmed",
+        "review_reference": "review-action-1",
+        "evidence": [copied_locator],
+    }
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Confirmed the hero action",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="user-confirmed origin must map unambiguously to a detected action",
+    ):
+        ImportedHandRecord(
+            identity=IDENTITY,
+            raw_sources=[
+                raw_source(
+                    raw_text=(
+                        "PokerStars Hand #123456789\n"
+                        "hero unresolved check\n"
+                        "hero automatic check\n"
+                    )
+                )
+            ],
+            detections=[source_detection],
+            canonical_revisions=[approved],
+            lifecycle={
+                "status": "active",
+                "active_canonical_revision": 1,
+                "changed_at": approved.approved_at,
+            },
+        )
 
 
 def test_explicit_marker_origin_remains_valid_without_a_correction() -> None:

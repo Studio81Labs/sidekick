@@ -124,6 +124,7 @@ class PlayerUserCorrectionAudit(PlayerHandProjection):
 
 
 class PlayerCanonicalRevisionAudit(PlayerHandProjection):
+    approval_id: str | None
     revision: int
     detection_id: str
     approved_at: datetime
@@ -142,6 +143,21 @@ class PlayerHandDetail(PlayerHandProjection):
 
 
 PlayerHandCloseAction = Literal["withdraw", "reject"]
+PlayerRequestId = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        pattern=(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
+            r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+        ),
+        strict=True,
+    ),
+]
+PlayerRecordVersion = Annotated[
+    str,
+    StringConstraints(pattern=r"^[a-f0-9]{64}$", strict=True),
+]
 
 
 class PlayerHandCloseRequest(PlayerHandProjection):
@@ -164,17 +180,7 @@ class PlayerHandCloseRequest(PlayerHandProjection):
 class PlayerHandDeleteRequest(PlayerHandProjection):
     """Exact retained-record precondition for one permanent deletion."""
 
-    request_id: Annotated[
-        str,
-        StringConstraints(
-            strip_whitespace=True,
-            pattern=(
-                r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-"
-                r"[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            ),
-            strict=True,
-        ),
-    ]
+    request_id: PlayerRequestId
     reason: Annotated[
         str,
         StringConstraints(
@@ -184,10 +190,7 @@ class PlayerHandDeleteRequest(PlayerHandProjection):
             strict=True,
         ),
     ]
-    expected_record_version: Annotated[
-        str,
-        StringConstraints(pattern=r"^[a-f0-9]{64}$", strict=True),
-    ]
+    expected_record_version: PlayerRecordVersion
     expected_lifecycle_status: Literal[
         "pending_review",
         "active",
@@ -216,6 +219,69 @@ class PlayerHandDeleteRequest(PlayerHandProjection):
         ):
             raise ValueError(
                 "inactive deletion precondition cannot select an active revision"
+            )
+        return self
+
+
+class PlayerHandApprovalRequest(PlayerHandProjection):
+    """Explicit reviewed state and exact retained-record precondition."""
+
+    request_id: PlayerRequestId
+    detection_id: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=160,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/+\-]*$",
+            strict=True,
+        ),
+    ]
+    approved_state: dict[str, JsonValue]
+    correction_reason: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=500,
+            strict=True,
+        ),
+    ] | None = None
+    expected_record_version: PlayerRecordVersion
+    expected_lifecycle_status: Literal[
+        "pending_review",
+        "active",
+        "withdrawn",
+        "rejected",
+    ]
+    expected_active_canonical_revision: int | None = Field(
+        default=None,
+        ge=1,
+        strict=True,
+    )
+    expected_canonical_revision_count: int = Field(ge=0, strict=True)
+    expected_deletion_generation: int = Field(ge=0, strict=True)
+    expected_lifecycle_changed_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_revision_precondition(self) -> Self:
+        active_revision = self.expected_active_canonical_revision
+        revision_count = self.expected_canonical_revision_count
+        if self.expected_lifecycle_status == "active":
+            if active_revision is None or active_revision != revision_count:
+                raise ValueError(
+                    "active approval precondition requires the latest active revision"
+                )
+        elif active_revision is not None:
+            raise ValueError(
+                "inactive approval precondition cannot select an active revision"
+            )
+        if (
+            self.expected_lifecycle_status in {"withdrawn", "rejected"}
+            and revision_count == 0
+        ):
+            raise ValueError(
+                "withdrawn or rejected approval precondition requires retained revisions"
             )
         return self
 
@@ -405,6 +471,7 @@ def get_player_hand(
         conflicts=record.conflicts,
         canonical_revisions=[
             PlayerCanonicalRevisionAudit(
+                approval_id=revision.approval_id,
                 revision=revision.revision,
                 detection_id=revision.detection_id,
                 approved_at=revision.approved_at,

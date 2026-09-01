@@ -12,6 +12,7 @@ import {
   type PlayerHandList,
   type PlayerHandSummary,
   type PlayerStorageStatus,
+  approvePlayerHand,
   bootstrapPlayerSession,
   clearPlayerCredentials,
   closePlayerHand,
@@ -29,6 +30,7 @@ type BusyAction =
   | "restore"
   | "records"
   | "detail"
+  | "approve"
   | "withdraw"
   | "reject"
   | "delete"
@@ -84,26 +86,112 @@ function evidenceLocation(
   return `source ${evidence.raw_source_id} · ${locators.join(" · ")}`;
 }
 
+interface HandApprovalDraft {
+  detectionId: string;
+  reviewedState: string;
+  correctionReason: string;
+}
+
+function approvalDraftFor(
+  detail: PlayerHandDetail,
+  requestedDetectionId?: string,
+): HandApprovalDraft | null {
+  const retainedDetectionIds = new Set(
+    detail.detections.map((detection) => detection.detection_id),
+  );
+  const latestRevision =
+    detail.canonical_revisions[detail.canonical_revisions.length - 1];
+  const detectionId =
+    (requestedDetectionId && retainedDetectionIds.has(requestedDetectionId)
+      ? requestedDetectionId
+      : null) ??
+    (latestRevision && retainedDetectionIds.has(latestRevision.detection_id)
+      ? latestRevision.detection_id
+      : detail.detections[detail.detections.length - 1]?.detection_id);
+  if (!detectionId) return null;
+  const matchingRevision = [...detail.canonical_revisions]
+    .reverse()
+    .find((revision) => revision.detection_id === detectionId);
+  const state =
+    matchingRevision?.state ??
+    detail.detections.find(
+      (detection) => detection.detection_id === detectionId,
+    )?.state;
+  if (!state) return null;
+  return {
+    detectionId,
+    reviewedState: JSON.stringify(state, null, 2),
+    correctionReason: "",
+  };
+}
+
+function normalizedJson(value: unknown): string {
+  const normalize = (item: unknown): unknown => {
+    if (Array.isArray(item)) return item.map(normalize);
+    if (item !== null && typeof item === "object") {
+      return Object.fromEntries(
+        Object.entries(item)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, child]) => [key, normalize(child)]),
+      );
+    }
+    return item;
+  };
+  return JSON.stringify(normalize(value));
+}
+
+function approvalRequiresConflictResolution(
+  detail: PlayerHandDetail,
+  detectionId: string,
+): boolean {
+  if (detail.summary.unresolved_conflict_count === 0) return false;
+  const selectedDetection = detail.detections.find(
+    (detection) => detection.detection_id === detectionId,
+  );
+  const latestRevision =
+    detail.canonical_revisions[detail.canonical_revisions.length - 1];
+  const canonicalDetection = latestRevision
+    ? detail.detections.find(
+        (detection) => detection.detection_id === latestRevision.detection_id,
+      )
+    : null;
+  return (
+    !selectedDetection ||
+    !canonicalDetection ||
+    selectedDetection.raw_source_id !== canonicalDetection.raw_source_id
+  );
+}
+
 interface HandDetailProps {
+  approvalDraft: HandApprovalDraft | null;
   busy: BusyAction;
   closeReason: string;
   deleteReason: string;
   detail: PlayerHandDetail;
+  onApprove: () => void;
+  onApprovalDetectionChange: (detectionId: string) => void;
+  onCorrectionReasonChange: (reason: string) => void;
   onClose: (action: PlayerHandCloseAction) => void;
   onDelete: () => void;
   onDeleteReasonChange: (reason: string) => void;
   onReasonChange: (reason: string) => void;
+  onReviewedStateChange: (state: string) => void;
 }
 
 function HandDetail({
+  approvalDraft,
   busy,
   closeReason,
   deleteReason,
   detail,
+  onApprove,
+  onApprovalDetectionChange,
+  onCorrectionReasonChange,
   onClose,
   onDelete,
   onDeleteReasonChange,
   onReasonChange,
+  onReviewedStateChange,
 }: HandDetailProps) {
   const { summary } = detail;
   const recognitionWarnings = detail.detections.flatMap((detection) => [
@@ -129,6 +217,9 @@ function HandDetail({
     })),
   );
   const deletionRequest = detail.lifecycle.deletion_request;
+  const approvalBlockedByConflict = approvalDraft
+    ? approvalRequiresConflictResolution(detail, approvalDraft.detectionId)
+    : false;
   return (
     <article className="hand-detail" aria-labelledby="hand-detail-heading">
       <div>
@@ -204,6 +295,93 @@ function HandDetail({
           <dd>{summary.unresolved_conflict_count}</dd>
         </div>
       </dl>
+      {approvalDraft &&
+      ["pending_review", "active", "withdrawn", "rejected"].includes(
+        summary.lifecycle_status,
+      ) ? (
+        <div className="audit-block lifecycle-actions approval-review">
+          <h4>Review and approve canonical state</h4>
+          <p>
+            Select one retained detection, review every field, and explicitly
+            publish the JSON below as canonical ground truth. Parser output
+            remains retained as evidence; your approved revision is stored
+            separately and becomes the only state eligible for learning.
+          </p>
+          {summary.unresolved_conflict_count > 0 ? (
+            approvalBlockedByConflict ? (
+              <p className="deletion-failure" role="alert">
+                Resolve the retained source conflict before switching the
+                canonical revision to this detection's source.
+              </p>
+            ) : (
+              <p className="field-help">
+                A competing source remains unresolved. This reapproval stays on
+                the preserved canonical source and does not resolve or replace
+                it.
+              </p>
+            )
+          ) : null}
+          <label>
+            <span>Detection to review</span>
+            <select
+              value={approvalDraft.detectionId}
+              disabled={busy !== null}
+              onChange={(event) =>
+                onApprovalDetectionChange(event.target.value)
+              }
+            >
+              {detail.detections.map((detection) => (
+                <option
+                  key={detection.detection_id}
+                  value={detection.detection_id}
+                >
+                  {detection.detection_id} · {detection.detector_id}{" "}
+                  {detection.detector_version}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Reviewed canonical state (JSON)</span>
+            <textarea
+              className="canonical-state-editor"
+              required
+              rows={18}
+              spellCheck={false}
+              value={approvalDraft.reviewedState}
+              disabled={busy !== null}
+              onChange={(event) => onReviewedStateChange(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>Correction reason</span>
+            <textarea
+              maxLength={500}
+              rows={3}
+              value={approvalDraft.correctionReason}
+              disabled={busy !== null}
+              onChange={(event) => onCorrectionReasonChange(event.target.value)}
+            />
+          </label>
+          <p className="field-help">
+            A reason is required whenever the reviewed JSON differs from the
+            selected detection. The service derives corrected fields, detected
+            values, and audit timestamps itself.
+          </p>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy !== null || approvalBlockedByConflict}
+            onClick={onApprove}
+          >
+            {busy === "approve"
+              ? "Approving reviewed state…"
+              : summary.canonical_revision_count > 0
+                ? "Approve new canonical revision"
+                : "Approve canonical state"}
+          </button>
+        </div>
+      ) : null}
       {summary.lifecycle_status === "active" ? (
         <div className="audit-block lifecycle-actions">
           <h4>Change approval state</h4>
@@ -488,6 +666,9 @@ export default function PlayerApp() {
     useState<PlayerBackupRestoreResult | null>(null);
   const [handPage, setHandPage] = useState<PlayerHandList | null>(null);
   const [handDetail, setHandDetail] = useState<PlayerHandDetail | null>(null);
+  const [approvalDraft, setApprovalDraft] = useState<HandApprovalDraft | null>(
+    null,
+  );
   const [loadingHandKey, setLoadingHandKey] = useState<string | null>(null);
   const [closeReason, setCloseReason] = useState("");
   const [deleteReason, setDeleteReason] = useState("");
@@ -533,6 +714,7 @@ export default function PlayerApp() {
       setStorage(null);
       setHandPage(null);
       setHandDetail(null);
+      setApprovalDraft(null);
       setCloseReason("");
       setDeleteReason("");
       setActionNotice(null);
@@ -547,6 +729,7 @@ export default function PlayerApp() {
     setStorage(null);
     setHandPage(null);
     setHandDetail(null);
+    setApprovalDraft(null);
     setCloseReason("");
     setDeleteReason("");
     setActionNotice(null);
@@ -588,6 +771,7 @@ export default function PlayerApp() {
       );
       if (!append) {
         setHandDetail(null);
+        setApprovalDraft(null);
         setCloseReason("");
         setDeleteReason("");
       }
@@ -604,12 +788,14 @@ export default function PlayerApp() {
     setError(null);
     setActionNotice(null);
     setHandDetail(null);
+    setApprovalDraft(null);
     setCloseReason("");
     setDeleteReason("");
     setLoadingHandKey(recordKey);
     try {
       const detail = await loadPlayerHand(credentials, recordKey);
       setHandDetail(detail);
+      setApprovalDraft(approvalDraftFor(detail));
       if (detail.summary.lifecycle_status === "deletion_pending") {
         setDeleteReason(detail.lifecycle.reason ?? "");
       }
@@ -625,8 +811,12 @@ export default function PlayerApp() {
     }
   };
 
-  const replaceHandDetail = (detail: PlayerHandDetail) => {
+  const replaceHandDetail = (
+    detail: PlayerHandDetail,
+    nextApprovalDraft = approvalDraftFor(detail),
+  ) => {
     setHandDetail(detail);
+    setApprovalDraft(nextApprovalDraft);
     setHandPage((current) =>
       current
         ? {
@@ -639,6 +829,138 @@ export default function PlayerApp() {
           }
         : current,
     );
+  };
+
+  const approveReviewedHand = async () => {
+    if (!credentials || !handDetail || !approvalDraft) return;
+    if (
+      approvalRequiresConflictResolution(handDetail, approvalDraft.detectionId)
+    ) {
+      setError(
+        "Resolve the retained source conflict before switching canonical source.",
+      );
+      return;
+    }
+    let approvedState: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(approvalDraft.reviewedState) as unknown;
+      if (
+        parsed === null ||
+        typeof parsed !== "object" ||
+        Array.isArray(parsed)
+      ) {
+        throw new Error("not an object");
+      }
+      approvedState = parsed as Record<string, unknown>;
+    } catch {
+      setError("Reviewed canonical state must be a valid JSON object.");
+      return;
+    }
+    const detection = handDetail.detections.find(
+      (item) => item.detection_id === approvalDraft.detectionId,
+    );
+    if (!detection) {
+      setError(
+        "The selected detection is no longer retained. Reload the hand.",
+      );
+      return;
+    }
+    const correctionReason = approvalDraft.correctionReason.trim();
+    if (
+      normalizedJson(approvedState) !== normalizedJson(detection.state) &&
+      correctionReason.length === 0
+    ) {
+      setError(
+        "Add a correction reason because the reviewed state differs from the selected detection.",
+      );
+      return;
+    }
+    const confirmed = window.confirm(
+      `Confirm canonical approval from detection ${approvalDraft.detectionId}. The reviewed state will become explicit ground truth for local learning, while the parser proposal remains retained separately for audit.`,
+    );
+    if (!confirmed) return;
+
+    const requestedDetail = handDetail;
+    const requestId = crypto.randomUUID();
+    setBusy("approve");
+    setError(null);
+    setActionNotice(null);
+    try {
+      const updated = await approvePlayerHand(
+        credentials,
+        requestedDetail.summary.record_key,
+        requestId,
+        approvalDraft.detectionId,
+        approvedState,
+        correctionReason || null,
+        requestedDetail.summary,
+      );
+      replaceHandDetail(updated);
+      setActionNotice(
+        `Canonical revision ${updated.summary.active_canonical_revision} approved. The reviewed state is now active for local learning.`,
+      );
+    } catch (approvalError) {
+      if (approvalError instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(approvalError.message);
+      } else if (
+        approvalError instanceof PlayerApiError &&
+        approvalError.status === 401
+      ) {
+        handleRequestError(approvalError);
+      } else {
+        try {
+          const refreshed = await loadPlayerHand(
+            credentials,
+            requestedDetail.summary.record_key,
+          );
+          const latestRevision =
+            refreshed.canonical_revisions[
+              refreshed.canonical_revisions.length - 1
+            ];
+          const exactApprovalCommitted =
+            refreshed.summary.lifecycle_status === "active" &&
+            latestRevision?.approval_id === requestId &&
+            refreshed.summary.active_canonical_revision ===
+              latestRevision.revision;
+          const preservedDraft = refreshed.detections.some(
+            (item) => item.detection_id === approvalDraft.detectionId,
+          )
+            ? approvalDraft
+            : approvalDraftFor(refreshed);
+          replaceHandDetail(
+            refreshed,
+            exactApprovalCommitted
+              ? approvalDraftFor(refreshed)
+              : preservedDraft,
+          );
+          if (exactApprovalCommitted) {
+            setActionNotice(
+              `Canonical revision ${latestRevision.revision} committed even though the original response was interrupted. The exact approval audit was refreshed.`,
+            );
+          } else {
+            handleRequestError(
+              approvalError,
+              "Canonical approval was not confirmed. The audit detail was refreshed.",
+            );
+          }
+        } catch (refreshError) {
+          if (refreshError instanceof PlayerHandRecoveryRequiredError) {
+            requireHandRecovery(
+              `${friendlyError(approvalError)} ${refreshError.message}`,
+            );
+          } else {
+            setHandDetail(null);
+            setApprovalDraft(null);
+            handleRequestError(
+              refreshError,
+              `${friendlyError(approvalError)} The approval outcome could not be refreshed; reload the records before retrying.`,
+            );
+          }
+        }
+      }
+    } finally {
+      setBusy(null);
+    }
   };
 
   const closeHandApproval = async (action: PlayerHandCloseAction) => {
@@ -831,6 +1153,7 @@ export default function PlayerApp() {
       setRestoreResult(result);
       setHandPage(null);
       setHandDetail(null);
+      setApprovalDraft(null);
       setCloseReason("");
       setDeleteReason("");
       setSelectedBackup(null);
@@ -851,6 +1174,7 @@ export default function PlayerApp() {
         setStorage(null);
         setHandPage(null);
         setHandDetail(null);
+        setApprovalDraft(null);
         setCloseReason("");
         setDeleteReason("");
         setSelectedBackup(null);
@@ -859,6 +1183,7 @@ export default function PlayerApp() {
       } else if (reason instanceof PlayerRestoreAmbiguousError) {
         setHandPage(null);
         setHandDetail(null);
+        setApprovalDraft(null);
         setCloseReason("");
         setDeleteReason("");
         setSelectedBackup(null);
@@ -900,6 +1225,7 @@ export default function PlayerApp() {
       setRestoreResult(null);
       setHandPage(null);
       setHandDetail(null);
+      setApprovalDraft(null);
       setCloseReason("");
       setDeleteReason("");
       setActionNotice(null);
@@ -1006,9 +1332,9 @@ export default function PlayerApp() {
                 <h2 id="records-heading">Local hand records</h2>
                 <p>
                   Inspect lifecycle and provenance without exposing raw hand
-                  histories in the collection response. Active approvals can be
-                  withdrawn or rejected, and every retained hand can be
-                  permanently deleted from its audit detail.
+                  histories in the collection response. Review a retained
+                  detection to approve canonical ground truth, change an active
+                  approval, or permanently delete a hand from its audit detail.
                 </p>
               </div>
               {storage.imported_hand_record_count > 0 ? (
@@ -1104,14 +1430,29 @@ export default function PlayerApp() {
             )}
             {handDetail ? (
               <HandDetail
+                approvalDraft={approvalDraft}
                 busy={busy}
                 closeReason={closeReason}
                 deleteReason={deleteReason}
                 detail={handDetail}
+                onApprove={() => void approveReviewedHand()}
+                onApprovalDetectionChange={(detectionId) =>
+                  setApprovalDraft(approvalDraftFor(handDetail, detectionId))
+                }
+                onCorrectionReasonChange={(correctionReason) =>
+                  setApprovalDraft((current) =>
+                    current ? { ...current, correctionReason } : current,
+                  )
+                }
                 onClose={(action) => void closeHandApproval(action)}
                 onDelete={() => void permanentlyDeleteHand()}
                 onDeleteReasonChange={setDeleteReason}
                 onReasonChange={setCloseReason}
+                onReviewedStateChange={(reviewedState) =>
+                  setApprovalDraft((current) =>
+                    current ? { ...current, reviewedState } : current,
+                  )
+                }
               />
             ) : null}
           </section>
@@ -1173,11 +1514,13 @@ export default function PlayerApp() {
           >
             <strong>Recovery checkpoint</strong>
             <span>
-              Direct hand-history import, correction, approval, and learning are
-              not enabled in this build yet. Existing active approvals can be
-              withdrawn or rejected while their evidence remains auditable, or
-              any retained hand can be permanently deleted to a receipt-only
-              tombstone. Screenshot capture is not a player feature.
+              Correction and explicit approval are enabled for retained hand
+              detections in this local runtime. Direct hand-history import and
+              the V2 learning loop are not enabled yet. Existing approvals can
+              be revised, withdrawn, or rejected while evidence remains
+              auditable, and retained hands can be permanently deleted to
+              receipt-only tombstones. Screenshot capture is not a player
+              feature.
             </span>
           </aside>
         </>

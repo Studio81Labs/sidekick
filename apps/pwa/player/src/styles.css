@@ -32,12 +32,14 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 3px solid #d77836;
   outline-offset: 3px;
@@ -387,14 +389,45 @@ code {
   font-weight: 700;
 }
 
+.lifecycle-actions select,
 .lifecycle-actions textarea {
   width: 100%;
-  resize: vertical;
   padding: 11px;
   border: 1px solid rgb(23 34 31 / 22%);
   border-radius: 12px;
   color: #17221f;
   background: #fff;
+}
+
+.lifecycle-actions textarea {
+  resize: vertical;
+}
+
+.approval-review {
+  display: grid;
+  gap: 14px;
+  border-color: rgb(31 91 74 / 30%);
+}
+
+.approval-review > * {
+  margin-bottom: 0;
+}
+
+.canonical-state-editor {
+  min-height: 280px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  tab-size: 2;
+}
+
+.field-help {
+  font-size: 0.84rem;
+}
+
+.approval-review .primary-button {
+  justify-self: start;
+  margin-top: 0;
 }
 
 .permanent-deletion {

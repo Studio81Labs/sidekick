@@ -2179,6 +2179,7 @@ class UserCorrection(ImportedHandModel):
 
 class CanonicalHandRevision(ImportedHandModel):
     schema_version: Literal["canonical-imported-hand/v1"] = "canonical-imported-hand/v1"
+    approval_id: Identifier | None = None
     revision: PositiveInteger
     detection_id: Identifier
     approved_at: AwareDatetime
@@ -2496,6 +2497,13 @@ class ImportedHandRecord(ImportedHandModel):
         revisions = [revision.revision for revision in self.canonical_revisions]
         if revisions != list(range(1, len(revisions) + 1)):
             raise ValueError("canonical revisions must be monotonic and contiguous from one")
+        approval_ids = [
+            revision.approval_id
+            for revision in self.canonical_revisions
+            if revision.approval_id is not None
+        ]
+        if len(approval_ids) != len(set(approval_ids)):
+            raise ValueError("canonical approval ids must be unique")
         previous_revision: CanonicalHandRevision | None = None
         for revision in self.canonical_revisions:
             detected = detection_by_id.get(revision.detection_id)
@@ -3526,6 +3534,256 @@ def imported_hand_state_sha256(state: ImportedHandState) -> str:
     return sha256(
         imported_hand_canonical_json(_state_payload_for_hash(state))
     ).hexdigest()
+
+
+def canonical_revision_from_review(
+    detection: DetectedImportedHand,
+    *,
+    approval_id: str,
+    revision: int,
+    approved_at: datetime,
+    approved_state: dict[str, JsonValue],
+    correction_reason: str | None,
+) -> CanonicalHandRevision:
+    """Build an auditable canonical revision from one explicit review.
+
+    The caller supplies the reviewed state, never the detected values or
+    correction timestamps. This factory derives the smallest non-overlapping
+    JSON-pointer corrections from the immutable detection and stamps them at
+    the server-owned approval instant.
+    """
+
+    detected_document = json.loads(detection.state.model_dump_json())
+    approved_document = json.loads(
+        json.dumps(approved_state, ensure_ascii=False, separators=(",", ":"))
+    )
+    if _contains_review_excerpt_field(approved_document):
+        raise ValueError("reviewed state cannot supply private source excerpts")
+    _preserve_review_excerpts(detected_document, approved_document)
+    approved_state = ImportedHandState.model_validate_json(
+        json.dumps(approved_document, ensure_ascii=False, separators=(",", ":"))
+    )
+    approved_document = json.loads(approved_state.model_dump_json())
+    differences = _review_differences(
+        _without_review_excerpts(detected_document),
+        _without_review_excerpts(approved_document),
+        pointer="",
+    )
+    if differences and not correction_reason:
+        raise ValueError("a changed reviewed state requires a correction reason")
+    corrections = [
+        UserCorrection(
+            field_pointer=pointer,
+            detected_value=detected_value,
+            approved_value=approved_value,
+            corrected_at=approved_at,
+            reason=correction_reason,
+        )
+        for pointer, detected_value, approved_value in differences
+    ]
+    return CanonicalHandRevision(
+        approval_id=approval_id,
+        revision=revision,
+        detection_id=detection.detection_id,
+        approved_at=approved_at,
+        state=approved_state,
+        corrections=corrections,
+    )
+
+
+def _preserve_review_excerpts(detected: JsonValue, approved: JsonValue) -> None:
+    """Keep raw evidence excerpts hidden from and unchanged by player review."""
+
+    if isinstance(detected, dict) and isinstance(approved, dict):
+        for key, detected_value in detected.items():
+            if key == "excerpt":
+                approved[key] = detected_value
+            elif key in approved:
+                _preserve_review_excerpts(detected_value, approved[key])
+    elif isinstance(detected, list) and isinstance(approved, list):
+        private_indexes = [
+            index
+            for index, item in enumerate(detected)
+            if _contains_review_excerpt(item)
+        ]
+        if not private_indexes:
+            return
+        used_detected_indexes: set[int] = set()
+        detected_identities = [
+            _review_list_item_identity(item) for item in detected
+        ]
+        for approved_index, approved_item in enumerate(approved):
+            identity = _review_list_item_identity(approved_item)
+            candidates = [
+                index
+                for index in range(len(detected))
+                if index not in used_detected_indexes
+                and detected_identities[index] == identity
+            ]
+            if not candidates:
+                if identity is not None:
+                    raise ValueError(
+                        "reviewed list changes cannot map private source evidence "
+                        "unambiguously"
+                    )
+                continue
+            if len(candidates) == 1:
+                detected_index = candidates[0]
+            elif (
+                approved_index in candidates
+                and _without_review_excerpts(detected[approved_index])
+                == approved_item
+            ):
+                detected_index = approved_index
+            else:
+                raise ValueError(
+                    "reviewed list changes cannot map private source evidence "
+                    "unambiguously"
+                )
+            used_detected_indexes.add(detected_index)
+            _preserve_review_excerpts(
+                detected[detected_index],
+                approved_item,
+            )
+        if any(index not in used_detected_indexes for index in private_indexes):
+            raise ValueError(
+                "reviewed list changes cannot map private source evidence "
+                "unambiguously"
+            )
+
+
+def _contains_review_excerpt(value: JsonValue) -> bool:
+    if isinstance(value, dict):
+        return any(
+            (key == "excerpt" and item is not None)
+            or _contains_review_excerpt(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_review_excerpt(item) for item in value)
+    return False
+
+
+def _contains_review_excerpt_field(value: JsonValue) -> bool:
+    if isinstance(value, dict):
+        return "excerpt" in value or any(
+            _contains_review_excerpt_field(item) for item in value.values()
+        )
+    if isinstance(value, list):
+        return any(_contains_review_excerpt_field(item) for item in value)
+    return False
+
+
+def _review_list_item_identity(value: JsonValue) -> tuple[Any, ...] | None:
+    if not isinstance(value, dict):
+        return None
+    if {
+        "raw_source_id",
+        "line_start",
+        "line_end",
+        "marker",
+    }.issubset(value):
+        return (
+            "evidence",
+            value["raw_source_id"],
+            value["line_start"],
+            value["line_end"],
+            value["marker"],
+        )
+    evidence_locations = _review_evidence_locations(value)
+    if evidence_locations:
+        return ("nested-evidence", *evidence_locations)
+    if "street" in value:
+        return ("street", value["street"])
+    if "disposition" in value and "player_id" in value:
+        return ("showdown", value["player_id"])
+    if "pot_index" in value and "player_id" in value:
+        return ("award", value["player_id"], value["pot_index"])
+    return None
+
+
+def _review_evidence_locations(
+    value: JsonValue,
+) -> tuple[tuple[JsonValue, JsonValue, JsonValue, JsonValue], ...]:
+    locations: list[tuple[JsonValue, JsonValue, JsonValue, JsonValue]] = []
+
+    def collect(item: JsonValue) -> None:
+        if isinstance(item, dict):
+            if {
+                "raw_source_id",
+                "line_start",
+                "line_end",
+                "marker",
+            }.issubset(item):
+                locations.append(
+                    (
+                        item["raw_source_id"],
+                        item["line_start"],
+                        item["line_end"],
+                        item["marker"],
+                    )
+                )
+                return
+            for child in item.values():
+                collect(child)
+        elif isinstance(item, list):
+            for child in item:
+                collect(child)
+
+    collect(value)
+    return tuple(sorted(locations, key=repr))
+
+
+def _without_review_excerpts(value: JsonValue) -> JsonValue:
+    if isinstance(value, dict):
+        return {
+            key: _without_review_excerpts(item)
+            for key, item in value.items()
+            if key != "excerpt"
+        }
+    if isinstance(value, list):
+        return [_without_review_excerpts(item) for item in value]
+    return value
+
+
+def _review_differences(
+    detected: JsonValue,
+    approved: JsonValue,
+    *,
+    pointer: str,
+) -> list[tuple[str, JsonValue, JsonValue]]:
+    if _json_values_equal(detected, approved):
+        return []
+    if isinstance(detected, dict) and isinstance(approved, dict):
+        if detected.keys() == approved.keys():
+            differences: list[tuple[str, JsonValue, JsonValue]] = []
+            for key in sorted(detected):
+                escaped = key.replace("~", "~0").replace("/", "~1")
+                differences.extend(
+                    _review_differences(
+                        detected[key],
+                        approved[key],
+                        pointer=f"{pointer}/{escaped}",
+                    )
+                )
+            return differences
+    if isinstance(detected, list) and isinstance(approved, list):
+        if len(detected) == len(approved):
+            differences = []
+            for index, (detected_item, approved_item) in enumerate(
+                zip(detected, approved, strict=True)
+            ):
+                differences.extend(
+                    _review_differences(
+                        detected_item,
+                        approved_item,
+                        pointer=f"{pointer}/{index}",
+                    )
+                )
+            return differences
+    if not pointer:
+        raise ValueError("reviewed state cannot replace its document root")
+    return [(pointer, detected, approved)]
 
 
 def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
@@ -5188,12 +5446,34 @@ def _validate_corrections_win(
             )
     detected_json = detected.state.model_dump_json()
     detected_document = json.loads(detected_json)
+    approved_document = json.loads(revision.state.model_dump_json())
+    visible_detected = _without_review_excerpts(detected_document)
+    visible_approved = _without_review_excerpts(approved_document)
+    raw_matches: list[bool] = []
+    visible_matches: list[bool] = []
     for correction in revision.corrections:
         detected_value = _pointer_get(
             detected_document,
             correction.field_pointer,
         )
-        if not _json_values_equal(detected_value, correction.detected_value):
+        raw_matches.append(
+            _json_values_equal(detected_value, correction.detected_value)
+        )
+        try:
+            visible_detected_value = _pointer_get(
+                visible_detected,
+                correction.field_pointer,
+            )
+        except ValueError:
+            visible_matches.append(False)
+        else:
+            visible_matches.append(
+                _json_values_equal(
+                    visible_detected_value,
+                    correction.detected_value,
+                )
+            )
+        if not raw_matches[-1] and not visible_matches[-1]:
             raise ValueError(
                 f"correction detected_value does not match {correction.field_pointer}"
             )
@@ -5201,12 +5481,38 @@ def _validate_corrections_win(
         [correction.field_pointer for correction in revision.corrections]
     )
     _validate_user_confirmed_origin_corrections(detected, revision)
-    expected = json.loads(detected_json)
-    for correction in revision.corrections:
-        _pointer_set(expected, correction.field_pointer, correction.approved_value)
-    approved = json.loads(revision.state.model_dump_json())
-    if not _json_values_equal(expected, approved):
-        raise ValueError("canonical state may differ from detection only through corrections")
+    if all(raw_matches):
+        expected = json.loads(detected_json)
+        for correction in revision.corrections:
+            _pointer_set(expected, correction.field_pointer, correction.approved_value)
+        if _json_values_equal(expected, approved_document):
+            return
+    visible_corrections = all(visible_matches) and all(
+        "excerpt" not in _pointer_tokens(correction.field_pointer)
+        and not _contains_review_excerpt_field(correction.detected_value)
+        and not _contains_review_excerpt_field(correction.approved_value)
+        for correction in revision.corrections
+    )
+    if visible_corrections:
+        expected = _without_review_excerpts(detected_document)
+        for correction in revision.corrections:
+            _pointer_set(expected, correction.field_pointer, correction.approved_value)
+        if _json_values_equal(expected, visible_approved):
+            restored = json.loads(
+                json.dumps(
+                    visible_approved,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            )
+            try:
+                _preserve_review_excerpts(detected_document, restored)
+            except ValueError:
+                pass
+            else:
+                if _json_values_equal(restored, approved_document):
+                    return
+    raise ValueError("canonical state may differ from detection only through corrections")
 
 
 def _validate_detected_action_origins(state: ImportedHandState) -> None:
@@ -5233,18 +5539,17 @@ def _validate_user_confirmed_origin_corrections(
         for action_index, action in enumerate(street.actions):
             if action.origin.basis != "user_confirmed":
                 continue
-            if (
-                street_index >= len(detected.state.streets)
-                or action_index
-                >= len(detected.state.streets[street_index].actions)
-            ):
+            if street_index >= len(detected.state.streets):
                 raise ValueError(
                     "user-confirmed origin must resolve a corresponding"
                     " detected action"
                 )
-            detected_origin = detected.state.streets[street_index].actions[
-                action_index
-            ].origin
+            detected_action = _detected_action_for_review_confirmation(
+                detected.state.streets[street_index].actions,
+                street.actions,
+                action_index=action_index,
+            )
+            detected_origin = detected_action.origin
             if not (
                 detected_origin.kind == "unknown"
                 and detected_origin.basis == "unresolved"
@@ -5252,6 +5557,86 @@ def _validate_user_confirmed_origin_corrections(
                 raise ValueError(
                     "user-confirmed origin must resolve a detected unknown origin"
                 )
+
+
+def _detected_action_for_review_confirmation(
+    detected_actions: list[ImportedAction],
+    approved_actions: list[ImportedAction],
+    *,
+    action_index: int,
+) -> ImportedAction:
+    approved_signatures = [
+        _review_action_confirmation_signature(action)
+        for action in approved_actions
+    ]
+    approved_signature = approved_signatures[action_index]
+    detected_candidates = [
+        detected_action
+        for detected_action in detected_actions
+        if _json_values_equal(
+            _review_action_confirmation_signature(detected_action),
+            approved_signature,
+        )
+    ]
+    approved_matches = sum(
+        _json_values_equal(signature, approved_signature)
+        for signature in approved_signatures
+    )
+    if len(detected_candidates) == 1 and approved_matches == 1:
+        return detected_candidates[0]
+    if (
+        action_index < len(detected_actions)
+        and _review_action_order_preserves_origin_binding(
+            detected_actions,
+            approved_actions,
+        )
+    ):
+        return detected_actions[action_index]
+    raise ValueError(
+        "user-confirmed origin must map unambiguously to a detected action"
+    )
+
+
+def _review_action_confirmation_signature(action: ImportedAction) -> JsonValue:
+    """Bind confirmation to immutable meaning and provenance, not one locator."""
+
+    document = _without_review_excerpts(json.loads(action.model_dump_json()))
+    assert isinstance(document, dict)
+    document.pop("sequence", None)
+    origin = document.get("origin")
+    if isinstance(origin, dict):
+        document["origin"] = {"evidence": origin.get("evidence")}
+    return document
+
+
+def _review_action_order_preserves_origin_binding(
+    detected_actions: list[ImportedAction],
+    approved_actions: list[ImportedAction],
+) -> bool:
+    if len(detected_actions) != len(approved_actions):
+        return False
+    for detected_action, approved_action in zip(
+        detected_actions,
+        approved_actions,
+        strict=True,
+    ):
+        detected_document = _without_review_excerpts(
+            json.loads(detected_action.model_dump_json())
+        )
+        approved_document = _without_review_excerpts(
+            json.loads(approved_action.model_dump_json())
+        )
+        if (
+            isinstance(approved_document, dict)
+            and isinstance(approved_document.get("origin"), dict)
+            and approved_document["origin"].get("basis") == "user_confirmed"
+        ):
+            assert isinstance(detected_document, dict)
+            detected_document.pop("origin", None)
+            approved_document.pop("origin", None)
+        if not _json_values_equal(detected_document, approved_document):
+            return False
+    return True
 
 
 def _validate_user_confirmed_origin_correction_presence(

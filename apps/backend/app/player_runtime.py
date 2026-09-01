@@ -44,6 +44,7 @@ from app.player_backup import (
 from app.player_hands import (
     DEFAULT_PLAYER_HAND_PAGE_SIZE,
     MAX_PLAYER_HAND_PAGE_SIZE,
+    PlayerHandApprovalRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
     PlayerHandDeleteRequest,
@@ -53,6 +54,7 @@ from app.player_namespace import (
     is_player_api_scope,
 )
 from app.player_workspace import (
+    PlayerHandApprovalInvalid,
     PlayerHandRecoveryRequired,
     PlayerHandTransitionConflict,
     PlayerStorageRecoveryRequired,
@@ -841,6 +843,46 @@ def create_player_runtime(
             body,
             action="reject",
         )
+
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/approve")
+    async def approve_player_hand(
+        request: Request,
+        record_key: str,
+        body: PlayerHandApprovalRequest,
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.approve_hand_record,
+                    record_key,
+                    request=body,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except PlayerHandApprovalInvalid as exc:
+                return _json_denial(422, str(exc))
+            except ValidationError:
+                return _json_denial(422, "Reviewed canonical state is invalid")
+            except (PlayerHandTransitionConflict, LifecycleCascadeError) as exc:
+                return _json_denial(409, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (PendingCascadeError, PlayerHandRecoveryRequired):
+                return _json_denial(
+                    503,
+                    "This hand has an interrupted approval write; restart the "
+                    "local player runtime so recovery can finish",
+                )
+            except (DataLockError, OSError):
+                return _json_denial(
+                    500,
+                    "Approval did not finish safely; refresh the hand before retrying",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
 
     @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/delete")
     async def delete_player_hand(

@@ -40,9 +40,12 @@ process-shared record stripes.
 [ADR 0055](../decisions/0055-expose-local-permanent-hand-deletion.md) adds
 stale-safe permanent deletion for any retained player hand. It first publishes
 an inactive deletion-pending generation, then purges hand-linked evidence to a
-receipt-only tombstone that older backups cannot resurrect. Import, correction,
-approval/reapproval, conflict resolution, authorized reimport, grading, and
-learning routes remain unwired.
+receipt-only tombstone that older backups cannot resurrect.
+[ADR 0056](../decisions/0056-expose-local-canonical-hand-approval.md) adds
+stale-safe correction and explicit approval/reapproval from one retained
+detection. The server derives correction audit, preserves private evidence, and
+binds exact retries to a unique approval ID. Import, conflict resolution,
+authorized reimport, grading, and learning routes remain unwired.
 CI exercises that separation over real listeners. A browser consumes a one-use
 launch URL from the production Uvicorn player application, proves all player
 API traffic stays on its exact loopback origin, and verifies the service worker
@@ -293,25 +296,28 @@ warning metadata, conflicts, sanitized detected and approved state, lifecycle
 state including deletion-cleanup failures, and deletion receipts. Collection
 responses omit source content; detail responses also omit raw text and evidence
 excerpts, including scalar correction values whose JSON pointer directly names
-an excerpt. Authenticated `POST /api/player/hands/{record_key}/withdraw`,
-`POST /api/player/hands/{record_key}/reject`, and
-`POST /api/player/hands/{record_key}/delete` expose the current player
-lifecycle writes. Withdrawal and rejection require the active canonical
-revision, deletion generation, and lifecycle timestamp from the loaded detail
-plus a non-empty player reason.
+an excerpt. Authenticated `POST /api/player/hands/{record_key}/approve`,
+`POST /api/player/hands/{record_key}/withdraw`, and
+`POST /api/player/hands/{record_key}/reject` expose retained approval writes;
+`POST /api/player/hands/{record_key}/delete` exposes permanent deletion.
+Withdrawal and rejection require the active canonical revision, deletion
+generation, and lifecycle timestamp from the loaded detail plus a non-empty
+player reason.
 Stale requests fail without writing; a retry whose exact requested inactive
 state is already current returns that retained state idempotently. The server
-supplies the transition instant and never accepts a client-authored canonical
-state. That instant advances strictly beyond the stored lifecycle marker even
-when restored data is ahead of local wall time, keeping the successor orderable
-against older backups. Permanent deletion additionally requires a UUID request
-id, a SHA-256 version over the complete retained record, and its exact lifecycle
-status and active-revision nullability. It publishes `deletion_pending` before
-purging to a receipt-only tombstone. The receipt binds the attempt to the exact
-record version and target generation without retaining the player reason or
-removed audit. An exact completed retry is idempotent; a cleanup retry from the
-refreshed pending record keeps the current generation. The player renders parser
-proposals, approved revisions,
+supplies every transition instant. Canonical approval accepts the complete
+player-reviewed state but never client-authored correction pointers, detected
+values, revision numbers, or audit timestamps; the other lifecycle routes
+accept no canonical state. That instant advances strictly beyond the stored
+lifecycle marker even when restored data is ahead of local wall time, keeping
+the successor orderable against older backups. Permanent deletion additionally
+requires a UUID request id, a SHA-256 version over the complete retained record,
+and its exact lifecycle status and active-revision nullability. It publishes
+`deletion_pending` before purging to a receipt-only tombstone. The receipt binds
+the attempt to the exact record version and target generation without retaining
+the player reason or removed audit. An exact completed retry is idempotent; a
+cleanup retry from the refreshed pending record keeps the current generation.
+The player renders parser proposals, approved revisions,
 field-level confidence, retained conflict resolutions, and cleanup failures
 with source/detection/revision lineage rather than collapsing uncertain or
 failed records into generic inactive copy. Active details expose explicit,
@@ -319,7 +325,13 @@ confirmed withdrawal/rejection controls, while every non-deleted detail exposes
 an explicit irreversible deletion control. Interrupted mutation responses are
 reconciled by rereading the audit before the UI reports the outcome; deletion is
 reported as committed only when the refreshed receipt id and generation match
-the attempted request. A durable
+the attempted request. Approval/reapproval additionally requires the complete
+record version, exact lifecycle and revision-count preconditions, a selected
+detection, and complete reviewed state. The server preserves hidden evidence
+excerpts, validates the rebuilt state, derives all correction pointers and
+audit values, and binds the resulting revision to the request UUID. The player
+reports an interrupted approval as committed only when that exact ID belongs to
+the latest active revision. A durable
 ready cascade makes both its failed mutation and subsequent detail reads return
 recovery-required, while collection pages report that key as unavailable, so
 the pre-replay record cannot be mistaken for a final outcome. Storage status
@@ -405,17 +417,19 @@ Retries of the published request or completed purge are idempotent. Older
 backups remain subject to `classify_restore`, so they cannot reactivate a
 purged generation without an explicit authorized reimport.
 
-What is deliberately not wired yet: there is no imported-hand import,
-correction/approval/reapproval, conflict resolution, or authorized re-import
-HTTP surface, and the hosted screenshot workflow is not a V2 player-data path.
+What is deliberately not wired yet: there is no imported-hand import, conflict
+resolution, or authorized re-import HTTP surface, and the hosted screenshot
+workflow is not a V2 player-data path.
 The local runtime constructs and recovers the player store and exposes
-authenticated storage metadata, sanitized record projections, approval
-withdrawal/rejection, permanent deletion, and whole-store V2 backup/restore.
+authenticated storage metadata, sanitized record projections, canonical
+correction/approval/reapproval, approval withdrawal/rejection, permanent
+deletion, and whole-store V2 backup/restore.
 These lifecycle mutations inherit the session, Host/Origin, and CSRF boundary
 established by ADR 0050. Withdrawal and rejection retain inactive audit;
 deletion first deactivates the record, then purges its hand-linked audit and
 derived artifacts to a generation-bound tombstone. No player route can promote
-V1 screenshot state or submit a replacement canonical state.
+V1 screenshot state; canonical approval accepts only a complete review of one
+retained imported-hand detection.
 
 Hero decision-point extraction lives in
 `app/domain/imported_hands/decisions.py` and consumes the aggregate's
