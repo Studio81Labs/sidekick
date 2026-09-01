@@ -181,6 +181,7 @@ def build_player_backup_archive(
             exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
+            workspace.require_current_layout()
             if workspace.imported_hands.has_pending_recovery():
                 raise PlayerBackupRecoveryRequiredError(
                     "Player backup is unavailable while an interrupted "
@@ -306,6 +307,7 @@ def restore_player_backup(
             exclusive=True,
             timeout_seconds=lock_timeout_seconds,
         ):
+            workspace.require_current_layout()
             if workspace.imported_hands.has_pending_recovery():
                 raise PlayerBackupRecoveryRequiredError(
                     "Player backup restore is unavailable while an interrupted "

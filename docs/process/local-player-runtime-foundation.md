@@ -30,6 +30,31 @@ That store directory must satisfy the same ownership, mode, and macOS ACL
 checks. The runtime does not open the V1 screenshot-job or benchmark stores. Do
 not copy the key into browser storage, a URL, logs, or a hosted deployment.
 
+## Workspace layout and first upgrade adoption
+
+The player data root is identified by the owner-only
+`.poker-hero-player-workspace.json` manifest. The local storage panel reports
+its layout version next to the resolved data directory. Version 1 contains the
+private `imported-hands/` store and its existing recovery journal; backup ZIPs
+have their own independent schema version and do not contain the workspace
+manifest.
+
+The first start after upgrading from a manifestless local runtime adopts the
+existing store automatically. Adoption takes the exclusive data-volume lock,
+validates the private imported-hand directory, and durably adds only the
+version 1 sidecar. It does not rewrite hand records, canonical revisions,
+decision artifacts, or cascade evidence. A crash before publication can retry
+the same adoption. If the marker was published before a later startup failure,
+the next start validates and uses it.
+
+Do not edit or replace the manifest manually. A symlink, shared permissions,
+malformed JSON, an unsupported future version, or a versioned workspace whose
+`imported-hands/` directory is missing fails startup instead of guessing or
+downgrading. Export a player backup before an application upgrade. If startup
+rejects a manifest, preserve the complete data directory and repair or migrate
+it with tooling for that exact source version; do not delete the marker to
+force legacy adoption.
+
 ## Start and stop
 
 Run:
@@ -122,10 +147,11 @@ approval/reapproval, withdrawal/rejection, and permanent deletion under
 `/api/player`, with an installable player PWA. The local workspace also composes
 the conflict-safe transaction for an already-parsed hand-history candidate, but
 there is still no player hand-history upload route or corpus-backed PokerStars
-adapter. Learning, migration, remote lookup, operating-system
-installer/uninstaller, and the complete player workflow remain absent. Future
-grade, mastery, drill, and proof stores do not yet exist, so they are not part
-of the version 1 archive. The hosted Worker and V1 FastAPI deployment deny the
-namespace, and the direct-network checkpoint verifies that denial without
-proxying a request body. Do not use the runtime or its test command as evidence
-that the Phase 1 gate or issue #432 is complete.
+adapter. The workspace now has a version 1 compatibility marker and a safe
+manifestless-store adoption, but future learning-store migrations, remote
+lookup, an operating-system installer/uninstaller, and the complete player
+workflow remain absent. Future grade, mastery, drill, and proof stores do not
+yet exist, so they are not part of the version 1 archive. The hosted Worker and
+V1 FastAPI deployment deny the namespace, and the direct-network checkpoint
+verifies that denial without proxying a request body. Do not use the runtime or
+its test command as evidence that the Phase 1 gate or issue #432 is complete.

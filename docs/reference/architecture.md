@@ -28,6 +28,13 @@ attaches only the imported-hand store to that runtime, enforces a private
 player-owned data directory, performs interrupted-write recovery before
 startup, and exposes authenticated read-only storage status. It still adds no
 player-record or mutation route at that checkpoint.
+[ADR 0059](../decisions/0059-version-the-local-player-workspace-layout.md)
+adds the durable player-workspace compatibility boundary. A private immutable
+version 1 manifest is validated before stores open; an existing manifestless
+imported-hand layout is adopted under the exclusive data-volume lock without
+rewriting retained record, artifact, or recovery bytes. Unknown, malformed,
+insecure, or structurally incomplete layouts fail startup, and the authenticated
+storage view discloses the active layout version.
 [ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md) replaces
 the inline readiness document with a separately built local recovery PWA. It
 exposes storage/recovery status and the existing player backup/restore workflow

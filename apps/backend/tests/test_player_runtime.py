@@ -49,6 +49,8 @@ from app.player_runtime import (
     load_or_create_installation_secret,
 )
 from app.player_workspace import (
+    PLAYER_WORKSPACE_LAYOUT_VERSION,
+    PLAYER_WORKSPACE_MANIFEST_FILENAME,
     PlayerDataDirectoryError,
     PlayerWorkspace,
     _macos_extended_acl_has_entries,
@@ -253,6 +255,7 @@ def test_player_runtime_opens_only_the_player_store(tmp_path: Path) -> None:
     assert {path.name for path in tmp_path.iterdir()} == {
         ".player-runtime-key",
         ".poker-hero-data.lock",
+        PLAYER_WORKSPACE_MANIFEST_FILENAME,
         "imported-hands",
     }
 
@@ -832,6 +835,7 @@ def test_player_api_requires_a_session_and_one_use_launch_ticket(
     assert storage.json() == {
         "status": "ready",
         "storage": "player-local-file",
+        "layout_version": PLAYER_WORKSPACE_LAYOUT_VERSION,
         "data_directory": str(tmp_path.resolve()),
         "imported_hand_record_count": 0,
         "recovery": {"completed": [], "quarantined": [], "failed": []},
@@ -870,6 +874,30 @@ def test_player_storage_status_preserves_recovery_attention(
         "completed": ["completed-cascade"],
         "quarantined": ["quarantined-cascade"],
         "failed": ["failed-cascade"],
+    }
+
+
+def test_player_api_reports_a_layout_change_as_restart_required(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    (tmp_path / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
+        '{"layout_version":2,"schema":"poker-hero-player-workspace"}\n',
+        encoding="utf-8",
+    )
+
+    response = client.get(
+        "/api/player/storage",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": (
+            "The player workspace layout changed while this runtime was open;"
+            " restart with a compatible version"
+        )
     }
 
 
