@@ -516,6 +516,25 @@ remaining #417 persistence/migration work. The application lifecycle boundary
 atomically supersedes or deactivates current decision artifacts and permanently
 purges them with their imported hand.
 
+Per-decision solved-policy comparison lives under `app/domain/grading`. It
+accepts only an already-extracted voluntary `HeroDecisionPoint` and an optional
+application-supplied reference policy that is bound to the SHA-256 of the exact
+route-critical decision state. Missing or mismatched references remain
+heuristic and ungraded; policy-incomplete solved evidence stays visible but is
+also ungraded. A complete policy retains reference, policy, tolerance, route,
+engine, economics, utility, artifact, and EV-unit provenance, treats any
+meaningfully supported mixed-policy realization as supported, and labels an
+action a mistake only when it falls outside that complete support. Candidate
+EVs are retained and the action's cost is re-derived from them. Reference
+actions and wager sizes must be legal in the bound canonical state. Bet and
+raise sizes compare exact total commitments in BB using a pinned tolerance; an
+unverified blind or commitment leaves the comparison heuristic and ungraded.
+The result is immutable and persistence-free, and even a gradeable comparison
+remains `requires_content_activation`; this domain does not activate a
+reference, authorize a remote provider, persist grades, calculate aggregate
+mixing deviations, move mastery, or schedule drills. Those application and
+Phase 0 gates remain open under issues #412, #414, #416, and #418.
+
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact
 whose filename matches the record's active revision and deletion generation,
