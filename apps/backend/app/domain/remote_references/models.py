@@ -840,9 +840,18 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                 running_wager = economics.big_blind_bb
                 minimum_raise_increment = economics.big_blind_bb
 
+            def close_completed_betting_round() -> None:
+                eligible = live_positions - all_in_positions
+                if len(eligible) != 1:
+                    return
+                sole_position = next(iter(eligible))
+                if simulated_commitments[sole_position] >= running_wager:
+                    pending_action_positions.clear()
+
             for action in prior_actions.actions:
                 if action.street != street:
                     continue
+                close_completed_betting_round()
                 actor = action.actor_position
                 if actor in folded_positions or actor in all_in_positions:
                     raise ValueError("folded or all-in players cannot act again")
@@ -923,6 +932,7 @@ class RemoteReferenceRouteRequest(RemoteReferenceModel):
                         if simulated_commitments[position] < running_wager
                     }
 
+            close_completed_betting_round()
             if street == self.decision_street:
                 if simulated_commitments != commitment_by_position:
                     raise ValueError(
@@ -1020,6 +1030,7 @@ class RemoteReferenceRouteDerivation(RemoteReferenceModel):
     """A local decision binding kept outside the closed outbound DTO."""
 
     decision: DecisionBinding
+    decision_state_sha256: Sha256Digest
     outbound_request: RemoteReferenceRouteRequest
 
 

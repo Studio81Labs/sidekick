@@ -550,10 +550,14 @@ letting a broad economics or abstraction declaration imply provider coverage.
 Closed component models
 make raw histories, hand/site/session and canonical-record identities, player
 names, timestamps, screenshots, and learning/profile state unrepresentable in
-the outbound DTO. A local immutable route-derivation envelope binds each closed
-request to the canonical decision revision and index that produced it; preflight
-rejects an envelope associated with any other decision before constructing a
-candidate. Route revisions, abstraction digests, and range digests must
+the outbound DTO. A pure local factory accepts the full validated canonical
+decision point, derives its stable binding and local state digest, and
+reconstructs every route-critical field in BB units before it can create an
+immutable route envelope. Preflight independently repeats that reconstruction,
+so a caller cannot associate an allowlisted request from one decision with
+another decision even when it forges the envelope binding and state digest.
+Unsupported postflop, ante, straddle, or uncalled-return state fails closed at
+this derivation boundary. Route revisions, abstraction digests, and range digests must
 match that independently selected provider manifest, never player data. Active
 players and their position-bound remaining stacks are explicit, so multiway
 routes cannot collapse materially different stack configurations.
@@ -575,7 +579,8 @@ line, position, and derivation context instead of a global digest allowlist.
 Provider configuration, policy, reference-source, commercial
 serving-rights, derived-output-rights, disclosure, consent, request, economics,
 utility, and abstraction revisions remain pinned in local audit provenance;
-local decision identity is never promoted to an outbound identifier or digest.
+the canonical decision binding and state digest remain local and are never
+promoted to an outbound identifier or digest.
 The candidate is not transport authorization: a future application boundary
 must atomically re-read authoritative provider status, consent status, and the
 current consent generation immediately before each dispatch or retry. Revocation,

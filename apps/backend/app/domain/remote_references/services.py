@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
+from decimal import Decimal
 from hashlib import sha256
 
+from app.domain.imported_hands.decisions import HeroDecisionPoint
 from app.domain.learning_content.models import DecisionBinding
 from app.domain.remote_references.models import (
     AbstractionSchemaBinding,
     EconomicConfigurationBinding,
     GameEconomicsRoute,
     HoleCardAbstractionRoute,
+    HoleCardsRoute,
+    PositionedCommitment,
+    PositionedStack,
+    PriorActionsRoute,
     RemoteDispatchReason,
     RemoteLookupUnavailableReason,
+    RemotePriorAction,
     RemoteReferenceConsent,
     RemoteReferenceDispatchPreflight,
     RemoteReferenceLookupUnavailable,
@@ -20,12 +28,14 @@ from app.domain.remote_references.models import (
     RemoteReferenceProviderPolicy,
     RemoteReferenceRouteDerivation,
     RemoteReferenceRouteRequest,
+    StackWagerPotRoute,
+    TablePositionRoute,
     UtilityConfigurationBinding,
 )
 
 
 def evaluate_remote_reference_preflight(
-    decision: DecisionBinding,
+    decision: HeroDecisionPoint,
     *,
     mode: RemoteReferenceMode,
     policy: RemoteReferenceProviderPolicy | None,
@@ -35,7 +45,10 @@ def evaluate_remote_reference_preflight(
 ) -> RemoteReferenceDispatchPreflight:
     """Evaluate snapshots into a candidate, never final transport authority."""
 
-    decision = DecisionBinding.model_validate(decision.model_dump(mode="python"))
+    decision_point = HeroDecisionPoint.model_validate(
+        decision.model_dump(mode="python")
+    )
+    decision = DecisionBinding.from_decision(decision_point)
     if not _is_aware(now):
         return _unavailable(decision, now=None, reason="clock_invalid")
     if mode not in {"local_only", "remote_enabled"}:
@@ -146,7 +159,12 @@ def evaluate_remote_reference_preflight(
         route.model_dump(mode="python")
     )
     request = route.outbound_request
-    if route.decision != decision:
+    if (
+        route.decision != decision
+        or route.decision_state_sha256
+        != _decision_state_sha256(decision_point)
+        or _derive_request_from_decision(decision_point, request) != request
+    ):
         return _unavailable(
             decision,
             now=now,
@@ -217,6 +235,224 @@ def evaluate_remote_reference_preflight(
         outbound_request=request,
         fresh_consent_recheck="required_immediately_before_dispatch",
     )
+
+
+def bind_remote_reference_route(
+    decision: HeroDecisionPoint,
+    request: RemoteReferenceRouteRequest,
+) -> RemoteReferenceRouteDerivation:
+    """Bind a closed request only when canonical decision state derives it."""
+
+    decision = HeroDecisionPoint.model_validate(decision.model_dump(mode="python"))
+    request = RemoteReferenceRouteRequest.model_validate(
+        request.model_dump(mode="python")
+    )
+    if _derive_request_from_decision(decision, request) != request:
+        raise ValueError("remote route does not match canonical decision state")
+    return RemoteReferenceRouteDerivation(
+        decision=DecisionBinding.from_decision(decision),
+        decision_state_sha256=_decision_state_sha256(decision),
+        outbound_request=request,
+    )
+
+
+def _decision_state_sha256(decision: HeroDecisionPoint) -> str:
+    payload = json.dumps(
+        decision.state.model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return sha256(payload).hexdigest()
+
+
+def _derive_request_from_decision(
+    decision: HeroDecisionPoint,
+    template: RemoteReferenceRouteRequest,
+) -> RemoteReferenceRouteRequest | None:
+    """Reconstruct every route-state field from one canonical decision point."""
+
+    state = decision.state
+    if (
+        decision.street != "preflop"
+        or state.street != "preflop"
+        or state.variant != "texas_holdem"
+        or state.betting_limit != "no_limit"
+        or state.economics.kind != "cash"
+        or state.blinds.small_blind is None
+        or state.blinds.big_blind is None
+        or state.blinds.ante is None
+        or state.blinds.ante != 0
+        or state.blinds.straddle is not None
+    ):
+        return None
+    expected_categories = {
+        "game_economics",
+        "prior_actions",
+        "stack_wager_pot",
+        "table_position",
+    }
+    categories = set(template.outbound_categories)
+    if not expected_categories <= categories or categories - expected_categories not in (
+        {"hole_cards"},
+        {"hole_card_abstraction"},
+    ):
+        return None
+
+    big_blind = state.blinds.big_blind
+    assert big_blind is not None
+
+    def bb(value: Decimal) -> Decimal:
+        return value / big_blind
+
+    economics_template = next(
+        component
+        for component in template.components
+        if isinstance(component, GameEconomicsRoute)
+    )
+    hole_template = next(
+        component
+        for component in template.components
+        if isinstance(component, (HoleCardsRoute, HoleCardAbstractionRoute))
+    )
+    if isinstance(hole_template, HoleCardsRoute):
+        hole_component: HoleCardsRoute | HoleCardAbstractionRoute = HoleCardsRoute(
+            cards=tuple(card.code for card in decision.state.hero_cards)
+        )
+    else:
+        hole_component = HoleCardAbstractionRoute(
+            abstraction_schema_revision=(
+                hole_template.abstraction_schema_revision
+            ),
+            abstraction_schema_sha256=hole_template.abstraction_schema_sha256,
+            starting_hand_class=_starting_hand_class(decision),
+        )
+
+    remote_actions: list[RemotePriorAction] = []
+    for history in state.action_history:
+        remote_sequence = 0
+        for action in history.actions:
+            if action.action_type in {
+                "post_ante",
+                "post_small_blind",
+                "post_big_blind",
+            }:
+                continue
+            if action.action_type not in {"fold", "check", "call", "bet", "raise"}:
+                return None
+            if action.action_type in {"call", "bet", "raise"}:
+                if action.total_committed is None:
+                    return None
+                total_committed = bb(action.total_committed)
+            else:
+                total_committed = None
+            remote_actions.append(
+                RemotePriorAction(
+                    street=history.street,
+                    sequence=remote_sequence,
+                    actor_position=action.position.display_label,
+                    action=action.action_type,
+                    total_committed_bb=total_committed,
+                    all_in=action.all_in,
+                )
+            )
+            remote_sequence += 1
+
+    active_seats = [seat for seat in state.seats if seat.status != "folded"]
+    prior_pot = state.pot_before_action - sum(
+        (seat.live_commitment for seat in state.seats),
+        start=Decimal(0),
+    )
+    try:
+        return RemoteReferenceRouteRequest(
+            route_schema_revision=template.route_schema_revision,
+            route_schema_sha256=template.route_schema_sha256,
+            decision_street="preflop",
+            components=(
+                GameEconomicsRoute(
+                    game_variant="texas_holdem",
+                    betting_limit="no_limit",
+                    game_format="cash",
+                    economic_model=economics_template.economic_model,
+                    economic_model_revision=(
+                        economics_template.economic_model_revision
+                    ),
+                    economic_configuration_sha256=(
+                        economics_template.economic_configuration_sha256
+                    ),
+                    utility_model=economics_template.utility_model,
+                    utility_model_revision=economics_template.utility_model_revision,
+                    utility_configuration_sha256=(
+                        economics_template.utility_configuration_sha256
+                    ),
+                    small_blind_bb=bb(state.blinds.small_blind),
+                    big_blind_bb=Decimal(1),
+                    ante_bb=Decimal(0),
+                    ante_mode="none",
+                ),
+                hole_component,
+                PriorActionsRoute(actions=tuple(remote_actions)),
+                StackWagerPotRoute(
+                    hero_stack_bb=bb(state.hero_stack_before_action),
+                    active_player_stacks=tuple(
+                        sorted(
+                            (
+                                PositionedStack(
+                                    position=seat.position.display_label,
+                                    remaining_stack_bb=bb(seat.stack_before_action),
+                                )
+                                for seat in active_seats
+                            ),
+                            key=lambda item: item.position,
+                        )
+                    ),
+                    committed_pot_before_street_bb=bb(prior_pot),
+                    current_street_commitments=tuple(
+                        sorted(
+                            (
+                                PositionedCommitment(
+                                    position=seat.position.display_label,
+                                    committed_bb=bb(seat.live_commitment),
+                                )
+                                for seat in state.seats
+                            ),
+                            key=lambda item: item.position,
+                        )
+                    ),
+                    pot_bb=bb(state.pot_before_action),
+                    current_wager_bb=bb(state.current_wager),
+                    amount_to_call_bb=bb(state.amount_to_call),
+                ),
+                TablePositionRoute(
+                    dealt_in_player_count=state.dealt_in_player_count,
+                    hero_position=state.hero_position.display_label,
+                    hero_button_distance=state.hero_position.button_distance,
+                    hero_action_index=state.hero_position.action_index,
+                    active_player_positions=tuple(
+                        sorted(
+                            seat.position.display_label for seat in active_seats
+                        )
+                    ),
+                    relative_position="not_applicable",
+                ),
+            ),
+        )
+    except ValueError:
+        return None
+
+
+def _starting_hand_class(decision: HeroDecisionPoint) -> str:
+    first, second = decision.state.hero_cards
+    if first.rank == second.rank:
+        return f"{first.rank}{second.rank}"
+    rank_order = "23456789TJQKA"
+    high, low = sorted(
+        (first, second),
+        key=lambda card: rank_order.index(card.rank),
+        reverse=True,
+    )
+    suitedness = "s" if high.suit == low.suit else "o"
+    return f"{high.rank}{low.rank}{suitedness}"
 
 
 def record_remote_reference_unavailable(

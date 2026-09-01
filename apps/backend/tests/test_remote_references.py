@@ -8,7 +8,7 @@ from hashlib import sha256
 import pytest
 from pydantic import ValidationError
 
-from app.domain.imported_hands import extract_hero_decision_points
+from app.domain.imported_hands import HeroDecisionPoint, extract_hero_decision_points
 from app.domain.learning_content import DecisionBinding
 from app.domain.remote_references import (
     AbstractionSchemaBinding,
@@ -32,6 +32,7 @@ from app.domain.remote_references import (
     StackWagerPotRoute,
     TablePositionRoute,
     UtilityConfigurationBinding,
+    bind_remote_reference_route,
     evaluate_remote_reference_preflight,
     record_remote_reference_unavailable,
 )
@@ -52,10 +53,14 @@ CATEGORIES = (
 )
 
 
-def decision_binding() -> DecisionBinding:
+def decision_point() -> HeroDecisionPoint:
     extraction = extract_hero_decision_points(baseline_decision_record())
     assert extraction.outcome == "decisions"
-    return DecisionBinding.from_decision(extraction.decision_points[0])
+    return extraction.decision_points[0]
+
+
+def decision_binding() -> DecisionBinding:
+    return DecisionBinding.from_decision(decision_point())
 
 
 def disclosure(**updates: object) -> RemoteReferenceDisclosure:
@@ -82,7 +87,9 @@ def disclosure(**updates: object) -> RemoteReferenceDisclosure:
 def route_manifest(**updates: object) -> RemoteReferenceRouteManifest:
     values = {
         "manifest_revision": "manifest-v1",
-        "eligible_route_context_sha256s": (route_request().semantic_digest(),),
+        "eligible_route_context_sha256s": (
+            canonical_route_request().semantic_digest(),
+        ),
         "economic_configurations": (
             EconomicConfigurationBinding(
                 economic_model="cash_rake",
@@ -264,14 +271,63 @@ def route_request(**updates: object) -> RemoteReferenceRouteRequest:
     return RemoteReferenceRouteRequest.model_validate(values)
 
 
+def canonical_route_request(**updates: object) -> RemoteReferenceRouteRequest:
+    components = (
+        route_request().components[0],
+        HoleCardAbstractionRoute(
+            abstraction_schema_revision="class-v1",
+            abstraction_schema_sha256=DIGEST_C,
+            starting_hand_class="AKo",
+        ),
+        PriorActionsRoute(actions=()),
+        StackWagerPotRoute(
+            hero_stack_bb=Decimal("99.5"),
+            active_player_stacks=(
+                PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
+                PositionedStack(
+                    position="BTN/SB",
+                    remaining_stack_bb=Decimal("99.5"),
+                ),
+            ),
+            committed_pot_before_street_bb=Decimal("0"),
+            current_street_commitments=(
+                PositionedCommitment(position="BB", committed_bb=Decimal("1")),
+                PositionedCommitment(
+                    position="BTN/SB",
+                    committed_bb=Decimal("0.5"),
+                ),
+            ),
+            pot_bb=Decimal("1.5"),
+            current_wager_bb=Decimal("1"),
+            amount_to_call_bb=Decimal("0.5"),
+        ),
+        TablePositionRoute(
+            dealt_in_player_count=2,
+            hero_position="BTN/SB",
+            hero_button_distance=0,
+            hero_action_index=0,
+            active_player_positions=("BB", "BTN/SB"),
+            relative_position="not_applicable",
+        ),
+    )
+    values = {
+        "route_schema_revision": "route-v1",
+        "route_schema_sha256": DIGEST_B,
+        "decision_street": "preflop",
+        "components": components,
+    }
+    values.update(updates)
+    return RemoteReferenceRouteRequest.model_validate(values)
+
+
 def route_derivation(
     *,
-    decision: DecisionBinding | None = None,
+    decision: HeroDecisionPoint | None = None,
     request: RemoteReferenceRouteRequest | None = None,
 ) -> RemoteReferenceRouteDerivation:
-    return RemoteReferenceRouteDerivation(
-        decision=decision or decision_binding(),
-        outbound_request=request or route_request(),
+    return bind_remote_reference_route(
+        decision or decision_point(),
+        request or canonical_route_request(),
     )
 
 
@@ -348,9 +404,9 @@ def preflight(
 ):
     selected = policy or provider_policy()
     selected_consent = accepted if accepted is not None else consent(policy=selected)
-    selected_request = request if request is not None else route_request()
+    selected_request = request if request is not None else canonical_route_request()
     return evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode=mode,  # type: ignore[arg-type]
         policy=selected,
         consent=selected_consent,
@@ -376,7 +432,7 @@ def test_preflight_fails_closed_before_consent(
     expected_reason: str,
 ) -> None:
     result = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode=overrides.get("mode", "remote_enabled"),  # type: ignore[arg-type]
         policy=overrides.get("policy", provider_policy()),  # type: ignore[arg-type]
         consent=None,
@@ -393,7 +449,7 @@ def test_preflight_fails_closed_before_consent(
 
 def test_preflight_rejects_a_naive_clock_without_crashing() -> None:
     result = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=provider_policy(),
         consent=consent(),
@@ -417,34 +473,68 @@ def test_exact_active_consent_yields_only_a_dispatch_candidate() -> None:
     )
     assert result.policy_grade_eligibility == "ungraded"
     assert result.resolved_reference is None
-    assert result.outbound_request == route_request()
-    assert result.request_sha256 == route_request().semantic_digest()
+    assert result.outbound_request == canonical_route_request()
+    assert result.request_sha256 == canonical_route_request().semantic_digest()
     assert result.provider_policy_sha256 == provider_policy().semantic_digest()
     assert result.route_manifest_sha256 == route_manifest().semantic_digest()
     assert result.commercial_serving_rights_revision == "commercial-rights-v1"
     assert result.derived_output_rights_revision == "derived-rights-v1"
 
 
+def test_route_factory_binds_the_full_canonical_decision_state() -> None:
+    decision = decision_point()
+
+    route = bind_remote_reference_route(decision, canonical_route_request())
+
+    assert route.decision == DecisionBinding.from_decision(decision)
+    assert route.outbound_request == canonical_route_request()
+    assert route.decision_state_sha256 == sha256(
+        json.dumps(
+            decision.state.model_dump(mode="json"),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
 def test_route_derivation_must_match_the_canonical_decision() -> None:
-    bound_decision = decision_binding()
-    different_decision = bound_decision.model_copy(
-        update={"decision_index": bound_decision.decision_index + 1}
+    original_decision = decision_point()
+    decision_payload = original_decision.model_dump(mode="python")
+    decision_payload["state"]["hero_cards"] = [
+        {"rank": "Q", "suit": "spades"},
+        {"rank": "Q", "suit": "hearts"},
+    ]
+    different_decision = HeroDecisionPoint.model_validate(decision_payload)
+    different_state_payload = json.dumps(
+        different_decision.state.model_dump(mode="json"),
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    forged_route = RemoteReferenceRouteDerivation(
+        decision=DecisionBinding.from_decision(different_decision),
+        decision_state_sha256=sha256(different_state_payload).hexdigest(),
+        outbound_request=canonical_route_request(),
     )
-    request = route_request()
+    request = canonical_route_request()
     policy = provider_policy()
+
+    with pytest.raises(ValueError, match="canonical decision state"):
+        bind_remote_reference_route(different_decision, request)
 
     result = evaluate_remote_reference_preflight(
         different_decision,
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        route=route_derivation(decision=bound_decision, request=request),
+        route=forged_route,
         now=NOW,
     )
 
     assert result.outcome == "unavailable"
     assert result.reason == "route_binding_mismatch"
-    assert result.decision == different_decision
+    assert result.decision == DecisionBinding.from_decision(different_decision)
     assert result.request_sha256 == request.semantic_digest()
     assert result.outbound_request is None
 
@@ -477,7 +567,7 @@ def test_consent_lifecycle_blocks_egress(
 ) -> None:
     policy = provider_policy()
     result = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=accepted,
@@ -499,7 +589,7 @@ def test_revocation_requires_a_fresh_preflight() -> None:
     )
 
     after_revocation = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=provider_policy(),
         consent=revoked,
@@ -530,7 +620,7 @@ def test_consent_is_bound_to_exact_provider_policy(
     original = provider_policy()
     changed = provider_policy(**policy_update)
     result = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=changed,
         consent=consent(policy=original),
@@ -550,7 +640,7 @@ def test_consent_is_bound_to_exact_disclosure() -> None:
     )
 
     result = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=changed,
         consent=consent(policy=original),
@@ -565,7 +655,7 @@ def test_consent_is_bound_to_exact_disclosure() -> None:
 def test_categories_and_route_schema_are_exactly_bound() -> None:
     policy = provider_policy()
     category_mismatch = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=consent(
@@ -576,32 +666,32 @@ def test_categories_and_route_schema_are_exactly_bound() -> None:
         now=NOW,
     )
     schema_mismatch = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
         route=route_derivation(
-            request=route_request(route_schema_revision="route-v2")
+            request=canonical_route_request(route_schema_revision="route-v2")
         ),
         now=NOW,
     )
     request_missing = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
         route=None,
         now=NOW,
     )
-    raw_components = list(route_request().components)
-    raw_components[1] = HoleCardsRoute(cards=("As", "Kd"))
+    raw_components = list(canonical_route_request().components)
+    raw_components[1] = HoleCardsRoute(cards=("Ah", "Kd"))
     request_category_mismatch = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
         route=route_derivation(
-            request=route_request(components=tuple(raw_components))
+            request=canonical_route_request(components=tuple(raw_components))
         ),
         now=NOW,
     )
@@ -616,20 +706,20 @@ def test_categories_and_route_schema_are_exactly_bound() -> None:
 
 def test_route_revisions_and_digests_require_provider_manifest_membership() -> None:
     policy = provider_policy()
-    components = list(route_request().components)
+    components = list(canonical_route_request().components)
     components[1] = HoleCardAbstractionRoute(
         abstraction_schema_revision="class-v2",
         abstraction_schema_sha256=DIGEST_D,
-        starting_hand_class="AKs",
+        starting_hand_class="AKo",
     )
 
     result = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
         route=route_derivation(
-            request=route_request(components=tuple(components))
+            request=canonical_route_request(components=tuple(components))
         ),
         now=NOW,
     )
@@ -641,20 +731,16 @@ def test_route_revisions_and_digests_require_provider_manifest_membership() -> N
 
 def test_provider_manifest_binds_the_exact_route_context() -> None:
     policy = provider_policy()
-    components = list(route_request().components)
-    stack = components[3]
-    assert isinstance(stack, StackWagerPotRoute)
-    stack_payload = stack.model_dump(mode="python")
-    stack_payload["hero_stack_bb"] = Decimal("98")
-    stack_payload["active_player_stacks"] = (
-        PositionedStack(position="BB", remaining_stack_bb=Decimal("98")),
-        PositionedStack(position="BTN", remaining_stack_bb=Decimal("97.5")),
-    )
-    components[3] = StackWagerPotRoute.model_validate(stack_payload)
-    changed_request = route_request(components=tuple(components))
+    components = list(canonical_route_request().components)
+    economics = components[0]
+    assert isinstance(economics, GameEconomicsRoute)
+    economics_payload = economics.model_dump(mode="python")
+    economics_payload["economic_configuration_sha256"] = DIGEST_D
+    components[0] = GameEconomicsRoute.model_validate(economics_payload)
+    changed_request = canonical_route_request(components=tuple(components))
 
     result = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
@@ -684,17 +770,20 @@ def test_postflop_ranges_remain_unavailable_until_context_bound() -> None:
         disclosure=disclosure(outbound_categories=categories)
     )
 
+    with pytest.raises(ValueError, match="canonical decision state"):
+        bind_remote_reference_route(decision_point(), postflop_route_request())
+
     result = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="remote_enabled",
         policy=policy,
         consent=consent(policy=policy),
-        route=route_derivation(request=postflop_route_request()),
+        route=None,
         now=NOW,
     )
 
     assert result.outcome == "unavailable"
-    assert result.reason == "route_manifest_mismatch"
+    assert result.reason == "route_unavailable"
     assert result.outbound_request is None
 
 
@@ -1177,6 +1266,100 @@ def test_forced_post_all_in_is_not_treated_as_pending_action() -> None:
     assert table.active_player_positions == ("BB", "BTN", "SB")
 
 
+def test_betting_closes_when_the_only_chipped_player_already_matches() -> None:
+    base = route_request()
+    components = (
+        base.components[0],
+        base.components[1],
+        PriorActionsRoute(actions=()),
+        StackWagerPotRoute(
+            hero_stack_bb=Decimal("99"),
+            active_player_stacks=(
+                PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
+                PositionedStack(
+                    position="BTN/SB",
+                    remaining_stack_bb=Decimal("0"),
+                ),
+            ),
+            committed_pot_before_street_bb=Decimal("0"),
+            current_street_commitments=(
+                PositionedCommitment(position="BB", committed_bb=Decimal("1")),
+                PositionedCommitment(
+                    position="BTN/SB",
+                    committed_bb=Decimal("0.5"),
+                ),
+            ),
+            pot_bb=Decimal("1.5"),
+            current_wager_bb=Decimal("1"),
+            amount_to_call_bb=Decimal("0"),
+        ),
+        TablePositionRoute(
+            dealt_in_player_count=2,
+            hero_position="BB",
+            hero_button_distance=1,
+            hero_action_index=1,
+            active_player_positions=("BB", "BTN/SB"),
+            relative_position="not_applicable",
+        ),
+    )
+
+    with pytest.raises(ValidationError, match="betting round closed"):
+        route_request(components=components)
+
+
+def test_sole_chipped_hero_remains_pending_when_facing_an_all_in() -> None:
+    base = route_request()
+    components = (
+        base.components[0],
+        base.components[1],
+        PriorActionsRoute(
+            actions=(
+                RemotePriorAction(
+                    street="preflop",
+                    sequence=0,
+                    actor_position="BTN/SB",
+                    action="raise",
+                    total_committed_bb=Decimal("2"),
+                    all_in=True,
+                ),
+            )
+        ),
+        StackWagerPotRoute(
+            hero_stack_bb=Decimal("99"),
+            active_player_stacks=(
+                PositionedStack(position="BB", remaining_stack_bb=Decimal("99")),
+                PositionedStack(
+                    position="BTN/SB",
+                    remaining_stack_bb=Decimal("0"),
+                ),
+            ),
+            committed_pot_before_street_bb=Decimal("0"),
+            current_street_commitments=(
+                PositionedCommitment(position="BB", committed_bb=Decimal("1")),
+                PositionedCommitment(
+                    position="BTN/SB",
+                    committed_bb=Decimal("2"),
+                ),
+            ),
+            pot_bb=Decimal("3"),
+            current_wager_bb=Decimal("2"),
+            amount_to_call_bb=Decimal("1"),
+        ),
+        TablePositionRoute(
+            dealt_in_player_count=2,
+            hero_position="BB",
+            hero_button_distance=1,
+            hero_action_index=1,
+            active_player_positions=("BB", "BTN/SB"),
+            relative_position="not_applicable",
+        ),
+    )
+
+    result = route_request(components=components)
+
+    assert result.decision_street == "preflop"
+
+
 def repeated_raise_request(
     *,
     bb_raise_total: Decimal,
@@ -1556,7 +1739,7 @@ def test_response_failures_require_only_a_local_response_digest() -> None:
 
 def test_only_a_current_dispatch_candidate_can_record_failure() -> None:
     unavailable = evaluate_remote_reference_preflight(
-        decision_binding(),
+        decision_point(),
         mode="local_only",
         policy=None,
         consent=None,

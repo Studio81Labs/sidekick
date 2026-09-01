@@ -212,6 +212,7 @@ def test_grading_domain_does_not_import_provider_or_benchmark_execution() -> Non
 def test_remote_reference_domain_has_only_pure_dependencies() -> None:
     allowed = {
         "__future__",
+        "app.domain.imported_hands.decisions",
         "app.domain.imported_hands.models",
         "app.domain.learning_content.models",
         "app.domain.remote_references.models",

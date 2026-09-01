@@ -30,6 +30,7 @@ from app.domain.remote_references.models import (
     UtilityConfigurationBinding,
 )
 from app.domain.remote_references.services import (
+    bind_remote_reference_route,
     evaluate_remote_reference_preflight,
     record_remote_reference_unavailable,
 )
@@ -62,6 +63,7 @@ __all__ = [
     "StackWagerPotRoute",
     "TablePositionRoute",
     "UtilityConfigurationBinding",
+    "bind_remote_reference_route",
     "evaluate_remote_reference_preflight",
     "record_remote_reference_unavailable",
 ]
