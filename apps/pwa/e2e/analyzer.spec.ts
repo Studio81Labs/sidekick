@@ -1149,6 +1149,7 @@ test("overlays delete confirmation without resizing screenshot details", async (
 
   const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
   await page.getByRole("button", { name: "Approve state" }).click();
+  await expect(uploadedJob.queueItem).toContainText("approved");
   const includeResponse = await page.request.put(
     `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark`,
     { data: { included: true } },
@@ -1194,10 +1195,11 @@ test("overlays delete confirmation without resizing screenshot details", async (
 
   await confirmation.getByRole("button", { name: "Cancel" }).click();
   await page.setViewportSize({ width: 320, height: 800 });
-  const mobileFooterBox = await coveredFooter.boundingBox();
-  expect(mobileFooterBox).not.toBeNull();
   await dialog.getByRole("button", { name: "Delete screenshot" }).click();
+  await expect(confirmation).toBeVisible();
+  const mobileFooterBox = await coveredFooter.boundingBox();
   const mobileConfirmationBox = await confirmation.boundingBox();
+  expect(mobileFooterBox).not.toBeNull();
   expect(mobileConfirmationBox).not.toBeNull();
   expect(
     Math.abs(mobileConfirmationBox!.y - mobileFooterBox!.y),
