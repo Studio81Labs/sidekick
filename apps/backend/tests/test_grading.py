@@ -384,7 +384,21 @@ def test_reference_raise_minimum_includes_the_hero_dead_ante() -> None:
     assert result.policy_grade_eligibility == "ungraded"
 
 
-def test_wager_sizing_matches_at_the_exact_tolerance_boundary() -> None:
+def test_wager_sizing_matches_inside_the_strict_tolerance_boundary() -> None:
+    target = wager_decision()
+    solved = reference(
+        target,
+        lines=(line("bet", "1", "0", total_committed_bb="2.049"),),
+        sizing_tolerance_bb="0.05",
+    )
+
+    result = grade_decision(target, reference=solved)
+
+    assert result.classification == "supported"
+    assert result.matched_policy_line == solved.policy_lines[0]
+
+
+def test_wager_sizing_at_the_exact_tolerance_boundary_is_not_a_match() -> None:
     target = wager_decision()
     solved = reference(
         target,
@@ -394,8 +408,9 @@ def test_wager_sizing_matches_at_the_exact_tolerance_boundary() -> None:
 
     result = grade_decision(target, reference=solved)
 
-    assert result.classification == "supported"
-    assert result.matched_policy_line == solved.policy_lines[0]
+    assert result.classification == "mistake"
+    assert result.reason == "outside_policy_support"
+    assert result.matched_policy_line is None
 
 
 def test_wager_sizing_outside_tolerance_is_a_mistake() -> None:
@@ -467,6 +482,21 @@ def test_reference_policy_rejects_ambiguous_or_incomplete_claims(
 ) -> None:
     with pytest.raises(ValidationError, match=expected_error):
         reference(decision(), lines=lines, policy_complete=complete)
+
+
+def test_reference_policy_allows_sizes_exactly_two_tolerances_apart() -> None:
+    target = wager_decision()
+
+    solved = reference(
+        target,
+        lines=(
+            line("bet", "0.5", "0", total_committed_bb="2"),
+            line("bet", "0.5", "-0.1", total_committed_bb="2.1"),
+        ),
+        sizing_tolerance_bb="0.05",
+    )
+
+    assert len(solved.policy_lines) == 2
 
 
 @pytest.mark.parametrize(

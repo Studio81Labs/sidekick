@@ -227,7 +227,7 @@ def _matched_policy_line(
         line
         for line in candidates
         if line.total_committed_bb is not None
-        and abs(line.total_committed_bb * big_blind - total_committed) <= tolerance
+        and abs(line.total_committed_bb * big_blind - total_committed) < tolerance
     ]
     return matches[0] if len(matches) == 1 else None
 

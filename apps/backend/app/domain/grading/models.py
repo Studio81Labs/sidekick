@@ -175,7 +175,7 @@ class ResolvedReferencePolicy(GradingModel):
                 separation = abs(
                     first.total_committed_bb - second.total_committed_bb
                 )
-                if separation <= self.sizing_tolerance_bb * 2:
+                if separation < self.sizing_tolerance_bb * 2:
                     raise ValueError(
                         "same-action wager policy lines must not have overlapping"
                         " sizing tolerances"
