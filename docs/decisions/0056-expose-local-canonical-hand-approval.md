@@ -55,6 +55,10 @@ fields. The server then derives the smallest non-overlapping JSON-pointer
 corrections from the same excerpt-free document the player reviewed. Private
 excerpt fields remain server-owned canonical evidence and never appear in a
 user correction, including when a correction reorders an evidence-bearing list.
+User-confirmed action origins are bound to the immutable detected action by the
+same visible provenance identity. A positional fallback is accepted only when
+the remaining player-visible action order is unchanged; ambiguous reordered
+confirmations fail closed.
 Detected values, approved values, correction timestamps, approval timestamp,
 and revision number are server-owned. An unchanged review records no corrections.
 A changed review without a reason is rejected without writing, and validation

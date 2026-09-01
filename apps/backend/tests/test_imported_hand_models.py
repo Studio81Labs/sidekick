@@ -15038,6 +15038,92 @@ def test_user_confirmation_must_resolve_a_detected_unknown_origin() -> None:
         origin_confirmation_record(explicit, confirmed, corrections)
 
 
+@pytest.mark.parametrize(
+    ("confirmed_index", "is_valid"),
+    [(0, False), (1, True)],
+)
+def test_reordered_confirmation_remains_bound_to_action_evidence(
+    confirmed_index: int,
+    is_valid: bool,
+) -> None:
+    state_payload = hand_state().model_dump()
+    unresolved_action = wager_action(0, "hero", "check", total=Decimal(0))
+    unresolved_action["origin"] = {
+        "kind": "unknown",
+        "basis": "unresolved",
+        "evidence": [
+            {
+                "raw_source_id": "file-1",
+                "line_start": 2,
+                "excerpt": "hero check",
+            }
+        ],
+    }
+    unresolved_action["evidence"] = unresolved_action["origin"]["evidence"]
+    automatic = automatic_action(1, "villain")
+    automatic_locator = {
+        "raw_source_id": "file-1",
+        "line_start": 3,
+        "excerpt": "villain automatic check",
+    }
+    automatic["evidence"] = [automatic_locator]
+    automatic["origin"]["evidence"] = [automatic_locator]
+    state_payload["streets"][0]["actions"] = [unresolved_action, automatic]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed_payload = source_state.model_dump(mode="json")
+    reviewed_actions = list(reversed(reviewed_payload["streets"][0]["actions"]))
+    for sequence, action in enumerate(reviewed_actions):
+        action["sequence"] = sequence
+        del action["evidence"][0]["excerpt"]
+        del action["origin"]["evidence"][0]["excerpt"]
+    reviewed_origin = reviewed_actions[confirmed_index]["origin"]
+    reviewed_origin["kind"] = "player_selected"
+    reviewed_origin["basis"] = "user_confirmed"
+    reviewed_origin["automatic_reason"] = None
+    reviewed_origin["review_reference"] = f"review-action-{confirmed_index}"
+    reviewed_payload["streets"][0]["actions"] = reviewed_actions
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed_payload,
+        correction_reason="Corrected action order and origin",
+    )
+
+    record_payload = {
+        "identity": IDENTITY,
+        "raw_sources": [
+            raw_source(
+                raw_text=(
+                    "PokerStars Hand #123456789\n"
+                    "hero check\n"
+                    "villain automatic check\n"
+                )
+            )
+        ],
+        "detections": [source_detection],
+        "canonical_revisions": [approved],
+        "lifecycle": {
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved.approved_at,
+        },
+    }
+    if not is_valid:
+        with pytest.raises(
+            ValidationError,
+            match="user-confirmed origin must resolve a detected unknown origin",
+        ):
+            ImportedHandRecord.model_validate(record_payload)
+        return
+
+    record = ImportedHandRecord.model_validate(record_payload)
+
+    assert record.canonical_revisions[0] == approved
+
+
 def test_explicit_marker_origin_remains_valid_without_a_correction() -> None:
     explicit = state_with_reviewed_action_origin(
         kind="player_selected",

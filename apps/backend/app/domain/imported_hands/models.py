@@ -5539,18 +5539,17 @@ def _validate_user_confirmed_origin_corrections(
         for action_index, action in enumerate(street.actions):
             if action.origin.basis != "user_confirmed":
                 continue
-            if (
-                street_index >= len(detected.state.streets)
-                or action_index
-                >= len(detected.state.streets[street_index].actions)
-            ):
+            if street_index >= len(detected.state.streets):
                 raise ValueError(
                     "user-confirmed origin must resolve a corresponding"
                     " detected action"
                 )
-            detected_origin = detected.state.streets[street_index].actions[
-                action_index
-            ].origin
+            detected_action = _detected_action_for_review_confirmation(
+                detected.state.streets[street_index].actions,
+                street.actions,
+                action_index=action_index,
+            )
+            detected_origin = detected_action.origin
             if not (
                 detected_origin.kind == "unknown"
                 and detected_origin.basis == "unresolved"
@@ -5558,6 +5557,68 @@ def _validate_user_confirmed_origin_corrections(
                 raise ValueError(
                     "user-confirmed origin must resolve a detected unknown origin"
                 )
+
+
+def _detected_action_for_review_confirmation(
+    detected_actions: list[ImportedAction],
+    approved_actions: list[ImportedAction],
+    *,
+    action_index: int,
+) -> ImportedAction:
+    approved_document = json.loads(approved_actions[action_index].model_dump_json())
+    approved_identity = _review_list_item_identity(approved_document)
+    if approved_identity is not None:
+        candidates = [
+            detected_action
+            for detected_action in detected_actions
+            if _review_list_item_identity(
+                json.loads(detected_action.model_dump_json())
+            )
+            == approved_identity
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
+    if (
+        action_index < len(detected_actions)
+        and _review_action_order_preserves_origin_binding(
+            detected_actions,
+            approved_actions,
+        )
+    ):
+        return detected_actions[action_index]
+    raise ValueError(
+        "user-confirmed origin must map unambiguously to a detected action"
+    )
+
+
+def _review_action_order_preserves_origin_binding(
+    detected_actions: list[ImportedAction],
+    approved_actions: list[ImportedAction],
+) -> bool:
+    if len(detected_actions) != len(approved_actions):
+        return False
+    for detected_action, approved_action in zip(
+        detected_actions,
+        approved_actions,
+        strict=True,
+    ):
+        detected_document = _without_review_excerpts(
+            json.loads(detected_action.model_dump_json())
+        )
+        approved_document = _without_review_excerpts(
+            json.loads(approved_action.model_dump_json())
+        )
+        if (
+            isinstance(approved_document, dict)
+            and isinstance(approved_document.get("origin"), dict)
+            and approved_document["origin"].get("basis") == "user_confirmed"
+        ):
+            assert isinstance(detected_document, dict)
+            detected_document.pop("origin", None)
+            approved_document.pop("origin", None)
+        if not _json_values_equal(detected_document, approved_document):
+            return False
+    return True
 
 
 def _validate_user_confirmed_origin_correction_presence(
