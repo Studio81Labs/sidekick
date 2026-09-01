@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import secrets
 from stat import S_ISREG
+import sys
 from threading import Lock
 from time import monotonic
 from types import MappingProxyType
@@ -70,9 +71,18 @@ PLAYER_PORT = 8765
 PLAYER_AUTHORITY = f"{PLAYER_HOST}:{PLAYER_PORT}"
 PLAYER_ORIGIN = f"http://{PLAYER_AUTHORITY}"
 PLAYER_SECRET_FILENAME = ".player-runtime-key"
-DEFAULT_PLAYER_ASSETS_DIR = (
-    Path(__file__).resolve().parents[2] / "pwa" / "dist-player"
-)
+
+
+def default_player_assets_dir() -> Path:
+    """Locate verified player assets in a source tree or frozen runtime bundle."""
+
+    frozen_root = getattr(sys, "_MEIPASS", None)
+    if isinstance(frozen_root, (str, os.PathLike)):
+        return Path(frozen_root) / "player-assets"
+    return Path(__file__).resolve().parents[2] / "pwa" / "dist-player"
+
+
+DEFAULT_PLAYER_ASSETS_DIR = default_player_assets_dir()
 REQUIRED_PLAYER_ASSETS = (
     "index.html",
     "manifest.webmanifest",

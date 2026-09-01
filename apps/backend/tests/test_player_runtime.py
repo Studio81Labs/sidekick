@@ -32,7 +32,11 @@ from app.domain.imported_hands import (
     extract_hero_decision_points,
     imported_hand_state_sha256,
 )
-from app.player_main import build_player_server, configured_player_runtime
+from app.player_main import (
+    build_player_server,
+    configured_player_runtime,
+    packaged_player_data_dir,
+)
 from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
 from app.player_hands import player_hand_record_version
 from app.player_namespace import (
@@ -51,6 +55,7 @@ from app.player_runtime import (
     PlayerRuntime,
     PlayerSessionAuthority,
     create_player_runtime,
+    default_player_assets_dir,
     load_or_create_installation_secret,
 )
 from app.player_workspace import (
@@ -79,6 +84,15 @@ DELETE_REQUEST_ID = "11111111-1111-4111-8111-111111111111"
 DELETE_RETRY_REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 APPROVAL_REQUEST_ID = "33333333-3333-4333-8333-333333333333"
 APPROVAL_RETRY_REQUEST_ID = "44444444-4444-4444-8444-444444444444"
+
+
+def test_frozen_player_runtime_uses_embedded_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+
+    assert default_player_assets_dir() == tmp_path / "player-assets"
 
 
 def _create_player_runtime(data_dir: Path, **kwargs) -> PlayerRuntime:
@@ -2236,12 +2250,125 @@ def test_player_launcher_holds_the_runtime_lifetime_lease_while_serving(
     )
     monkeypatch.setattr(player_main_module, "serve_player_runtime", observe_lease)
 
-    player_main_module.main()
+    assert player_main_module.main([]) == 0
 
     assert observed == [True]
     lease = player_runtime_lease(data_dir.resolve())
     descriptor = lease.acquire(exclusive=True, timeout_seconds=0)
     lease.release(descriptor)
+
+
+def test_player_launcher_dispatches_export_and_remove(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[list[str]] = []
+
+    def export_and_remove(arguments: list[str]) -> int:
+        observed.append(arguments)
+        return 7
+
+    monkeypatch.setattr("app.player_uninstall.main", export_and_remove)
+
+    assert (
+        player_main_module.main(
+            [
+                "export-and-remove",
+                "/private/player-backup.zip",
+                "--confirm-remove-data",
+            ]
+        )
+        == 7
+    )
+    assert observed == [
+        ["/private/player-backup.zip", "--confirm-remove-data"]
+    ]
+
+
+def test_player_launcher_rejects_unknown_packaged_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert player_main_module.main(["serve-on-lan"]) == 2
+
+    assert "Unknown player runtime command: serve-on-lan" in capsys.readouterr().err
+
+
+def test_packaged_player_data_dir_uses_platform_application_data_root() -> None:
+    home = Path("/private/player")
+
+    assert packaged_player_data_dir(platform_name="darwin", home=home) == (
+        home / "Library" / "Application Support" / "Poker Hero" / "data"
+    )
+    assert packaged_player_data_dir(
+        platform_name="linux",
+        home=home,
+        xdg_data_home="/private/xdg",
+    ) == Path("/private/xdg/poker-hero/player/data")
+    assert packaged_player_data_dir(
+        platform_name="linux",
+        home=home,
+        xdg_data_home="",
+    ) == home / ".local" / "share" / "poker-hero" / "player" / "data"
+
+
+def test_packaged_player_data_dir_rejects_relative_xdg_root() -> None:
+    with pytest.raises(RuntimeError, match="XDG_DATA_HOME must be absolute"):
+        packaged_player_data_dir(
+            platform_name="linux",
+            home=Path("/private/player"),
+            xdg_data_home="relative-data",
+        )
+
+
+def test_packaged_player_data_dir_rejects_relative_home() -> None:
+    with pytest.raises(RuntimeError, match="home directory must be absolute"):
+        packaged_player_data_dir(
+            platform_name="linux",
+            home=Path("relative-home"),
+            xdg_data_home="",
+        )
+
+
+def test_packaged_player_sets_default_data_dir_without_overriding_operator_choice(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.delenv("POKER_DATA_DIR", raising=False)
+    monkeypatch.setattr(
+        player_main_module,
+        "packaged_player_data_dir",
+        lambda: tmp_path / "packaged-data",
+    )
+
+    player_main_module.configure_packaged_player_data_dir()
+
+    assert os.environ["POKER_DATA_DIR"] == str(tmp_path / "packaged-data")
+    monkeypatch.setenv("POKER_DATA_DIR", str(tmp_path / "operator-data"))
+    player_main_module.configure_packaged_player_data_dir()
+    assert os.environ["POKER_DATA_DIR"] == str(tmp_path / "operator-data")
+
+
+def test_packaged_player_expands_operator_data_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("POKER_DATA_DIR", "~/operator-data")
+
+    player_main_module.configure_packaged_player_data_dir()
+
+    assert os.environ["POKER_DATA_DIR"] == str(tmp_path / "operator-data")
+
+
+def test_packaged_player_rejects_relative_explicit_data_dir(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("POKER_DATA_DIR", "relative-data")
+
+    with pytest.raises(RuntimeError, match="POKER_DATA_DIR must be absolute"):
+        player_main_module.configure_packaged_player_data_dir()
 
 
 def _non_loopback_ipv4() -> str | None:
