@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 import unittest
@@ -294,12 +295,30 @@ class FlutterFamilyTests(unittest.TestCase):
 
 class FlutterPinReadTests(unittest.TestCase):
     def test_reads_the_constraint_this_repository_ships(self) -> None:
+        # CAPABILITY-NEUTRAL, necessarily. This file is byte-identical across
+        # the repository family and not every member ships Flutter: taven and
+        # sidekick have no `constraints.flutter` at all, where None is the
+        # correct answer and the pruner's documented "collect nothing". An
+        # unconditional assertNotNone here asserted a capability rather than a
+        # behaviour, and failed their CI on a file that was working exactly as
+        # designed.
+        #
+        # So compare the reader against whatever renovate.json this repository
+        # actually ships. That still exercises the real file rather than a
+        # fixture, and it cannot encode one repo's topology into a shared file.
         root = Path(__file__).resolve().parent.parent.parent
+        declared = (
+            json.loads((root / "renovate.json").read_text())
+            .get("constraints", {})
+            .get("flutter")
+        )
         pin = pruner.read_flutter_pin(root)
-        self.assertIsNotNone(pin)
-        # Same value scripts/check-flutter-pin.py holds the workflows to, so the
-        # pruner and the build can never disagree about which SDK is current.
-        self.assertRegex(str(pin), r"^\d+\.\d+\.\d+$")
+        self.assertEqual(pin, declared)
+        if declared is not None:
+            # Where a pin exists it is the same value check-flutter-pin.py holds
+            # the workflows to, so the pruner and the build can never disagree
+            # about which SDK is current.
+            self.assertRegex(str(pin), r"^\d+\.\d+\.\d+$")
 
     def test_missing_or_malformed_renovate_json_reads_as_unknown(self) -> None:
         import tempfile
