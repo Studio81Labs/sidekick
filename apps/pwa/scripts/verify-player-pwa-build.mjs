@@ -47,6 +47,10 @@ for (const asset of assets) {
 const worker = await readFile(resolve(dist, "sw.js"), "utf8");
 invariant(!worker.includes("__POKER_HERO_"), "service-worker markers remain");
 invariant(
+  !/^\s*import\b/.test(worker),
+  "service worker is not compatible with the existing classic registration",
+);
+invariant(
   /poker-hero-player-shell-[a-f0-9]{16}/.test(worker),
   "service-worker cache name is not player-specific and build-versioned",
 );
@@ -61,6 +65,11 @@ invariant(
 invariant(
   !expectedPrecache.includes("/api"),
   "private API paths entered the player precache",
+);
+invariant(
+  worker.includes("POKER_HERO_PLAYER_ACTIVATE_UPDATE") &&
+    worker.includes("skipWaiting"),
+  "service worker does not require the explicit player update handoff",
 );
 
 const manifest = JSON.parse(
@@ -106,6 +115,10 @@ const applicationSource = (
       .map((pathname) => readFile(resolve(dist, pathname), "utf8")),
   )
 ).join("\n");
+invariant(
+  applicationSource.includes("POKER_HERO_PLAYER_ACTIVATE_UPDATE"),
+  "player application cannot request the explicit update handoff",
+);
 for (const requiredPath of [
   "/api/player/session",
   "/api/player/storage",

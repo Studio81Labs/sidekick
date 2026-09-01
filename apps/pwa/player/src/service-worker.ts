@@ -9,11 +9,12 @@ import {
   networkFirstNavigation,
   precacheVersion,
 } from "../../src/app/pwa/serviceWorkerRuntime";
-
 const worker = self as unknown as ServiceWorkerGlobalScope;
 const CACHE_NAME = "__POKER_HERO_CACHE_NAME__";
 const PRECACHE_URLS = "__POKER_HERO_PRECACHE_URLS__" as unknown as string[];
 const PRECACHE_PATHS = new Set(PRECACHE_URLS);
+// Keep the worker standalone so existing classic registrations can update.
+const PLAYER_ACTIVATE_UPDATE_MESSAGE = "POKER_HERO_PLAYER_ACTIVATE_UPDATE";
 
 worker.addEventListener("install", (event) => {
   event.waitUntil(precacheVersion(CACHE_NAME, PRECACHE_URLS));
@@ -36,6 +37,12 @@ worker.addEventListener("activate", (event) => {
       )
       .then(() => worker.clients.claim()),
   );
+});
+
+worker.addEventListener("message", (event) => {
+  if (event.data?.type === PLAYER_ACTIVATE_UPDATE_MESSAGE) {
+    event.waitUntil(worker.skipWaiting());
+  }
 });
 
 worker.addEventListener("fetch", (event) => {

@@ -153,6 +153,23 @@ h2 {
   background: #fff0ec;
 }
 
+.notice.player-update {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  border: 1px solid #7c9a8f;
+  color: #284c41;
+  background: #e8f0eb;
+  line-height: 1.5;
+}
+
+.notice.player-update .secondary-button {
+  flex: 0 0 auto;
+  margin-top: 0;
+  background: #fff;
+}
+
 .storage-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -587,8 +604,13 @@ button:disabled {
   }
 
   .masthead,
-  .boundary-note {
+  .boundary-note,
+  .notice.player-update {
     flex-direction: column;
+  }
+
+  .notice.player-update {
+    align-items: stretch;
   }
 
   .storage-panel,

@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 
 import {
   PlayerApiError,
@@ -24,6 +30,11 @@ import {
   restorePlayerBackup,
   revokePlayerSession,
 } from "./playerApi";
+import {
+  playerUpdateDirtyReasons,
+  type PlayerUpdateSafety,
+  usePlayerUpdateCoordinator,
+} from "./playerUpdateCoordinator";
 
 type BusyAction =
   | "export"
@@ -702,6 +713,7 @@ function RestoreSummary({ result }: { result: PlayerBackupRestoreResult }) {
 
 export default function PlayerApp() {
   const backupInput = useRef<HTMLInputElement>(null);
+  const permitNextUnloadRef = useRef(false);
   const [credentials, setCredentials] = useState<PlayerCredentials | null>(
     null,
   );
@@ -720,6 +732,7 @@ export default function PlayerApp() {
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
+  const [draftRevision, setDraftRevision] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -741,16 +754,6 @@ export default function PlayerApp() {
       active = false;
     };
   }, []);
-
-  useEffect(() => {
-    if (busy !== "restore") return;
-    const protectRestore = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", protectRestore);
-    return () => window.removeEventListener("beforeunload", protectRestore);
-  }, [busy]);
 
   const handleRequestError = (reason: unknown, context?: string) => {
     if (reason instanceof PlayerApiError && reason.status === 401) {
@@ -1282,6 +1285,73 @@ export default function PlayerApp() {
 
   const booting = !credentials && !error;
   const attentionItems = storage ? recoveryCount(storage) : 0;
+  const defaultApprovalDraft = handDetail ? approvalDraftFor(handDetail) : null;
+  const defaultDeleteReason =
+    handDetail?.summary.lifecycle_status === "deletion_pending"
+      ? (handDetail.lifecycle.reason ?? "")
+      : "";
+  const approvalDraftDirty =
+    approvalDraft !== null &&
+    (defaultApprovalDraft === null ||
+      approvalDraft.detectionId !== defaultApprovalDraft.detectionId ||
+      approvalDraft.reviewedState !== defaultApprovalDraft.reviewedState ||
+      approvalDraft.correctionReason !== defaultApprovalDraft.correctionReason);
+  const dirtyReasons = playerUpdateDirtyReasons({
+    approvalChanged: approvalDraftDirty,
+    approvalStateReasonChanged: closeReason !== "",
+    backupSelected: selectedBackup !== null,
+    permanentDeletionReasonChanged: deleteReason !== defaultDeleteReason,
+  });
+  const updateSafety: PlayerUpdateSafety = {
+    dirtyRevision: draftRevision,
+    isBusy: booting || busy !== null,
+    isDirty: dirtyReasons.length > 0,
+  };
+  const prepareForUpdateReload = useCallback(() => {
+    permitNextUnloadRef.current = true;
+    window.setTimeout(() => {
+      permitNextUnloadRef.current = false;
+    }, 0);
+  }, []);
+  const update = usePlayerUpdateCoordinator(
+    updateSafety,
+    prepareForUpdateReload,
+  );
+
+  useLayoutEffect(() => {
+    if (!updateSafety.isBusy && !updateSafety.isDirty) return;
+    const preventUnsafeUnload = (event: BeforeUnloadEvent) => {
+      if (permitNextUnloadRef.current) {
+        permitNextUnloadRef.current = false;
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", preventUnsafeUnload);
+    return () =>
+      window.removeEventListener("beforeunload", preventUnsafeUnload);
+  }, [updateSafety.isBusy, updateSafety.isDirty]);
+
+  const markDraftChanged = () => {
+    setDraftRevision((current) => current + 1);
+  };
+  const activateDiscardingDrafts = () => {
+    if (
+      window.confirm(
+        "Discard every unsaved local player draft and reload the update?",
+      )
+    ) {
+      update.activate(true);
+    }
+  };
+  const updateMessage = update.activated
+    ? "Poker Hero Local Player has updated. Reload when your work is safe."
+    : updateSafety.isBusy
+      ? "A local player update is ready and will wait for active work to finish."
+      : updateSafety.isDirty
+        ? "A local player update is ready. Finish your drafts or explicitly discard them."
+        : "A local player update is ready to reload.";
 
   return (
     <main className="shell">
@@ -1305,6 +1375,30 @@ export default function PlayerApp() {
           </button>
         ) : null}
       </header>
+
+      {update.available ? (
+        <div className="notice player-update" role="status" aria-live="polite">
+          <span>{updateMessage}</span>
+          {!updateSafety.isBusy ? (
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={update.activating}
+              onClick={
+                updateSafety.isDirty
+                  ? activateDiscardingDrafts
+                  : () => update.activate(false)
+              }
+            >
+              {update.activating
+                ? "Updating…"
+                : updateSafety.isDirty
+                  ? "Discard and reload"
+                  : "Reload update"}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
 
       {booting ? (
         <section className="panel status-panel" aria-live="polite">
@@ -1485,23 +1579,32 @@ export default function PlayerApp() {
                 deleteReason={deleteReason}
                 detail={handDetail}
                 onApprove={() => void approveReviewedHand()}
-                onApprovalDetectionChange={(detectionId) =>
-                  setApprovalDraft(approvalDraftFor(handDetail, detectionId))
-                }
-                onCorrectionReasonChange={(correctionReason) =>
+                onApprovalDetectionChange={(detectionId) => {
+                  markDraftChanged();
+                  setApprovalDraft(approvalDraftFor(handDetail, detectionId));
+                }}
+                onCorrectionReasonChange={(correctionReason) => {
+                  markDraftChanged();
                   setApprovalDraft((current) =>
                     current ? { ...current, correctionReason } : current,
-                  )
-                }
+                  );
+                }}
                 onClose={(action) => void closeHandApproval(action)}
                 onDelete={() => void permanentlyDeleteHand()}
-                onDeleteReasonChange={setDeleteReason}
-                onReasonChange={setCloseReason}
-                onReviewedStateChange={(reviewedState) =>
+                onDeleteReasonChange={(reason) => {
+                  markDraftChanged();
+                  setDeleteReason(reason);
+                }}
+                onReasonChange={(reason) => {
+                  markDraftChanged();
+                  setCloseReason(reason);
+                }}
+                onReviewedStateChange={(reviewedState) => {
+                  markDraftChanged();
                   setApprovalDraft((current) =>
                     current ? { ...current, reviewedState } : current,
-                  )
-                }
+                  );
+                }}
               />
             ) : null}
           </section>
@@ -1539,6 +1642,7 @@ export default function PlayerApp() {
                   accept=".zip,application/zip,application/octet-stream"
                   disabled={busy !== null}
                   onChange={(event) => {
+                    markDraftChanged();
                     setSelectedBackup(event.target.files?.[0] ?? null);
                     setRestoreResult(null);
                   }}

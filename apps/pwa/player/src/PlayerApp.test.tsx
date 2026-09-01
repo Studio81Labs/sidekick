@@ -13,6 +13,47 @@ import {
   PLAYER_CSRF_STORAGE_KEY,
   PLAYER_SESSION_STORAGE_KEY,
 } from "./playerApi";
+import { PLAYER_ACTIVATE_UPDATE_MESSAGE } from "./playerUpdateProtocol";
+
+class WaitingPlayerWorker extends EventTarget {
+  readonly postMessage = vi.fn();
+  state: ServiceWorkerState = "installed";
+}
+
+class WaitingPlayerRegistration extends EventTarget {
+  installing: ServiceWorker | null = null;
+  readonly update = vi.fn().mockResolvedValue(undefined);
+
+  constructor(readonly waiting: ServiceWorker) {
+    super();
+  }
+}
+
+class PlayerServiceWorkerContainer extends EventTarget {
+  controller = {} as ServiceWorker;
+  readonly getRegistration = vi.fn();
+  readonly register = vi.fn();
+}
+
+const originalServiceWorker = Object.getOwnPropertyDescriptor(
+  navigator,
+  "serviceWorker",
+);
+
+function installWaitingPlayerWorker(): WaitingPlayerWorker {
+  const worker = new WaitingPlayerWorker();
+  const registration = new WaitingPlayerRegistration(
+    worker as unknown as ServiceWorker,
+  );
+  const container = new PlayerServiceWorkerContainer();
+  container.register.mockResolvedValue(registration);
+  container.getRegistration.mockResolvedValue(registration);
+  Object.defineProperty(navigator, "serviceWorker", {
+    configurable: true,
+    value: container,
+  });
+  return worker;
+}
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -403,7 +444,13 @@ const deletedHandDetail = {
 describe("PlayerApp", () => {
   afterEach(() => {
     cleanup();
+    vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+    if (originalServiceWorker) {
+      Object.defineProperty(navigator, "serviceWorker", originalServiceWorker);
+    } else {
+      Reflect.deleteProperty(navigator, "serviceWorker");
+    }
   });
 
   beforeEach(() => {
@@ -452,6 +499,105 @@ describe("PlayerApp", () => {
     expect(new Headers(storageRequest?.[1]?.headers).get("Authorization")).toBe(
       "Bearer player-session",
     );
+  });
+
+  it("defers a waiting player update through bootstrap, drafts, and restore", async () => {
+    const user = userEvent.setup();
+    const worker = installWaitingPlayerWorker();
+    vi.stubEnv("PROD", true);
+    window.location.hash = "#ticket=one-use-ticket";
+    let resolveStorage!: (response: Response) => void;
+    const storageResponse = new Promise<Response>((resolve) => {
+      resolveStorage = resolve;
+    });
+    const restoreResponse = new Promise<Response>(() => undefined);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockReturnValueOnce(storageResponse)
+      .mockReturnValueOnce(restoreResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+
+    expect(
+      await screen.findByText(/will wait for active work to finish/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Reload update" }),
+    ).not.toBeInTheDocument();
+
+    resolveStorage(jsonResponse(readyStorage));
+    await screen.findByText("Ready on this machine");
+    expect(screen.getByRole("button", { name: "Reload update" })).toBeEnabled();
+
+    await user.upload(
+      screen.getByLabelText("Player backup ZIP"),
+      new File(["backup"], "player.zip", { type: "application/zip" }),
+    );
+    expect(
+      await screen.findByText(/Finish your drafts or explicitly discard them/),
+    ).toBeInTheDocument();
+
+    const unload = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(unload);
+    expect(unload.defaultPrevented).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Restore backup" }));
+    expect(
+      await screen.findByText(/will wait for active work to finish/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /reload/i }),
+    ).not.toBeInTheDocument();
+    expect(worker.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("requires explicit confirmation before discarding a player draft", async () => {
+    const user = userEvent.setup();
+    const worker = installWaitingPlayerWorker();
+    vi.stubEnv("PROD", true);
+    window.location.hash = "#ticket=one-use-ticket";
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.upload(
+      screen.getByLabelText("Player backup ZIP"),
+      new File(["backup"], "player.zip", { type: "application/zip" }),
+    );
+
+    const discard = await screen.findByRole("button", {
+      name: "Discard and reload",
+    });
+    await user.click(discard);
+    expect(worker.postMessage).not.toHaveBeenCalled();
+
+    confirm.mockReturnValue(true);
+    await user.click(discard);
+    expect(confirm).toHaveBeenLastCalledWith(
+      "Discard every unsaved local player draft and reload the update?",
+    );
+    expect(worker.postMessage).toHaveBeenCalledWith({
+      type: PLAYER_ACTIVATE_UPDATE_MESSAGE,
+    });
   });
 
   it("preserves an exchanged session when initial storage status is transient", async () => {
