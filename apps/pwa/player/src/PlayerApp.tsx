@@ -15,6 +15,7 @@ import {
   bootstrapPlayerSession,
   clearPlayerCredentials,
   closePlayerHand,
+  deletePlayerHand,
   exportPlayerBackup,
   loadPlayerHand,
   loadPlayerHands,
@@ -30,6 +31,7 @@ type BusyAction =
   | "detail"
   | "withdraw"
   | "reject"
+  | "delete"
   | "signout"
   | null;
 
@@ -85,16 +87,22 @@ function evidenceLocation(
 interface HandDetailProps {
   busy: BusyAction;
   closeReason: string;
+  deleteReason: string;
   detail: PlayerHandDetail;
   onClose: (action: PlayerHandCloseAction) => void;
+  onDelete: () => void;
+  onDeleteReasonChange: (reason: string) => void;
   onReasonChange: (reason: string) => void;
 }
 
 function HandDetail({
   busy,
   closeReason,
+  deleteReason,
   detail,
   onClose,
+  onDelete,
+  onDeleteReasonChange,
   onReasonChange,
 }: HandDetailProps) {
   const { summary } = detail;
@@ -231,6 +239,42 @@ function HandDetail({
               onClick={() => onClose("reject")}
             >
               {busy === "reject" ? "Rejecting…" : "Reject as incorrect"}
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {summary.lifecycle_status !== "deleted" ? (
+        <div className="audit-block lifecycle-actions permanent-deletion">
+          <h4>Permanently delete retained hand</h4>
+          <p>
+            This first makes the hand inactive, then permanently removes raw
+            sources, detections, conflicts, corrections, canonical revisions,
+            and derived audit. Only a non-sensitive receipt and deletion
+            generation remain. An older backup cannot undo the deletion.
+          </p>
+          <label>
+            <span>Permanent deletion reason</span>
+            <textarea
+              required
+              maxLength={256}
+              rows={3}
+              value={deleteReason}
+              disabled={busy !== null}
+              onChange={(event) => onDeleteReasonChange(event.target.value)}
+            />
+          </label>
+          <div className="lifecycle-action-buttons">
+            <button
+              className="danger-button"
+              type="button"
+              disabled={busy !== null || deleteReason.trim().length === 0}
+              onClick={onDelete}
+            >
+              {busy === "delete"
+                ? "Deleting permanently…"
+                : summary.lifecycle_status === "deletion_pending"
+                  ? "Retry deletion cleanup"
+                  : "Delete permanently"}
             </button>
           </div>
         </div>
@@ -446,6 +490,7 @@ export default function PlayerApp() {
   const [handDetail, setHandDetail] = useState<PlayerHandDetail | null>(null);
   const [loadingHandKey, setLoadingHandKey] = useState<string | null>(null);
   const [closeReason, setCloseReason] = useState("");
+  const [deleteReason, setDeleteReason] = useState("");
   const [actionNotice, setActionNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
@@ -489,6 +534,7 @@ export default function PlayerApp() {
       setHandPage(null);
       setHandDetail(null);
       setCloseReason("");
+      setDeleteReason("");
       setActionNotice(null);
     }
     const message = friendlyError(reason);
@@ -502,6 +548,7 @@ export default function PlayerApp() {
     setHandPage(null);
     setHandDetail(null);
     setCloseReason("");
+    setDeleteReason("");
     setActionNotice(null);
     setError(message);
   };
@@ -542,6 +589,7 @@ export default function PlayerApp() {
       if (!append) {
         setHandDetail(null);
         setCloseReason("");
+        setDeleteReason("");
       }
     } catch (reason) {
       handleRequestError(reason);
@@ -557,9 +605,14 @@ export default function PlayerApp() {
     setActionNotice(null);
     setHandDetail(null);
     setCloseReason("");
+    setDeleteReason("");
     setLoadingHandKey(recordKey);
     try {
-      setHandDetail(await loadPlayerHand(credentials, recordKey));
+      const detail = await loadPlayerHand(credentials, recordKey);
+      setHandDetail(detail);
+      if (detail.summary.lifecycle_status === "deletion_pending") {
+        setDeleteReason(detail.lifecycle.reason ?? "");
+      }
     } catch (reason) {
       if (reason instanceof PlayerHandRecoveryRequiredError) {
         requireHandRecovery(reason.message);
@@ -675,6 +728,98 @@ export default function PlayerApp() {
     }
   };
 
+  const permanentlyDeleteHand = async () => {
+    if (!credentials || !handDetail || deleteReason.trim().length === 0) return;
+    const confirmed = window.confirm(
+      "Confirm permanent deletion. Raw sources, detected and approved state, conflicts, corrections, and derived audit will be removed. Only a deletion receipt remains, and this cannot be undone by restoring an older backup.",
+    );
+    if (!confirmed) return;
+
+    const requestedDetail = handDetail;
+    const reason = deleteReason.trim();
+    const requestId = crypto.randomUUID();
+    const targetGeneration =
+      requestedDetail.summary.lifecycle_status === "deletion_pending"
+        ? requestedDetail.summary.deletion_generation
+        : requestedDetail.summary.deletion_generation + 1;
+    setBusy("delete");
+    setError(null);
+    setActionNotice(null);
+    try {
+      const updated = await deletePlayerHand(
+        credentials,
+        requestedDetail.summary.record_key,
+        requestId,
+        reason,
+        requestedDetail.summary,
+      );
+      replaceHandDetail(updated);
+      setCloseReason("");
+      setDeleteReason("");
+      setActionNotice(
+        "Permanent deletion completed. Only the deletion receipt and generation remain.",
+      );
+    } catch (deleteError) {
+      if (deleteError instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(deleteError.message);
+      } else if (
+        deleteError instanceof PlayerApiError &&
+        deleteError.status === 401
+      ) {
+        handleRequestError(deleteError);
+      } else {
+        try {
+          const refreshed = await loadPlayerHand(
+            credentials,
+            requestedDetail.summary.record_key,
+          );
+          replaceHandDetail(refreshed);
+          if (
+            refreshed.summary.lifecycle_status === "deleted" &&
+            refreshed.summary.deletion_generation === targetGeneration &&
+            refreshed.deletion_receipt?.receipt_id === requestId
+          ) {
+            setCloseReason("");
+            setDeleteReason("");
+            setActionNotice(
+              "Permanent deletion committed even though the original response was interrupted. The receipt was refreshed.",
+            );
+          } else if (
+            refreshed.summary.lifecycle_status === "deletion_pending"
+          ) {
+            setCloseReason("");
+            setDeleteReason(refreshed.lifecycle.reason ?? "");
+            handleRequestError(
+              deleteError,
+              "The hand is inactive and deletion cleanup is pending. Review the refreshed detail and retry cleanup.",
+            );
+          } else {
+            setDeleteReason("");
+            handleRequestError(
+              deleteError,
+              "Permanent deletion was not confirmed. The audit detail was refreshed.",
+            );
+          }
+        } catch (refreshError) {
+          if (refreshError instanceof PlayerHandRecoveryRequiredError) {
+            requireHandRecovery(
+              `${friendlyError(deleteError)} ${refreshError.message}`,
+            );
+          } else {
+            setHandDetail(null);
+            setDeleteReason("");
+            handleRequestError(
+              refreshError,
+              `${friendlyError(deleteError)} The deletion outcome could not be refreshed; reload the records before retrying.`,
+            );
+          }
+        }
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const restoreBackup = async () => {
     if (!credentials || !selectedBackup) return;
     setBusy("restore");
@@ -687,6 +832,7 @@ export default function PlayerApp() {
       setHandPage(null);
       setHandDetail(null);
       setCloseReason("");
+      setDeleteReason("");
       setSelectedBackup(null);
       if (backupInput.current) backupInput.current.value = "";
       try {
@@ -706,6 +852,7 @@ export default function PlayerApp() {
         setHandPage(null);
         setHandDetail(null);
         setCloseReason("");
+        setDeleteReason("");
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         setError(reason.message);
@@ -713,6 +860,7 @@ export default function PlayerApp() {
         setHandPage(null);
         setHandDetail(null);
         setCloseReason("");
+        setDeleteReason("");
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         try {
@@ -753,6 +901,7 @@ export default function PlayerApp() {
       setHandPage(null);
       setHandDetail(null);
       setCloseReason("");
+      setDeleteReason("");
       setActionNotice(null);
       if (backupInput.current) backupInput.current.value = "";
       setError(message);
@@ -858,7 +1007,8 @@ export default function PlayerApp() {
                 <p>
                   Inspect lifecycle and provenance without exposing raw hand
                   histories in the collection response. Active approvals can be
-                  withdrawn or rejected from their audit detail.
+                  withdrawn or rejected, and every retained hand can be
+                  permanently deleted from its audit detail.
                 </p>
               </div>
               {storage.imported_hand_record_count > 0 ? (
@@ -956,8 +1106,11 @@ export default function PlayerApp() {
               <HandDetail
                 busy={busy}
                 closeReason={closeReason}
+                deleteReason={deleteReason}
                 detail={handDetail}
                 onClose={(action) => void closeHandApproval(action)}
+                onDelete={() => void permanentlyDeleteHand()}
+                onDeleteReasonChange={setDeleteReason}
                 onReasonChange={setCloseReason}
               />
             ) : null}
@@ -1022,8 +1175,9 @@ export default function PlayerApp() {
             <span>
               Direct hand-history import, correction, approval, and learning are
               not enabled in this build yet. Existing active approvals can be
-              withdrawn or rejected locally while their evidence remains
-              auditable. Screenshot capture is not a player feature.
+              withdrawn or rejected while their evidence remains auditable, or
+              any retained hand can be permanently deleted to a receipt-only
+              tombstone. Screenshot capture is not a player feature.
             </span>
           </aside>
         </>

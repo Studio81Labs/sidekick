@@ -38,6 +38,7 @@ export type PlayerHandLifecycleStatus =
 
 export interface PlayerHandSummary {
   record_key: string;
+  record_version: string;
   identity: {
     namespace: string;
     site: string;
@@ -355,6 +356,45 @@ export async function closePlayerHand(
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           reason,
+          expected_active_canonical_revision:
+            expected.active_canonical_revision,
+          expected_deletion_generation: expected.deletion_generation,
+          expected_lifecycle_changed_at: expected.lifecycle_changed_at,
+        }),
+      },
+    );
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerHandRecoveryRequiredError();
+    }
+    throw error;
+  }
+  return (await response.json()) as PlayerHandDetail;
+}
+
+export async function deletePlayerHand(
+  credentials: PlayerCredentials,
+  recordKey: string,
+  requestId: string,
+  reason: string,
+  expected: PlayerHandSummary,
+): Promise<PlayerHandDetail> {
+  if (expected.lifecycle_status === "deleted") {
+    throw new Error("This retained hand has already been permanently deleted.");
+  }
+  let response: Response;
+  try {
+    response = await playerRequest(
+      credentials,
+      `/api/player/hands/${encodeURIComponent(recordKey)}/delete`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          request_id: requestId,
+          reason,
+          expected_record_version: expected.record_version,
+          expected_lifecycle_status: expected.lifecycle_status,
           expected_active_canonical_revision:
             expected.active_canonical_revision,
           expected_deletion_generation: expected.deletion_generation,

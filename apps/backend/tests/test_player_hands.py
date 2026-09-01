@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from hashlib import sha256
 
 from app.domain.imported_hands import (
     ImportedHandRecord,
@@ -11,6 +12,7 @@ from app.player_hands import (
     _without_evidence_excerpts,
     get_player_hand,
     list_player_hands,
+    player_hand_record_version,
 )
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
@@ -59,6 +61,8 @@ def test_player_hand_detail_preserves_review_metadata_without_raw_text(tmp_path)
     assert detail.summary.lifecycle_status == "pending_review"
     assert detail.summary.learning_eligible is False
     assert detail.summary.warning_count == 2
+    assert detail.summary.record_version == player_hand_record_version(record)
+    assert len(detail.summary.record_version) == 64
     assert detail.raw_sources[0].provenance.adapter_id == "pokerstars"
     assert detail.detections[0].state["identity"] == {
         "namespace": "site-hand-id/v1",
@@ -75,6 +79,24 @@ def test_player_hand_detail_preserves_review_metadata_without_raw_text(tmp_path)
     assert "raw_text" not in serialized
     assert "PokerStars Hand #123456789" not in serialized
     assert "excerpt" not in serialized
+
+
+def test_player_hand_record_version_covers_retained_audit_evidence() -> None:
+    record = pending_review_record()
+    changed_text = f"{record.raw_sources[0].raw_text}\nnew audit line"
+    changed_source = record.raw_sources[0].model_copy(
+        update={
+            "content_sha256": sha256(changed_text.encode("utf-8")).hexdigest(),
+            "raw_text": changed_text,
+        }
+    )
+    changed = ImportedHandRecord.model_validate(
+        record.model_copy(update={"raw_sources": [changed_source]}).model_dump(
+            mode="python"
+        )
+    )
+
+    assert player_hand_record_version(record) != player_hand_record_version(changed)
 
 
 def test_player_hand_detail_represents_a_tombstone_without_identity_or_evidence(
