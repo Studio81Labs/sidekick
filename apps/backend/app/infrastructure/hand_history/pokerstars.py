@@ -680,6 +680,8 @@ def _parse_body(
     forced_post_seen = False
     hole_seen = False
     showdown_seen = False
+    award_seen = False
+    non_forced_action_seen = False
     in_summary = False
     summary_seen = False
     unresolved_decisions = 0
@@ -723,10 +725,10 @@ def _parse_body(
             hole_seen = True
             continue
         if text == "*** SHOW DOWN ***":
-            if not hole_seen or showdown_seen or in_summary:
+            if not hole_seen or showdown_seen or award_seen or in_summary:
                 raise _HandParseError(
                     "showdown_order",
-                    "The showdown marker must follow play and appear at most once.",
+                    "The showdown marker must follow play, precede awards, and appear at most once.",
                     line_start=line.number,
                 )
             showdown_seen = True
@@ -810,10 +812,10 @@ def _parse_body(
 
         street_match = _STREET_RE.fullmatch(text)
         if street_match is not None:
-            if not hole_seen or showdown_seen:
+            if not hole_seen or showdown_seen or award_seen:
                 raise _HandParseError(
                     "street_order",
-                    "A board street must follow hole cards and precede showdown.",
+                    "A board street must follow hole cards and precede showdown and awards.",
                     line_start=line.number,
                 )
             street_name = _STREET_NAME[street_match.group("street")]
@@ -863,6 +865,8 @@ def _parse_body(
                 or showdown_seen
                 or len(street_names) != 1
                 or hero_player_id is not None
+                or award_seen
+                or non_forced_action_seen
             ):
                 raise _HandParseError(
                     "hero_cards_order",
@@ -886,10 +890,10 @@ def _parse_body(
 
         uncalled = _UNCALLED_RE.fullmatch(text)
         if uncalled is not None:
-            if not hole_seen or showdown_seen:
+            if not hole_seen or showdown_seen or award_seen:
                 raise _HandParseError(
                     "uncalled_return_order",
-                    "An uncalled return must follow hole cards and precede showdown.",
+                    "An uncalled return must follow hole cards and precede showdown and awards.",
                     line_start=line.number,
                 )
             player_id = _player_id(
@@ -966,10 +970,17 @@ def _parse_body(
                     evidence=[evidence],
                 )
             )
+            award_seen = True
             continue
 
         actor_line = _ACTOR_LINE_RE.fullmatch(text)
         if actor_line is not None:
+            if award_seen:
+                raise _HandParseError(
+                    "award_order",
+                    "Table actions and showdown evidence cannot follow a pot award.",
+                    line_start=line.number,
+                )
             player_id = _player_id(
                 actor_line.group("name"),
                 player_id_by_name,
@@ -1035,6 +1046,8 @@ def _parse_body(
                 current_wager = max(current_wager, live_committed)
             actions[-1].append(action)
             action_evidence[-1].append(evidence)
+            if not is_forced_post:
+                non_forced_action_seen = True
             if action.origin.kind == "unknown":
                 unresolved_decisions += 1
             continue

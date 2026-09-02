@@ -437,6 +437,78 @@ def test_exact_shown_cards_syntax_is_supported() -> None:
     assert [card.code for card in showdown[0].cards] == ["Ad", "Qd"]
 
 
+@pytest.mark.parametrize(
+    ("later_line", "expected_code"),
+    [
+        ("Heads Hero: folds", "award_order"),
+        (
+            "Uncalled bet ($0.50) returned to Heads Rival",
+            "uncalled_return_order",
+        ),
+        ("*** FLOP *** [2c 3d 4h]", "street_order"),
+        ("*** SHOW DOWN ***", "showdown_order"),
+    ],
+)
+def test_pot_award_ends_table_action_evidence(
+    later_line: str,
+    expected_code: str,
+) -> None:
+    source = (FIXTURES / "synthetic-heads-up.txt").read_text()
+    prefix, _ = source.split("Heads Hero: folds", 1)
+    source = (
+        prefix
+        + "Heads Rival collected $1.00 from pot\n"
+        + later_line
+        + "\n"
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("action-after-award.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.line_start == 10
+    assert diagnostic.code == expected_code
+
+
+def test_pot_award_rejects_later_hero_cards() -> None:
+    source = (FIXTURES / "synthetic-heads-up.txt").read_text()
+    dealt = "Dealt to Heads Hero [Qc Jh]\n"
+    prefix, _ = source.split(dealt, 1)
+    source = prefix + "Heads Rival collected $1.00 from pot\n" + dealt
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("hero-cards-after-award.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "hero_cards_order"
+    assert diagnostic.line_start == 9
+
+
+def test_hero_cards_must_precede_the_first_non_forced_action() -> None:
+    source = (FIXTURES / "synthetic-heads-up.txt").read_text()
+    dealt = "Dealt to Heads Hero [Qc Jh]\n"
+    source = source.replace(dealt, "").replace(
+        "Heads Hero: folds\n",
+        "Heads Hero: folds\n" + dealt,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("late-hero-cards.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "hero_cards_order"
+    assert diagnostic.line_start == 9
+
+
 def test_occurrence_ids_are_deterministic_but_import_context_bound() -> None:
     source = (FIXTURES / "synthetic-heads-up.txt").read_text()
     first = parse_pokerstars_text(
