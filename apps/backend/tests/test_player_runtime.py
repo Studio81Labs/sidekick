@@ -78,6 +78,7 @@ from test_imported_hand_store import (
     sample_identity,
     withdrawn_record,
 )
+from test_imported_hand_ingestion import parsed_candidate
 
 
 TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
@@ -231,6 +232,25 @@ def hand_approval_payload(
         "detection_id": detection_id or record.detections[-1].detection_id,
         "approved_state": approved_state,
         "correction_reason": correction_reason,
+        "expected_record_version": player_hand_record_version(record),
+        "expected_lifecycle_status": lifecycle.status,
+        "expected_active_canonical_revision": lifecycle.active_canonical_revision,
+        "expected_canonical_revision_count": len(record.canonical_revisions),
+        "expected_deletion_generation": lifecycle.deletion_generation,
+        "expected_lifecycle_changed_at": lifecycle.changed_at.isoformat(),
+    }
+
+
+def hand_conflict_resolution_payload(
+    record,
+    *,
+    resolution: str,
+    selected_raw_source_id: str,
+) -> dict[str, object]:
+    lifecycle = record.lifecycle
+    return {
+        "resolution": resolution,
+        "selected_raw_source_id": selected_raw_source_id,
         "expected_record_version": player_hand_record_version(record),
         "expected_lifecycle_status": lifecycle.status,
         "expected_active_canonical_revision": lifecycle.active_canonical_revision,
@@ -1498,6 +1518,77 @@ def test_player_hand_routes_validate_pagination_and_missing_keys(tmp_path: Path)
     assert missing.json() == {"detail": "Imported hand record not found"}
 
 
+def test_player_conflict_resolution_route_is_stale_safe_and_idempotent(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    runtime.workspace.ingest_detected_hand(parsed_candidate(1))
+    conflicted = runtime.workspace.ingest_detected_hand(
+        parsed_candidate(2, raw_text=f"{RAW_TEXT}Total pot 2\n")
+    ).record
+    key = imported_hand_record_key(conflicted.identity)
+    conflict_id = conflicted.conflicts[0].conflict_id
+    session = exchange_session(client, runtime)
+    payload = hand_conflict_resolution_payload(
+        conflicted,
+        resolution="use_source",
+        selected_raw_source_id="source-2",
+    )
+    path = f"/api/player/hands/{key}/conflicts/{conflict_id}/resolve"
+
+    unauthorized = client.post(
+        path,
+        json=payload,
+        headers={"Origin": PLAYER_ORIGIN},
+    )
+    missing_csrf = client.post(
+        path,
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {session['session_token']}",
+            "Origin": PLAYER_ORIGIN,
+        },
+    )
+    invalid_source = client.post(
+        path,
+        json={**payload, "selected_raw_source_id": "source-missing"},
+        headers=player_mutation_headers(session),
+    )
+    stale = client.post(
+        path,
+        json={**payload, "expected_record_version": "0" * 64},
+        headers=player_mutation_headers(session),
+    )
+    first = client.post(
+        path,
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+    retry = client.post(
+        path,
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+
+    assert unauthorized.status_code == 401
+    assert missing_csrf.status_code == 403
+    assert invalid_source.status_code == 422
+    assert stale.status_code == 409
+    assert first.status_code == 200
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    detail = first.json()
+    assert detail["summary"]["lifecycle_status"] == "pending_review"
+    assert detail["summary"]["learning_eligible"] is False
+    assert detail["summary"]["unresolved_conflict_count"] == 0
+    assert detail["conflicts"][0]["status"] == "resolved_use_source"
+    assert detail["conflicts"][0]["selected_raw_source_id"] == "source-2"
+    assert RAW_TEXT not in first.text
+    assert runtime.workspace.imported_hands.get(key).conflicts[0].status == (
+        "resolved_use_source"
+    )
+
+
 def test_player_hand_routes_report_a_stable_snapshot_timeout(tmp_path: Path) -> None:
     client, runtime = player_client(tmp_path, status_lock_timeout_seconds=0)
     session = exchange_session(client, runtime)
@@ -2754,6 +2845,7 @@ def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
         "/api/player/imports",
         f"/api/player/hands/{'a' * 64}/reject",
         f"/api/player/hands/{'a' * 64}/approve",
+        f"/api/player/hands/{'a' * 64}/conflicts/conflict-1/resolve",
         f"/api/player/hands/{'a' * 64}/delete",
         "/api%2Fplayer%2Fimports",
         "/%61pi/%70layer/imports",

@@ -111,6 +111,7 @@ export interface PlayerHandList {
 }
 
 export type PlayerHandCloseAction = "withdraw" | "reject";
+export type PlayerHandConflictResolution = "keep_active" | "use_source";
 
 export interface PlayerHandDetail {
   summary: PlayerHandSummary;
@@ -490,6 +491,52 @@ export async function approvePlayerHand(
           detection_id: detectionId,
           approved_state: approvedState,
           correction_reason: correctionReason,
+          expected_record_version: expected.record_version,
+          expected_lifecycle_status: expected.lifecycle_status,
+          expected_active_canonical_revision:
+            expected.active_canonical_revision,
+          expected_canonical_revision_count: expected.canonical_revision_count,
+          expected_deletion_generation: expected.deletion_generation,
+          expected_lifecycle_changed_at: expected.lifecycle_changed_at,
+        }),
+      },
+    );
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerHandRecoveryRequiredError();
+    }
+    throw error;
+  }
+  return (await response.json()) as PlayerHandDetail;
+}
+
+export async function resolvePlayerHandConflict(
+  credentials: PlayerCredentials,
+  recordKey: string,
+  conflictId: string,
+  resolution: PlayerHandConflictResolution,
+  selectedRawSourceId: string,
+  expected: PlayerHandSummary,
+): Promise<PlayerHandDetail> {
+  if (
+    expected.lifecycle_status === "deletion_pending" ||
+    expected.lifecycle_status === "deleted"
+  ) {
+    throw new Error(
+      "A hand pending or completing deletion cannot resolve conflicts.",
+    );
+  }
+  let response: Response;
+  try {
+    response = await playerRequest(
+      credentials,
+      `/api/player/hands/${encodeURIComponent(recordKey)}/conflicts/${encodeURIComponent(conflictId)}/resolve`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          resolution,
+          selected_raw_source_id: selectedRawSourceId,
           expected_record_version: expected.record_version,
           expected_lifecycle_status: expected.lifecycle_status,
           expected_active_canonical_revision:

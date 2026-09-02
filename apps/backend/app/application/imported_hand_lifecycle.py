@@ -67,6 +67,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from typing import Literal
 
 from app.application.imported_hand_ports import (
     ImportedHandCascadeHandle,
@@ -77,6 +78,7 @@ from app.domain.imported_hands import (
     DeletionReceipt,
     DeletionRequest,
     HandDecisionExtraction,
+    ImportConflict,
     ImportedHandLifecycle,
     ImportedHandRecord,
 )
@@ -239,6 +241,109 @@ class ImportedHandLifecycleService:
             reason=reason,
             at=at,
         )
+
+    def resolve_conflict(
+        self,
+        record_key: str,
+        *,
+        conflict_id: str,
+        status: Literal["resolved_keep_active", "resolved_use_source"],
+        selected_raw_source_id: str,
+        at: datetime,
+    ) -> ImportedHandRecord:
+        """Record one explicit source choice without fabricating approval.
+
+        Keeping the preserved source may leave an active hand active. Choosing
+        a source for review cannot: an existing active revision describes the
+        old decision point until the player separately approves reviewed state
+        from the selected source, so the intermediate record becomes
+        ``pending_review`` and serves no derived decisions.
+        """
+        record = self._current(record_key)
+        conflict = next(
+            (
+                item
+                for item in record.conflicts
+                if item.conflict_id == conflict_id
+            ),
+            None,
+        )
+        if conflict is None:
+            raise LifecycleCascadeError(
+                f"record {record_key} does not retain conflict {conflict_id}"
+            )
+        if conflict.status != "unresolved":
+            raise LifecycleCascadeError(
+                f"conflict {conflict_id} is already {conflict.status}"
+            )
+
+        resolved = ImportConflict(
+            conflict_id=conflict.conflict_id,
+            raw_source_ids=conflict.raw_source_ids,
+            detected_ids=conflict.detected_ids,
+            active_canonical_revision_at_creation=(
+                conflict.active_canonical_revision_at_creation
+            ),
+            status=status,
+            selected_raw_source_id=selected_raw_source_id,
+            resolved_at=at,
+        )
+        lifecycle_payload = record.lifecycle.model_dump(mode="python")
+        lifecycle_payload["changed_at"] = at
+        if status == "resolved_use_source" and record.lifecycle.status == "active":
+            lifecycle_payload.update(
+                status="pending_review",
+                active_canonical_revision=None,
+                reason=None,
+            )
+        successor = ImportedHandRecord(
+            identity=record.identity,
+            raw_sources=record.raw_sources,
+            detections=record.detections,
+            conflicts=[
+                resolved if item.conflict_id == conflict_id else item
+                for item in record.conflicts
+            ],
+            canonical_revisions=record.canonical_revisions,
+            lifecycle=ImportedHandLifecycle.model_validate(lifecycle_payload),
+        )
+        if successor.lifecycle.learning_eligible and any(
+            item.status == "unresolved" for item in successor.conflicts
+        ):
+            return self._publish_record_only(
+                record_key,
+                successor,
+                operation="resolve_conflict",
+                expected=record,
+            )
+        return self._publish(
+            record_key,
+            successor,
+            operation="resolve_conflict",
+            expected=record,
+        )
+
+    def _publish_record_only(
+        self,
+        record_key: str,
+        record: ImportedHandRecord,
+        *,
+        operation: str,
+        expected: ImportedHandRecord,
+    ) -> ImportedHandRecord:
+        """Publish an active record that another unresolved conflict blocks.
+
+        The previously retained artifact deliberately remains untouched and
+        unservable: ``active_decisions`` re-derives the unresolved-conflict
+        rejection from the live record and refuses the older artifact. The
+        final resolution will publish the exact now-eligible extraction.
+        """
+        self._require_advancing_marker(record_key, record, expected)
+        cascade: ImportedHandCascadeHandle
+        with self._store.begin_cascade(record_key, operation=operation) as cascade:
+            self._require_unchanged(record_key, expected)
+            cascade.stage_record(record)
+        return record
 
     def request_deletion(
         self, record_key: str, *, reason: str, at: datetime
@@ -497,12 +602,11 @@ class ImportedHandLifecycleService:
         an already-approved hand is the reachable case: its recomputed
         rejection resolves to the very name the approved verdict already
         occupies, so it would replace retained audit history rather than
-        land beside it. That is refused at the adapter --
-        ``DecisionArtifactRetentionError``, which the four verbs below
-        can never trigger because each either appends a revision or ends
-        eligibility -- so such a verb fails loudly rather than losing the
-        artifact. Making it *work* needs a ruling on where that hand's
-        superseding rejection should live, not a change here.
+        land beside it. Ingestion therefore retains the earlier artifact and
+        the active read gate refuses it while the conflict is unresolved.
+        Resolving one of several conflicts uses the same deliberate record-only
+        publication in ``_publish_record_only``; resolving the final conflict
+        republishes the exact eligible extraction through this method.
 
         The two stages are not ordered. "Deactivate before publish" is
         satisfied by there being one commit, not by which line runs

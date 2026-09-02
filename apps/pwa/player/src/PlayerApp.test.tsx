@@ -1223,6 +1223,182 @@ describe("PlayerApp", () => {
     );
   });
 
+  it("keeps the preserved canonical source with exact conflict preconditions", async () => {
+    const user = userEvent.setup();
+    const committed = {
+      ...conflictedActiveHandDetail,
+      summary: {
+        ...conflictedActiveHand,
+        record_version: "8".repeat(64),
+        lifecycle_changed_at: "2026-08-30T12:31:00Z",
+        unresolved_conflict_count: 0,
+      },
+      lifecycle: {
+        ...conflictedActiveHandDetail.lifecycle,
+        changed_at: "2026-08-30T12:31:00Z",
+      },
+      conflicts: [
+        {
+          ...conflictedActiveHandDetail.conflicts[0],
+          status: "resolved_keep_active",
+          selected_raw_source_id: "file-1",
+          resolved_at: "2026-08-30T12:31:00Z",
+        },
+      ],
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [conflictedActiveHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(conflictedActiveHandDetail))
+      .mockRejectedValueOnce(new TypeError("response interrupted"))
+      .mockResolvedValueOnce(jsonResponse(committed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Keep preserved canonical state",
+      }),
+    );
+
+    expect(
+      await screen.findByText(
+        /conflict resolution committed even though the original response was interrupted/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/resolved keep active/)).toBeInTheDocument();
+    expect(screen.getByText(/Selected source: file-1/)).toBeInTheDocument();
+    const request = fetchMock.mock.calls[4];
+    expect(request?.[0]).toBe(
+      `/api/player/hands/${pendingHand.record_key}/conflicts/conflict-1/resolve`,
+    );
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      resolution: "keep_active",
+      selected_raw_source_id: "file-1",
+      expected_record_version: conflictedActiveHand.record_version,
+      expected_lifecycle_status: "active",
+      expected_active_canonical_revision: 1,
+      expected_canonical_revision_count: 1,
+      expected_deletion_generation: 0,
+      expected_lifecycle_changed_at: conflictedActiveHand.lifecycle_changed_at,
+    });
+    expect(new Headers(request?.[1]?.headers).get("X-Poker-CSRF-Token")).toBe(
+      "csrf-token",
+    );
+    expect(fetchMock.mock.calls[5]?.[0]).toBe(
+      `/api/player/hands/${pendingHand.record_key}`,
+    );
+  });
+
+  it("moves a selected conflict source to review without auto-approving it", async () => {
+    const user = userEvent.setup();
+    const committed = {
+      ...conflictedActiveHandDetail,
+      summary: {
+        ...conflictedActiveHand,
+        record_version: "8".repeat(64),
+        lifecycle_status: "pending_review",
+        lifecycle_changed_at: "2026-08-30T12:31:00Z",
+        active_canonical_revision: null,
+        learning_eligible: false,
+        unresolved_conflict_count: 0,
+      },
+      lifecycle: {
+        ...conflictedActiveHandDetail.lifecycle,
+        status: "pending_review",
+        active_canonical_revision: null,
+        changed_at: "2026-08-30T12:31:00Z",
+      },
+      conflicts: [
+        {
+          ...conflictedActiveHandDetail.conflicts[0],
+          status: "resolved_use_source",
+          selected_raw_source_id: "file-2",
+          resolved_at: "2026-08-30T12:31:00Z",
+        },
+      ],
+    };
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [conflictedActiveHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(conflictedActiveHandDetail))
+      .mockResolvedValueOnce(jsonResponse(committed));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Review source file-2" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /Review and explicitly approve its detected state/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/This record is not approved for learning/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("combobox", { name: "Detection to review" }),
+    ).toHaveValue("detection-2");
+    expect(
+      screen.getByRole("button", { name: "Approve new canonical revision" }),
+    ).toBeEnabled();
+    const request = fetchMock.mock.calls[4];
+    expect(JSON.parse(String(request?.[1]?.body))).toEqual({
+      resolution: "use_source",
+      selected_raw_source_id: "file-2",
+      expected_record_version: conflictedActiveHand.record_version,
+      expected_lifecycle_status: "active",
+      expected_active_canonical_revision: 1,
+      expected_canonical_revision_count: 1,
+      expected_deletion_generation: 0,
+      expected_lifecycle_changed_at: conflictedActiveHand.lifecycle_changed_at,
+    });
+  });
+
   it("approves an explicitly corrected detection with exact audit preconditions", async () => {
     const user = userEvent.setup();
     const requestId = "33333333-3333-4333-8333-333333333333" as ReturnType<

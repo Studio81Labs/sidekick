@@ -50,6 +50,7 @@ from app.player_hands import (
     PlayerHandApprovalRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
+    PlayerHandConflictResolutionRequest,
     PlayerHandDeleteRequest,
     PlayerRequestId,
 )
@@ -69,6 +70,7 @@ from app.player_namespace import (
 from app.player_workspace import (
     PlayerDataDirectoryError,
     PlayerHandApprovalInvalid,
+    PlayerHandConflictResolutionInvalid,
     PlayerHandRecoveryRequired,
     PlayerHandTransitionConflict,
     PlayerStorageRecoveryRequired,
@@ -1110,6 +1112,52 @@ def create_player_runtime(
                 return _json_denial(
                     500,
                     "Approval did not finish safely; refresh the hand before retrying",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    @app.post(
+        f"{PLAYER_API_PREFIX}/hands/{{record_key}}/conflicts/"
+        "{conflict_id}/resolve"
+    )
+    async def resolve_player_hand_conflict(
+        request: Request,
+        record_key: str,
+        conflict_id: str,
+        body: PlayerHandConflictResolutionRequest,
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.resolve_hand_conflict,
+                    record_key,
+                    conflict_id=conflict_id,
+                    request=body,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except PlayerHandConflictResolutionInvalid as exc:
+                return _json_denial(422, str(exc))
+            except ValidationError:
+                return _json_denial(422, "The conflict source choice is invalid")
+            except (PlayerHandTransitionConflict, LifecycleCascadeError) as exc:
+                return _json_denial(409, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (PendingCascadeError, PlayerHandRecoveryRequired):
+                return _json_denial(
+                    503,
+                    "This hand has an interrupted conflict-resolution write;"
+                    " restart the local player runtime so recovery can finish",
+                )
+            except (DataLockError, OSError):
+                return _json_denial(
+                    500,
+                    "Conflict resolution did not finish safely; refresh the hand"
+                    " before retrying",
                 )
         return JSONResponse(payload.model_dump(mode="json"))
 

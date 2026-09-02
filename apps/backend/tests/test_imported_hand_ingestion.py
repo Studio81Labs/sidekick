@@ -30,11 +30,17 @@ from app.domain.imported_hands import (
 )
 from app.player_hands import (
     PlayerHandApprovalRequest,
+    PlayerHandConflictResolutionRequest,
     get_player_hand,
     player_hand_record_version,
 )
-from app.player_workspace import PlayerHandApprovalInvalid, PlayerWorkspace
+from app.player_workspace import (
+    PlayerHandApprovalInvalid,
+    PlayerHandConflictResolutionInvalid,
+    PlayerWorkspace,
+)
 from app.storage.imported_hand_store import (
+    DecisionArtifactIntegrityError,
     FileImportedHandStore,
     imported_hand_record_key,
 )
@@ -539,6 +545,330 @@ def test_unresolved_reimport_conflict_blocks_active_decision_extraction(
     extraction = extract_hero_decision_points(result.record)
     assert extraction.outcome == "not_extractable"
     assert extraction.rejection == "unresolved_conflict"
+
+
+def conflict_resolution_request(
+    record: ImportedHandRecord,
+    *,
+    resolution: str,
+    selected_raw_source_id: str,
+) -> PlayerHandConflictResolutionRequest:
+    return PlayerHandConflictResolutionRequest(
+        resolution=resolution,
+        selected_raw_source_id=selected_raw_source_id,
+        expected_record_version=player_hand_record_version(record),
+        expected_lifecycle_status=record.lifecycle.status,
+        expected_active_canonical_revision=(
+            record.lifecycle.active_canonical_revision
+        ),
+        expected_canonical_revision_count=len(record.canonical_revisions),
+        expected_deletion_generation=record.lifecycle.deletion_generation,
+        expected_lifecycle_changed_at=record.lifecycle.changed_at,
+    )
+
+
+def test_player_workspace_can_keep_the_preserved_source_and_republish_decisions(
+    tmp_path,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    current = approved_record()
+    key = imported_hand_record_key(current.identity)
+    workspace.imported_hands.save(key, current)
+    workspace.imported_hands.save_decisions(
+        key,
+        extract_hero_decision_points(current),
+    )
+    conflicted = workspace.ingest_detected_hand(
+        parsed_candidate(2, raw_text=f"{RAW_TEXT}Total pot 2\n")
+    ).record
+    conflict = conflicted.conflicts[0]
+    preserved_detection = next(
+        item
+        for item in conflicted.detections
+        if item.detection_id == conflicted.canonical_revisions[0].detection_id
+    )
+    request = conflict_resolution_request(
+        conflicted,
+        resolution="keep_active",
+        selected_raw_source_id=preserved_detection.raw_source_id,
+    )
+
+    first = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=conflict.conflict_id,
+        request=request,
+        at=NOW + timedelta(minutes=4),
+    )
+    retry = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=conflict.conflict_id,
+        request=request,
+        at=NOW + timedelta(minutes=5),
+    )
+
+    assert retry == first
+    assert first.summary.lifecycle_status == "active"
+    assert first.summary.learning_eligible is True
+    assert first.conflicts[0].status == "resolved_keep_active"
+    assert first.conflicts[0].selected_raw_source_id == (
+        preserved_detection.raw_source_id
+    )
+    active = workspace.imported_hands.active_decisions(key)
+    assert active is not None
+    assert active == extract_hero_decision_points(
+        workspace.imported_hands.get(key)
+    )
+
+
+def test_player_workspace_source_choice_requires_a_later_explicit_approval(
+    tmp_path,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    current = approved_record()
+    key = imported_hand_record_key(current.identity)
+    workspace.imported_hands.save(key, current)
+    workspace.imported_hands.save_decisions(
+        key,
+        extract_hero_decision_points(current),
+    )
+    conflicted = workspace.ingest_detected_hand(
+        parsed_candidate(2, raw_text=f"{RAW_TEXT}Total pot 2\n")
+    ).record
+    conflict = conflicted.conflicts[0]
+    selected_source_id = next(
+        item
+        for item in conflict.raw_source_ids
+        if item
+        != next(
+            detection.raw_source_id
+            for detection in conflicted.detections
+            if detection.detection_id
+            == conflicted.canonical_revisions[0].detection_id
+        )
+    )
+
+    pending = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=conflict.conflict_id,
+        request=conflict_resolution_request(
+            conflicted,
+            resolution="use_source",
+            selected_raw_source_id=selected_source_id,
+        ),
+        at=NOW + timedelta(minutes=4),
+    )
+
+    assert pending.summary.lifecycle_status == "pending_review"
+    assert pending.summary.active_canonical_revision is None
+    assert pending.summary.learning_eligible is False
+    assert pending.conflicts[0].status == "resolved_use_source"
+    assert pending.conflicts[0].selected_raw_source_id == selected_source_id
+    assert workspace.imported_hands.active_decisions(key) is None
+
+    record = workspace.imported_hands.get(key)
+    selected_detection = next(
+        item
+        for item in record.detections
+        if item.raw_source_id == selected_source_id
+    )
+    approved = workspace.approve_hand_record(
+        key,
+        request=PlayerHandApprovalRequest(
+            request_id="77777777-7777-4777-8777-777777777777",
+            detection_id=selected_detection.detection_id,
+            approved_state=selected_detection.state.model_dump(mode="json"),
+            correction_reason=None,
+            expected_record_version=player_hand_record_version(record),
+            expected_lifecycle_status="pending_review",
+            expected_active_canonical_revision=None,
+            expected_canonical_revision_count=1,
+            expected_deletion_generation=0,
+            expected_lifecycle_changed_at=record.lifecycle.changed_at,
+        ),
+        at=NOW + timedelta(minutes=5),
+    )
+
+    assert approved.summary.lifecycle_status == "active"
+    assert approved.summary.active_canonical_revision == 2
+    assert approved.canonical_revisions[-1].detection_id == (
+        selected_detection.detection_id
+    )
+    assert workspace.imported_hands.active_decisions(key) is not None
+
+
+def test_same_source_semantic_conflict_can_select_review_without_auto_approval(
+    tmp_path,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    current = approved_record()
+    key = imported_hand_record_key(current.identity)
+    workspace.imported_hands.save(key, current)
+    conflicted = workspace.ingest_detected_hand(
+        parsed_candidate(2, hero_player_id="villain")
+    ).record
+    conflict = conflicted.conflicts[0]
+    selected_source_id = conflict.raw_source_ids[0]
+
+    resolved = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=conflict.conflict_id,
+        request=conflict_resolution_request(
+            conflicted,
+            resolution="use_source",
+            selected_raw_source_id=selected_source_id,
+        ),
+        at=NOW + timedelta(minutes=4),
+    )
+
+    assert resolved.summary.lifecycle_status == "pending_review"
+    assert resolved.conflicts[0].status == "resolved_use_source"
+    assert resolved.conflicts[0].selected_raw_source_id == selected_source_id
+    assert resolved.summary.canonical_revision_count == 1
+
+
+def test_resolving_multiple_conflicts_keeps_decisions_blocked_until_the_last(
+    tmp_path,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    current = approved_record()
+    key = imported_hand_record_key(current.identity)
+    workspace.imported_hands.save(key, current)
+    workspace.imported_hands.save_decisions(
+        key,
+        extract_hero_decision_points(current),
+    )
+    workspace.ingest_detected_hand(
+        parsed_candidate(2, raw_text=f"{RAW_TEXT}Total pot 2\n")
+    )
+    conflicted = workspace.ingest_detected_hand(
+        parsed_candidate(3, raw_text=f"{RAW_TEXT}Total pot 3\n")
+    ).record
+    preserved_detection = next(
+        item
+        for item in conflicted.detections
+        if item.detection_id == conflicted.canonical_revisions[0].detection_id
+    )
+
+    first = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=conflicted.conflicts[0].conflict_id,
+        request=conflict_resolution_request(
+            conflicted,
+            resolution="keep_active",
+            selected_raw_source_id=preserved_detection.raw_source_id,
+        ),
+        at=NOW + timedelta(minutes=5),
+    )
+
+    assert first.summary.lifecycle_status == "active"
+    assert first.summary.unresolved_conflict_count == 1
+    with pytest.raises(DecisionArtifactIntegrityError):
+        workspace.imported_hands.active_decisions(key)
+
+    current_record = workspace.imported_hands.get(key)
+    final = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=current_record.conflicts[1].conflict_id,
+        request=conflict_resolution_request(
+            current_record,
+            resolution="keep_active",
+            selected_raw_source_id=preserved_detection.raw_source_id,
+        ),
+        at=NOW + timedelta(minutes=6),
+    )
+
+    assert final.summary.lifecycle_status == "active"
+    assert final.summary.unresolved_conflict_count == 0
+    assert workspace.imported_hands.active_decisions(key) is not None
+
+
+def test_overlapping_conflict_choices_cannot_strand_explicit_approval(
+    tmp_path,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    current = approved_record()
+    key = imported_hand_record_key(current.identity)
+    workspace.imported_hands.save(key, current)
+    workspace.ingest_detected_hand(
+        parsed_candidate(2, raw_text=f"{RAW_TEXT}Total pot 2\n")
+    )
+    conflicted = workspace.ingest_detected_hand(
+        parsed_candidate(3, raw_text=f"{RAW_TEXT}Total pot 3\n")
+    ).record
+    preserved_source_id = next(
+        item.raw_source_id
+        for item in conflicted.detections
+        if item.detection_id == conflicted.canonical_revisions[0].detection_id
+    )
+
+    pending = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=conflicted.conflicts[0].conflict_id,
+        request=conflict_resolution_request(
+            conflicted,
+            resolution="use_source",
+            selected_raw_source_id="source-2",
+        ),
+        at=NOW + timedelta(minutes=5),
+    )
+    before_incompatible_choice = workspace.imported_hands.get(key)
+
+    with pytest.raises(
+        PlayerHandConflictResolutionInvalid,
+        match="would leave no source available for explicit approval",
+    ):
+        workspace.resolve_hand_conflict(
+            key,
+            conflict_id=pending.conflicts[1].conflict_id,
+            request=conflict_resolution_request(
+                before_incompatible_choice,
+                resolution="keep_active",
+                selected_raw_source_id=preserved_source_id,
+            ),
+            at=NOW + timedelta(minutes=6),
+        )
+
+    assert workspace.imported_hands.get(key) == before_incompatible_choice
+
+    compatible = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=pending.conflicts[1].conflict_id,
+        request=conflict_resolution_request(
+            before_incompatible_choice,
+            resolution="use_source",
+            selected_raw_source_id="source-3",
+        ),
+        at=NOW + timedelta(minutes=6),
+    )
+    assert compatible.conflicts[1].selected_raw_source_id == "source-3"
+    retained = workspace.imported_hands.get(key)
+    selected_detection = next(
+        item
+        for item in retained.detections
+        if item.raw_source_id == "source-3"
+    )
+    approved = workspace.approve_hand_record(
+        key,
+        request=PlayerHandApprovalRequest(
+            request_id="88888888-8888-4888-8888-888888888888",
+            detection_id=selected_detection.detection_id,
+            approved_state=selected_detection.state.model_dump(mode="json"),
+            correction_reason=None,
+            expected_record_version=player_hand_record_version(retained),
+            expected_lifecycle_status="pending_review",
+            expected_active_canonical_revision=None,
+            expected_canonical_revision_count=1,
+            expected_deletion_generation=0,
+            expected_lifecycle_changed_at=retained.lifecycle.changed_at,
+        ),
+        at=NOW + timedelta(minutes=7),
+    )
+
+    assert approved.summary.lifecycle_status == "active"
+    assert approved.summary.active_canonical_revision == 2
+    assert approved.canonical_revisions[-1].detection_id == (
+        selected_detection.detection_id
+    )
 
 
 @pytest.mark.parametrize("status", ["deleted", "deletion_pending"])
