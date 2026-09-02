@@ -587,6 +587,33 @@ def test_premature_results_point_to_stated_pot_line() -> None:
     assert diagnostic.line_end == 17
 
 
+def test_award_only_premature_results_point_to_award_line() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text().replace(
+        "Flop Rival: folds",
+        "Flop Rival: calls $1.00",
+        1,
+    ).replace(
+        "Uncalled bet ($1.00) returned to Flop Hero\n",
+        "",
+        1,
+    ).replace(
+        "Flop Hero collected $2.00 from pot",
+        "Flop Hero collected $4.00 from pot",
+        1,
+    ).split("*** SUMMARY ***", 1)[0]
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("award-only-premature-results.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "premature_results"
+    assert diagnostic.line_start == 15
+    assert diagnostic.line_end == 15
+
+
 def test_duplicate_summary_seat_is_rejected_at_duplicate_line() -> None:
     source = (FIXTURES / "synthetic-heads-up.txt").read_text()
     source += "Seat 2: Heads Rival (big blind) collected ($1.00)\n"

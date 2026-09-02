@@ -1910,8 +1910,23 @@ def _state_action_diagnostic(
                     evidence = action.evidence[0]
                     return (*target, evidence)
         completed_streets.append(street)
+    result_evidence = parsed_body.results_evidence
+    if result_evidence is None and parsed_body.results is not None:
+        result_sources = [
+            source
+            for item in [
+                *parsed_body.results.showdown,
+                *parsed_body.results.awards,
+            ]
+            for source in item.evidence
+        ]
+        if result_sources:
+            result_evidence = min(
+                result_sources,
+                key=lambda source: (source.line_start, source.line_end),
+            )
     if (
-        parsed_body.results_evidence is not None
+        result_evidence is not None
         and target[0]
         in {
             "incomplete_street",
@@ -1920,7 +1935,7 @@ def _state_action_diagnostic(
             "premature_street_transition",
         }
     ):
-        return (*target, parsed_body.results_evidence)
+        return (*target, result_evidence)
     return None
 
 
