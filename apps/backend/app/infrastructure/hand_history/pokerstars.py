@@ -418,9 +418,7 @@ def _parse_hand(
         line=1,
     )
     occurrence_digest = sha256(
-        (
-            f"{context.import_id}\0{block.ordinal}\0{block.raw_text}"
-        ).encode("utf-8")
+        f"{context.import_id}\0{block.ordinal}".encode("utf-8")
     ).hexdigest()
     session_digest = sha256(context.import_id.encode("utf-8")).hexdigest()
     raw_source_id = f"ps-source-{occurrence_digest[:32]}"
@@ -489,6 +487,12 @@ def _parse_hand(
             seat.player_id: _summary_position_tags(seat)
             for seat in seats
         },
+    )
+    _validate_structural_blind_posts(
+        parsed_body,
+        seats,
+        small_blind=small_blind,
+        big_blind=big_blind,
     )
     ante, ante_mode = _ante_structure(parsed_body.streets, seats)
     straddle = _straddle_amount(parsed_body.streets)
@@ -1683,6 +1687,13 @@ def _ante_structure(
         )
     dealt_ids = {seat.player_id for seat in seats if seat.participation == "dealt_in"}
     poster_ids = {action.actor_id for action in posts}
+    if len(poster_ids) != len(posts):
+        raise _HandParseError(
+            "unsupported_ante_structure",
+            "Each dealt-in seat may post the configured ante at most once.",
+            line_start=line_start,
+            line_end=line_end,
+        )
     big_blind = next(
         (
             action.actor_id
@@ -1701,6 +1712,122 @@ def _ante_structure(
         line_start=line_start,
         line_end=line_end,
     )
+
+
+def _validate_structural_blind_posts(
+    parsed_body: _ParsedBody,
+    seats: list[ImportedSeat],
+    *,
+    small_blind: Decimal,
+    big_blind: Decimal,
+) -> None:
+    small_blind_actor = next(
+        (
+            seat.player_id
+            for seat in seats
+            if seat.position is not None
+            and seat.position.display_label in {"BTN/SB", "SB"}
+        ),
+        None,
+    )
+    big_blind_actor = next(
+        (
+            seat.player_id
+            for seat in seats
+            if seat.position is not None
+            and seat.position.display_label == "BB"
+        ),
+        None,
+    )
+    if small_blind_actor is None or big_blind_actor is None:
+        line = parsed_body.hole_evidence.line_start
+        raise _HandParseError(
+            "unsupported_blind_structure",
+            "The dealt-in seat ring does not establish both structural blinds.",
+            line_start=line,
+            line_end=line,
+        )
+    expected_actors = {
+        "post_small_blind": small_blind_actor,
+        "post_big_blind": big_blind_actor,
+    }
+    configured_amounts = {
+        "post_small_blind": small_blind,
+        "post_big_blind": big_blind,
+    }
+    seats_by_player = {seat.player_id: seat for seat in seats}
+    seen: set[str] = set()
+    forced_stack_exhausted: set[str] = set()
+
+    for action in parsed_body.streets[0].actions:
+        actor = seats_by_player[action.actor_id]
+        if (
+            action.action_type.startswith("post_")
+            and actor.starting_stack is not None
+            and action.total_committed == actor.starting_stack
+        ):
+            forced_stack_exhausted.add(action.actor_id)
+        if action.action_type not in configured_amounts:
+            continue
+
+        sources = action.evidence
+        line_start = min(source.line_start for source in sources)
+        line_end = max(source.line_end for source in sources)
+        expected_actor = expected_actors[action.action_type]
+        if action.actor_id != expected_actor:
+            raise _HandParseError(
+                "invalid_structural_blind",
+                "A structural blind post must come from its derived dealt-in seat.",
+                line_start=line_start,
+                line_end=line_end,
+            )
+        if action.action_type in seen:
+            raise _HandParseError(
+                "invalid_structural_blind",
+                "Each structural blind may be posted at most once.",
+                line_start=line_start,
+                line_end=line_end,
+            )
+        seen.add(action.action_type)
+
+        configured_amount = configured_amounts[action.action_type]
+        amount = action.amount
+        stack_exceeded = (
+            actor.starting_stack is not None
+            and action.total_committed is not None
+            and action.total_committed > actor.starting_stack
+        )
+        short_stack_exhausted = (
+            amount is not None
+            and amount < configured_amount
+            and (
+                (
+                    actor.starting_stack is not None
+                    and action.total_committed == actor.starting_stack
+                )
+                or (actor.starting_stack is None and action.all_in)
+            )
+        )
+        if stack_exceeded or (
+            amount != configured_amount and not short_stack_exhausted
+        ):
+            raise _HandParseError(
+                "invalid_structural_blind",
+                "A structural blind must match the header amount or exhaust a shorter stack.",
+                line_start=line_start,
+                line_end=line_end,
+            )
+
+    for action_type, expected_actor in expected_actors.items():
+        if action_type in seen or expected_actor in forced_stack_exhausted:
+            continue
+        line = parsed_body.hole_evidence.line_start
+        raise _HandParseError(
+            "missing_structural_blind",
+            "The forced-post section ended before every required structural blind was posted.",
+            line_start=line,
+            line_end=line,
+        )
 
 
 def _straddle_amount(streets: list[ImportedStreet]) -> Decimal | None:

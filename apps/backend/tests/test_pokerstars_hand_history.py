@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from app.application.imported_hand_ingestion import ImportedHandIngestionService
+from app.application.imported_hand_ingestion import (
+    ImportedHandImportIdConflict,
+    ImportedHandIngestionService,
+)
 from app.infrastructure.hand_history.pokerstars import (
     POKERSTARS_ADAPTER_ID,
     POKERSTARS_ADAPTER_VERSION,
@@ -217,6 +220,69 @@ Short Small: calls $1.50
     raise_action = result.hands[0].candidate.detection.state.streets[0].actions[2]
     assert raise_action.action_type == "raise"
     assert str(raise_action.total_committed) == "2.00"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected_line"),
+    [
+        (
+            "Small Synthetic: posts small blind $0.50",
+            "Small Synthetic: posts small blind $0.25",
+            7,
+        ),
+        (
+            "Big Synthetic: posts big blind $1.00",
+            "Big Synthetic: posts big blind $0.50",
+            8,
+        ),
+        (
+            "Small Synthetic: posts small blind $0.50",
+            "Hero Synthetic: posts small blind $0.50",
+            7,
+        ),
+    ],
+)
+def test_invalid_structural_blind_points_to_its_source_line(
+    old: str,
+    new: str,
+    expected_line: int,
+) -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        old,
+        new,
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("invalid-structural-blind.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "invalid_structural_blind"
+    assert diagnostic.line_start == expected_line
+    assert diagnostic.line_end == expected_line
+
+
+def test_missing_structural_blind_points_to_forced_post_section_end() -> None:
+    source = (FIXTURES / "synthetic-heads-up.txt").read_text().replace(
+        "Heads Rival: posts big blind $1.00\n",
+        "",
+        1,
+    )
+    source = source.split("Heads Hero: folds\n", 1)[0]
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("missing-big-blind.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "missing_structural_blind"
+    assert diagnostic.line_start == 6
+    assert diagnostic.line_end == 6
 
 
 def test_per_player_antes_do_not_inflate_live_raise_or_return_totals() -> None:
@@ -856,7 +922,9 @@ def test_sitting_out_table_participant_is_rejected_at_source_line(
     assert diagnostic.line_end == expected_line
 
 
-def test_occurrence_ids_are_deterministic_but_import_context_bound() -> None:
+def test_occurrence_ids_are_deterministic_but_import_context_bound(
+    tmp_path: Path,
+) -> None:
     source = (FIXTURES / "synthetic-heads-up.txt").read_text()
     first = parse_pokerstars_text(
         source,
@@ -874,11 +942,23 @@ def test_occurrence_ids_are_deterministic_but_import_context_bound() -> None:
             source_filename="synthetic-heads-up.txt",
         ),
     ).hands[0]
+    altered = parse_pokerstars_text(
+        source.replace("Dealt to Heads Hero [Qc Jh]", "Dealt to Heads Hero [Qd Jc]"),
+        context=import_context("synthetic-heads-up.txt"),
+    ).hands[0]
 
     assert replay.candidate == first.candidate
     assert replay.reconciliation == first.reconciliation
     assert later.candidate.raw.identity == first.candidate.raw.identity
     assert later.candidate.raw.raw_source_id != first.candidate.raw.raw_source_id
+    assert (
+        altered.candidate.raw.provenance.import_id
+        == first.candidate.raw.provenance.import_id
+    )
+    service = ImportedHandIngestionService(store=FileImportedHandStore(tmp_path))
+    service.ingest(first.candidate)
+    with pytest.raises(ImportedHandImportIdConflict):
+        service.ingest(altered.candidate)
 
 
 def test_missing_headers_return_a_file_diagnostic() -> None:
