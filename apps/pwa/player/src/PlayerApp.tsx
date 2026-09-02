@@ -39,6 +39,10 @@ import {
   type PlayerUpdateSafety,
   usePlayerUpdateCoordinator,
 } from "./playerUpdateCoordinator";
+import {
+  clearPlayerImportRetry,
+  preservePlayerImportRetry,
+} from "./playerImportRetry";
 
 type BusyAction =
   | "export"
@@ -1263,13 +1267,19 @@ export default function PlayerApp() {
     setActionNotice(null);
     setImportResult(null);
     try {
-      const result = await importPokerStarsFiles(
-        credentials,
+      const retainedRequestId = await preservePlayerImportRetry(
         selectedImportFiles,
         importRequestId,
       );
+      setImportRequestId(retainedRequestId);
+      const result = await importPokerStarsFiles(
+        credentials,
+        selectedImportFiles,
+        retainedRequestId,
+      );
       setImportResult(result);
       if (!result.summary.retry_required) {
+        clearPlayerImportRetry();
         setSelectedImportFiles([]);
         setImportRequestId(null);
         if (importInput.current) importInput.current.value = "";
@@ -1306,7 +1316,9 @@ export default function PlayerApp() {
         setSelectedImportFiles([]);
         setImportRequestId(null);
         if (importInput.current) importInput.current.value = "";
-        setError(reason.message);
+        setError(
+          `${reason.message} Reselect the same files in the same order to reuse the retained safe-retry identity.`,
+        );
       } else if (reason instanceof PlayerImportAmbiguousError) {
         setHandPage(null);
         setHandDetail(null);
@@ -1640,6 +1652,7 @@ export default function PlayerApp() {
                 onChange={(event) => {
                   markDraftChanged();
                   const selected = Array.from(event.target.files ?? []);
+                  if (selected.length === 0) clearPlayerImportRetry();
                   setSelectedImportFiles(selected);
                   setImportRequestId(
                     selected.length > 0 ? crypto.randomUUID() : null,

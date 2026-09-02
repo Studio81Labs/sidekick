@@ -58,9 +58,11 @@ outside this checkpoint.
 authenticated multipart PokerStars text import to the local player runtime.
 Files and parsed hands are isolated, the first server timestamps remain
 authoritative across an exact request replay, and every successful parser
-proposal stays unapproved; new hand identities stay pending review. The UI and
-API expose only the bounded adapter subset and make no #409 corpus or Phase 1
-claim.
+proposal stays unapproved; new hand identities stay pending review. The PWA
+preserves an outstanding request UUID across a required runtime restart only
+when SHA-256 filename/content fingerprints match the reselected ordered files;
+no filename or hand-history content enters browser storage. The UI and API
+expose only the bounded adapter subset and make no #409 corpus or Phase 1 claim.
 [ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md) replaces
 the inline readiness document with a separately built local recovery PWA. It
 exposes storage/recovery status and the existing player backup/restore workflow

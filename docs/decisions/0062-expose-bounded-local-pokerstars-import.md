@@ -64,9 +64,14 @@ form parser applies the lower file-count limit before the route reads any file.
 
 The dedicated player PWA owns the multipart transport, validates that every
 ordered file slot received an outcome, and retains the same UUID and selected
-files after an ambiguous response or retryable storage diagnostic. Selection or
-active import is unsafe for service-worker activation. Confirmed terminal
-outcomes clear stale record detail and refresh the stable storage count.
+files after an ambiguous response or retryable storage diagnostic. Before
+submission it persists the outstanding UUID with ordered SHA-256 filename and
+content fingerprints, but no filename or hand-history text. After a runtime or
+page restart, reselecting the exact ordered files restores that UUID; renamed,
+reordered, or changed files use a new UUID. Confirmed terminal outcomes erase
+the persisted retry identity, clear stale record detail, and refresh the stable
+storage count. Selection or active import is unsafe for service-worker
+activation.
 
 The UI labels this as the bounded English no-limit cash subset. Diagnostics and
 failed/indeterminate reconciliation remain visible. Parser proposals stay

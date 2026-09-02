@@ -13,6 +13,7 @@ import {
   PLAYER_CSRF_STORAGE_KEY,
   PLAYER_SESSION_STORAGE_KEY,
 } from "./playerApi";
+import { PLAYER_IMPORT_RETRY_STORAGE_KEY } from "./playerImportRetry";
 import { PLAYER_ACTIVATE_UPDATE_MESSAGE } from "./playerUpdateProtocol";
 
 class WaitingPlayerWorker extends EventTarget {
@@ -504,6 +505,7 @@ describe("PlayerApp", () => {
 
   beforeEach(() => {
     sessionStorage.clear();
+    localStorage.clear();
     window.history.replaceState(null, "", "/");
     vi.restoreAllMocks();
   });
@@ -646,6 +648,82 @@ describe("PlayerApp", () => {
     expect(
       screen.getByRole("button", { name: "Import for review" }),
     ).toBeEnabled();
+    expect(localStorage.getItem(PLAYER_IMPORT_RETRY_STORAGE_KEY)).toContain(
+      requestId,
+    );
+  });
+
+  it("reuses a retained retry identity after recovery restarts the runtime", async () => {
+    const retainedRequestId =
+      "99999999-9999-4999-8999-999999999999" as ReturnType<
+        Crypto["randomUUID"]
+      >;
+    const replacementRequestId =
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" as ReturnType<
+        Crypto["randomUUID"]
+      >;
+    const randomUuid = vi
+      .spyOn(window.crypto, "randomUUID")
+      .mockReturnValueOnce(retainedRequestId)
+      .mockReturnValueOnce(replacementRequestId);
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
+    const firstFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({ detail: "Recovery required" }, 503),
+      );
+    vi.stubGlobal("fetch", firstFetch);
+    const firstUser = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await firstUser.upload(
+      screen.getByLabelText("PokerStars hand-history files"),
+      new File(["PokerStars Hand"], "hands.txt", { type: "text/plain" }),
+    );
+    await firstUser.click(
+      screen.getByRole("button", { name: "Import for review" }),
+    );
+
+    expect(
+      await screen.findByText(
+        /same files in the same order.*safe-retry identity/,
+      ),
+    ).toBeInTheDocument();
+    expect(localStorage.getItem(PLAYER_IMPORT_RETRY_STORAGE_KEY)).toContain(
+      retainedRequestId,
+    );
+
+    cleanup();
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "restarted-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "restarted-csrf");
+    const secondFetch = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse(importOutcome(retainedRequestId, "duplicate_request")),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage));
+    vi.stubGlobal("fetch", secondFetch);
+    const secondUser = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await secondUser.upload(
+      screen.getByLabelText("PokerStars hand-history files"),
+      new File(["PokerStars Hand"], "hands.txt", { type: "text/plain" }),
+    );
+    await secondUser.click(
+      screen.getByRole("button", { name: "Import for review" }),
+    );
+
+    await screen.findByText(/retry outcomes were already retained/);
+    const retryBody = secondFetch.mock.calls[1]?.[1]?.body as FormData;
+    expect(retryBody.get("request_id")).toBe(retainedRequestId);
+    expect(randomUuid).toHaveBeenCalledTimes(2);
+    expect(localStorage.getItem(PLAYER_IMPORT_RETRY_STORAGE_KEY)).toBeNull();
   });
 
   it("retains files and request identity after an ambiguous import", async () => {
