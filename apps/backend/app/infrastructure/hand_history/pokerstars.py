@@ -71,7 +71,7 @@ _STREET_RE = re.compile(
     r"^\*\*\* (?P<street>FLOP|TURN|RIVER) \*\*\* (?P<boards>.+)$"
 )
 _TOTAL_POT_RE = re.compile(
-    rf"^Total pot (?P<gross>{_MONEY}) \| Rake (?P<rake>{_MONEY})(?: .*)?$"
+    rf"^Total pot (?P<gross>{_MONEY}) \| Rake (?P<rake>{_MONEY})$"
 )
 _UNCALLED_RE = re.compile(
     rf"^Uncalled bet \((?P<amount>{_MONEY})\) returned to (?P<name>.+)$"

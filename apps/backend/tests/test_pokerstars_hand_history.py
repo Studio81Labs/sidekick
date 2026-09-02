@@ -347,6 +347,23 @@ def test_reconciliation_failure_is_an_explicit_non_clean_disposition() -> None:
     )
 
 
+def test_unsupported_total_pot_suffix_is_not_silently_discarded() -> None:
+    source = (FIXTURES / "synthetic-heads-up.txt").read_text().replace(
+        "Total pot $1.00 | Rake $0.00",
+        "Total pot $1.00 | Rake $0.00 | Jackpot $0.50",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("unsupported-pot-suffix.txt"),
+    )
+
+    assert result.hands == ()
+    assert [diagnostic.code for diagnostic in result.diagnostics] == [
+        "unsupported_summary_line"
+    ]
+
+
 def test_occurrence_ids_are_deterministic_but_import_context_bound() -> None:
     source = (FIXTURES / "synthetic-heads-up.txt").read_text()
     first = parse_pokerstars_text(
