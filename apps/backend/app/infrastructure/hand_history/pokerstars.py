@@ -1589,11 +1589,20 @@ def _ante_structure(
     ]
     if not posts:
         return None, "unknown"
+    post_evidence = [
+        source
+        for action in posts
+        for source in action.evidence
+    ]
+    line_start = min(source.line_start for source in post_evidence)
+    line_end = max(source.line_end for source in post_evidence)
     amounts = {action.amount for action in posts}
     if len(amounts) != 1 or None in amounts:
         raise _HandParseError(
             "unsupported_ante_structure",
             "Ante posts must use one known amount in this adapter revision.",
+            line_start=line_start,
+            line_end=line_end,
         )
     dealt_ids = {seat.player_id for seat in seats if seat.participation == "dealt_in"}
     poster_ids = {action.actor_id for action in posts}
@@ -1614,6 +1623,8 @@ def _ante_structure(
     raise _HandParseError(
         "unsupported_ante_structure",
         "Ante posters do not match per-player or big-blind ante semantics.",
+        line_start=line_start,
+        line_end=line_end,
     )
 
 
@@ -1645,6 +1656,7 @@ def _field_evidence(
         "/game/blinds/small_blind": DetectedFieldEvidence(evidence=[header]),
         "/game/blinds/big_blind": DetectedFieldEvidence(evidence=[header]),
         "/game/economics/currency": DetectedFieldEvidence(evidence=[header]),
+        "/game/betting_limit": DetectedFieldEvidence(evidence=[header]),
         "/game/table_size": DetectedFieldEvidence(
             evidence=[parsed_seats.table_evidence]
         ),

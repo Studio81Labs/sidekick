@@ -87,6 +87,11 @@ def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
     table_size_evidence = candidate.detection.field_evidence["/game/table_size"]
     assert table_size_evidence.evidence[0].line_start == 2
     assert table_size_evidence.evidence[0].excerpt.startswith("Table 'Synthetic Alpha'")
+    betting_limit_evidence = candidate.detection.field_evidence[
+        "/game/betting_limit"
+    ]
+    assert betting_limit_evidence.evidence[0].line_start == 1
+    assert "No Limit" in betting_limit_evidence.evidence[0].excerpt
     assert "/streets/0/actions/2" in candidate.detection.field_evidence
     assert candidate.detection.warnings == [
         "Action origin is unresolved for 3 player decision(s); review is required."
@@ -190,6 +195,40 @@ def test_per_player_antes_do_not_inflate_live_raise_or_return_totals() -> None:
     assert returned.action_type == "uncalled_return"
     assert str(returned.total_committed) == "0.60"
     assert parsed.reconciliation.status == "pass"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected_line_end"),
+    [
+        (
+            "Ante Small: posts the ante $0.10",
+            "Ante Small: posts the ante $0.20",
+            8,
+        ),
+        (
+            "Ante Hero: posts the ante $0.10\n",
+            "",
+            7,
+        ),
+    ],
+)
+def test_unsupported_ante_structure_points_to_the_ante_lines(
+    old: str,
+    new: str,
+    expected_line_end: int,
+) -> None:
+    source = (FIXTURES / "synthetic-ante.txt").read_text().replace(old, new)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("unsupported-ante-structure.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "unsupported_ante_structure"
+    assert diagnostic.line_start == 6
+    assert diagnostic.line_end == expected_line_end
 
 
 def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
