@@ -630,11 +630,14 @@ def _parse_seats(
 
     table_size = int(table.group("table_size"))
     button_seat = int(table.group("button"))
-    if any(seat.seat_number > table_size for seat in seats):
-        raise _HandParseError(
-            "seat_outside_table",
-            "A seat number exceeds the declared table size.",
-        )
+    for seat, evidence in zip(seats, seat_evidence, strict=True):
+        if seat.seat_number > table_size:
+            raise _HandParseError(
+                "seat_outside_table",
+                "A seat number exceeds the declared table size.",
+                line_start=evidence.line_start,
+                line_end=evidence.line_end,
+            )
     return _ParsedSeats(
         seats=seats,
         player_id_by_name=player_id_by_name,
@@ -1630,18 +1633,25 @@ def _ante_structure(
 
 def _straddle_amount(streets: list[ImportedStreet]) -> Decimal | None:
     posts = [
-        action.amount
+        action
         for action in streets[0].actions
         if action.action_type == "post_straddle"
     ]
     if not posts:
         return None
-    if len(posts) != 1 or posts[0] is None:
+    post_evidence = [
+        source
+        for action in posts
+        for source in action.evidence
+    ]
+    if len(posts) != 1 or posts[0].amount is None:
         raise _HandParseError(
             "unsupported_straddle_structure",
             "Exactly one known straddle is supported in this adapter revision.",
+            line_start=min(source.line_start for source in post_evidence),
+            line_end=max(source.line_end for source in post_evidence),
         )
-    return posts[0]
+    return posts[0].amount
 
 
 def _field_evidence(
@@ -1651,10 +1661,14 @@ def _field_evidence(
     parsed_body: _ParsedBody,
 ) -> dict[str, DetectedFieldEvidence]:
     evidence: dict[str, DetectedFieldEvidence] = {
+        "/identity/site": DetectedFieldEvidence(evidence=[header]),
         "/identity/source_hand_id": DetectedFieldEvidence(evidence=[header]),
         "/chronology/played_at": DetectedFieldEvidence(evidence=[header]),
+        "/chronology/source_timezone": DetectedFieldEvidence(evidence=[header]),
+        "/game/variant": DetectedFieldEvidence(evidence=[header]),
         "/game/blinds/small_blind": DetectedFieldEvidence(evidence=[header]),
         "/game/blinds/big_blind": DetectedFieldEvidence(evidence=[header]),
+        "/game/economics/kind": DetectedFieldEvidence(evidence=[header]),
         "/game/economics/currency": DetectedFieldEvidence(evidence=[header]),
         "/game/betting_limit": DetectedFieldEvidence(evidence=[header]),
         "/game/table_size": DetectedFieldEvidence(
@@ -1664,8 +1678,38 @@ def _field_evidence(
             evidence=[parsed_seats.table_evidence]
         ),
     }
+    position_sources = [
+        parsed_seats.table_evidence,
+        *parsed_seats.seat_evidence,
+    ]
     for index, seat_evidence in enumerate(parsed_seats.seat_evidence):
         evidence[f"/seats/{index}"] = DetectedFieldEvidence(evidence=[seat_evidence])
+        evidence[f"/seats/{index}/position"] = DetectedFieldEvidence(
+            evidence=position_sources
+        )
+    ante_sources = [
+        source
+        for action in parsed_body.streets[0].actions
+        if action.action_type == "post_ante"
+        for source in action.evidence
+    ]
+    if ante_sources:
+        evidence["/game/blinds/ante"] = DetectedFieldEvidence(
+            evidence=ante_sources
+        )
+        evidence["/game/blinds/ante_mode"] = DetectedFieldEvidence(
+            evidence=ante_sources
+        )
+    straddle_sources = [
+        source
+        for action in parsed_body.streets[0].actions
+        if action.action_type == "post_straddle"
+        for source in action.evidence
+    ]
+    if straddle_sources:
+        evidence["/game/blinds/straddle"] = DetectedFieldEvidence(
+            evidence=straddle_sources
+        )
     if parsed_body.hero_evidence is not None:
         evidence["/hero_player_id"] = DetectedFieldEvidence(
             evidence=[parsed_body.hero_evidence]

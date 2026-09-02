@@ -28,6 +28,24 @@ def import_context(name: str = "synthetic-cash-sitout.txt") -> PokerStarsImportC
     )
 
 
+def synthetic_straddle_source(*straddle_posts: str) -> str:
+    posts = "".join(f"{post}\n" for post in straddle_posts)
+    return (
+        "PokerStars Hand #900000000008: Hold'em No Limit ($0.50/$1.00 USD) "
+        "- 2026/08/30 12:41:56 ET\n"
+        "Table 'Synthetic Straddle' 4-max Seat #1 is the button\n"
+        "Seat 1: Straddle Hero ($100.00 in chips)\n"
+        "Seat 2: Straddle Small ($100.00 in chips)\n"
+        "Seat 3: Straddle Big ($100.00 in chips)\n"
+        "Seat 4: Straddle Rival ($100.00 in chips)\n"
+        "Straddle Small: posts small blind $0.50\n"
+        "Straddle Big: posts big blind $1.00\n"
+        f"{posts}"
+        "*** HOLE CARDS ***\n"
+        "Dealt to Straddle Hero [As Kd]\n"
+    )
+
+
 def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
     tmp_path: Path,
 ) -> None:
@@ -87,11 +105,28 @@ def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
     table_size_evidence = candidate.detection.field_evidence["/game/table_size"]
     assert table_size_evidence.evidence[0].line_start == 2
     assert table_size_evidence.evidence[0].excerpt.startswith("Table 'Synthetic Alpha'")
-    betting_limit_evidence = candidate.detection.field_evidence[
+    for pointer in (
+        "/identity/site",
+        "/chronology/source_timezone",
+        "/game/variant",
+        "/game/betting_limit",
+        "/game/economics/kind",
+    ):
+        header_evidence = candidate.detection.field_evidence[pointer]
+        assert header_evidence.evidence[0].line_start == 1
+    assert "No Limit" in candidate.detection.field_evidence[
         "/game/betting_limit"
-    ]
-    assert betting_limit_evidence.evidence[0].line_start == 1
-    assert "No Limit" in betting_limit_evidence.evidence[0].excerpt
+    ].evidence[0].excerpt
+    assert [
+        source.line_start
+        for source in candidate.detection.field_evidence[
+            "/seats/0/position"
+        ].evidence
+    ] == [2, 3, 4, 5, 6]
+    assert all(
+        f"/seats/{index}/position" in candidate.detection.field_evidence
+        for index in range(len(state.seats))
+    )
     assert "/streets/0/actions/2" in candidate.detection.field_evidence
     assert candidate.detection.warnings == [
         "Action origin is unresolved for 3 player decision(s); review is required."
@@ -191,6 +226,18 @@ def test_per_player_antes_do_not_inflate_live_raise_or_return_totals() -> None:
     assert state.game.blinds.ante_mode == "per_player"
     assert state.game.blinds.ante is not None
     assert str(state.game.blinds.ante) == "0.10"
+    assert [
+        source.line_start
+        for source in result.hands[0].candidate.detection.field_evidence[
+            "/game/blinds/ante"
+        ].evidence
+    ] == [6, 7, 8]
+    assert [
+        source.line_start
+        for source in result.hands[0].candidate.detection.field_evidence[
+            "/game/blinds/ante_mode"
+        ].evidence
+    ] == [6, 7, 8]
     returned = state.streets[0].actions[-1]
     assert returned.action_type == "uncalled_return"
     assert str(returned.total_committed) == "0.60"
@@ -229,6 +276,61 @@ def test_unsupported_ante_structure_points_to_the_ante_lines(
     assert diagnostic.code == "unsupported_ante_structure"
     assert diagnostic.line_start == 6
     assert diagnostic.line_end == expected_line_end
+
+
+def test_straddle_value_retains_its_post_evidence() -> None:
+    source = synthetic_straddle_source(
+        "Straddle Rival: posts straddle $2.00",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("straddle.txt"),
+    )
+
+    assert result.diagnostics == ()
+    parsed = result.hands[0]
+    assert str(parsed.candidate.detection.state.game.blinds.straddle) == "2.00"
+    straddle_evidence = parsed.candidate.detection.field_evidence[
+        "/game/blinds/straddle"
+    ]
+    assert [source.line_start for source in straddle_evidence.evidence] == [9]
+
+
+def test_unsupported_straddles_point_to_the_post_lines() -> None:
+    source = synthetic_straddle_source(
+        "Straddle Rival: posts straddle $2.00",
+        "Straddle Hero: posts straddle $4.00",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("unsupported-straddles.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "unsupported_straddle_structure"
+    assert diagnostic.line_start == 9
+    assert diagnostic.line_end == 10
+
+
+def test_seat_outside_the_table_points_to_the_seat_line() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Seat 6: Big Synthetic",
+        "Seat 7: Big Synthetic",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("seat-outside-table.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "seat_outside_table"
+    assert diagnostic.line_start == 6
+    assert diagnostic.line_end == 6
 
 
 def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
