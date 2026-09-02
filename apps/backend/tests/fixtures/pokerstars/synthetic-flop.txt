@@ -1,0 +1,21 @@
+PokerStars Hand #900000000006:  Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:39:56 ET
+Table 'Synthetic Flop' 2-max Seat #1 is the button
+Seat 1: Flop Hero ($100.00 in chips)
+Seat 2: Flop Rival ($100.00 in chips)
+Flop Hero: posts small blind $0.50
+Flop Rival: posts big blind $1.00
+*** HOLE CARDS ***
+Dealt to Flop Hero [Ad Qd]
+Flop Hero: calls $0.50
+Flop Rival: checks
+*** FLOP *** [2c 3d 4h]
+Flop Rival: checks
+Flop Hero: bets $1.00
+Flop Rival: folds
+Uncalled bet ($1.00) returned to Flop Hero
+Flop Hero collected $2.00 from pot
+*** SUMMARY ***
+Total pot $2.00 | Rake $0.00
+Board [2c 3d 4h]
+Seat 1: Flop Hero (button) (small blind) collected ($2.00)
+Seat 2: Flop Rival (big blind) folded on the Flop

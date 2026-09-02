@@ -1,0 +1,21 @@
+PokerStars Hand #900000000003: Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:36:56 ET
+Table 'Synthetic Mixed' 2-max Seat #1 is the button
+Seat 1: Mixed Hero ($100.00 in chips)
+Seat 2: Mixed Rival ($100.00 in chips)
+Mixed Hero: posts small blind $0.50
+Mixed Rival: posts big blind $1.00
+*** HOLE CARDS ***
+Dealt to Mixed Hero [9c 8c]
+Mixed Hero: folds
+Uncalled bet ($0.50) returned to Mixed Rival
+Mixed Rival collected $1.00 from pot
+*** SUMMARY ***
+Total pot $1.00 | Rake $0.00
+Seat 1: Mixed Hero (button) (small blind) folded before Flop
+Seat 2: Mixed Rival (big blind) collected ($1.00)
+
+PokerStars Hand #900000000004: Tournament #700000001, $10+$1 USD Hold'em No Limit - Level I (10/20) - 2026/08/30 12:37:56 ET
+Table '700000001 1' 9-max Seat #1 is the button
+Seat 1: Tournament Synthetic (1500 in chips)
+Seat 2: Tournament Rival (1500 in chips)
+*** HOLE CARDS ***

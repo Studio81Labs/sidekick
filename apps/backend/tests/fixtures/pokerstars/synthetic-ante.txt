@@ -1,0 +1,21 @@
+PokerStars Hand #900000000005: Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:38:56 ET
+Table 'Synthetic Ante' 3-max Seat #1 is the button
+Seat 1: Ante Hero ($100.00 in chips)
+Seat 2: Ante Small ($100.00 in chips)
+Seat 3: Ante Big ($100.00 in chips)
+Ante Hero: posts the ante $0.10
+Ante Small: posts the ante $0.10
+Ante Big: posts the ante $0.10
+Ante Small: posts small blind $0.50
+Ante Big: posts big blind $1.00
+*** HOLE CARDS ***
+Dealt to Ante Hero [7s 6s]
+Ante Hero: folds
+Ante Small: folds
+Uncalled bet ($0.50) returned to Ante Big
+Ante Big collected $1.30 from pot
+*** SUMMARY ***
+Total pot $1.30 | Rake $0.00
+Seat 1: Ante Hero (button) folded before Flop
+Seat 2: Ante Small (small blind) folded before Flop
+Seat 3: Ante Big (big blind) collected ($1.30)

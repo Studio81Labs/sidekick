@@ -302,6 +302,22 @@ parsed-candidate transaction lands before the #409 PokerStars adapter and
 player upload route. Sanitized player audit detail nests these later occurrences
 under their retained raw source, and its source count includes every occurrence.
 
+The first bounded PokerStars text adapter now lives in
+`app/infrastructure/hand_history/pokerstars.py`. It splits a file into
+independent hand blocks and emits either an unapproved
+`ParsedImportedHandCandidate` plus its amount-only pot reconciliation, or a
+structured rejection for that hand. The current format revision deliberately
+accepts only English no-limit cash headers and syntax it can map without
+guessing. Exact source lines remain attached to detected fields and actions;
+ordinary table actions remain origin-`unknown`, while explicit blind, ante,
+straddle, and uncalled-return markers are forced/system evidence. Source times
+are preserved with their source zone, and ambiguous/nonexistent ET wall times
+are rejected. Synthetic development fixtures verify the contract and isolation
+behavior but are not the representative corpus or 99% clean-parse evidence
+required to close #409. Every successful parse separately reports whether pot
+reconciliation is clean, failed, or indeterminate. No player upload route
+invokes this adapter yet.
+
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit
 detail, while raw hand-history text stays inside the store.
