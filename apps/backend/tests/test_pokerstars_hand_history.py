@@ -603,6 +603,22 @@ def test_duplicate_summary_seat_is_rejected_at_duplicate_line() -> None:
     assert diagnostic.line_end == 16
 
 
+def test_duplicate_summary_board_is_rejected_at_duplicate_line() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text()
+    source += "Board [2c 3d 4h]\n"
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("duplicate-summary-board.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "duplicate_summary_board"
+    assert diagnostic.line_start == 22
+    assert diagnostic.line_end == 22
+
+
 def test_action_after_valid_all_in_points_to_later_action() -> None:
     source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
         "Seat 1: Hero Synthetic ($100.00 in chips)",

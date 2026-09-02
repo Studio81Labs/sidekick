@@ -732,6 +732,7 @@ def _parse_body(
     showdown: list[ShowdownEntry] = []
     stated_pot: StatedPotSummary | None = None
     results_evidence: SourceEvidence | None = None
+    summary_board_seen = False
     summary_seat_numbers: set[int] = set()
     table_seen = False
     seat_declaration_count = 0
@@ -847,6 +848,13 @@ def _parse_body(
                         "This PokerStars summary board syntax is unsupported.",
                         line_start=line.number,
                     )
+                if summary_board_seen:
+                    raise _HandParseError(
+                        "duplicate_summary_board",
+                        "A hand cannot contain more than one summary-board line.",
+                        line_start=line.number,
+                        line_end=line.number,
+                    )
                 summary_cards = _parse_cards(
                     summary_board.group("cards"),
                     line=line.number,
@@ -857,6 +865,7 @@ def _parse_body(
                         "The summary board does not match the parsed street board.",
                         line_start=line.number,
                     )
+                summary_board_seen = True
                 continue
             if text.startswith("Seat "):
                 _validate_summary_seat_line(
