@@ -50,6 +50,13 @@ specific detected meaning.
 Both resolutions retain every raw source, detection, prior canonical revision,
 and conflict entry. The conflict gains its immutable status, selected source,
 and server resolution timestamp, while lifecycle freshness advances strictly.
+Before publication, the runtime projects the requested choice together with
+compatible completions of the remaining unresolved conflicts. It rejects the
+choice when no retained detection source could still become a valid later
+canonical revision. This prevents overlapping immutable scopes from stranding
+the hand, while still permitting a later broader conflict to select a source
+outside an earlier conflict's scope.
+
 An exact retry of the same immutable conflict choice returns current sanitized
 detail; a different choice, missing conflict, stale snapshot, invalid source,
 or deletion state fails without writing. Interrupted durable publication

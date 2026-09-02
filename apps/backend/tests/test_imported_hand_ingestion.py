@@ -34,7 +34,11 @@ from app.player_hands import (
     get_player_hand,
     player_hand_record_version,
 )
-from app.player_workspace import PlayerHandApprovalInvalid, PlayerWorkspace
+from app.player_workspace import (
+    PlayerHandApprovalInvalid,
+    PlayerHandConflictResolutionInvalid,
+    PlayerWorkspace,
+)
 from app.storage.imported_hand_store import (
     DecisionArtifactIntegrityError,
     FileImportedHandStore,
@@ -776,6 +780,95 @@ def test_resolving_multiple_conflicts_keeps_decisions_blocked_until_the_last(
     assert final.summary.lifecycle_status == "active"
     assert final.summary.unresolved_conflict_count == 0
     assert workspace.imported_hands.active_decisions(key) is not None
+
+
+def test_overlapping_conflict_choices_cannot_strand_explicit_approval(
+    tmp_path,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    current = approved_record()
+    key = imported_hand_record_key(current.identity)
+    workspace.imported_hands.save(key, current)
+    workspace.ingest_detected_hand(
+        parsed_candidate(2, raw_text=f"{RAW_TEXT}Total pot 2\n")
+    )
+    conflicted = workspace.ingest_detected_hand(
+        parsed_candidate(3, raw_text=f"{RAW_TEXT}Total pot 3\n")
+    ).record
+    preserved_source_id = next(
+        item.raw_source_id
+        for item in conflicted.detections
+        if item.detection_id == conflicted.canonical_revisions[0].detection_id
+    )
+
+    pending = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=conflicted.conflicts[0].conflict_id,
+        request=conflict_resolution_request(
+            conflicted,
+            resolution="use_source",
+            selected_raw_source_id="source-2",
+        ),
+        at=NOW + timedelta(minutes=5),
+    )
+    before_incompatible_choice = workspace.imported_hands.get(key)
+
+    with pytest.raises(
+        PlayerHandConflictResolutionInvalid,
+        match="would leave no source available for explicit approval",
+    ):
+        workspace.resolve_hand_conflict(
+            key,
+            conflict_id=pending.conflicts[1].conflict_id,
+            request=conflict_resolution_request(
+                before_incompatible_choice,
+                resolution="keep_active",
+                selected_raw_source_id=preserved_source_id,
+            ),
+            at=NOW + timedelta(minutes=6),
+        )
+
+    assert workspace.imported_hands.get(key) == before_incompatible_choice
+
+    compatible = workspace.resolve_hand_conflict(
+        key,
+        conflict_id=pending.conflicts[1].conflict_id,
+        request=conflict_resolution_request(
+            before_incompatible_choice,
+            resolution="use_source",
+            selected_raw_source_id="source-3",
+        ),
+        at=NOW + timedelta(minutes=6),
+    )
+    assert compatible.conflicts[1].selected_raw_source_id == "source-3"
+    retained = workspace.imported_hands.get(key)
+    selected_detection = next(
+        item
+        for item in retained.detections
+        if item.raw_source_id == "source-3"
+    )
+    approved = workspace.approve_hand_record(
+        key,
+        request=PlayerHandApprovalRequest(
+            request_id="88888888-8888-4888-8888-888888888888",
+            detection_id=selected_detection.detection_id,
+            approved_state=selected_detection.state.model_dump(mode="json"),
+            correction_reason=None,
+            expected_record_version=player_hand_record_version(retained),
+            expected_lifecycle_status="pending_review",
+            expected_active_canonical_revision=None,
+            expected_canonical_revision_count=1,
+            expected_deletion_generation=0,
+            expected_lifecycle_changed_at=retained.lifecycle.changed_at,
+        ),
+        at=NOW + timedelta(minutes=7),
+    )
+
+    assert approved.summary.lifecycle_status == "active"
+    assert approved.summary.active_canonical_revision == 2
+    assert approved.canonical_revisions[-1].detection_id == (
+        selected_detection.detection_id
+    )
 
 
 @pytest.mark.parametrize("status", ["deleted", "deletion_pending"])
