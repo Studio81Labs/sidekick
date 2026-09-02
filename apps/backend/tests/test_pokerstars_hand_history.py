@@ -788,6 +788,24 @@ def test_hero_cards_must_precede_the_first_non_forced_action() -> None:
     assert diagnostic.line_start == 9
 
 
+def test_sitting_out_player_cannot_be_assigned_as_hero() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Dealt to Hero Synthetic [As Kd]",
+        "Dealt to Sitting Synthetic [As Kd]",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("sitting-out-hero.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "hero_not_dealt_in"
+    assert diagnostic.line_start == 10
+    assert diagnostic.line_end == 10
+
+
 def test_occurrence_ids_are_deterministic_but_import_context_bound() -> None:
     source = (FIXTURES / "synthetic-heads-up.txt").read_text()
     first = parse_pokerstars_text(

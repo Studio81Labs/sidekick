@@ -905,11 +905,19 @@ def _parse_body(
                     "The dealt-to-hero line must appear once in the hole-card section.",
                     line_start=line.number,
                 )
-            hero_player_id = _player_id(
+            dealt_player_id = _player_id(
                 dealt.group("name"),
                 player_id_by_name,
                 line=line.number,
             )
+            if dealt_player_id in sitting_out_player_ids:
+                raise _HandParseError(
+                    "hero_not_dealt_in",
+                    "The dealt-to-hero line must identify a dealt-in seat.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
+            hero_player_id = dealt_player_id
             hero_cards = _parse_cards(dealt.group("cards"), line=line.number)
             if len(hero_cards) != 2:
                 raise _HandParseError(
