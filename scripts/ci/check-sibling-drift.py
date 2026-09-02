@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# ported from Studio81Labs/nexcue@314cec89
+# ported from Studio81Labs/nexcue@2bc9444403fe6f45a2bbf02be506c455ca2ecbac
 """Report infra drift between this repository and a sibling built from the same template.
 
 Why this exists: drift between Nexcue and TableTap is currently found by someone
@@ -221,11 +221,13 @@ IDENTICAL = [
     "scripts/ci/check-release-tag.sh",
     "scripts/ci/check-semgrep-fixture.py",
     "scripts/ci/compare-marketing-version.py",
-    # Guards the CocoaPods half of the iOS plugin split. Its prose was made
-    # repo-neutral when the second repo adopted it, precisely so it could be
-    # held here -- the SPM-awareness is the part worth keeping identical, since
-    # a copy that predates it reports drift on a correctly-migrated tree.
-    "scripts/ci/check-podfile-lock.py",
+    # Guards the iOS plugin set against a plugin Swift Package Manager cannot
+    # resolve. Was check-podfile-lock.py, guarding the CocoaPods half of the
+    # split, until CocoaPods was retired and there was no split left; the hazard
+    # moved rather than disappearing. Held byte-identical for the same reason as
+    # before: a copy that predates the current rule reports drift on a
+    # correctly-migrated tree.
+    "scripts/ci/check-ios-plugins-spm.py",
     # Cache deletion is destructive policy. Keep its implementation and
     # fixture suite identical wherever the shared workflow can invoke it.
     "scripts/ci/prune-stale-caches.py",
@@ -244,7 +246,7 @@ IDENTICAL = [
 # Flutter and React Native both carry apps/mobile/.gitignore, for example.
 TOPOLOGY_GATED = {
     "scripts/lib/resolve-flutter.sh": "capability:mobile",
-    "scripts/ci/check-podfile-lock.py": "capability:mobile",
+    "scripts/ci/check-ios-plugins-spm.py": "capability:mobile",
     "scripts/ci/check-release-tag.sh": "capability:versioned-release",
     "scripts/ci/check-semgrep-fixture.py": "capability:semgrep-fixture",
     "scripts/ci/compare-marketing-version.py": "capability:mobile",
@@ -269,7 +271,7 @@ TOPOLOGY_GATED = {
 # action pins remain comparable through ACTION_TOPOLOGY_GATED below.
 STACK_TOPOLOGY_GATED = {
     "scripts/lib/resolve-flutter.sh": "apps/mobile/pubspec.yaml",
-    "scripts/ci/check-podfile-lock.py": "apps/mobile/pubspec.yaml",
+    "scripts/ci/check-ios-plugins-spm.py": "apps/mobile/pubspec.yaml",
     ".github/workflows/flutter-pin-check.yml": "apps/mobile/pubspec.yaml",
     ".github/workflows/mobile-ci.yml": "apps/mobile/pubspec.yaml",
     ".github/workflows/mobile-release.yml": "apps/mobile/pubspec.yaml",
@@ -666,12 +668,13 @@ ACTION_WORKFLOWS = [
 #   check-flutter-pin.py  the prose states each repo's ACTUAL pubspec: one
 #                         declares no `flutter` key, the other an open-ended
 #                         floor. Same code, different true facts.
-#   check-ios-spm.sh      canary plugins differ because the dependency sets do,
-#                         and the Podfile assertion differs because the SPM
-#                         migrations are at different stages -- one asserts the
-#                         lock holds ONLY Flutter, the other that one named pod
-#                         is gone. Forcing these identical would assert a
-#                         migration state that is not true in one repo.
+#   check-ios-spm.sh      canary plugins differ because the dependency sets do.
+#                         Both repos have now retired CocoaPods, so section 4
+#                         asserts the same thing in each -- but each states its
+#                         own reason for getting there, and only one of them has
+#                         Firebase's October 2026 CocoaPods deadline riding on
+#                         it. Forcing these identical would flatten a rationale
+#                         that is not the same rationale.
 #   mobile-run-*.sh       flavors and emulator setup differ by app topology.
 #   refresh-semgrep-rules.sh
 #                         functionally identical -- all 47 differing lines are
