@@ -494,30 +494,52 @@ def _parse_hand(
         small_blind=small_blind,
         big_blind=big_blind,
     )
+    _validate_known_cards(parsed_body)
     ante, ante_mode = _ante_structure(parsed_body.streets, seats)
     straddle = _straddle_amount(parsed_body.streets)
-    state = ImportedHandState(
-        identity=identity,
-        chronology=chronology,
-        game=GameContext(
-            betting_limit="no_limit",
-            table_size=parsed_seats.table_size,
-            blinds=BlindStructure(
-                small_blind=small_blind,
-                big_blind=big_blind,
-                ante=ante,
-                ante_mode=ante_mode,
-                straddle=straddle,
-            ),
-            economics=CashEconomics(currency=currency),
+    game = GameContext(
+        betting_limit="no_limit",
+        table_size=parsed_seats.table_size,
+        blinds=BlindStructure(
+            small_blind=small_blind,
+            big_blind=big_blind,
+            ante=ante,
+            ante_mode=ante_mode,
+            straddle=straddle,
         ),
-        button_seat=parsed_seats.button_seat,
-        seats=seats,
-        hero_player_id=parsed_body.hero_player_id,
-        hero_cards=parsed_body.hero_cards,
-        streets=parsed_body.streets,
-        results=parsed_body.results,
+        economics=CashEconomics(currency=currency),
     )
+    try:
+        state = ImportedHandState(
+            identity=identity,
+            chronology=chronology,
+            game=game,
+            button_seat=parsed_seats.button_seat,
+            seats=seats,
+            hero_player_id=parsed_body.hero_player_id,
+            hero_cards=parsed_body.hero_cards,
+            streets=parsed_body.streets,
+            results=parsed_body.results,
+        )
+    except ValidationError as exc:
+        action_diagnostic = _state_action_diagnostic(
+            exc,
+            identity=identity,
+            chronology=chronology,
+            game=game,
+            button_seat=parsed_seats.button_seat,
+            seats=seats,
+            parsed_body=parsed_body,
+        )
+        if action_diagnostic is None:
+            raise
+        code, message, evidence = action_diagnostic
+        raise _HandParseError(
+            code,
+            message,
+            line_start=evidence.line_start,
+            line_end=evidence.line_end,
+        ) from exc
     reconciliation = reconcile_pot(state)
     warnings = list(parsed_body.warnings)
     if reconciliation.status == "fail":
@@ -720,6 +742,8 @@ def _parse_body(
     in_summary = False
     summary_seen = False
     unresolved_decisions = 0
+    uncalled_return_seen = False
+    folded_player_ids: set[str] = set()
 
     for line in lines[1:]:
         text = line.text
@@ -799,6 +823,13 @@ def _parse_body(
                     currency,
                     line=line.number,
                 )
+                if rake > gross:
+                    raise _HandParseError(
+                        "invalid_total_pot",
+                        "Rake cannot exceed the total pot.",
+                        line_start=line.number,
+                        line_end=line.number,
+                    )
                 stated_pot = StatedPotSummary(
                     gross_total=gross,
                     rake=rake,
@@ -886,6 +917,7 @@ def _parse_body(
             }
             current_wager = Decimal(0)
             nominal_bring_in = Decimal(0)
+            uncalled_return_seen = False
             continue
         if text.startswith("*** "):
             raise _HandParseError(
@@ -936,6 +968,13 @@ def _parse_body(
                     "An uncalled return must follow hole cards and precede showdown and awards.",
                     line_start=line.number,
                 )
+            if uncalled_return_seen:
+                raise _HandParseError(
+                    "action_after_uncalled_return",
+                    "A street cannot contain more than one uncalled return.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
             player_id = _dealt_in_player_id(
                 uncalled.group("name"),
                 player_id_by_name,
@@ -973,6 +1012,7 @@ def _parse_body(
                 )
             )
             action_evidence[-1].append(evidence)
+            uncalled_return_seen = True
             continue
 
         collected = _COLLECTED_RE.fullmatch(text)
@@ -989,6 +1029,13 @@ def _parse_body(
                 sitting_out_player_ids=sitting_out_player_ids,
                 line=line.number,
             )
+            if player_id in folded_player_ids:
+                raise _HandParseError(
+                    "invalid_award_recipient",
+                    "A player who folded cannot receive a pot award.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
             evidence = _evidence(raw_source_id, line)
             pot_label = collected.group("pot")
             if pot_label == "pot":
@@ -1039,6 +1086,13 @@ def _parse_body(
                         "Shown or mucked cards require an explicit showdown section.",
                         line_start=line.number,
                     )
+                if player_id in folded_player_ids:
+                    raise _HandParseError(
+                        "invalid_showdown_participant",
+                        "A player who folded cannot appear at showdown.",
+                        line_start=line.number,
+                        line_end=line.number,
+                    )
                 showdown.append(showdown_entry)
                 continue
             parsed_action = _parse_action_line(
@@ -1058,6 +1112,13 @@ def _parse_body(
                     "This PokerStars player action is not supported.",
                     line_start=line.number,
                 )
+            if uncalled_return_seen:
+                raise _HandParseError(
+                    "action_after_uncalled_return",
+                    "A table action cannot follow an uncalled return on the same street.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
             action, total_committed, live_committed = parsed_action
             is_forced_post = action.action_type.startswith("post_")
             if showdown_seen or (is_forced_post and hole_seen) or (
@@ -1067,6 +1128,13 @@ def _parse_body(
                     "action_section_order",
                     "Forced posts must precede hole cards and table actions must follow them.",
                     line_start=line.number,
+                )
+            if player_id in folded_player_ids:
+                raise _HandParseError(
+                    "terminal_actor_action",
+                    "A player cannot act after folding.",
+                    line_start=line.number,
+                    line_end=line.number,
                 )
             if is_forced_post:
                 if not table_seen or seat_declaration_count < 2:
@@ -1091,6 +1159,8 @@ def _parse_body(
             action_evidence[-1].append(evidence)
             if not is_forced_post:
                 non_forced_action_seen = True
+            if action.action_type == "fold":
+                folded_player_ids.add(player_id)
             if action.origin.kind == "unknown":
                 unresolved_decisions += 1
             continue
@@ -1643,6 +1713,135 @@ def _evidence(raw_source_id: str, line: _SourceLine) -> SourceEvidence:
     )
 
 
+def _validate_known_cards(parsed_body: _ParsedBody) -> None:
+    seen_codes: set[str] = set()
+    for card in parsed_body.hero_cards:
+        if card.code in seen_codes:
+            assert parsed_body.hero_evidence is not None
+            raise _HandParseError(
+                "duplicate_known_card",
+                "The hero holding cannot contain the same card twice.",
+                line_start=parsed_body.hero_evidence.line_start,
+                line_end=parsed_body.hero_evidence.line_end,
+            )
+        seen_codes.add(card.code)
+
+    previous_board: list[Card] = []
+    for street, evidence in zip(
+        parsed_body.streets,
+        parsed_body.board_evidence,
+        strict=True,
+    ):
+        if not street.board_cards:
+            continue
+        assert evidence is not None
+        if previous_board and (
+            street.board_cards[: len(previous_board)] != previous_board
+        ):
+            raise _HandParseError(
+                "board_prefix_mismatch",
+                "A street board must preserve every card from the prior street.",
+                line_start=evidence.line_start,
+                line_end=evidence.line_end,
+            )
+        new_cards = street.board_cards[len(previous_board) :]
+        for card in new_cards:
+            if card.code in seen_codes:
+                raise _HandParseError(
+                    "duplicate_known_card",
+                    "Hero and board cards must identify unique physical cards.",
+                    line_start=evidence.line_start,
+                    line_end=evidence.line_end,
+                )
+            seen_codes.add(card.code)
+        previous_board = street.board_cards
+
+
+def _state_action_diagnostic(
+    validation_error: ValidationError,
+    *,
+    identity: StableHandIdentity,
+    chronology: SourceChronology,
+    game: GameContext,
+    button_seat: int,
+    seats: list[ImportedSeat],
+    parsed_body: _ParsedBody,
+) -> tuple[str, str, SourceEvidence] | None:
+    target = _recognized_state_action_issue(validation_error)
+    if target is None:
+        return None
+
+    completed_streets: list[ImportedStreet] = []
+    for street in parsed_body.streets:
+        for action_index, action in enumerate(street.actions):
+            prefix_street = ImportedStreet(
+                street=street.street,
+                board_cards=street.board_cards,
+                actions=street.actions[: action_index + 1],
+            )
+            try:
+                ImportedHandState(
+                    identity=identity,
+                    chronology=chronology,
+                    game=game,
+                    button_seat=button_seat,
+                    seats=seats,
+                    hero_player_id=parsed_body.hero_player_id,
+                    hero_cards=parsed_body.hero_cards,
+                    streets=[*completed_streets, prefix_street],
+                    results=None,
+                )
+            except ValidationError as prefix_error:
+                if _recognized_state_action_issue(prefix_error) == target:
+                    evidence = action.evidence[0]
+                    return (*target, evidence)
+        completed_streets.append(street)
+    return None
+
+
+def _recognized_state_action_issue(
+    validation_error: ValidationError,
+) -> tuple[str, str] | None:
+    messages = [
+        str(error["msg"])
+        for error in validation_error.errors(
+            include_url=False,
+            include_context=False,
+            include_input=False,
+        )
+    ]
+    if any("an action is out of turn" in message for message in messages):
+        return (
+            "action_out_of_turn",
+            "A player action is out of turn for the derived dealt-in seat ring.",
+        )
+    if any(
+        "all-in marker has cumulative commitment" in message
+        for message in messages
+    ):
+        return (
+            "invalid_all_in",
+            "An all-in marker must exhaust the player's known starting stack.",
+        )
+    if any(
+        "an actor cannot act after folding or going all-in" in message
+        for message in messages
+    ):
+        return (
+            "terminal_actor_action",
+            "A player cannot act after folding or going all-in.",
+        )
+    if any(
+        "exceeds known starting stack" in message
+        for message in messages
+    ):
+        return (
+            "action_exceeds_stack",
+            "A chip action cannot exceed the player's known starting stack.",
+        )
+    return None
+
+
 def _ante_structure(
     streets: list[ImportedStreet],
     seats: list[ImportedSeat],
@@ -1860,32 +2059,26 @@ def _field_evidence(
     parsed_body: _ParsedBody,
 ) -> dict[str, DetectedFieldEvidence]:
     evidence: dict[str, DetectedFieldEvidence] = {
-        "/identity/site": DetectedFieldEvidence(evidence=[header]),
-        "/identity/source_hand_id": DetectedFieldEvidence(evidence=[header]),
-        "/chronology/played_at": DetectedFieldEvidence(evidence=[header]),
-        "/chronology/source_timezone": DetectedFieldEvidence(evidence=[header]),
-        "/game/variant": DetectedFieldEvidence(evidence=[header]),
-        "/game/blinds/small_blind": DetectedFieldEvidence(evidence=[header]),
-        "/game/blinds/big_blind": DetectedFieldEvidence(evidence=[header]),
-        "/game/economics/kind": DetectedFieldEvidence(evidence=[header]),
-        "/game/economics/currency": DetectedFieldEvidence(evidence=[header]),
-        "/game/betting_limit": DetectedFieldEvidence(evidence=[header]),
-        "/game/table_size": DetectedFieldEvidence(
-            evidence=[parsed_seats.table_evidence]
-        ),
-        "/button_seat": DetectedFieldEvidence(
-            evidence=[parsed_seats.table_evidence]
-        ),
+        "/identity/site": _exact_field(header),
+        "/identity/source_hand_id": _exact_field(header),
+        "/chronology/played_at": _exact_field(header),
+        "/chronology/source_timezone": _exact_field(header),
+        "/game/variant": _exact_field(header),
+        "/game/blinds/small_blind": _exact_field(header),
+        "/game/blinds/big_blind": _exact_field(header),
+        "/game/economics/kind": _exact_field(header),
+        "/game/economics/currency": _exact_field(header),
+        "/game/betting_limit": _exact_field(header),
+        "/game/table_size": _exact_field(parsed_seats.table_evidence),
+        "/button_seat": _exact_field(parsed_seats.table_evidence),
     }
     position_sources = [
         parsed_seats.table_evidence,
         *parsed_seats.seat_evidence,
     ]
     for index, seat_evidence in enumerate(parsed_seats.seat_evidence):
-        evidence[f"/seats/{index}"] = DetectedFieldEvidence(evidence=[seat_evidence])
-        evidence[f"/seats/{index}/position"] = DetectedFieldEvidence(
-            evidence=position_sources
-        )
+        evidence[f"/seats/{index}"] = _exact_field(seat_evidence)
+        evidence[f"/seats/{index}/position"] = _exact_field(*position_sources)
     ante_sources = [
         source
         for action in parsed_body.streets[0].actions
@@ -1893,18 +2086,12 @@ def _field_evidence(
         for source in action.evidence
     ]
     if ante_sources:
-        evidence["/game/blinds/ante"] = DetectedFieldEvidence(
-            evidence=ante_sources
-        )
-        evidence["/game/blinds/ante_mode"] = DetectedFieldEvidence(
-            evidence=ante_sources
-        )
+        evidence["/game/blinds/ante"] = _exact_field(*ante_sources)
+        evidence["/game/blinds/ante_mode"] = _exact_field(*ante_sources)
     else:
-        evidence["/game/blinds/ante"] = DetectedFieldEvidence(
-            evidence=[parsed_body.hole_evidence]
-        )
-        evidence["/game/blinds/ante_mode"] = DetectedFieldEvidence(
-            evidence=[parsed_body.hole_evidence]
+        evidence["/game/blinds/ante"] = _exact_field(parsed_body.hole_evidence)
+        evidence["/game/blinds/ante_mode"] = _exact_field(
+            parsed_body.hole_evidence
         )
     straddle_sources = [
         source
@@ -1913,28 +2100,33 @@ def _field_evidence(
         for source in action.evidence
     ]
     if straddle_sources:
-        evidence["/game/blinds/straddle"] = DetectedFieldEvidence(
-            evidence=straddle_sources
+        evidence["/game/blinds/straddle"] = _exact_field(*straddle_sources)
+    else:
+        evidence["/game/blinds/straddle"] = _exact_field(
+            parsed_body.hole_evidence
         )
     if parsed_body.hero_evidence is not None:
-        evidence["/hero_player_id"] = DetectedFieldEvidence(
-            evidence=[parsed_body.hero_evidence]
-        )
-        evidence["/hero_cards"] = DetectedFieldEvidence(
-            evidence=[parsed_body.hero_evidence]
-        )
+        evidence["/hero_player_id"] = _exact_field(parsed_body.hero_evidence)
+        evidence["/hero_cards"] = _exact_field(parsed_body.hero_evidence)
     for street_index, board_source in enumerate(parsed_body.board_evidence):
         if board_source is not None:
-            evidence[
-                f"/streets/{street_index}/board_cards"
-            ] = DetectedFieldEvidence(evidence=[board_source])
+            evidence[f"/streets/{street_index}/board_cards"] = _exact_field(
+                board_source
+            )
     for street_index, street_evidence in enumerate(parsed_body.action_evidence):
         for action_index, action_source in enumerate(street_evidence):
             evidence[
                 f"/streets/{street_index}/actions/{action_index}"
-            ] = DetectedFieldEvidence(evidence=[action_source])
+            ] = _exact_field(action_source)
     if parsed_body.results_evidence is not None:
-        evidence["/results/stated_pot"] = DetectedFieldEvidence(
-            evidence=[parsed_body.results_evidence]
+        evidence["/results/stated_pot"] = _exact_field(
+            parsed_body.results_evidence
         )
     return evidence
+
+
+def _exact_field(*sources: SourceEvidence) -> DetectedFieldEvidence:
+    return DetectedFieldEvidence(
+        confidence=Decimal("1"),
+        evidence=list(sources),
+    )

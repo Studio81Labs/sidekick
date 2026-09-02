@@ -137,6 +137,15 @@ def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
         f"/seats/{index}/position" in candidate.detection.field_evidence
         for index in range(len(state.seats))
     )
+    assert all(
+        field.confidence == Decimal("1")
+        for field in candidate.detection.field_evidence.values()
+    )
+    straddle_evidence = candidate.detection.field_evidence[
+        "/game/blinds/straddle"
+    ]
+    assert straddle_evidence.evidence[0].line_start == 9
+    assert straddle_evidence.evidence[0].excerpt == "*** HOLE CARDS ***"
     assert "/streets/0/actions/2" in candidate.detection.field_evidence
     assert candidate.detection.warnings == [
         "Action origin is unresolved for 3 player decision(s); review is required."
@@ -283,6 +292,207 @@ def test_missing_structural_blind_points_to_forced_post_section_end() -> None:
     assert diagnostic.code == "missing_structural_blind"
     assert diagnostic.line_start == 6
     assert diagnostic.line_end == 6
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected_code", "expected_line"),
+    [
+        (
+            "Hero Synthetic: raises $2.00 to $3.00",
+            "Hero Synthetic: raises $2.00 to $3.00 and is all-in",
+            "invalid_all_in",
+            11,
+        ),
+        (
+            "Small Synthetic: folds\nBig Synthetic: folds",
+            "Big Synthetic: folds\nSmall Synthetic: folds",
+            "action_out_of_turn",
+            12,
+        ),
+        (
+            "Seat 1: Hero Synthetic ($100.00 in chips)",
+            "Seat 1: Hero Synthetic ($2.00 in chips)",
+            "action_exceeds_stack",
+            11,
+        ),
+        (
+            "Uncalled bet ($2.00) returned to Hero Synthetic\n",
+            (
+                "Uncalled bet ($2.00) returned to Hero Synthetic\n"
+                "Small Synthetic: folds\n"
+            ),
+            "action_after_uncalled_return",
+            15,
+        ),
+        (
+            "Small Synthetic: folds\n",
+            "Small Synthetic: folds\nSmall Synthetic: calls $2.50\n",
+            "terminal_actor_action",
+            13,
+        ),
+    ],
+)
+def test_invalid_action_contract_points_to_its_source_line(
+    old: str,
+    new: str,
+    expected_code: str,
+    expected_line: int,
+) -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        old,
+        new,
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("invalid-action-contract.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == expected_code
+    assert diagnostic.line_start == expected_line
+    assert diagnostic.line_end == expected_line
+
+
+def test_action_after_valid_all_in_points_to_later_action() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Seat 1: Hero Synthetic ($100.00 in chips)",
+        "Seat 1: Hero Synthetic ($3.00 in chips)",
+        1,
+    ).replace(
+        "Hero Synthetic: raises $2.00 to $3.00\n",
+        (
+            "Hero Synthetic: raises $2.00 to $3.00 and is all-in\n"
+            "Hero Synthetic: checks\n"
+        ),
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("action-after-valid-all-in.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "terminal_actor_action"
+    assert diagnostic.line_start == 12
+    assert diagnostic.line_end == 12
+
+
+def test_folded_player_award_points_to_collection_line() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Hero Synthetic collected $2.50 from pot",
+        "Small Synthetic collected $2.50 from pot",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("folded-player-award.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "invalid_award_recipient"
+    assert diagnostic.line_start == 15
+    assert diagnostic.line_end == 15
+
+
+def test_folded_player_showdown_points_to_shown_cards_line() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Uncalled bet ($2.00) returned to Hero Synthetic\n",
+        "*** SHOW DOWN ***\nSmall Synthetic: shows [2c 3d]\n",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("folded-player-showdown.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "invalid_showdown_participant"
+    assert diagnostic.line_start == 15
+    assert diagnostic.line_end == 15
+
+
+def test_hero_board_collision_points_to_street_marker() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text().replace(
+        "[2c 3d 4h]",
+        "[Ad 3d 4h]",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("duplicate-known-card.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "duplicate_known_card"
+    assert diagnostic.line_start == 11
+    assert diagnostic.line_end == 11
+
+
+def test_duplicate_hero_card_points_to_dealt_line() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Dealt to Hero Synthetic [As Kd]",
+        "Dealt to Hero Synthetic [As As]",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("duplicate-hero-card.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "duplicate_known_card"
+    assert diagnostic.line_start == 10
+    assert diagnostic.line_end == 10
+
+
+def test_changed_turn_board_prefix_points_to_turn_marker() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text()
+    prefix, _ = source.split("Flop Hero: bets $1.00", 1)
+    source = (
+        prefix
+        + "Flop Hero: checks\n"
+        + "*** TURN *** [2c 3d 5h] [6s]\n"
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("changed-board-prefix.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "board_prefix_mismatch"
+    assert diagnostic.line_start == 14
+    assert diagnostic.line_end == 14
+
+
+def test_rake_above_total_pot_points_to_summary_total() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Total pot $2.50 | Rake $0.00",
+        "Total pot $1.00 | Rake $2.00",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("invalid-total-pot.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "invalid_total_pot"
+    assert diagnostic.line_start == 17
+    assert diagnostic.line_end == 17
 
 
 def test_per_player_antes_do_not_inflate_live_raise_or_return_totals() -> None:
