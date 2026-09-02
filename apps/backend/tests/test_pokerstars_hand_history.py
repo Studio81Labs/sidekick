@@ -806,6 +806,56 @@ def test_sitting_out_player_cannot_be_assigned_as_hero() -> None:
     assert diagnostic.line_end == 10
 
 
+@pytest.mark.parametrize(
+    ("old", "new", "expected_line"),
+    [
+        (
+            "Hero Synthetic: raises $2.00 to $3.00",
+            "Sitting Synthetic: raises $2.00 to $3.00",
+            11,
+        ),
+        (
+            "Uncalled bet ($2.00) returned to Hero Synthetic",
+            "Uncalled bet ($2.00) returned to Sitting Synthetic",
+            14,
+        ),
+        (
+            "Hero Synthetic collected $2.50 from pot",
+            "Sitting Synthetic collected $2.50 from pot",
+            15,
+        ),
+        (
+            "Hero Synthetic collected $2.50 from pot",
+            "*** SHOW DOWN ***\n"
+            "Sitting Synthetic: shows [2c 3d]\n"
+            "Hero Synthetic collected $2.50 from pot",
+            16,
+        ),
+    ],
+)
+def test_sitting_out_table_participant_is_rejected_at_source_line(
+    old: str,
+    new: str,
+    expected_line: int,
+) -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        old,
+        new,
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("sitting-out-participant.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "actor_not_dealt_in"
+    assert diagnostic.line_start == expected_line
+    assert diagnostic.line_end == expected_line
+
+
 def test_occurrence_ids_are_deterministic_but_import_context_bound() -> None:
     source = (FIXTURES / "synthetic-heads-up.txt").read_text()
     first = parse_pokerstars_text(

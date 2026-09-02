@@ -905,18 +905,14 @@ def _parse_body(
                     "The dealt-to-hero line must appear once in the hole-card section.",
                     line_start=line.number,
                 )
-            dealt_player_id = _player_id(
+            dealt_player_id = _dealt_in_player_id(
                 dealt.group("name"),
                 player_id_by_name,
+                sitting_out_player_ids=sitting_out_player_ids,
                 line=line.number,
+                code="hero_not_dealt_in",
+                message="The dealt-to-hero line must identify a dealt-in seat.",
             )
-            if dealt_player_id in sitting_out_player_ids:
-                raise _HandParseError(
-                    "hero_not_dealt_in",
-                    "The dealt-to-hero line must identify a dealt-in seat.",
-                    line_start=line.number,
-                    line_end=line.number,
-                )
             hero_player_id = dealt_player_id
             hero_cards = _parse_cards(dealt.group("cards"), line=line.number)
             if len(hero_cards) != 2:
@@ -936,9 +932,10 @@ def _parse_body(
                     "An uncalled return must follow hole cards and precede showdown and awards.",
                     line_start=line.number,
                 )
-            player_id = _player_id(
+            player_id = _dealt_in_player_id(
                 uncalled.group("name"),
                 player_id_by_name,
+                sitting_out_player_ids=sitting_out_player_ids,
                 line=line.number,
             )
             amount = _parse_positive_money(
@@ -982,9 +979,10 @@ def _parse_body(
                     "A pot award must follow the hole-card section.",
                     line_start=line.number,
                 )
-            player_id = _player_id(
+            player_id = _dealt_in_player_id(
                 collected.group("name"),
                 player_id_by_name,
+                sitting_out_player_ids=sitting_out_player_ids,
                 line=line.number,
             )
             evidence = _evidence(raw_source_id, line)
@@ -1021,9 +1019,10 @@ def _parse_body(
                     "Table actions and showdown evidence cannot follow a pot award.",
                     line_start=line.number,
                 )
-            player_id = _player_id(
+            player_id = _dealt_in_player_id(
                 actor_line.group("name"),
                 player_id_by_name,
+                sitting_out_player_ids=sitting_out_player_ids,
                 line=line.number,
             )
             body = actor_line.group("body")
@@ -1609,6 +1608,26 @@ def _player_id(
             "An action references a player without a seat declaration.",
             line_start=line,
         ) from exc
+
+
+def _dealt_in_player_id(
+    name: str,
+    player_id_by_name: dict[str, str],
+    *,
+    sitting_out_player_ids: set[str],
+    line: int,
+    code: str = "actor_not_dealt_in",
+    message: str = "A table action, showdown, or award must identify a dealt-in seat.",
+) -> str:
+    player_id = _player_id(name, player_id_by_name, line=line)
+    if player_id in sitting_out_player_ids:
+        raise _HandParseError(
+            code,
+            message,
+            line_start=line,
+            line_end=line,
+        )
+    return player_id
 
 
 def _evidence(raw_source_id: str, line: _SourceLine) -> SourceEvidence:
