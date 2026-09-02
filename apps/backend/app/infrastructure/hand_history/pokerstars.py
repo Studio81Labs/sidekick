@@ -732,6 +732,7 @@ def _parse_body(
     showdown: list[ShowdownEntry] = []
     stated_pot: StatedPotSummary | None = None
     results_evidence: SourceEvidence | None = None
+    summary_seat_numbers: set[int] = set()
     table_seen = False
     seat_declaration_count = 0
     forced_post_seen = False
@@ -870,6 +871,7 @@ def _parse_body(
                     street_names=street_names,
                     actions=actions,
                     awards=awards,
+                    summary_seat_numbers=summary_seat_numbers,
                 )
                 continue
             raise _HandParseError(
@@ -1232,6 +1234,7 @@ def _validate_summary_seat_line(
     street_names: list[Literal["preflop", "flop", "turn", "river"]],
     actions: list[list[ImportedAction]],
     awards: list[PotAward],
+    summary_seat_numbers: set[int],
 ) -> None:
     summary = _SUMMARY_SEAT_RE.fullmatch(text)
     if summary is None:
@@ -1240,6 +1243,15 @@ def _validate_summary_seat_line(
             "This PokerStars seat-summary syntax is unsupported.",
             line_start=line,
         )
+    seat_number = int(summary.group("seat"))
+    if seat_number in summary_seat_numbers:
+        raise _HandParseError(
+            "duplicate_summary_seat",
+            "A hand summary cannot repeat a seat record.",
+            line_start=line,
+            line_end=line,
+        )
+    summary_seat_numbers.add(seat_number)
     rest = summary.group("rest")
     matching_names = [
         name
@@ -1889,6 +1901,17 @@ def _state_action_diagnostic(
                     evidence = action.evidence[0]
                     return (*target, evidence)
         completed_streets.append(street)
+    if (
+        parsed_body.results_evidence is not None
+        and target[0]
+        in {
+            "incomplete_street",
+            "missing_uncalled_return",
+            "premature_results",
+            "premature_street_transition",
+        }
+    ):
+        return (*target, parsed_body.results_evidence)
     return None
 
 
@@ -1933,7 +1956,21 @@ def _recognized_state_action_issue(
             "A bet cannot be made while facing an outstanding wager.",
         )
     if any(
-        "a non-all-in raise must be at least the last full bet or raise increment"
+        "a bet must add chips above the prior commitment" in message
+        or "a non-all-in bet must be at least the minimum full wager increment"
+        in message
+        for message in messages
+    ):
+        return (
+            "invalid_bet",
+            "A bet must add chips and meet the minimum full-wager increment unless all-in.",
+        )
+    if any(
+        "a raise requires an outstanding wager" in message
+        or "a raise must increase the outstanding wager" in message
+        or "a raise is not allowed because short all-ins have not reopened betting"
+        in message
+        or "a non-all-in raise must be at least the last full bet or raise increment"
         in message
         for message in messages
     ):
@@ -1942,12 +1979,71 @@ def _recognized_state_action_issue(
             "A non-all-in raise must meet the minimum full-raise increment.",
         )
     if any(
+        "an uncalled return must exactly settle the actor's unique unmatched live commitment"
+        in message
+        or "an uncalled return cannot occur while an opponent response remains pending"
+        in message
+        for message in messages
+    ):
+        return (
+            "invalid_uncalled_return",
+            "An uncalled return must exactly settle the unique unmatched wager after responses end.",
+        )
+    if any(
+        "a table decision is not allowed after every pot-eligible opponent is all-in"
+        in message
+        or "a bet or raise is not allowed when no opponent can respond" in message
+        or "a table decision is not allowed after the known action round is complete"
+        in message
+        for message in messages
+    ):
+        return (
+            "terminal_table_action",
+            "A table decision is not allowed after actionable opposition has ended.",
+        )
+    if any(
         "a street cannot end before the known action round is complete" in message
         for message in messages
     ):
         return (
             "premature_street_transition",
             "A street cannot advance before the known action round is complete.",
+        )
+    if any(
+        "a street cannot end while a non-folded, non-all-in player has not matched"
+        in message
+        for message in messages
+    ):
+        return (
+            "incomplete_street",
+            "A street cannot advance while an actionable player has not matched the wager.",
+        )
+    if any(
+        "a street cannot end with a unique unmatched top wager" in message
+        for message in messages
+    ):
+        return (
+            "missing_uncalled_return",
+            "A street with a unique unmatched top wager requires an uncalled return.",
+        )
+    if any(
+        "a later street is not allowed after folds end the hand" in message
+        for message in messages
+    ):
+        return (
+            "street_after_hand_end",
+            "A later street is not allowed after folds end the hand.",
+        )
+    if any(
+        "results require the hand to reach a completed river or end by folds"
+        in message
+        or "results require completed river betting or a fold-ended terminal hand"
+        in message
+        for message in messages
+    ):
+        return (
+            "premature_results",
+            "Results require a completed river or a fold-ended terminal hand.",
         )
     if any(
         "all-in marker has cumulative commitment" in message

@@ -457,6 +457,152 @@ def test_premature_street_transition_points_to_marker_line() -> None:
     assert diagnostic.line_end == 10
 
 
+def test_invalid_uncalled_return_points_to_action_line() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Uncalled bet ($2.00) returned to Hero Synthetic",
+        "Uncalled bet ($1.00) returned to Hero Synthetic",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("invalid-uncalled-return.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "invalid_uncalled_return"
+    assert diagnostic.line_start == 14
+    assert diagnostic.line_end == 14
+
+
+@pytest.mark.parametrize(
+    ("replacement", "expected_code"),
+    [
+        ("Flop Hero: bets $0.50", "invalid_bet"),
+        ("Flop Hero: raises $1.00 to $1.00", "invalid_raise"),
+    ],
+)
+def test_additional_invalid_wager_points_to_action_line(
+    replacement: str,
+    expected_code: str,
+) -> None:
+    lines = (FIXTURES / "synthetic-flop.txt").read_text().splitlines()
+    lines[12] = replacement
+    source = "\n".join(lines[:13]) + "\n"
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("additional-invalid-wager.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == expected_code
+    assert diagnostic.line_start == 13
+    assert diagnostic.line_end == 13
+
+
+def test_action_after_all_opponents_are_all_in_points_to_action_line() -> None:
+    lines = (FIXTURES / "synthetic-flop.txt").read_text().splitlines()
+    lines[3] = "Seat 2: Flop Rival ($1.00 in chips)"
+    lines[5] = "Flop Rival: posts big blind $1.00 and is all-in"
+    lines = [line for line in lines if line != "Flop Rival: checks"]
+    source = "\n".join(lines[:11]) + "\n"
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("action-after-opponents-all-in.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "terminal_table_action"
+    assert diagnostic.line_start == 11
+    assert diagnostic.line_end == 11
+
+
+def test_missing_uncalled_return_points_to_next_street_marker() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Uncalled bet ($2.00) returned to Hero Synthetic\n",
+        "*** FLOP *** [2c 3d 4h]\n",
+        1,
+    ).split("Hero Synthetic collected", 1)[0]
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("missing-uncalled-return.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "missing_uncalled_return"
+    assert diagnostic.line_start == 14
+    assert diagnostic.line_end == 14
+
+
+def test_street_after_fold_end_points_to_next_street_marker() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Hero Synthetic collected $2.50 from pot\n",
+        "*** FLOP *** [2c 3d 4h]\n",
+        1,
+    ).split("*** SUMMARY ***", 1)[0]
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("street-after-fold-end.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "street_after_hand_end"
+    assert diagnostic.line_start == 15
+    assert diagnostic.line_end == 15
+
+
+def test_premature_results_point_to_stated_pot_line() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text().replace(
+        "Flop Rival: folds",
+        "Flop Rival: calls $1.00",
+        1,
+    ).replace(
+        "Uncalled bet ($1.00) returned to Flop Hero\n",
+        "",
+        1,
+    ).replace(
+        "Seat 2: Flop Rival (big blind) folded on the Flop\n",
+        "",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("premature-results.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "premature_results"
+    assert diagnostic.line_start == 17
+    assert diagnostic.line_end == 17
+
+
+def test_duplicate_summary_seat_is_rejected_at_duplicate_line() -> None:
+    source = (FIXTURES / "synthetic-heads-up.txt").read_text()
+    source += "Seat 2: Heads Rival (big blind) collected ($1.00)\n"
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("duplicate-summary-seat.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "duplicate_summary_seat"
+    assert diagnostic.line_start == 16
+    assert diagnostic.line_end == 16
+
+
 def test_action_after_valid_all_in_points_to_later_action() -> None:
     source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
         "Seat 1: Hero Synthetic ($100.00 in chips)",
