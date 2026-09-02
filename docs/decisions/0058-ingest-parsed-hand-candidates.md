@@ -4,6 +4,11 @@ Status: accepted
 
 Date: 2026-09-01
 
+Amended by [ADR 0062](0062-expose-bounded-local-pokerstars-import.md): an exact
+HTTP request replay keeps the first durable server import/detection timestamps
+authoritative while every other provenance and detection-audit field must still
+match.
+
 ## Context
 
 Issue #415 needs a player-facing hand-history import workflow, but the

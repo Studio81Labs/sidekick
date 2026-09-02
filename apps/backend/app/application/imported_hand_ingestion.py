@@ -11,6 +11,7 @@ from app.application.imported_hand_ports import ImportedHandRepository
 from app.domain.imported_hands import (
     DetectedImportedHand,
     ImportConflict,
+    ImportProvenance,
     ImportedHandLifecycle,
     ImportedHandRecord,
     ImportedHandState,
@@ -197,13 +198,19 @@ def _duplicate_import_result(
             if (
                 raw.raw_source_id != candidate.raw_source_id
                 or raw.chronology != candidate.chronology
-                or raw.provenance != candidate.provenance
+                or not _same_retry_provenance(
+                    raw.provenance,
+                    candidate.provenance,
+                )
                 or raw.content_sha256 != candidate.content_sha256
             ):
                 raise ImportedHandImportIdConflict(
                     "an import id is already bound to different source evidence"
                 )
-            if _initial_detection(record, raw) != candidate_detection:
+            if not _same_retry_detection(
+                _initial_detection(record, raw),
+                candidate_detection,
+            ):
                 raise ImportedHandImportIdConflict(
                     "an import retry changed the detected hand meaning or audit evidence"
                 )
@@ -218,7 +225,10 @@ def _duplicate_import_result(
             if (
                 reimport.raw_source_id != candidate.raw_source_id
                 or reimport.chronology != candidate.chronology
-                or reimport.provenance != candidate.provenance
+                or not _same_retry_provenance(
+                    reimport.provenance,
+                    candidate.provenance,
+                )
                 or raw.content_sha256 != candidate.content_sha256
             ):
                 raise ImportedHandImportIdConflict(
@@ -236,7 +246,10 @@ def _duplicate_import_result(
                     target_raw_source_id=retained_detection.raw_source_id,
                 )
             )
-            if retained_detection != comparable_candidate:
+            if not _same_retry_detection(
+                retained_detection,
+                comparable_candidate,
+            ):
                 raise ImportedHandImportIdConflict(
                     "an import retry changed the detected hand meaning or audit evidence"
                 )
@@ -246,6 +259,28 @@ def _duplicate_import_result(
                 record=record,
             )
     return None
+
+
+def _same_retry_provenance(
+    retained: ImportProvenance,
+    candidate: ImportProvenance,
+) -> bool:
+    """Keep the first server observation time authoritative on request replay."""
+
+    return retained == candidate.model_copy(
+        update={"imported_at": retained.imported_at}
+    )
+
+
+def _same_retry_detection(
+    retained: DetectedImportedHand,
+    candidate: DetectedImportedHand,
+) -> bool:
+    """Compare deterministic recognition while retaining its first timestamp."""
+
+    return retained == candidate.model_copy(
+        update={"detected_at": retained.detected_at}
+    )
 
 
 def _require_append_chronology(

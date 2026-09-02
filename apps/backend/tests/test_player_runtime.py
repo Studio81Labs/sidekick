@@ -52,6 +52,7 @@ from app.player_runtime import (
     PLAYER_SECRET_FILENAME,
     PlayerAssetError,
     PlayerCredentialError,
+    PlayerImportBodyLimitMiddleware,
     PlayerRuntime,
     PlayerSessionAuthority,
     create_player_runtime,
@@ -80,10 +81,59 @@ from test_imported_hand_store import (
 
 
 TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
+POKERSTARS_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "pokerstars"
 DELETE_REQUEST_ID = "11111111-1111-4111-8111-111111111111"
 DELETE_RETRY_REQUEST_ID = "22222222-2222-4222-8222-222222222222"
 APPROVAL_REQUEST_ID = "33333333-3333-4333-8333-333333333333"
 APPROVAL_RETRY_REQUEST_ID = "44444444-4444-4444-8444-444444444444"
+IMPORT_REQUEST_ID = "55555555-5555-4555-8555-555555555555"
+SECOND_IMPORT_REQUEST_ID = "66666666-6666-4666-8666-666666666666"
+
+
+def test_player_import_body_limit_rejects_a_chunk_before_copying_it() -> None:
+    downstream_called = False
+    sent: list[dict[str, object]] = []
+
+    async def downstream(_scope, _receive, _send) -> None:
+        nonlocal downstream_called
+        downstream_called = True
+
+    async def receive() -> dict[str, object]:
+        return {
+            "type": "http.request",
+            "body": b"x" * 17,
+            "more_body": False,
+        }
+
+    async def send(message: dict[str, object]) -> None:
+        sent.append(message)
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "POST",
+        "scheme": "http",
+        "path": "/api/player/imports",
+        "raw_path": b"/api/player/imports",
+        "query_string": b"",
+        "root_path": "",
+        "headers": [],
+        "client": ("127.0.0.1", 50000),
+        "server": ("127.0.0.1", 8765),
+    }
+
+    asyncio.run(
+        PlayerImportBodyLimitMiddleware(downstream, limit=16)(
+            scope,
+            receive,
+            send,
+        )
+    )
+
+    assert downstream_called is False
+    assert sent[0]["type"] == "http.response.start"
+    assert sent[0]["status"] == 413
 
 
 def test_frozen_player_runtime_uses_embedded_assets(
@@ -1135,6 +1185,260 @@ def test_player_storage_reports_when_a_stable_snapshot_times_out(
 
     assert response.status_code == 409
     assert "waiting for an exclusive hold" in response.json()["detail"]
+
+
+def test_player_import_processes_valid_hands_and_isolates_file_diagnostics(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    mixed = (POKERSTARS_FIXTURES_DIR / "synthetic-mixed.txt").read_bytes()
+
+    response = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files=[
+            ("files", ("mixed.txt", mixed, "text/plain")),
+            ("files", ("broken.txt", b"\xff\xfe", "text/plain")),
+        ],
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["request_id"] == IMPORT_REQUEST_ID
+    assert payload["summary"] == {
+        "files_received": 2,
+        "files_processed": 1,
+        "hands_succeeded": 1,
+        "diagnostic_count": 2,
+        "duplicate_requests": 0,
+        "retry_required": False,
+    }
+    assert payload["files"][0]["status"] == "partial"
+    assert payload["files"][0]["hands"][0]["disposition"] == (
+        "created_pending_review"
+    )
+    assert payload["files"][0]["hands"][0]["lifecycle_status"] == (
+        "pending_review"
+    )
+    assert payload["files"][0]["diagnostics"][0]["code"] == (
+        "unsupported_header"
+    )
+    assert payload["files"][1]["status"] == "rejected"
+    assert payload["files"][1]["hands"] == []
+    assert payload["files"][1]["diagnostics"][0]["code"] == (
+        "invalid_encoding"
+    )
+    assert "PokerStars Hand" not in response.text
+    keys = runtime.workspace.imported_hands.list_keys()
+    assert len(keys) == 1
+    record = runtime.workspace.imported_hands.get(keys[0])
+    assert record.lifecycle.status == "pending_review"
+    assert record.canonical_revisions == []
+    assert record.raw_sources[0].provenance.source_filename == "mixed.txt"
+
+
+def test_player_import_retry_keeps_first_timestamp_and_rejects_id_reuse(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    source = (POKERSTARS_FIXTURES_DIR / "synthetic-heads-up.txt").read_text()
+
+    first = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers=player_mutation_headers(session),
+    )
+    assert first.status_code == 200
+    first_hand = first.json()["files"][0]["hands"][0]
+    retained = runtime.workspace.imported_hands.get(first_hand["record_key"])
+    first_imported_at = retained.raw_sources[0].provenance.imported_at
+    first_detected_at = retained.detections[0].detected_at
+
+    replay = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers=player_mutation_headers(session),
+    )
+
+    assert replay.status_code == 200
+    assert replay.json()["files"][0]["hands"][0]["disposition"] == (
+        "duplicate_request"
+    )
+    assert replay.json()["summary"]["duplicate_requests"] == 1
+    retained = runtime.workspace.imported_hands.get(first_hand["record_key"])
+    assert retained.raw_sources[0].provenance.imported_at == first_imported_at
+    assert retained.detections[0].detected_at == first_detected_at
+    assert len(retained.raw_sources) == 1
+    assert len(retained.detections) == 1
+
+    conflict = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("renamed.txt", source, "text/plain")},
+        headers=player_mutation_headers(session),
+    )
+
+    assert conflict.status_code == 200
+    assert conflict.json()["files"][0]["hands"] == []
+    assert conflict.json()["files"][0]["diagnostics"][0]["code"] == (
+        "request_id_conflict"
+    )
+    assert runtime.workspace.imported_hands.get(first_hand["record_key"]) == retained
+
+    reimport = client.post(
+        "/api/player/imports",
+        data={"request_id": SECOND_IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers=player_mutation_headers(session),
+    )
+    assert reimport.status_code == 200
+    assert reimport.json()["files"][0]["hands"][0]["disposition"] == (
+        "recorded_exact_reimport"
+    )
+    retained = runtime.workspace.imported_hands.get(first_hand["record_key"])
+    assert len(retained.raw_sources) == 1
+    assert len(retained.raw_sources[0].reimports) == 1
+    assert len(retained.detections) == 2
+
+    reimport_replay = client.post(
+        "/api/player/imports",
+        data={"request_id": SECOND_IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers=player_mutation_headers(session),
+    )
+    assert reimport_replay.status_code == 200
+    assert reimport_replay.json()["files"][0]["hands"][0]["disposition"] == (
+        "duplicate_request"
+    )
+    replayed = runtime.workspace.imported_hands.get(first_hand["record_key"])
+    assert len(replayed.raw_sources[0].reimports) == 1
+    assert len(replayed.detections) == 2
+
+    changed = source.replace(
+        "Dealt to Heads Hero [Qc Jh]",
+        "Dealt to Heads Hero [Qd Jc]",
+    )
+    changed_response = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", changed, "text/plain")},
+        headers=player_mutation_headers(session),
+    )
+    assert changed_response.status_code == 200
+    assert changed_response.json()["files"][0]["hands"][0]["disposition"] == (
+        "recorded_identity_conflict"
+    )
+    conflicted = runtime.workspace.imported_hands.get(first_hand["record_key"])
+    assert len(conflicted.raw_sources) == 2
+    assert len(conflicted.detections) == 3
+    assert len(conflicted.conflicts) == 1
+    assert conflicted.conflicts[0].status == "unresolved"
+    assert conflicted.canonical_revisions == []
+
+
+def test_player_import_requires_session_csrf_and_bounded_text_files(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path, max_player_import_file_bytes=16)
+    source = (POKERSTARS_FIXTURES_DIR / "synthetic-heads-up.txt").read_bytes()
+
+    unauthorized = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers={"Origin": PLAYER_ORIGIN},
+    )
+    assert unauthorized.status_code == 401
+
+    session = exchange_session(client, runtime)
+    missing_csrf = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers={
+            "Authorization": f"Bearer {session['session_token']}",
+            "Origin": PLAYER_ORIGIN,
+        },
+    )
+    assert missing_csrf.status_code == 403
+
+    too_large = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers=player_mutation_headers(session),
+    )
+    assert too_large.status_code == 200
+    assert too_large.json()["files"][0]["status"] == "rejected"
+    assert too_large.json()["files"][0]["diagnostics"][0]["code"] == (
+        "file_too_large"
+    )
+    assert runtime.workspace.imported_hands.list_keys() == []
+
+    body_client, body_runtime = player_client(
+        tmp_path / "body-limit",
+        max_player_import_batch_bytes=32,
+        max_player_import_file_bytes=1024 * 1024,
+    )
+    body_session = exchange_session(body_client, body_runtime)
+    body_too_large = body_client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("large.txt", b"x" * (300 * 1024), "text/plain")},
+        headers=player_mutation_headers(body_session),
+    )
+    assert body_too_large.status_code == 413
+    assert body_runtime.workspace.imported_hands.list_keys() == []
+
+    count_client, count_runtime = player_client(
+        tmp_path / "file-count",
+        max_player_import_files=2,
+    )
+    count_session = exchange_session(count_client, count_runtime)
+    too_many_files = count_client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files=[
+            ("files", (f"hands-{index}.txt", b"not a hand", "text/plain"))
+            for index in range(3)
+        ],
+        headers=player_mutation_headers(count_session),
+    )
+    assert too_many_files.status_code == 413
+    assert count_runtime.workspace.imported_hands.list_keys() == []
+
+
+def test_player_import_marks_retryable_storage_outcomes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    source = (POKERSTARS_FIXTURES_DIR / "synthetic-heads-up.txt").read_bytes()
+
+    def storage_busy(*_args, **_kwargs):
+        raise DataLockTimeoutError("storage busy")
+
+    monkeypatch.setattr(PlayerWorkspace, "ingest_detected_hand", storage_busy)
+    response = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["summary"]["retry_required"] is True
+    assert response.json()["files"][0]["hands"] == []
+    assert response.json()["files"][0]["diagnostics"][0]["code"] == (
+        "storage_busy"
+    )
+    assert runtime.workspace.imported_hands.list_keys() == []
 
 
 def test_player_hand_routes_require_auth_and_return_safe_review_projections(

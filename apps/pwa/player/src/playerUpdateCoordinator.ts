@@ -12,6 +12,7 @@ export interface PlayerDraftState {
   approvalChanged: boolean;
   approvalStateReasonChanged: boolean;
   backupSelected: boolean;
+  importFilesSelected: boolean;
   permanentDeletionReasonChanged: boolean;
 }
 
@@ -35,6 +36,7 @@ const INITIAL_STATE: PlayerUpdateState = {
 export function playerUpdateDirtyReasons(drafts: PlayerDraftState): string[] {
   return [
     drafts.backupSelected ? "selected backup archive" : null,
+    drafts.importFilesSelected ? "selected hand-history files" : null,
     drafts.approvalChanged ? "canonical approval draft" : null,
     drafts.approvalStateReasonChanged ? "approval-state reason" : null,
     drafts.permanentDeletionReasonChanged ? "permanent-deletion reason" : null,

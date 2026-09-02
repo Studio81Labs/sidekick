@@ -78,10 +78,12 @@ describe("player service-worker controller handoff", () => {
         approvalChanged: true,
         approvalStateReasonChanged: true,
         backupSelected: true,
+        importFilesSelected: true,
         permanentDeletionReasonChanged: true,
       }),
     ).toEqual([
       "selected backup archive",
+      "selected hand-history files",
       "canonical approval draft",
       "approval-state reason",
       "permanent-deletion reason",
@@ -91,6 +93,7 @@ describe("player service-worker controller handoff", () => {
         approvalChanged: false,
         approvalStateReasonChanged: false,
         backupSelected: false,
+        importFilesSelected: false,
         permanentDeletionReasonChanged: false,
       }),
     ).toEqual([]);

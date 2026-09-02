@@ -54,6 +54,13 @@ loopback launch, one-use bootstrap/session security, Host/Origin/CSRF and LAN
 boundaries, and data removal. A supported OS installer, signing/publishing,
 automatic updates, application-file removal, and browser-PWA removal remain
 outside this checkpoint.
+[ADR 0062](../decisions/0062-expose-bounded-local-pokerstars-import.md) adds
+authenticated multipart PokerStars text import to the local player runtime.
+Files and parsed hands are isolated, the first server timestamps remain
+authoritative across an exact request replay, and every successful parser
+proposal stays unapproved; new hand identities stay pending review. The UI and
+API expose only the bounded adapter subset and make no #409 corpus or Phase 1
+claim.
 [ADR 0053](../decisions/0053-serve-a-dedicated-local-player-pwa.md) replaces
 the inline readiness document with a separately built local recovery PWA. It
 exposes storage/recovery status and the existing player backup/restore workflow
@@ -315,8 +322,9 @@ are preserved with their source zone, and ambiguous/nonexistent ET wall times
 are rejected. Synthetic development fixtures verify the contract and isolation
 behavior but are not the representative corpus or 99% clean-parse evidence
 required to close #409. Every successful parse separately reports whether pot
-reconciliation is clean, failed, or indeterminate. No player upload route
-invokes this adapter yet.
+reconciliation is clean, failed, or indeterminate. Authenticated
+`POST /api/player/imports` invokes the adapter for bounded UTF-8 `.txt` uploads
+and returns sanitized per-file and per-hand outcomes without exposing raw text.
 
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit
@@ -355,7 +363,16 @@ warning metadata, conflicts, sanitized detected and approved state, lifecycle
 state including deletion-cleanup failures, and deletion receipts. Collection
 responses omit source content; detail responses also omit raw text and evidence
 excerpts, including scalar correction values whose JSON pointer directly names
-an excerpt. Authenticated `POST /api/player/hands/{record_key}/approve`,
+an excerpt. Authenticated `POST /api/player/imports` accepts one or more bounded
+PokerStars text exports; each successful candidate enters the same per-record
+ingestion locks without changing approved canonical state, and new identities
+stay pending review. A request UUID, ordered file slot, and file SHA-256 bind
+deterministic source, import, and detection IDs. Exact replays
+retain the first durable server timestamps and return duplicate outcomes;
+changed bytes cannot alias those IDs and follow the ordinary reimport/conflict
+rules. Files and hands remain independent, so one diagnostic or conflict cannot
+roll back successful siblings. Authenticated
+`POST /api/player/hands/{record_key}/approve`,
 `POST /api/player/hands/{record_key}/withdraw`, and
 `POST /api/player/hands/{record_key}/reject` expose retained approval writes;
 `POST /api/player/hands/{record_key}/delete` exposes permanent deletion.
@@ -412,9 +429,10 @@ content-addressed assets, and icons are public; player data remains behind the
 authenticated API. The player service worker precaches only the static shell
 and treats `/api` and encoded equivalents as network-only. A player-only update
 coordinator detects a waiting worker but never activates it during session
-bootstrap or an authenticated player operation. Selected backups and edited
-approval, lifecycle, or deletion fields require an explicit, revision-bound
-discard confirmation. The coordinator reloads only after controller handoff
+bootstrap or an authenticated player operation. Selected backups, selected
+hand-history files, and edited approval, lifecycle, or deletion fields require
+an explicit, revision-bound discard confirmation. The coordinator reloads only
+after controller handoff
 and rechecks that no new busy work or draft revision appeared; otherwise it
 leaves the new shell installed and asks for a later safe reload. This governs
 browser-shell replacement only and does not install, update, or remove the
@@ -484,13 +502,13 @@ Retries of the published request or completed purge are idempotent. Older
 backups remain subject to `classify_restore`, so they cannot reactivate a
 purged generation without an explicit authorized reimport.
 
-What is deliberately not wired yet: there is no imported-hand import, conflict
-resolution, or authorized re-import HTTP surface, and the hosted screenshot
-workflow is not a V2 player-data path.
+What is deliberately not wired yet: there is no conflict-resolution or
+authorized tombstone re-import HTTP surface, and the hosted screenshot workflow
+is not a V2 player-data path.
 The local runtime constructs and recovers the player store and exposes
 authenticated storage metadata, sanitized record projections, canonical
 correction/approval/reapproval, approval withdrawal/rejection, permanent
-deletion, and whole-store V2 backup/restore.
+deletion, bounded PokerStars import, and whole-store V2 backup/restore.
 These lifecycle mutations inherit the session, Host/Origin, and CSRF boundary
 established by ADR 0050. Withdrawal and rejection retain inactive audit;
 deletion first deactivates the record, then purges its hand-linked audit and

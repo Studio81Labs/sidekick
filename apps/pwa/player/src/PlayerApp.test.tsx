@@ -71,6 +71,55 @@ const readyStorage = {
   recovery: { completed: [], quarantined: [], failed: [] },
 };
 
+function importOutcome(
+  requestId: string,
+  disposition = "created_pending_review",
+  retryRequired = false,
+) {
+  return {
+    request_id: requestId,
+    files: [
+      {
+        file_slot: 1,
+        filename: "hands.txt",
+        status: "partial",
+        hands: [
+          {
+            hand_ordinal: 1,
+            source_hand_id: "900000000001",
+            record_key: "8".repeat(64),
+            disposition,
+            parser_disposition: "clean",
+            reconciliation_status: "pass",
+            lifecycle_status: "pending_review",
+            warning_count: 0,
+          },
+        ],
+        diagnostics: [
+          {
+            code: retryRequired ? "storage_failure" : "unsupported_header",
+            message: retryRequired
+              ? "The local store could not confirm this hand."
+              : "This hand format is outside the supported subset.",
+            hand_ordinal: 2,
+            source_hand_id: "900000000002",
+            line_start: 17,
+            line_end: null,
+          },
+        ],
+      },
+    ],
+    summary: {
+      files_received: 1,
+      files_processed: 1,
+      hands_succeeded: 1,
+      diagnostic_count: 1,
+      duplicate_requests: disposition === "duplicate_request" ? 1 : 0,
+      retry_required: retryRequired,
+    },
+  };
+}
+
 const pendingHand = {
   record_key: "a".repeat(64),
   record_version: "9".repeat(64),
@@ -499,6 +548,199 @@ describe("PlayerApp", () => {
     expect(new Headers(storageRequest?.[1]?.headers).get("Authorization")).toBe(
       "Bearer player-session",
     );
+  });
+
+  it("imports selected PokerStars files for review and refreshes local totals", async () => {
+    const requestId = "55555555-5555-4555-8555-555555555555" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(jsonResponse(importOutcome(requestId)))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...readyStorage, imported_hand_record_count: 4 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    const input = screen.getByLabelText(
+      "PokerStars hand-history files",
+    ) as HTMLInputElement;
+    await user.upload(
+      input,
+      new File(["PokerStars Hand"], "hands.txt", { type: "text/plain" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Import for review" }));
+
+    expect(
+      await screen.findByText("Import finished with reviewable outcomes."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Hand #900000000001.*created pending review/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/unsupported header.*outside the supported subset/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("4", { selector: "dd" })).toBeInTheDocument();
+    expect(input.value).toBe("");
+    expect(
+      screen.getByRole("button", { name: "Import for review" }),
+    ).toBeDisabled();
+
+    const importRequest = fetchMock.mock.calls[1];
+    expect(importRequest?.[0]).toBe("/api/player/imports");
+    const headers = new Headers(importRequest?.[1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer stored-session");
+    expect(headers.get("X-Poker-CSRF-Token")).toBe("stored-csrf");
+    expect(headers.has("Content-Type")).toBe(false);
+    const body = importRequest?.[1]?.body as FormData;
+    expect(body.get("request_id")).toBe(requestId);
+    expect((body.get("files") as File).name).toBe("hands.txt");
+  });
+
+  it("retains the exact request after a retryable storage diagnostic", async () => {
+    const requestId = "88888888-8888-4888-8888-888888888888" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(jsonResponse(readyStorage))
+        .mockResolvedValueOnce(
+          jsonResponse(
+            importOutcome(requestId, "created_pending_review", true),
+          ),
+        )
+        .mockResolvedValueOnce(jsonResponse(readyStorage)),
+    );
+    const user = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    const input = screen.getByLabelText(
+      "PokerStars hand-history files",
+    ) as HTMLInputElement;
+    await user.upload(
+      input,
+      new File(["PokerStars Hand"], "hands.txt", { type: "text/plain" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Import for review" }));
+
+    expect(
+      await screen.findByText("Import needs a safe retry."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/same request ID and selected files remain ready/),
+    ).toBeInTheDocument();
+    expect(input.files).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Import for review" }),
+    ).toBeEnabled();
+  });
+
+  it("retains files and request identity after an ambiguous import", async () => {
+    const requestId = "66666666-6666-4666-8666-666666666666" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(
+        jsonResponse({ ...readyStorage, imported_hand_record_count: 4 }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(importOutcome(requestId, "duplicate_request")),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ ...readyStorage, imported_hand_record_count: 4 }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const user = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    const input = screen.getByLabelText(
+      "PokerStars hand-history files",
+    ) as HTMLInputElement;
+    await user.upload(
+      input,
+      new File(["PokerStars Hand"], "hands.txt", { type: "text/plain" }),
+    );
+    const importButton = screen.getByRole("button", {
+      name: "Import for review",
+    });
+    await user.click(importButton);
+
+    expect(
+      await screen.findByText(
+        /same request ID and selected files remain ready/,
+      ),
+    ).toBeInTheDocument();
+    expect(input.files).toHaveLength(1);
+    expect(importButton).toBeEnabled();
+    await user.click(importButton);
+
+    expect(
+      await screen.findByText(/1 retry outcomes were already retained/),
+    ).toBeInTheDocument();
+    const firstBody = fetchMock.mock.calls[1]?.[1]?.body as FormData;
+    const retryBody = fetchMock.mock.calls[3]?.[1]?.body as FormData;
+    expect(firstBody.get("request_id")).toBe(requestId);
+    expect(retryBody.get("request_id")).toBe(requestId);
+    expect(input.value).toBe("");
+  });
+
+  it("treats an incomplete successful import response as ambiguous", async () => {
+    const requestId = "77777777-7777-4777-8777-777777777777" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValueOnce(jsonResponse(readyStorage))
+        .mockResolvedValueOnce(jsonResponse(importOutcome(requestId)))
+        .mockResolvedValueOnce(jsonResponse(readyStorage)),
+    );
+    const user = userEvent.setup();
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    const input = screen.getByLabelText(
+      "PokerStars hand-history files",
+    ) as HTMLInputElement;
+    await user.upload(input, [
+      new File(["PokerStars Hand"], "hands.txt", { type: "text/plain" }),
+      new File(["PokerStars Hand"], "more-hands.txt", {
+        type: "text/plain",
+      }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Import for review" }));
+
+    expect(
+      await screen.findByText(/import may have committed.*safe retry/),
+    ).toBeInTheDocument();
+    expect(input.files).toHaveLength(2);
+    expect(
+      screen.queryByText("Import finished with reviewable outcomes."),
+    ).not.toBeInTheDocument();
   });
 
   it("defers a waiting player update through bootstrap, drafts, and restore", async () => {
@@ -2298,7 +2540,7 @@ describe("PlayerApp", () => {
     expect(restoreRequest?.[1]?.body).toBe(backup);
   });
 
-  it("surfaces quarantined recovery evidence without enabling import", async () => {
+  it("surfaces quarantined recovery evidence and disables import", async () => {
     sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "stored-session");
     sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "stored-csrf");
     const unreadableKey = "d".repeat(64);
@@ -2338,9 +2580,15 @@ describe("PlayerApp", () => {
     expect(screen.getByText("2", { selector: "dd" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Correction and explicit approval are enabled.*Direct hand-history import and the V2 learning loop are not enabled/,
+        /Bounded PokerStars text import.*Imported parser output remains pending review.*V2 learning loop is not enabled/,
       ),
     ).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("PokerStars hand-history files"),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Import for review" }),
+    ).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Load hand records" }));
     expect(
       await screen.findByText("site-hand-id/v1 · pokerstars #123456789"),
