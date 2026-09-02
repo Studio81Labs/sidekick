@@ -1886,6 +1886,31 @@ def _recognized_state_action_issue(
             "A player action is out of turn for the derived dealt-in seat ring.",
         )
     if any(
+        "a call must match the outstanding wager" in message
+        for message in messages
+    ):
+        return (
+            "invalid_call",
+            "A non-all-in call must match the outstanding wager.",
+        )
+    if any(
+        "an actor cannot check while facing an outstanding wager" in message
+        for message in messages
+    ):
+        return (
+            "invalid_check",
+            "A player cannot check while facing an outstanding wager.",
+        )
+    if any(
+        "a non-all-in raise must be at least the last full bet or raise increment"
+        in message
+        for message in messages
+    ):
+        return (
+            "invalid_raise",
+            "A non-all-in raise must meet the minimum full-raise increment.",
+        )
+    if any(
         "all-in marker has cumulative commitment" in message
         for message in messages
     ):

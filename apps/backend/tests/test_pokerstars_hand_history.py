@@ -366,6 +366,40 @@ def test_invalid_action_contract_points_to_its_source_line(
     assert diagnostic.line_end == expected_line
 
 
+@pytest.mark.parametrize(
+    ("replacement", "expected_code"),
+    [
+        ("Small Synthetic: calls $0.50", "invalid_call"),
+        ("Small Synthetic: checks", "invalid_check"),
+        ("Small Synthetic: raises $1.00 to $4.00", "invalid_raise"),
+    ],
+)
+def test_invalid_betting_rule_points_to_action_line(
+    replacement: str,
+    expected_code: str,
+) -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Small Synthetic: folds",
+        replacement,
+        1,
+    ).replace(
+        "Seat 5: Small Synthetic (small blind) folded before Flop\n",
+        "",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("invalid-betting-rule.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == expected_code
+    assert diagnostic.line_start == 12
+    assert diagnostic.line_end == 12
+
+
 def test_action_after_valid_all_in_points_to_later_action() -> None:
     source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
         "Seat 1: Hero Synthetic ($100.00 in chips)",
