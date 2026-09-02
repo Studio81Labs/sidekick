@@ -105,6 +105,16 @@ def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
         "unknown",
         "forced_system",
     ]
+    assert [
+        action.origin.confidence for action in state.streets[0].actions
+    ] == [
+        Decimal("1"),
+        Decimal("1"),
+        None,
+        None,
+        None,
+        Decimal("1"),
+    ]
     assert parsed.reconciliation.status == "pass"
     assert parsed.disposition == "clean"
     assert parsed.reconciliation.derived_gross_total == state.results.stated_pot.gross_total
@@ -990,6 +1000,57 @@ def test_exact_shown_cards_syntax_is_supported() -> None:
     showdown = result.hands[0].candidate.detection.state.results.showdown
     assert len(showdown) == 1
     assert [card.code for card in showdown[0].cards] == ["Ad", "Qd"]
+
+
+@pytest.mark.parametrize(
+    ("player", "cards", "expected_code"),
+    [
+        ("Flop Rival", "5s 5s", "duplicate_showdown_card"),
+        ("Flop Rival", "2c 5s", "showdown_card_collision"),
+        ("Flop Hero", "Ac Qd", "hero_showdown_mismatch"),
+    ],
+)
+def test_showdown_card_conflict_points_to_shown_cards_line(
+    player: str,
+    cards: str,
+    expected_code: str,
+) -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text()
+    prefix, _ = source.split("Flop Rival: folds", 1)
+    source = prefix + f"*** SHOW DOWN ***\n{player}: shows [{cards}]\n"
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("showdown-card-conflict.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == expected_code
+    assert diagnostic.line_start == 15
+    assert diagnostic.line_end == 15
+
+
+def test_duplicate_showdown_player_points_to_second_entry() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text()
+    prefix, _ = source.split("Flop Rival: folds", 1)
+    source = (
+        prefix
+        + "*** SHOW DOWN ***\n"
+        + "Flop Hero: shows [Ad Qd]\n"
+        + "Flop Hero: shows [Ad Qd]\n"
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("duplicate-showdown-player.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "duplicate_showdown_entry"
+    assert diagnostic.line_start == 16
+    assert diagnostic.line_end == 16
 
 
 @pytest.mark.parametrize(

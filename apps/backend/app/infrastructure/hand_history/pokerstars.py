@@ -744,6 +744,7 @@ def _parse_body(
     unresolved_decisions = 0
     uncalled_return_seen = False
     folded_player_ids: set[str] = set()
+    showdown_player_ids: set[str] = set()
 
     for line in lines[1:]:
         text = line.text
@@ -1093,6 +1094,14 @@ def _parse_body(
                         line_start=line.number,
                         line_end=line.number,
                     )
+                if player_id in showdown_player_ids:
+                    raise _HandParseError(
+                        "duplicate_showdown_entry",
+                        "A player may appear at showdown at most once.",
+                        line_start=line.number,
+                        line_end=line.number,
+                    )
+                showdown_player_ids.add(player_id)
                 showdown.append(showdown_entry)
                 continue
             parsed_action = _parse_action_line(
@@ -1506,6 +1515,7 @@ def _action(
     origin = ActionOrigin(
         kind="forced_system" if forced else "unknown",
         basis="explicit_marker" if forced else "unresolved",
+        confidence=Decimal("1") if forced else None,
         evidence=[evidence],
     )
     return ImportedAction(
@@ -1755,6 +1765,66 @@ def _validate_known_cards(parsed_body: _ParsedBody) -> None:
                 )
             seen_codes.add(card.code)
         previous_board = street.board_cards
+
+    if parsed_body.results is None:
+        return
+    hero_entry = next(
+        (
+            entry
+            for entry in parsed_body.results.showdown
+            if entry.player_id == parsed_body.hero_player_id
+        ),
+        None,
+    )
+    if hero_entry is not None and hero_entry.cards:
+        hero_codes = [card.code for card in hero_entry.cards]
+        evidence = hero_entry.evidence[0]
+        if len(hero_codes) != len(set(hero_codes)):
+            raise _HandParseError(
+                "duplicate_showdown_card",
+                "A shown holding cannot contain the same card twice.",
+                line_start=evidence.line_start,
+                line_end=evidence.line_end,
+            )
+        if parsed_body.hero_cards:
+            if set(hero_codes) != {
+                card.code for card in parsed_body.hero_cards
+            }:
+                raise _HandParseError(
+                    "hero_showdown_mismatch",
+                    "The hero's shown cards must match the dealt holding.",
+                    line_start=evidence.line_start,
+                    line_end=evidence.line_end,
+                )
+        elif seen_codes.intersection(hero_codes):
+            raise _HandParseError(
+                "showdown_card_collision",
+                "Shown cards cannot duplicate known board cards.",
+                line_start=evidence.line_start,
+                line_end=evidence.line_end,
+            )
+        seen_codes.update(hero_codes)
+
+    for entry in parsed_body.results.showdown:
+        if entry is hero_entry or not entry.cards:
+            continue
+        entry_codes = [card.code for card in entry.cards]
+        evidence = entry.evidence[0]
+        if len(entry_codes) != len(set(entry_codes)):
+            raise _HandParseError(
+                "duplicate_showdown_card",
+                "A shown holding cannot contain the same card twice.",
+                line_start=evidence.line_start,
+                line_end=evidence.line_end,
+            )
+        if seen_codes.intersection(entry_codes):
+            raise _HandParseError(
+                "showdown_card_collision",
+                "Shown holdings cannot duplicate any known card.",
+                line_start=evidence.line_start,
+                line_end=evidence.line_end,
+            )
+        seen_codes.update(entry_codes)
 
 
 def _state_action_diagnostic(
