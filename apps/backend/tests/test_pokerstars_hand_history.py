@@ -278,6 +278,24 @@ def test_unsupported_ante_structure_points_to_the_ante_lines(
     assert diagnostic.line_end == expected_line_end
 
 
+def test_all_in_antes_do_not_establish_a_nominal_amount() -> None:
+    source = (FIXTURES / "synthetic-ante.txt").read_text().replace(
+        "posts the ante $0.10",
+        "posts the ante $0.05 and is all-in",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("all-in-antes.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "unsupported_ante_structure"
+    assert diagnostic.line_start == 6
+    assert diagnostic.line_end == 8
+
+
 def test_straddle_value_retains_its_post_evidence() -> None:
     source = synthetic_straddle_source(
         "Straddle Rival: posts straddle $2.00",
@@ -315,6 +333,23 @@ def test_unsupported_straddles_point_to_the_post_lines() -> None:
     assert diagnostic.line_end == 10
 
 
+def test_short_all_in_straddle_does_not_establish_a_nominal_amount() -> None:
+    source = synthetic_straddle_source(
+        "Straddle Rival: posts straddle $1.50 and is all-in",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("short-all-in-straddle.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "unsupported_straddle_structure"
+    assert diagnostic.line_start == 9
+    assert diagnostic.line_end == 9
+
+
 def test_seat_outside_the_table_points_to_the_seat_line() -> None:
     source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
         "Seat 6: Big Synthetic",
@@ -330,6 +365,67 @@ def test_seat_outside_the_table_points_to_the_seat_line() -> None:
     diagnostic = result.diagnostics[0]
     assert diagnostic.code == "seat_outside_table"
     assert diagnostic.line_start == 6
+    assert diagnostic.line_end == 6
+
+
+@pytest.mark.parametrize("button_seat", [2, 3])
+def test_unresolved_button_is_isolated_from_a_valid_sibling(button_seat: int) -> None:
+    invalid = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Seat #1 is the button",
+        f"Seat #{button_seat} is the button",
+    )
+    valid = (FIXTURES / "synthetic-heads-up.txt").read_text()
+
+    result = parse_pokerstars_text(
+        f"{invalid}\n\n{valid}",
+        context=import_context("unresolved-button.txt"),
+    )
+
+    assert [hand.hand_ordinal for hand in result.hands] == [2]
+    assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000002"
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "unsupported_button_seat"
+    assert diagnostic.hand_ordinal == 1
+    assert diagnostic.line_start == 2
+    assert diagnostic.line_end == 2
+
+
+def test_duplicate_seat_number_points_to_the_second_declaration() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Seat 3: Sitting Synthetic",
+        "Seat 1: Sitting Synthetic",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("duplicate-seat-number.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "duplicate_seat_number"
+    assert diagnostic.line_start == 4
+
+
+def test_insufficient_dealt_in_ring_points_to_the_seat_declarations() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text()
+    source = source.replace(
+        "Seat 5: Small Synthetic ($100.00 in chips)",
+        "Seat 5: Small Synthetic ($100.00 in chips) is sitting out",
+    ).replace(
+        "Seat 6: Big Synthetic ($100.00 in chips)",
+        "Seat 6: Big Synthetic ($100.00 in chips) is sitting out",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("insufficient-dealt-in-ring.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "insufficient_dealt_in_seats"
+    assert diagnostic.line_start == 3
     assert diagnostic.line_end == 6
 
 

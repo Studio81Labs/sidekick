@@ -592,6 +592,7 @@ def _parse_seats(
 
     seats: list[ImportedSeat] = []
     player_id_by_name: dict[str, str] = {}
+    seat_numbers: set[int] = set()
     seat_evidence: list[SourceEvidence] = []
     for line, match in seat_matches:
         name = match.group("name")
@@ -602,6 +603,13 @@ def _parse_seats(
                 line_start=line.number,
             )
         seat_number = int(match.group("seat"))
+        if seat_number in seat_numbers:
+            raise _HandParseError(
+                "duplicate_seat_number",
+                "A seat number appears in more than one declaration.",
+                line_start=line.number,
+            )
+        seat_numbers.add(seat_number)
         player_id = f"seat-{seat_number}"
         player_id_by_name[name] = player_id
         stack = _parse_money(
@@ -638,6 +646,24 @@ def _parse_seats(
                 line_start=evidence.line_start,
                 line_end=evidence.line_end,
             )
+    button = next(
+        (seat for seat in seats if seat.seat_number == button_seat),
+        None,
+    )
+    if button is None or button.participation != "dealt_in":
+        raise _HandParseError(
+            "unsupported_button_seat",
+            "The button must identify a declared dealt-in seat.",
+            line_start=table_line.number,
+            line_end=table_line.number,
+        )
+    if sum(seat.participation == "dealt_in" for seat in seats) < 2:
+        raise _HandParseError(
+            "insufficient_dealt_in_seats",
+            "At least two declared seats must be dealt in.",
+            line_start=min(source.line_start for source in seat_evidence),
+            line_end=max(source.line_end for source in seat_evidence),
+        )
     return _ParsedSeats(
         seats=seats,
         player_id_by_name=player_id_by_name,
@@ -1599,6 +1625,13 @@ def _ante_structure(
     ]
     line_start = min(source.line_start for source in post_evidence)
     line_end = max(source.line_end for source in post_evidence)
+    if all(action.all_in for action in posts):
+        raise _HandParseError(
+            "unsupported_ante_structure",
+            "All-in ante posts do not establish the nominal ante amount.",
+            line_start=line_start,
+            line_end=line_end,
+        )
     amounts = {action.amount for action in posts}
     if len(amounts) != 1 or None in amounts:
         raise _HandParseError(
@@ -1644,10 +1677,10 @@ def _straddle_amount(streets: list[ImportedStreet]) -> Decimal | None:
         for action in posts
         for source in action.evidence
     ]
-    if len(posts) != 1 or posts[0].amount is None:
+    if len(posts) != 1 or posts[0].amount is None or posts[0].all_in:
         raise _HandParseError(
             "unsupported_straddle_structure",
-            "Exactly one known straddle is supported in this adapter revision.",
+            "Exactly one non-all-in straddle is required to establish its nominal amount.",
             line_start=min(source.line_start for source in post_evidence),
             line_end=max(source.line_end for source in post_evidence),
         )
