@@ -1645,6 +1645,9 @@ def _field_evidence(
         "/game/blinds/small_blind": DetectedFieldEvidence(evidence=[header]),
         "/game/blinds/big_blind": DetectedFieldEvidence(evidence=[header]),
         "/game/economics/currency": DetectedFieldEvidence(evidence=[header]),
+        "/game/table_size": DetectedFieldEvidence(
+            evidence=[parsed_seats.table_evidence]
+        ),
         "/button_seat": DetectedFieldEvidence(
             evidence=[parsed_seats.table_evidence]
         ),

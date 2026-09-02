@@ -84,6 +84,9 @@ def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
     assert parsed.reconciliation.status == "pass"
     assert parsed.disposition == "clean"
     assert parsed.reconciliation.derived_gross_total == state.results.stated_pot.gross_total
+    table_size_evidence = candidate.detection.field_evidence["/game/table_size"]
+    assert table_size_evidence.evidence[0].line_start == 2
+    assert table_size_evidence.evidence[0].excerpt.startswith("Table 'Synthetic Alpha'")
     assert "/streets/0/actions/2" in candidate.detection.field_evidence
     assert candidate.detection.warnings == [
         "Action origin is unresolved for 3 player decision(s); review is required."
