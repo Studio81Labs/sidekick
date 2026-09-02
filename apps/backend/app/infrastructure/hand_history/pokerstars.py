@@ -2217,7 +2217,7 @@ def _validate_structural_blind_posts(
     for action in parsed_body.streets[0].actions:
         actor = seats_by_player[action.actor_id]
         if (
-            action.action_type.startswith("post_")
+            action.action_type == "post_ante"
             and actor.starting_stack is not None
             and action.total_committed == actor.starting_stack
         ):

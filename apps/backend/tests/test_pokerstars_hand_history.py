@@ -304,6 +304,31 @@ def test_missing_structural_blind_points_to_forced_post_section_end() -> None:
     assert diagnostic.line_end == 6
 
 
+def test_stack_exhausting_straddle_does_not_waive_missing_big_blind() -> None:
+    source = synthetic_straddle_source(
+        "Straddle Big: posts straddle $2.00",
+    ).replace(
+        "Seat 3: Straddle Big ($100.00 in chips)",
+        "Seat 3: Straddle Big ($2.00 in chips)",
+        1,
+    ).replace(
+        "Straddle Big: posts big blind $1.00\n",
+        "",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("straddle-without-big-blind.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "missing_structural_blind"
+    assert diagnostic.line_start == 9
+    assert diagnostic.line_end == 9
+
+
 @pytest.mark.parametrize(
     ("old", "new", "expected_code", "expected_line"),
     [
