@@ -348,7 +348,7 @@ def _split_hands(
         _HandBlock(
             ordinal=ordinal,
             file_line_start=start + 1,
-            raw_text="".join(lines[start:end]),
+            raw_text=_hand_block_text(lines, start=start, end=end),
         )
         for ordinal, (start, end) in enumerate(
             zip(starts, [*starts[1:], len(lines)], strict=True),
@@ -356,6 +356,12 @@ def _split_hands(
         )
     ]
     return blocks, diagnostics
+
+
+def _hand_block_text(lines: list[str], *, start: int, end: int) -> str:
+    while end > start and not lines[end - 1].strip():
+        end -= 1
+    return "".join(lines[start:end])
 
 
 def _contract_validation_message(exc: ValidationError) -> str:

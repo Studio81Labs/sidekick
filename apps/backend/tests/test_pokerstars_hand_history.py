@@ -207,6 +207,37 @@ def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
     assert diagnostic.line_start == 17
 
 
+def test_inter_hand_blank_lines_do_not_change_raw_identity_or_reimport(
+    tmp_path: Path,
+) -> None:
+    source = (FIXTURES / "synthetic-heads-up.txt").read_text()
+    sibling = (FIXTURES / "synthetic-ante.txt").read_text()
+    standalone = parse_pokerstars_text(
+        source,
+        context=PokerStarsImportContext(
+            import_id="standalone-import",
+            imported_at=IMPORTED_AT,
+            source_filename="standalone.txt",
+        ),
+    ).hands[0].candidate
+    overlapping = parse_pokerstars_text(
+        f"{source}\n\n{sibling}",
+        context=PokerStarsImportContext(
+            import_id="overlapping-import",
+            imported_at=datetime(2026, 9, 2, 10, 1, tzinfo=timezone.utc),
+            source_filename="overlapping.txt",
+        ),
+    ).hands[0].candidate
+
+    assert overlapping.raw.raw_text == standalone.raw.raw_text
+    assert overlapping.raw.content_sha256 == standalone.raw.content_sha256
+    assert overlapping.raw.raw_source_id != standalone.raw.raw_source_id
+
+    service = ImportedHandIngestionService(store=FileImportedHandStore(tmp_path))
+    assert service.ingest(standalone).disposition == "created_pending_review"
+    assert service.ingest(overlapping).disposition == "recorded_exact_reimport"
+
+
 def test_unknown_action_produces_a_structured_rejection() -> None:
     source = (FIXTURES / "synthetic-heads-up.txt").read_text().replace(
         "Heads Hero: folds",
