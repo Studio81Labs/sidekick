@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 
@@ -69,6 +70,8 @@ def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
     assert state.game.table_size == 6
     assert state.game.economics.kind == "cash"
     assert state.game.economics.currency == "USD"
+    assert state.game.blinds.ante == Decimal(0)
+    assert state.game.blinds.ante_mode == "unknown"
     assert [(seat.seat_number, seat.participation) for seat in state.seats] == [
         (1, "dealt_in"),
         (3, "sitting_out"),
@@ -105,6 +108,10 @@ def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
     table_size_evidence = candidate.detection.field_evidence["/game/table_size"]
     assert table_size_evidence.evidence[0].line_start == 2
     assert table_size_evidence.evidence[0].excerpt.startswith("Table 'Synthetic Alpha'")
+    for pointer in ("/game/blinds/ante", "/game/blinds/ante_mode"):
+        ante_evidence = candidate.detection.field_evidence[pointer]
+        assert ante_evidence.evidence[0].line_start == 9
+        assert ante_evidence.evidence[0].excerpt == "*** HOLE CARDS ***"
     for pointer in (
         "/identity/site",
         "/chronology/source_timezone",
@@ -294,6 +301,38 @@ def test_all_in_antes_do_not_establish_a_nominal_amount() -> None:
     assert diagnostic.code == "unsupported_ante_structure"
     assert diagnostic.line_start == 6
     assert diagnostic.line_end == 8
+
+
+def test_short_all_in_ante_preserves_contribution_and_uses_nominal_amount() -> None:
+    source = """PokerStars Hand #900000000009: Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:42:56 ET
+Table 'Synthetic Short Ante' 3-max Seat #1 is the button
+Seat 1: Ante Hero ($100.00 in chips)
+Seat 2: Ante Small ($100.00 in chips)
+Seat 3: Ante Big ($0.05 in chips)
+Ante Hero: posts the ante $0.10
+Ante Small: posts the ante $0.10
+Ante Big: posts the ante $0.05 and is all-in
+Ante Small: posts small blind $0.50
+*** HOLE CARDS ***
+Dealt to Ante Hero [7s 6s]
+"""
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("short-all-in-ante.txt"),
+    )
+
+    assert result.diagnostics == ()
+    state = result.hands[0].candidate.detection.state
+    assert state.game.blinds.ante == Decimal("0.10")
+    assert state.game.blinds.ante_mode == "per_player"
+    big_ante = next(
+        action
+        for action in state.streets[0].actions
+        if action.action_type == "post_ante" and action.actor_id == "seat-3"
+    )
+    assert big_ante.amount == Decimal("0.05")
+    assert big_ante.all_in is True
 
 
 def test_straddle_value_retains_its_post_evidence() -> None:

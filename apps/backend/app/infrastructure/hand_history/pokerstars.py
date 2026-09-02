@@ -556,6 +556,7 @@ class _ParsedBody:
     results: HandResults | None
     warnings: tuple[str, ...]
     hero_evidence: SourceEvidence | None
+    hole_evidence: SourceEvidence
     board_evidence: list[SourceEvidence | None]
     action_evidence: list[list[SourceEvidence]]
     results_evidence: SourceEvidence | None
@@ -700,6 +701,7 @@ def _parse_body(
     hero_player_id: str | None = None
     hero_cards: list[Card] = []
     hero_evidence: SourceEvidence | None = None
+    hole_evidence: SourceEvidence | None = None
     awards: list[PotAward] = []
     showdown: list[ShowdownEntry] = []
     stated_pot: StatedPotSummary | None = None
@@ -752,6 +754,7 @@ def _parse_body(
                     line_start=line.number,
                 )
             hole_seen = True
+            hole_evidence = _evidence(raw_source_id, line)
             continue
         if text == "*** SHOW DOWN ***":
             if not hole_seen or showdown_seen or award_seen or in_summary:
@@ -1092,6 +1095,7 @@ def _parse_body(
             "missing_hole_cards",
             "A supported hand requires an explicit hole-card section marker.",
         )
+    assert hole_evidence is not None
 
     streets = [
         ImportedStreet(street=name, board_cards=board, actions=street_actions)
@@ -1120,6 +1124,7 @@ def _parse_body(
         results=results,
         warnings=warnings,
         hero_evidence=hero_evidence,
+        hole_evidence=hole_evidence,
         board_evidence=board_evidence,
         action_evidence=action_evidence,
         results_evidence=results_evidence,
@@ -1617,7 +1622,7 @@ def _ante_structure(
         if action.action_type == "post_ante"
     ]
     if not posts:
-        return None, "unknown"
+        return Decimal(0), "unknown"
     post_evidence = [
         source
         for action in posts
@@ -1625,18 +1630,27 @@ def _ante_structure(
     ]
     line_start = min(source.line_start for source in post_evidence)
     line_end = max(source.line_end for source in post_evidence)
-    if all(action.all_in for action in posts):
+    nominal_amounts = {
+        action.amount for action in posts if not action.all_in
+    }
+    if len(nominal_amounts) != 1 or None in nominal_amounts:
         raise _HandParseError(
             "unsupported_ante_structure",
-            "All-in ante posts do not establish the nominal ante amount.",
+            "Ante posts require one known non-all-in amount to establish the nominal ante.",
             line_start=line_start,
             line_end=line_end,
         )
-    amounts = {action.amount for action in posts}
-    if len(amounts) != 1 or None in amounts:
+    amount = next(iter(nominal_amounts))
+    assert amount is not None
+    if any(
+        action.amount is None
+        or (action.all_in and action.amount > amount)
+        or (not action.all_in and action.amount != amount)
+        for action in posts
+    ):
         raise _HandParseError(
             "unsupported_ante_structure",
-            "Ante posts must use one known amount in this adapter revision.",
+            "Ante posts must match the nominal amount unless a shorter post is all-in.",
             line_start=line_start,
             line_end=line_end,
         )
@@ -1650,8 +1664,6 @@ def _ante_structure(
         ),
         None,
     )
-    amount = next(iter(amounts))
-    assert amount is not None
     if poster_ids == dealt_ids:
         return amount, "per_player"
     if poster_ids == {big_blind}:
@@ -1732,6 +1744,13 @@ def _field_evidence(
         )
         evidence["/game/blinds/ante_mode"] = DetectedFieldEvidence(
             evidence=ante_sources
+        )
+    else:
+        evidence["/game/blinds/ante"] = DetectedFieldEvidence(
+            evidence=[parsed_body.hole_evidence]
+        )
+        evidence["/game/blinds/ante_mode"] = DetectedFieldEvidence(
+            evidence=[parsed_body.hole_evidence]
         )
     straddle_sources = [
         source
