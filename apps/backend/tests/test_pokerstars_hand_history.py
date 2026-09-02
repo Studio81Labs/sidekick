@@ -419,6 +419,44 @@ def test_call_without_outstanding_wager_points_to_action_line() -> None:
     assert diagnostic.line_end == 12
 
 
+def test_bet_facing_outstanding_wager_points_to_action_line() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text().replace(
+        "Flop Hero: calls $0.50",
+        "Flop Hero: bets $2.00",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("bet-facing-outstanding-wager.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "invalid_bet"
+    assert diagnostic.line_start == 9
+    assert diagnostic.line_end == 9
+
+
+def test_premature_street_transition_points_to_marker_line() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text().replace(
+        "Flop Rival: checks\n",
+        "",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("premature-street-transition.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "premature_street_transition"
+    assert diagnostic.line_start == 10
+    assert diagnostic.line_end == 10
+
+
 def test_action_after_valid_all_in_points_to_later_action() -> None:
     source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
         "Seat 1: Hero Synthetic ($100.00 in chips)",

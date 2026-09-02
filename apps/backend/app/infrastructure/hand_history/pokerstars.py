@@ -1842,7 +1842,30 @@ def _state_action_diagnostic(
         return None
 
     completed_streets: list[ImportedStreet] = []
-    for street in parsed_body.streets:
+    for street_index, street in enumerate(parsed_body.streets):
+        if street_index > 0:
+            boundary_street = ImportedStreet(
+                street=street.street,
+                board_cards=street.board_cards,
+                actions=[],
+            )
+            try:
+                ImportedHandState(
+                    identity=identity,
+                    chronology=chronology,
+                    game=game,
+                    button_seat=button_seat,
+                    seats=seats,
+                    hero_player_id=parsed_body.hero_player_id,
+                    hero_cards=parsed_body.hero_cards,
+                    streets=[*completed_streets, boundary_street],
+                    results=None,
+                )
+            except ValidationError as boundary_error:
+                if _recognized_state_action_issue(boundary_error) == target:
+                    evidence = parsed_body.board_evidence[street_index]
+                    assert evidence is not None
+                    return (*target, evidence)
         for action_index, action in enumerate(street.actions):
             prefix_street = ImportedStreet(
                 street=street.street,
@@ -1903,6 +1926,13 @@ def _recognized_state_action_issue(
             "A player cannot check while facing an outstanding wager.",
         )
     if any(
+        "a bet requires no outstanding wager" in message for message in messages
+    ):
+        return (
+            "invalid_bet",
+            "A bet cannot be made while facing an outstanding wager.",
+        )
+    if any(
         "a non-all-in raise must be at least the last full bet or raise increment"
         in message
         for message in messages
@@ -1910,6 +1940,14 @@ def _recognized_state_action_issue(
         return (
             "invalid_raise",
             "A non-all-in raise must meet the minimum full-raise increment.",
+        )
+    if any(
+        "a street cannot end before the known action round is complete" in message
+        for message in messages
+    ):
+        return (
+            "premature_street_transition",
+            "A street cannot advance before the known action round is complete.",
         )
     if any(
         "all-in marker has cumulative commitment" in message
