@@ -1,0 +1,21 @@
+PokerStars Hand #900000000001: Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:34:56 ET
+Table 'Synthetic Alpha' 6-max Seat #1 is the button
+Seat 1: Hero Synthetic ($100.00 in chips)
+Seat 3: Sitting Synthetic ($75.00 in chips) is sitting out
+Seat 5: Small Synthetic ($100.00 in chips)
+Seat 6: Big Synthetic ($100.00 in chips)
+Small Synthetic: posts small blind $0.50
+Big Synthetic: posts big blind $1.00
+*** HOLE CARDS ***
+Dealt to Hero Synthetic [As Kd]
+Hero Synthetic: raises $2.00 to $3.00
+Small Synthetic: folds
+Big Synthetic: folds
+Uncalled bet ($2.00) returned to Hero Synthetic
+Hero Synthetic collected $2.50 from pot
+*** SUMMARY ***
+Total pot $2.50 | Rake $0.00
+Seat 1: Hero Synthetic (button) collected ($2.50)
+Seat 3: Sitting Synthetic is sitting out
+Seat 5: Small Synthetic (small blind) folded before Flop
+Seat 6: Big Synthetic (big blind) folded before Flop
