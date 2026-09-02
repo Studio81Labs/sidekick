@@ -1887,11 +1887,12 @@ def _recognized_state_action_issue(
         )
     if any(
         "a call must match the outstanding wager" in message
+        or "a call requires an outstanding wager" in message
         for message in messages
     ):
         return (
             "invalid_call",
-            "A non-all-in call must match the outstanding wager.",
+            "A call requires an outstanding wager and must match it unless all-in.",
         )
     if any(
         "an actor cannot check while facing an outstanding wager" in message

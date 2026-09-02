@@ -400,6 +400,25 @@ def test_invalid_betting_rule_points_to_action_line(
     assert diagnostic.line_end == 12
 
 
+def test_call_without_outstanding_wager_points_to_action_line() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text().replace(
+        "Flop Rival: checks\nFlop Hero: bets $1.00",
+        "Flop Rival: calls $1.00\nFlop Hero: bets $1.00",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("call-without-outstanding-wager.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "invalid_call"
+    assert diagnostic.line_start == 12
+    assert diagnostic.line_end == 12
+
+
 def test_action_after_valid_all_in_points_to_later_action() -> None:
     source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
         "Seat 1: Hero Synthetic ($100.00 in chips)",
