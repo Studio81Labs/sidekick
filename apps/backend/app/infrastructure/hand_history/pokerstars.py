@@ -95,7 +95,7 @@ _RAISE_RE = re.compile(
     rf"^raises (?P<raise_by>{_MONEY}) to (?P<target>{_MONEY})"
     r"(?P<all_in> and is all-in)?$"
 )
-_SHOW_RE = re.compile(r"^shows \[(?P<cards>[^\]]+)\](?: .*)?$")
+_SHOW_RE = re.compile(r"^shows \[(?P<cards>[^\]]+)\]$")
 _SUMMARY_SEAT_RE = re.compile(
     r"^Seat (?P<seat>[1-9][0-9]*): (?P<rest>.+)$"
 )
@@ -1413,6 +1413,12 @@ def _showdown_entry(
             cards=cards,
             disposition="shown",
             evidence=[evidence],
+        )
+    if body.startswith("shows "):
+        raise _HandParseError(
+            "unsupported_showdown",
+            "This PokerStars shown-hand syntax is unsupported.",
+            line_start=line,
         )
     if body == "mucks hand":
         return ShowdownEntry(

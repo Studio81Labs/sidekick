@@ -395,6 +395,48 @@ def test_unsupported_total_pot_suffix_is_not_silently_discarded() -> None:
     ]
 
 
+def test_unsupported_showdown_suffix_is_not_silently_discarded() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text().replace(
+        "Uncalled bet ($1.00) returned to Flop Hero\n",
+        (
+            "Uncalled bet ($1.00) returned to Flop Hero\n"
+            "*** SHOW DOWN ***\n"
+            "Flop Hero: shows [Ad Qd] and collected $2.00\n"
+        ),
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("unsupported-showdown-suffix.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "unsupported_showdown"
+    assert diagnostic.line_start == 17
+
+
+def test_exact_shown_cards_syntax_is_supported() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text().replace(
+        "Uncalled bet ($1.00) returned to Flop Hero\n",
+        (
+            "Uncalled bet ($1.00) returned to Flop Hero\n"
+            "*** SHOW DOWN ***\n"
+            "Flop Hero: shows [Ad Qd]\n"
+        ),
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("exact-showdown.txt"),
+    )
+
+    assert result.diagnostics == ()
+    showdown = result.hands[0].candidate.detection.state.results.showdown
+    assert len(showdown) == 1
+    assert [card.code for card in showdown[0].cards] == ["Ad", "Qd"]
+
+
 def test_occurrence_ids_are_deterministic_but_import_context_bound() -> None:
     source = (FIXTURES / "synthetic-heads-up.txt").read_text()
     first = parse_pokerstars_text(
