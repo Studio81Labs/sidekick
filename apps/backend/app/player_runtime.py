@@ -21,8 +21,10 @@ from typing import Callable
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 from starlette.concurrency import run_in_threadpool
+from starlette.datastructures import UploadFile
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.application.imported_hand_lifecycle import LifecycleCascadeError
@@ -49,6 +51,16 @@ from app.player_hands import (
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
     PlayerHandDeleteRequest,
+    PlayerRequestId,
+)
+from app.player_imports import (
+    MAX_PLAYER_IMPORT_BATCH_BYTES,
+    MAX_PLAYER_IMPORT_FILE_BYTES,
+    MAX_PLAYER_IMPORT_FILES,
+    PlayerImportFile,
+    PlayerImportFileOutcome,
+    import_pokerstars_files,
+    rejected_player_import_file,
 )
 from app.player_namespace import (
     PLAYER_API_PREFIX,
@@ -71,6 +83,7 @@ PLAYER_PORT = 8765
 PLAYER_AUTHORITY = f"{PLAYER_HOST}:{PLAYER_PORT}"
 PLAYER_ORIGIN = f"http://{PLAYER_AUTHORITY}"
 PLAYER_SECRET_FILENAME = ".player-runtime-key"
+PLAYER_IMPORT_MULTIPART_OVERHEAD_BYTES = 256 * 1024
 
 
 def default_player_assets_dir() -> Path:
@@ -437,6 +450,201 @@ def _json_denial(status_code: int, detail: str) -> JSONResponse:
     )
 
 
+def _valid_player_import_filename(filename: str) -> bool:
+    return (
+        bool(filename)
+        and filename == filename.strip()
+        and len(filename) <= 255
+        and filename.lower().endswith(".txt")
+        and "/" not in filename
+        and "\\" not in filename
+        and "\x00" not in filename
+        and not (len(filename) >= 2 and filename[1] == ":")
+    )
+
+
+class PlayerImportBodyLimitMiddleware:
+    """Bound the raw multipart body before Starlette can spool file parts."""
+
+    def __init__(self, app: ASGIApp, *, limit: int) -> None:
+        self.app = app
+        self.limit = limit
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if not (
+            scope["type"] == "http"
+            and scope.get("method", "").upper() == "POST"
+            and scope.get("path") == f"{PLAYER_API_PREFIX}/imports"
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        content_lengths = _header_values(scope, b"content-length")
+        if len(content_lengths) > 1:
+            await _json_denial(400, "Content-Length must be unambiguous")(
+                scope,
+                receive,
+                send,
+            )
+            return
+        if content_lengths:
+            try:
+                declared_length = int(content_lengths[0])
+            except ValueError:
+                declared_length = -1
+            if declared_length < 0:
+                await _json_denial(400, "Content-Length must be a decimal integer")(
+                    scope,
+                    receive,
+                    send,
+                )
+                return
+            if declared_length > self.limit:
+                await _json_denial(413, "The player import body is too large")(
+                    scope,
+                    receive,
+                    send,
+                )
+                return
+
+        body = bytearray()
+        while True:
+            message = await receive()
+            if message["type"] == "http.disconnect":
+                return
+            if message["type"] != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            if len(chunk) > self.limit - len(body):
+                await _json_denial(413, "The player import body is too large")(
+                    scope,
+                    receive,
+                    send,
+                )
+                return
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+
+        delivered = False
+
+        async def replay_receive() -> Message:
+            nonlocal delivered
+            if delivered:
+                return {"type": "http.disconnect"}
+            delivered = True
+            return {
+                "type": "http.request",
+                "body": bytes(body),
+                "more_body": False,
+            }
+
+        await self.app(scope, replay_receive, send)
+
+
+async def _read_player_import_files(
+    files: list[UploadFile],
+    *,
+    max_player_import_file_bytes: int,
+    max_player_import_batch_bytes: int,
+) -> list[PlayerImportFile | PlayerImportFileOutcome] | JSONResponse:
+    if not files:
+        return _json_denial(400, "Select at least one PokerStars text file")
+    declared_batch_size = sum(
+        upload.size for upload in files if upload.size is not None
+    )
+    if declared_batch_size > max_player_import_batch_bytes:
+        return _json_denial(
+            413,
+            "The selected PokerStars files exceed the import batch limit",
+        )
+
+    sources: list[PlayerImportFile | PlayerImportFileOutcome] = []
+    batch_size = 0
+    for slot, upload in enumerate(files, start=1):
+        raw_filename = upload.filename or ""
+        filename = (
+            raw_filename
+            if _valid_player_import_filename(raw_filename)
+            else f"file-{slot}.txt"
+        )
+        media_type = (
+            (upload.content_type or "").partition(";")[0].strip().lower()
+        )
+        payload = await upload.read(max_player_import_file_bytes + 1)
+        batch_size += len(payload)
+        if batch_size > max_player_import_batch_bytes:
+            return _json_denial(
+                413,
+                "The selected PokerStars files exceed the import batch limit",
+            )
+        if not _valid_player_import_filename(raw_filename):
+            sources.append(
+                rejected_player_import_file(
+                    slot,
+                    filename,
+                    code="invalid_filename",
+                    message=(
+                        "PokerStars imports require a plain .txt filename"
+                        " without a directory path."
+                    ),
+                )
+            )
+            continue
+        if media_type not in {
+            "",
+            "application/octet-stream",
+            "text/plain",
+        }:
+            sources.append(
+                rejected_player_import_file(
+                    slot,
+                    filename,
+                    code="unsupported_media_type",
+                    message="PokerStars imports must be plain text files.",
+                )
+            )
+            continue
+        if len(payload) > max_player_import_file_bytes:
+            sources.append(
+                rejected_player_import_file(
+                    slot,
+                    filename,
+                    code="file_too_large",
+                    message=(
+                        "This PokerStars file exceeds the local import size limit."
+                    ),
+                )
+            )
+            continue
+        try:
+            raw_text = payload.decode("utf-8")
+        except UnicodeDecodeError:
+            sources.append(
+                rejected_player_import_file(
+                    slot,
+                    filename,
+                    code="invalid_encoding",
+                    message="PokerStars imports must use UTF-8 text.",
+                )
+            )
+            continue
+        sources.append(
+            PlayerImportFile(
+                slot=slot,
+                filename=filename,
+                content_sha256=sha256(payload).hexdigest(),
+                raw_text=raw_text,
+            )
+        )
+    return sources
+
+
 async def _read_bounded_body(request: Request, *, limit: int) -> bytes:
     content_length = request.headers.get("content-length")
     if content_length is not None:
@@ -662,6 +870,9 @@ def create_player_runtime(
     backup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_EXPORT_TIMEOUT_SECONDS,
     status_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     max_player_backup_bytes: int = DEFAULT_MAX_PLAYER_BACKUP_BYTES,
+    max_player_import_file_bytes: int = MAX_PLAYER_IMPORT_FILE_BYTES,
+    max_player_import_batch_bytes: int = MAX_PLAYER_IMPORT_BATCH_BYTES,
+    max_player_import_files: int = MAX_PLAYER_IMPORT_FILES,
 ) -> PlayerRuntime:
     player_assets = validate_player_assets(player_assets_dir)
     workspace = PlayerWorkspace.open(
@@ -939,6 +1150,101 @@ def create_player_runtime(
                 )
         return JSONResponse(payload.model_dump(mode="json"))
 
+    @app.post(f"{PLAYER_API_PREFIX}/imports")
+    async def import_player_pokerstars_files(
+        request: Request,
+    ) -> JSONResponse:
+        media_type = request.headers.get("content-type", "").partition(";")[0]
+        if media_type.strip().lower() != "multipart/form-data":
+            return _json_denial(
+                415,
+                "Player imports require multipart form data",
+            )
+        try:
+            async with request.form(
+                max_files=max_player_import_files,
+                max_fields=1,
+                max_part_size=4096,
+            ) as form:
+                if any(
+                    key not in {"request_id", "files"}
+                    for key, _value in form.multi_items()
+                ):
+                    return _json_denial(
+                        400,
+                        "Player import form contains an unsupported field",
+                    )
+                request_values = form.getlist("request_id")
+                if len(request_values) != 1 or not isinstance(
+                    request_values[0],
+                    str,
+                ):
+                    return _json_denial(
+                        400,
+                        "Player import requires one UUID request_id field",
+                    )
+                try:
+                    request_id = TypeAdapter(PlayerRequestId).validate_python(
+                        request_values[0]
+                    )
+                except ValidationError:
+                    return _json_denial(
+                        400,
+                        "Player import request_id must be a valid UUID",
+                    )
+                file_values = form.getlist("files")
+                if not all(
+                    isinstance(file_value, UploadFile)
+                    for file_value in file_values
+                ):
+                    return _json_denial(
+                        400,
+                        "Every player import files field must contain a file",
+                    )
+                files = [
+                    file_value
+                    for file_value in file_values
+                    if isinstance(file_value, UploadFile)
+                ]
+                sources_or_error = await _read_player_import_files(
+                    files,
+                    max_player_import_file_bytes=max_player_import_file_bytes,
+                    max_player_import_batch_bytes=max_player_import_batch_bytes,
+                )
+        except StarletteHTTPException as exc:
+            status_code = 413 if "files" in str(exc.detail).lower() else 400
+            return _json_denial(status_code, "Player import multipart limits exceeded")
+        if isinstance(sources_or_error, JSONResponse):
+            return sources_or_error
+        sources = sources_or_error
+
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                status = await run_in_threadpool(
+                    workspace.status_payload,
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+                if status["status"] != "ready":
+                    return _json_denial(
+                        503,
+                        "Player storage recovery needs attention before import",
+                    )
+                outcome = await run_in_threadpool(
+                    import_pokerstars_files,
+                    workspace,
+                    request_id=request_id,
+                    imported_at=datetime.now(timezone.utc),
+                    files=sources,
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except PlayerStorageRecoveryRequired as exc:
+                return _json_denial(503, str(exc))
+        return JSONResponse(outcome.model_dump(mode="json"))
+
     @app.get(f"{PLAYER_API_PREFIX}/backups/export")
     async def export_player_backup(request: Request) -> Response:
         async with restore_access_gate.operation():
@@ -1025,7 +1331,14 @@ def create_player_runtime(
     async def player_icon(asset_path: str) -> Response:
         return _player_public_asset_response(player_assets, "icons", asset_path)
 
-    secured_app: ASGIApp = PlayerApiSessionMiddleware(app, sessions)
+    bounded_app: ASGIApp = PlayerImportBodyLimitMiddleware(
+        app,
+        limit=(
+            max_player_import_batch_bytes
+            + PLAYER_IMPORT_MULTIPART_OVERHEAD_BYTES
+        ),
+    )
+    secured_app: ASGIApp = PlayerApiSessionMiddleware(bounded_app, sessions)
     secured_app = PlayerNetworkBoundaryMiddleware(
         secured_app,
         authority=authority,

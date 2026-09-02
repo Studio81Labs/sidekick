@@ -9,6 +9,8 @@ import {
 import {
   PlayerApiError,
   PlayerHandRecoveryRequiredError,
+  PlayerImportAmbiguousError,
+  PlayerImportRecoveryRequiredError,
   PlayerRestoreAmbiguousError,
   PlayerRestoreRecoveryRequiredError,
   type PlayerBackupRestoreResult,
@@ -17,6 +19,7 @@ import {
   type PlayerHandCloseAction,
   type PlayerHandList,
   type PlayerHandSummary,
+  type PlayerImportBatchOutcome,
   type PlayerStorageStatus,
   approvePlayerHand,
   bootstrapPlayerSession,
@@ -24,6 +27,7 @@ import {
   closePlayerHand,
   deletePlayerHand,
   exportPlayerBackup,
+  importPokerStarsFiles,
   loadPlayerHand,
   loadPlayerHands,
   loadPlayerStorage,
@@ -35,9 +39,14 @@ import {
   type PlayerUpdateSafety,
   usePlayerUpdateCoordinator,
 } from "./playerUpdateCoordinator";
+import {
+  clearPlayerImportRetry,
+  preservePlayerImportRetry,
+} from "./playerImportRetry";
 
 type BusyAction =
   | "export"
+  | "import"
   | "restore"
   | "records"
   | "detail"
@@ -711,8 +720,63 @@ function RestoreSummary({ result }: { result: PlayerBackupRestoreResult }) {
   );
 }
 
+function ImportSummary({ result }: { result: PlayerImportBatchOutcome }) {
+  return (
+    <div className="notice import-result" role="status">
+      <strong>
+        {result.summary.retry_required
+          ? "Import needs a safe retry."
+          : "Import finished with reviewable outcomes."}
+      </strong>
+      <span>
+        {result.summary.hands_succeeded} hands retained across{" "}
+        {result.summary.files_processed} of {result.summary.files_received}{" "}
+        files; {result.summary.diagnostic_count} diagnostics require review.
+      </span>
+      {result.summary.duplicate_requests > 0 ? (
+        <span>
+          {result.summary.duplicate_requests} retry outcomes were already
+          retained and were not duplicated.
+        </span>
+      ) : null}
+      <ul className="import-outcomes">
+        {result.files.map((file, fileIndex) => (
+          <li key={`${file.filename}-${fileIndex}`}>
+            <strong>
+              {file.filename} · {file.status}
+            </strong>
+            <span>
+              {file.hands.length} hands retained · {file.diagnostics.length}{" "}
+              diagnostics
+            </span>
+            {file.hands.map((hand) => (
+              <span key={`${hand.record_key}-${hand.hand_ordinal}`}>
+                Hand #{hand.source_hand_id} ·{" "}
+                {hand.disposition.replace(/_/g, " ")} ·{" "}
+                {hand.reconciliation_status} reconciliation ·{" "}
+                {hand.lifecycle_status.replace(/_/g, " ")}
+              </span>
+            ))}
+            {file.diagnostics.map((diagnostic, diagnosticIndex) => (
+              <span
+                key={`${diagnostic.code}-${diagnostic.hand_ordinal}-${diagnosticIndex}`}
+              >
+                {diagnostic.hand_ordinal
+                  ? `Hand ${diagnostic.hand_ordinal} · `
+                  : ""}
+                {diagnostic.code.replace(/_/g, " ")} · {diagnostic.message}
+              </span>
+            ))}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function PlayerApp() {
   const backupInput = useRef<HTMLInputElement>(null);
+  const importInput = useRef<HTMLInputElement>(null);
   const permitNextUnloadRef = useRef(false);
   const [credentials, setCredentials] = useState<PlayerCredentials | null>(
     null,
@@ -721,6 +785,10 @@ export default function PlayerApp() {
   const [selectedBackup, setSelectedBackup] = useState<File | null>(null);
   const [restoreResult, setRestoreResult] =
     useState<PlayerBackupRestoreResult | null>(null);
+  const [selectedImportFiles, setSelectedImportFiles] = useState<File[]>([]);
+  const [importRequestId, setImportRequestId] = useState<string | null>(null);
+  const [importResult, setImportResult] =
+    useState<PlayerImportBatchOutcome | null>(null);
   const [handPage, setHandPage] = useState<PlayerHandList | null>(null);
   const [handDetail, setHandDetail] = useState<PlayerHandDetail | null>(null);
   const [approvalDraft, setApprovalDraft] = useState<HandApprovalDraft | null>(
@@ -1190,6 +1258,93 @@ export default function PlayerApp() {
     }
   };
 
+  const importHandHistories = async () => {
+    if (!credentials || selectedImportFiles.length === 0 || !importRequestId) {
+      return;
+    }
+    setBusy("import");
+    setError(null);
+    setActionNotice(null);
+    setImportResult(null);
+    try {
+      const retainedRequestId = await preservePlayerImportRetry(
+        selectedImportFiles,
+        importRequestId,
+      );
+      setImportRequestId(retainedRequestId);
+      const result = await importPokerStarsFiles(
+        credentials,
+        selectedImportFiles,
+        retainedRequestId,
+      );
+      setImportResult(result);
+      if (!result.summary.retry_required) {
+        clearPlayerImportRetry();
+        setSelectedImportFiles([]);
+        setImportRequestId(null);
+        if (importInput.current) importInput.current.value = "";
+      }
+      setHandPage(null);
+      setHandDetail(null);
+      setApprovalDraft(null);
+      setCloseReason("");
+      setDeleteReason("");
+      try {
+        setStorage(await loadPlayerStorage(credentials));
+        if (result.summary.retry_required) {
+          setError(
+            "Some hand outcomes were not confirmed. The same request ID and selected files remain ready for a safe retry.",
+          );
+        }
+      } catch (reason) {
+        setStorage(null);
+        handleRequestError(
+          reason,
+          "Import finished, but storage status could not be refreshed.",
+        );
+      }
+    } catch (reason) {
+      if (reason instanceof PlayerImportRecoveryRequiredError) {
+        clearPlayerCredentials();
+        setCredentials(null);
+        setStorage(null);
+        setHandPage(null);
+        setHandDetail(null);
+        setApprovalDraft(null);
+        setCloseReason("");
+        setDeleteReason("");
+        setSelectedImportFiles([]);
+        setImportRequestId(null);
+        if (importInput.current) importInput.current.value = "";
+        setError(
+          `${reason.message} Reselect the same files in the same order to reuse the retained safe-retry identity.`,
+        );
+      } else if (reason instanceof PlayerImportAmbiguousError) {
+        setHandPage(null);
+        setHandDetail(null);
+        setApprovalDraft(null);
+        setCloseReason("");
+        setDeleteReason("");
+        try {
+          setStorage(await loadPlayerStorage(credentials));
+          setError(
+            `${reason.message} The same request ID and selected files remain ready for a safe retry.`,
+          );
+        } catch (refreshError) {
+          setStorage(null);
+          handleRequestError(
+            refreshError,
+            `${reason.message} A stable storage status could not be obtained. Restart the local player runtime before retrying.`,
+          );
+        }
+      } else {
+        handleRequestError(reason);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const restoreBackup = async () => {
     if (!credentials || !selectedBackup) return;
     setBusy("restore");
@@ -1271,6 +1426,9 @@ export default function PlayerApp() {
       setStorage(null);
       setSelectedBackup(null);
       setRestoreResult(null);
+      setSelectedImportFiles([]);
+      setImportRequestId(null);
+      setImportResult(null);
       setHandPage(null);
       setHandDetail(null);
       setApprovalDraft(null);
@@ -1278,6 +1436,7 @@ export default function PlayerApp() {
       setDeleteReason("");
       setActionNotice(null);
       if (backupInput.current) backupInput.current.value = "";
+      if (importInput.current) importInput.current.value = "";
       setError(message);
       setBusy(null);
     }
@@ -1300,6 +1459,7 @@ export default function PlayerApp() {
     approvalChanged: approvalDraftDirty,
     approvalStateReasonChanged: closeReason !== "",
     backupSelected: selectedBackup !== null,
+    importFilesSelected: selectedImportFiles.length > 0,
     permanentDeletionReasonChanged: deleteReason !== defaultDeleteReason,
   });
   const updateSafety: PlayerUpdateSafety = {
@@ -1418,6 +1578,8 @@ export default function PlayerApp() {
 
       {restoreResult ? <RestoreSummary result={restoreResult} /> : null}
 
+      {importResult ? <ImportSummary result={importResult} /> : null}
+
       {actionNotice ? (
         <div className="notice restore-result" role="status">
           {actionNotice}
@@ -1463,6 +1625,63 @@ export default function PlayerApp() {
                 local files.
               </p>
             ) : null}
+          </section>
+
+          <section
+            className="panel import-panel"
+            aria-labelledby="import-heading"
+          >
+            <div>
+              <p className="eyebrow">Local hand-history import</p>
+              <h2 id="import-heading">Import PokerStars text histories</h2>
+              <p>
+                Select one or more UTF-8 .txt exports. The current adapter
+                supports a bounded English no-limit cash subset. Every parser
+                proposal remains unapproved; new hand identities stay pending
+                review until you explicitly approve canonical state.
+              </p>
+            </div>
+            <label className="file-field">
+              <span>PokerStars hand-history files</span>
+              <input
+                ref={importInput}
+                type="file"
+                multiple
+                accept=".txt,text/plain"
+                disabled={busy !== null || attentionItems > 0}
+                onChange={(event) => {
+                  markDraftChanged();
+                  const selected = Array.from(event.target.files ?? []);
+                  if (selected.length === 0) clearPlayerImportRetry();
+                  setSelectedImportFiles(selected);
+                  setImportRequestId(
+                    selected.length > 0 ? crypto.randomUUID() : null,
+                  );
+                  setImportResult(null);
+                }}
+              />
+            </label>
+            {selectedImportFiles.length > 0 ? (
+              <p className="selected-files">
+                {selectedImportFiles.length} file
+                {selectedImportFiles.length === 1 ? "" : "s"} selected:{" "}
+                {selectedImportFiles.map((file) => file.name).join(", ")}
+              </p>
+            ) : null}
+            <button
+              className="primary-button"
+              type="button"
+              disabled={
+                busy !== null ||
+                attentionItems > 0 ||
+                selectedImportFiles.length === 0
+              }
+              onClick={() => void importHandHistories()}
+            >
+              {busy === "import"
+                ? "Parsing and retaining…"
+                : "Import for review"}
+            </button>
           </section>
 
           <section
@@ -1667,12 +1886,13 @@ export default function PlayerApp() {
           >
             <strong>Recovery checkpoint</strong>
             <span>
-              Correction and explicit approval are enabled for retained hand
-              detections in this local runtime. Direct hand-history import and
-              the V2 learning loop are not enabled yet. Existing approvals can
-              be revised, withdrawn, or rejected while evidence remains
-              auditable, and retained hands can be permanently deleted to
-              receipt-only tombstones. Screenshot capture is not a player
+              Bounded PokerStars text import, correction, and explicit approval
+              are enabled in this local runtime. Imported parser output remains
+              pending review and never becomes canonical ground truth
+              automatically. The V2 learning loop is not enabled yet. Existing
+              approvals can be revised, withdrawn, or rejected while evidence
+              remains auditable, and retained hands can be permanently deleted
+              to receipt-only tombstones. Screenshot capture is not a player
               feature.
             </span>
           </aside>

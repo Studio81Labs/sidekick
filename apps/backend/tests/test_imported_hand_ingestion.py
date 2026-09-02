@@ -163,6 +163,31 @@ def test_same_import_request_is_idempotent(tmp_path) -> None:
     assert len(replay.record.raw_sources[0].reimports) == 1
 
 
+def test_same_import_request_keeps_first_server_timestamps_on_retry(tmp_path) -> None:
+    store = FileImportedHandStore(tmp_path)
+    service = ImportedHandIngestionService(store=store)
+    candidate = parsed_candidate(1)
+    first = service.ingest(candidate)
+    raw_payload = candidate.raw.model_dump(mode="python")
+    raw_payload["provenance"]["imported_at"] = NOW + timedelta(minutes=5)
+    detection_payload = candidate.detection.model_dump(mode="python")
+    detection_payload["detected_at"] = NOW + timedelta(minutes=5)
+
+    replay = service.ingest(
+        ParsedImportedHandCandidate(
+            raw=RawHandHistory.model_validate(raw_payload),
+            detection=DetectedImportedHand.model_validate(detection_payload),
+        )
+    )
+
+    assert replay.disposition == "duplicate_request"
+    assert replay.record == first.record
+    assert replay.record.raw_sources[0].provenance.imported_at == NOW + timedelta(
+        minutes=1
+    )
+    assert replay.record.detections[0].detected_at == NOW + timedelta(minutes=1)
+
+
 def test_exact_reimport_retains_changed_recognition_audit(tmp_path) -> None:
     store = FileImportedHandStore(tmp_path)
     service = ImportedHandIngestionService(store=store)

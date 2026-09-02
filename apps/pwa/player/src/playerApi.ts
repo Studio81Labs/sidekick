@@ -29,6 +29,52 @@ export interface PlayerBackupRestoreResult {
   total_records: number;
 }
 
+export type PlayerImportDisposition =
+  | "created_pending_review"
+  | "recorded_exact_reimport"
+  | "recorded_identity_conflict"
+  | "duplicate_request";
+
+export interface PlayerImportDiagnostic {
+  code: string;
+  message: string;
+  hand_ordinal: number | null;
+  source_hand_id: string | null;
+  line_start: number | null;
+  line_end: number | null;
+}
+
+export interface PlayerImportBatchOutcome {
+  request_id: string;
+  files: Array<{
+    file_slot: number;
+    filename: string;
+    status: "processed" | "partial" | "rejected";
+    hands: Array<{
+      hand_ordinal: number;
+      source_hand_id: string;
+      record_key: string;
+      disposition: PlayerImportDisposition;
+      parser_disposition:
+        | "clean"
+        | "reconciliation_failed"
+        | "reconciliation_indeterminate";
+      reconciliation_status: "pass" | "fail" | "indeterminate";
+      lifecycle_status: string;
+      warning_count: number;
+    }>;
+    diagnostics: PlayerImportDiagnostic[];
+  }>;
+  summary: {
+    files_received: number;
+    files_processed: number;
+    hands_succeeded: number;
+    diagnostic_count: number;
+    duplicate_requests: number;
+    retry_required: boolean;
+  };
+}
+
 export type PlayerHandLifecycleStatus =
   | "pending_review"
   | "active"
@@ -208,6 +254,24 @@ export class PlayerRestoreRecoveryRequiredError extends Error {
       "The restore did not complete and may have partially changed local data. Restart the local player runtime so journal recovery can finish before exporting a backup or retrying.",
     );
     this.name = "PlayerRestoreRecoveryRequiredError";
+  }
+}
+
+export class PlayerImportAmbiguousError extends Error {
+  constructor() {
+    super(
+      "The import may have committed, but the browser did not receive a complete response. Retry the same selected files to recover the per-hand outcomes safely.",
+    );
+    this.name = "PlayerImportAmbiguousError";
+  }
+}
+
+export class PlayerImportRecoveryRequiredError extends Error {
+  constructor() {
+    super(
+      "Local storage requires recovery before another import. Restart the local player runtime, then select the files again.",
+    );
+    this.name = "PlayerImportRecoveryRequiredError";
   }
 }
 
@@ -551,6 +615,145 @@ export async function restorePlayerBackup(
   } catch (error) {
     if (error instanceof PlayerRestoreAmbiguousError) throw error;
     throw new PlayerRestoreAmbiguousError();
+  }
+}
+
+function isPlayerImportBatchOutcome(
+  value: unknown,
+  requestId: string,
+  files: File[],
+): value is PlayerImportBatchOutcome {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  const summary = payload.summary as Record<string, unknown> | undefined;
+  const isNullableString = (item: unknown) =>
+    item === null || typeof item === "string";
+  const isNullableInteger = (item: unknown) =>
+    item === null || (Number.isInteger(item) && Number(item) >= 1);
+  const isDiagnostic = (item: unknown) => {
+    if (!item || typeof item !== "object") return false;
+    const diagnostic = item as Record<string, unknown>;
+    return (
+      typeof diagnostic.code === "string" &&
+      typeof diagnostic.message === "string" &&
+      isNullableInteger(diagnostic.hand_ordinal) &&
+      isNullableString(diagnostic.source_hand_id) &&
+      isNullableInteger(diagnostic.line_start) &&
+      isNullableInteger(diagnostic.line_end)
+    );
+  };
+  const dispositions = new Set<PlayerImportDisposition>([
+    "created_pending_review",
+    "recorded_exact_reimport",
+    "recorded_identity_conflict",
+    "duplicate_request",
+  ]);
+  const parserDispositions = new Set([
+    "clean",
+    "reconciliation_failed",
+    "reconciliation_indeterminate",
+  ]);
+  const reconciliationStatuses = new Set(["pass", "fail", "indeterminate"]);
+  const isHand = (item: unknown) => {
+    if (!item || typeof item !== "object") return false;
+    const hand = item as Record<string, unknown>;
+    return (
+      Number.isInteger(hand.hand_ordinal) &&
+      Number(hand.hand_ordinal) >= 1 &&
+      typeof hand.source_hand_id === "string" &&
+      typeof hand.record_key === "string" &&
+      /^[a-f0-9]{64}$/.test(hand.record_key) &&
+      dispositions.has(hand.disposition as PlayerImportDisposition) &&
+      parserDispositions.has(hand.parser_disposition as string) &&
+      reconciliationStatuses.has(hand.reconciliation_status as string) &&
+      typeof hand.lifecycle_status === "string" &&
+      Number.isInteger(hand.warning_count) &&
+      Number(hand.warning_count) >= 0
+    );
+  };
+  const fileStatuses = new Set(["processed", "partial", "rejected"]);
+  const isFile = (item: unknown, index: number) => {
+    if (!item || typeof item !== "object") return false;
+    const file = item as Record<string, unknown>;
+    return (
+      file.file_slot === index + 1 &&
+      typeof file.filename === "string" &&
+      fileStatuses.has(file.status as string) &&
+      Array.isArray(file.hands) &&
+      file.hands.every(isHand) &&
+      Array.isArray(file.diagnostics) &&
+      file.diagnostics.every(isDiagnostic)
+    );
+  };
+  const integerFields = [
+    "files_received",
+    "files_processed",
+    "hands_succeeded",
+    "diagnostic_count",
+    "duplicate_requests",
+  ] as const;
+  return (
+    payload.request_id === requestId &&
+    Array.isArray(payload.files) &&
+    payload.files.length === files.length &&
+    payload.files.every(isFile) &&
+    !!summary &&
+    typeof summary === "object" &&
+    integerFields.every(
+      (field) =>
+        Number.isInteger(summary[field]) && Number(summary[field]) >= 0,
+    ) &&
+    typeof summary.retry_required === "boolean" &&
+    summary.files_received === payload.files.length &&
+    Number(summary.files_processed) <= payload.files.length &&
+    Number(summary.hands_succeeded) ===
+      payload.files.reduce(
+        (count, file) =>
+          count +
+          (file as PlayerImportBatchOutcome["files"][number]).hands.length,
+        0,
+      ) &&
+    Number(summary.diagnostic_count) ===
+      payload.files.reduce(
+        (count, file) =>
+          count +
+          (file as PlayerImportBatchOutcome["files"][number]).diagnostics
+            .length,
+        0,
+      )
+  );
+}
+
+export async function importPokerStarsFiles(
+  credentials: PlayerCredentials,
+  files: File[],
+  requestId: string,
+): Promise<PlayerImportBatchOutcome> {
+  const body = new FormData();
+  body.set("request_id", requestId);
+  files.forEach((file) => body.append("files", file, file.name));
+  let response: Response;
+  try {
+    response = await playerRequest(credentials, "/api/player/imports", {
+      method: "POST",
+      body,
+    });
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerImportRecoveryRequiredError();
+    }
+    if (error instanceof PlayerApiError) throw error;
+    throw new PlayerImportAmbiguousError();
+  }
+  try {
+    const payload = (await response.json()) as unknown;
+    if (!isPlayerImportBatchOutcome(payload, requestId, files)) {
+      throw new PlayerImportAmbiguousError();
+    }
+    return payload;
+  } catch (error) {
+    if (error instanceof PlayerImportAmbiguousError) throw error;
+    throw new PlayerImportAmbiguousError();
   }
 }
 

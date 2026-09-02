@@ -265,18 +265,26 @@ route, or production credential transport.
 ## Current limit
 
 The local runtime now exposes authenticated session lifecycle, health, store
-status, conflict-safe backup/restore, sanitized imported-hand audit reads,
-approval/reapproval, withdrawal/rejection, and permanent deletion under
-`/api/player`, with an installable player PWA and an explicit draft- and
-operation-safe browser-shell update handoff. The local workspace also composes
-the conflict-safe transaction for an already-parsed hand-history candidate, but
-there is still no player hand-history upload route or corpus-backed PokerStars
-adapter. The workspace now has a version 1 compatibility marker, safe
-manifestless-store adoption, and a verified export-before-remove command for
-player data. A host-platform release archive now embeds the runtime and verified
-PWA and is exercised without a repository checkout, but it remains unsigned and
-does not choose or implement an operating-system installer, application update
-channel, application-file update, or browser installation/removal lifecycle.
+status, conflict-safe backup/restore, bounded multipart PokerStars text import,
+sanitized imported-hand audit reads, approval/reapproval, withdrawal/rejection,
+and permanent deletion under `/api/player`, with an installable player PWA and
+an explicit draft- and operation-safe browser-shell update handoff. Import
+accepts one or more UTF-8 `.txt` files from the bounded English no-limit cash
+adapter, isolates every file and hand, and retains successful parser proposals
+as unapproved audit; new hand identities remain pending review. Exact
+response-loss retries reuse the same request UUID and ordered files; they keep
+the first server timestamps and do not add another source occurrence. The PWA
+persists only that outstanding UUID plus ordered filename/content hashes, so a
+restart can safely reuse it after the exact files are reselected without
+placing filenames or hand-history text in browser storage. A confirmed terminal
+outcome erases the retry metadata. This is not the representative corpus or 99%
+clean-parse evidence required by #409. The workspace now has a version 1
+compatibility marker, safe manifestless-store adoption, and a verified
+export-before-remove command for player data. A host-platform release archive
+now embeds the runtime and verified PWA and is exercised without a repository
+checkout, but it remains unsigned and does not choose or implement an
+operating-system installer, application update channel, application-file
+update, or browser installation/removal lifecycle.
 Future learning-store migrations, remote lookup, and the complete player
 workflow also remain absent.
 Future grade, mastery, drill, and proof stores do not yet exist, so they are not

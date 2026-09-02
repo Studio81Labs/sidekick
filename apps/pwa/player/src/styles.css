@@ -236,6 +236,33 @@ code {
   margin-top: 24px;
 }
 
+.import-panel {
+  display: grid;
+  gap: 18px;
+  margin-top: 24px;
+  padding: 32px;
+}
+
+.import-panel p:not(.eyebrow) {
+  color: #596b65;
+  line-height: 1.6;
+}
+
+.import-panel .file-field {
+  margin-top: 0;
+}
+
+.import-panel .primary-button {
+  width: fit-content;
+  margin-top: 0;
+}
+
+.selected-files {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+}
+
 .records-panel {
   margin-top: 24px;
   padding: 32px;
@@ -572,13 +599,37 @@ button:disabled {
   background: #fff;
 }
 
-.notice.restore-result {
+.notice.restore-result,
+.notice.import-result {
   display: grid;
   gap: 4px;
   border: 1px solid #6e9a89;
   color: #315b4e;
   background: #edf7f1;
   font-size: 0.9rem;
+}
+
+.import-outcomes {
+  display: grid;
+  gap: 10px;
+  margin: 10px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.import-outcomes li,
+.import-outcomes li span {
+  display: grid;
+  gap: 3px;
+}
+
+.import-outcomes li {
+  padding-top: 10px;
+  border-top: 1px solid rgb(49 91 78 / 18%);
+}
+
+.import-outcomes li span {
+  color: #4f6960;
 }
 
 .boundary-note {
