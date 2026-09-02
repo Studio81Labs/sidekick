@@ -111,6 +111,64 @@ def test_heads_up_button_is_also_small_blind() -> None:
     assert result.hands[0].reconciliation.status == "pass"
 
 
+def test_exported_two_space_header_delimiter_is_supported() -> None:
+    source = (FIXTURES / "synthetic-heads-up.txt").read_text().replace(
+        "#900000000002: Hold'em",
+        "#900000000002:  Hold'em",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("two-space-header.txt"),
+    )
+
+    assert result.diagnostics == ()
+    assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000002"
+
+
+def test_board_cards_retain_their_street_marker_evidence() -> None:
+    source = (FIXTURES / "synthetic-flop.txt").read_text()
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("synthetic-flop.txt"),
+    )
+
+    assert result.diagnostics == ()
+    parsed = result.hands[0]
+    assert parsed.reconciliation.status == "pass"
+    board = parsed.candidate.detection.field_evidence[
+        "/streets/1/board_cards"
+    ]
+    assert board.evidence[0].line_start == 11
+    assert board.evidence[0].excerpt == "*** FLOP *** [2c 3d 4h]"
+
+
+def test_short_big_blind_uses_the_nominal_preflop_bring_in_for_raises() -> None:
+    source = """PokerStars Hand #900000000007:  Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:40:56 ET
+Table 'Synthetic Short Blind' 3-max Seat #1 is the button
+Seat 1: Short Hero ($100.00 in chips)
+Seat 2: Short Small ($100.00 in chips)
+Seat 3: Short Big ($0.50 in chips)
+Short Small: posts small blind $0.50
+Short Big: posts big blind $0.50 and is all-in
+*** HOLE CARDS ***
+Dealt to Short Hero [Kh Qh]
+Short Hero: raises $1.00 to $2.00
+Short Small: calls $1.50
+"""
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("short-big-blind.txt"),
+    )
+
+    assert result.diagnostics == ()
+    raise_action = result.hands[0].candidate.detection.state.streets[0].actions[2]
+    assert raise_action.action_type == "raise"
+    assert str(raise_action.total_committed) == "2.00"
+
+
 def test_per_player_antes_do_not_inflate_live_raise_or_return_totals() -> None:
     source = (FIXTURES / "synthetic-ante.txt").read_text()
 

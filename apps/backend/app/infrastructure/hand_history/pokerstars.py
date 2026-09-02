@@ -49,7 +49,7 @@ _MONEY = (
 )
 _HEADER_START_RE = re.compile(r"^\ufeff?PokerStars Hand #(?P<hand_id>[^:]+):")
 _CASH_HEADER_RE = re.compile(
-    rf"^\ufeff?PokerStars Hand #(?P<hand_id>[0-9]+): "
+    rf"^\ufeff?PokerStars Hand #(?P<hand_id>[0-9]+): +"
     rf"Hold'em No Limit \((?P<small>{_MONEY})/(?P<big>{_MONEY}) "
     r"(?P<currency>[A-Z]{3})\) - "
     r"(?P<played_at>[0-9]{4}/[0-9]{2}/[0-9]{2} "
@@ -472,6 +472,7 @@ def _parse_hand(
         lines,
         raw_source_id=raw_source_id,
         currency=currency,
+        nominal_preflop_bring_in=big_blind,
         player_id_by_name=parsed_seats.player_id_by_name,
         sitting_out_player_ids={
             seat.player_id
@@ -549,6 +550,7 @@ class _ParsedBody:
     results: HandResults | None
     warnings: tuple[str, ...]
     hero_evidence: SourceEvidence | None
+    board_evidence: list[SourceEvidence | None]
     action_evidence: list[list[SourceEvidence]]
     results_evidence: SourceEvidence | None
 
@@ -642,12 +644,14 @@ def _parse_body(
     *,
     raw_source_id: str,
     currency: str,
+    nominal_preflop_bring_in: Decimal,
     player_id_by_name: dict[str, str],
     sitting_out_player_ids: set[str],
     expected_position_tags_by_player: dict[str, frozenset[str]],
 ) -> _ParsedBody:
     street_names: list[Literal["preflop", "flop", "turn", "river"]] = ["preflop"]
     boards: list[list[Card]] = [[]]
+    board_evidence: list[SourceEvidence | None] = [None]
     actions: list[list[ImportedAction]] = [[]]
     action_evidence: list[list[SourceEvidence]] = [[]]
     commitments: dict[str, Decimal] = {
@@ -657,6 +661,7 @@ def _parse_body(
         player_id: Decimal(0) for player_id in player_id_by_name.values()
     }
     current_wager = Decimal(0)
+    nominal_bring_in = nominal_preflop_bring_in
     hero_player_id: str | None = None
     hero_cards: list[Card] = []
     hero_evidence: SourceEvidence | None = None
@@ -826,6 +831,7 @@ def _parse_body(
             )
             street_names.append(street_name)
             boards.append(board)
+            board_evidence.append(_evidence(raw_source_id, line))
             actions.append([])
             action_evidence.append([])
             commitments = {
@@ -835,6 +841,7 @@ def _parse_body(
                 player_id: Decimal(0) for player_id in player_id_by_name.values()
             }
             current_wager = Decimal(0)
+            nominal_bring_in = Decimal(0)
             continue
         if text.startswith("*** "):
             raise _HandParseError(
@@ -982,7 +989,7 @@ def _parse_body(
                 actor_id=player_id,
                 prior_total=commitments[player_id],
                 prior_live=live_commitments[player_id],
-                current_wager=current_wager,
+                current_wager=max(current_wager, nominal_bring_in),
                 evidence=evidence,
             )
             if parsed_action is None:
@@ -1065,6 +1072,7 @@ def _parse_body(
         results=results,
         warnings=warnings,
         hero_evidence=hero_evidence,
+        board_evidence=board_evidence,
         action_evidence=action_evidence,
         results_evidence=results_evidence,
     )
@@ -1625,6 +1633,11 @@ def _field_evidence(
         evidence["/hero_cards"] = DetectedFieldEvidence(
             evidence=[parsed_body.hero_evidence]
         )
+    for street_index, board_source in enumerate(parsed_body.board_evidence):
+        if board_source is not None:
+            evidence[
+                f"/streets/{street_index}/board_cards"
+            ] = DetectedFieldEvidence(evidence=[board_source])
     for street_index, street_evidence in enumerate(parsed_body.action_evidence):
         for action_index, action_source in enumerate(street_evidence):
             evidence[
