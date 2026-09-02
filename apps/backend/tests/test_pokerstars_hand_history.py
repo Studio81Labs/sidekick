@@ -476,6 +476,25 @@ def test_invalid_uncalled_return_points_to_action_line() -> None:
     assert diagnostic.line_end == 14
 
 
+def test_wrong_recipient_uncalled_return_points_to_action_line() -> None:
+    source = (FIXTURES / "synthetic-cash-sitout.txt").read_text().replace(
+        "Uncalled bet ($2.00) returned to Hero Synthetic",
+        "Uncalled bet ($0.50) returned to Small Synthetic",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("wrong-recipient-uncalled-return.txt"),
+    )
+
+    assert result.hands == ()
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.code == "invalid_uncalled_return"
+    assert diagnostic.line_start == 14
+    assert diagnostic.line_end == 14
+
+
 @pytest.mark.parametrize(
     ("replacement", "expected_code"),
     [

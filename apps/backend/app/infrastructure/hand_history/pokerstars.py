@@ -2007,6 +2007,8 @@ def _recognized_state_action_issue(
         in message
         or "an uncalled return cannot occur while an opponent response remains pending"
         in message
+        or "only the sole winner's same-street uncalled return is allowed after folds end the hand"
+        in message
         for message in messages
     ):
         return (
