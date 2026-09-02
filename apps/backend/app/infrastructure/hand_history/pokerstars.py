@@ -2374,6 +2374,17 @@ def _field_evidence(
             evidence[
                 f"/streets/{street_index}/actions/{action_index}"
             ] = _exact_field(action_source)
+    if parsed_body.results is not None:
+        for showdown_index, showdown_entry in enumerate(
+            parsed_body.results.showdown
+        ):
+            evidence[f"/results/showdown/{showdown_index}"] = _exact_field(
+                *showdown_entry.evidence
+            )
+        for award_index, award in enumerate(parsed_body.results.awards):
+            evidence[f"/results/awards/{award_index}"] = _exact_field(
+                *award.evidence
+            )
     if parsed_body.results_evidence is not None:
         evidence["/results/stated_pot"] = _exact_field(
             parsed_body.results_evidence

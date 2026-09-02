@@ -1321,9 +1321,16 @@ def test_exact_shown_cards_syntax_is_supported() -> None:
     )
 
     assert result.diagnostics == ()
-    showdown = result.hands[0].candidate.detection.state.results.showdown
+    detection = result.hands[0].candidate.detection
+    showdown = detection.state.results.showdown
     assert len(showdown) == 1
     assert [card.code for card in showdown[0].cards] == ["Ad", "Qd"]
+    showdown_evidence = detection.field_evidence["/results/showdown/0"]
+    award_evidence = detection.field_evidence["/results/awards/0"]
+    assert showdown_evidence.confidence == Decimal("1")
+    assert showdown_evidence.evidence[0].line_start == 17
+    assert award_evidence.confidence == Decimal("1")
+    assert award_evidence.evidence[0].line_start == 18
 
 
 @pytest.mark.parametrize(
