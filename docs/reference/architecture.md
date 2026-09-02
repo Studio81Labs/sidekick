@@ -79,8 +79,12 @@ receipt-only tombstone that older backups cannot resurrect.
 [ADR 0056](../decisions/0056-expose-local-canonical-hand-approval.md) adds
 stale-safe correction and explicit approval/reapproval from one retained
 detection. The server derives correction audit, preserves private evidence, and
-binds exact retries to a unique approval ID. Import, conflict resolution,
-authorized reimport, grading, and learning routes remain unwired.
+binds exact retries to a unique approval ID.
+[ADR 0063](../decisions/0063-expose-local-import-conflict-resolution.md) adds
+stale-safe explicit resolution of retained import conflicts. Keeping the
+preserved source may retain active learning; selecting a source first returns
+an active hand to pending review and requires a separate explicit approval.
+Authorized tombstone reimport, grading, and learning routes remain unwired.
 CI exercises that separation over real listeners. A browser consumes a one-use
 launch URL from the production Uvicorn player application, proves all player
 API traffic stays on its exact loopback origin, and verifies the service worker

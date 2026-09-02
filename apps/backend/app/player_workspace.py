@@ -48,6 +48,7 @@ from app.player_hands import (
     PlayerHandApprovalRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
+    PlayerHandConflictResolutionRequest,
     PlayerHandDeleteRequest,
     PlayerHandDetail,
     PlayerHandList,
@@ -72,6 +73,10 @@ class PlayerHandTransitionConflict(RuntimeError):
 
 class PlayerHandApprovalInvalid(ValueError):
     """A reviewed state cannot form an auditable canonical revision."""
+
+
+class PlayerHandConflictResolutionInvalid(ValueError):
+    """A requested source choice cannot resolve the retained conflict."""
 
 
 class PlayerHandRecoveryRequired(RuntimeError):
@@ -1126,6 +1131,137 @@ class PlayerWorkspace:
                                 "This hand has an interrupted lifecycle write; "
                                 "restart the local player runtime so recovery "
                                 "can finish"
+                            ) from exc
+                        raise
+                    self._require_final_hand_record(record_key)
+                    return get_player_hand(self.imported_hands, record_key)
+
+    def resolve_hand_conflict(
+        self,
+        record_key: str,
+        *,
+        conflict_id: str,
+        request: PlayerHandConflictResolutionRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerHandDetail:
+        """Persist one explicit conflict choice against an exact snapshot."""
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self.require_current_layout()
+                    self._require_final_hand_record(record_key)
+                    record = self.imported_hands.get(record_key)
+                    lifecycle = record.lifecycle
+                    conflict = next(
+                        (
+                            item
+                            for item in record.conflicts
+                            if item.conflict_id == conflict_id
+                        ),
+                        None,
+                    )
+                    if conflict is None:
+                        raise PlayerHandTransitionConflict(
+                            "The selected conflict is not retained by this hand"
+                        )
+                    target_status = (
+                        "resolved_keep_active"
+                        if request.resolution == "keep_active"
+                        else "resolved_use_source"
+                    )
+                    if conflict.status != "unresolved":
+                        if (
+                            conflict.status == target_status
+                            and conflict.selected_raw_source_id
+                            == request.selected_raw_source_id
+                        ):
+                            return get_player_hand(self.imported_hands, record_key)
+                        raise PlayerHandTransitionConflict(
+                            "This conflict was already resolved with a different"
+                            " source choice"
+                        )
+
+                    if (
+                        player_hand_record_version(record)
+                        != request.expected_record_version
+                        or lifecycle.status != request.expected_lifecycle_status
+                        or lifecycle.active_canonical_revision
+                        != request.expected_active_canonical_revision
+                        or len(record.canonical_revisions)
+                        != request.expected_canonical_revision_count
+                        or lifecycle.deletion_generation
+                        != request.expected_deletion_generation
+                        or lifecycle.changed_at
+                        != request.expected_lifecycle_changed_at
+                    ):
+                        raise PlayerHandTransitionConflict(
+                            "The retained hand changed after this audit detail was"
+                            " loaded; refresh it before resolving the conflict"
+                        )
+                    if request.selected_raw_source_id not in conflict.raw_source_ids:
+                        raise PlayerHandConflictResolutionInvalid(
+                            "The selected source does not belong to this conflict"
+                        )
+                    if request.resolution == "keep_active":
+                        preserved_revision = (
+                            conflict.active_canonical_revision_at_creation
+                        )
+                        if preserved_revision is None:
+                            raise PlayerHandConflictResolutionInvalid(
+                                "This conflict has no preserved canonical source to"
+                                " keep"
+                            )
+                        preserved = record.canonical_revisions[
+                            preserved_revision - 1
+                        ]
+                        preserved_detection = next(
+                            item
+                            for item in record.detections
+                            if item.detection_id == preserved.detection_id
+                        )
+                        if (
+                            request.selected_raw_source_id
+                            != preserved_detection.raw_source_id
+                        ):
+                            raise PlayerHandConflictResolutionInvalid(
+                                "Keeping the preserved canonical state requires its"
+                                " retained source"
+                            )
+
+                    resolved_at = _advanced_lifecycle_time(
+                        at,
+                        lifecycle.changed_at,
+                    )
+                    lifecycle_service = ImportedHandLifecycleService(
+                        store=self.imported_hands,
+                        extract=extract_hero_decision_points,
+                        now=lambda: resolved_at,
+                    )
+                    try:
+                        lifecycle_service.resolve_conflict(
+                            record_key,
+                            conflict_id=conflict_id,
+                            status=target_status,
+                            selected_raw_source_id=(
+                                request.selected_raw_source_id
+                            ),
+                            at=resolved_at,
+                        )
+                    except (DataLockError, OSError) as exc:
+                        if self.imported_hands.has_interrupted_write(record_key):
+                            raise PlayerHandRecoveryRequired(
+                                "This hand has an interrupted lifecycle write;"
+                                " restart the local player runtime so recovery can"
+                                " finish"
                             ) from exc
                         raise
                     self._require_final_hand_record(record_key)

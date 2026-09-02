@@ -231,6 +231,7 @@ class CascadeIntent(BaseModel):
         "reapprove",
         "withdraw",
         "reject",
+        "resolve_conflict",
         "request_deletion",
         "purge",
         "restore",

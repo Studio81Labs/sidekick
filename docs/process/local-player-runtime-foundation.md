@@ -267,7 +267,8 @@ route, or production credential transport.
 The local runtime now exposes authenticated session lifecycle, health, store
 status, conflict-safe backup/restore, bounded multipart PokerStars text import,
 sanitized imported-hand audit reads, approval/reapproval, withdrawal/rejection,
-and permanent deletion under `/api/player`, with an installable player PWA and
+explicit imported-source conflict resolution, and permanent deletion under
+`/api/player`, with an installable player PWA and
 an explicit draft- and operation-safe browser-shell update handoff. Import
 accepts one or more UTF-8 `.txt` files from the bounded English no-limit cash
 adapter, isolates every file and hand, and retains successful parser proposals

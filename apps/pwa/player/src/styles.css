@@ -414,6 +414,19 @@ code {
   display: inline;
 }
 
+.conflict-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+.conflict-actions p {
+  flex-basis: 100%;
+  margin: 0 0 4px;
+}
+
 .confidence-block code {
   display: inline;
 }

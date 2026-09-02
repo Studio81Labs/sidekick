@@ -153,6 +153,7 @@ class PlayerHandDetail(PlayerHandProjection):
 
 
 PlayerHandCloseAction = Literal["withdraw", "reject"]
+PlayerHandConflictResolution = Literal["keep_active", "use_source"]
 PlayerRequestId = Annotated[
     str,
     StringConstraints(
@@ -292,6 +293,62 @@ class PlayerHandApprovalRequest(PlayerHandProjection):
         ):
             raise ValueError(
                 "withdrawn or rejected approval precondition requires retained revisions"
+            )
+        return self
+
+
+class PlayerHandConflictResolutionRequest(PlayerHandProjection):
+    """Explicit source choice and exact retained-record precondition."""
+
+    resolution: PlayerHandConflictResolution
+    selected_raw_source_id: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=160,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/+\-]*$",
+            strict=True,
+        ),
+    ]
+    expected_record_version: PlayerRecordVersion
+    expected_lifecycle_status: Literal[
+        "pending_review",
+        "active",
+        "withdrawn",
+        "rejected",
+    ]
+    expected_active_canonical_revision: int | None = Field(
+        default=None,
+        ge=1,
+        strict=True,
+    )
+    expected_canonical_revision_count: int = Field(ge=0, strict=True)
+    expected_deletion_generation: int = Field(ge=0, strict=True)
+    expected_lifecycle_changed_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def validate_revision_precondition(self) -> Self:
+        active_revision = self.expected_active_canonical_revision
+        revision_count = self.expected_canonical_revision_count
+        if self.expected_lifecycle_status == "active":
+            if active_revision is None or active_revision != revision_count:
+                raise ValueError(
+                    "active conflict-resolution precondition requires the latest"
+                    " active revision"
+                )
+        elif active_revision is not None:
+            raise ValueError(
+                "inactive conflict-resolution precondition cannot select an"
+                " active revision"
+            )
+        if (
+            self.expected_lifecycle_status in {"withdrawn", "rejected"}
+            and revision_count == 0
+        ):
+            raise ValueError(
+                "withdrawn or rejected conflict-resolution precondition requires"
+                " retained revisions"
             )
         return self
 

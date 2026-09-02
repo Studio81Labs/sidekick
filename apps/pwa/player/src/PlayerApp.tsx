@@ -17,6 +17,7 @@ import {
   type PlayerCredentials,
   type PlayerHandDetail,
   type PlayerHandCloseAction,
+  type PlayerHandConflictResolution,
   type PlayerHandList,
   type PlayerHandSummary,
   type PlayerImportBatchOutcome,
@@ -31,6 +32,7 @@ import {
   loadPlayerHand,
   loadPlayerHands,
   loadPlayerStorage,
+  resolvePlayerHandConflict,
   restorePlayerBackup,
   revokePlayerSession,
 } from "./playerApi";
@@ -51,6 +53,7 @@ type BusyAction =
   | "records"
   | "detail"
   | "approve"
+  | "resolve"
   | "withdraw"
   | "reject"
   | "delete"
@@ -192,6 +195,39 @@ function approvalRequiresConflictResolution(
   );
 }
 
+function conflictPreservedSource(
+  detail: PlayerHandDetail,
+  conflict: PlayerHandDetail["conflicts"][number],
+): string | null {
+  const revisionNumber = conflict.active_canonical_revision_at_creation;
+  if (revisionNumber === null) return null;
+  const revision = detail.canonical_revisions.find(
+    (item) => item.revision === revisionNumber,
+  );
+  if (!revision) return null;
+  return (
+    detail.detections.find(
+      (detection) => detection.detection_id === revision.detection_id,
+    )?.raw_source_id ?? null
+  );
+}
+
+function conflictReviewDetectionId(
+  detail: PlayerHandDetail,
+  conflict: PlayerHandDetail["conflicts"][number],
+  sourceId: string,
+): string | undefined {
+  const conflictDetections = new Set(conflict.detected_ids);
+  return [...detail.detections]
+    .reverse()
+    .find(
+      (detection) =>
+        detection.approval_eligible &&
+        detection.raw_source_id === sourceId &&
+        conflictDetections.has(detection.detection_id),
+    )?.detection_id;
+}
+
 interface HandDetailProps {
   approvalDraft: HandApprovalDraft | null;
   busy: BusyAction;
@@ -205,6 +241,11 @@ interface HandDetailProps {
   onDelete: () => void;
   onDeleteReasonChange: (reason: string) => void;
   onReasonChange: (reason: string) => void;
+  onResolveConflict: (
+    conflictId: string,
+    resolution: PlayerHandConflictResolution,
+    selectedRawSourceId: string,
+  ) => void;
   onReviewedStateChange: (state: string) => void;
 }
 
@@ -221,6 +262,7 @@ function HandDetail({
   onDelete,
   onDeleteReasonChange,
   onReasonChange,
+  onResolveConflict,
   onReviewedStateChange,
 }: HandDetailProps) {
   const { summary } = detail;
@@ -611,36 +653,95 @@ function HandDetail({
         <div className="audit-block conflict-block">
           <h4>Import conflict history</h4>
           <ul>
-            {detail.conflicts.map((conflict) => (
-              <li key={conflict.conflict_id}>
-                <span>
-                  <strong>{lifecycleLabel(conflict.status)}</strong> · conflict{" "}
-                  <code>{conflict.conflict_id}</code>
-                </span>
-                <span>
-                  Sources: {conflict.raw_source_ids.join(", ")}. Detections:{" "}
-                  {conflict.detected_ids.length > 0
-                    ? conflict.detected_ids.join(", ")
-                    : "none retained at creation"}
-                  .
-                </span>
-                {conflict.active_canonical_revision_at_creation !== null ? (
+            {detail.conflicts.map((conflict) => {
+              const preservedSource = conflictPreservedSource(detail, conflict);
+              return (
+                <li key={conflict.conflict_id}>
                   <span>
-                    Active revision at creation:{" "}
-                    {conflict.active_canonical_revision_at_creation}.
+                    <strong>{lifecycleLabel(conflict.status)}</strong> ·
+                    conflict <code>{conflict.conflict_id}</code>
                   </span>
-                ) : null}
-                {conflict.selected_raw_source_id ? (
                   <span>
-                    Selected source: {conflict.selected_raw_source_id}
-                    {conflict.resolved_at
-                      ? ` · resolved ${new Date(conflict.resolved_at).toLocaleString()}`
-                      : ""}
+                    Sources: {conflict.raw_source_ids.join(", ")}. Detections:{" "}
+                    {conflict.detected_ids.length > 0
+                      ? conflict.detected_ids.join(", ")
+                      : "none retained at creation"}
                     .
                   </span>
-                ) : null}
-              </li>
-            ))}
+                  {conflict.active_canonical_revision_at_creation !== null ? (
+                    <span>
+                      Active revision at creation:{" "}
+                      {conflict.active_canonical_revision_at_creation}.
+                    </span>
+                  ) : null}
+                  {conflict.selected_raw_source_id ? (
+                    <span>
+                      Selected source: {conflict.selected_raw_source_id}
+                      {conflict.resolved_at
+                        ? ` · resolved ${new Date(conflict.resolved_at).toLocaleString()}`
+                        : ""}
+                      .
+                    </span>
+                  ) : null}
+                  {conflict.status === "unresolved" ? (
+                    <div className="conflict-actions">
+                      <p>
+                        Keep the preserved canonical state, or select one source
+                        to review before a separate explicit approval. Choosing
+                        a source never approves parser output by itself.
+                      </p>
+                      {preservedSource ? (
+                        <button
+                          className="secondary-button"
+                          type="button"
+                          disabled={busy !== null}
+                          onClick={() =>
+                            onResolveConflict(
+                              conflict.conflict_id,
+                              "keep_active",
+                              preservedSource,
+                            )
+                          }
+                        >
+                          {busy === "resolve"
+                            ? "Resolving…"
+                            : "Keep preserved canonical state"}
+                        </button>
+                      ) : null}
+                      {conflict.raw_source_ids.map((sourceId) => {
+                        const detectionId = conflictReviewDetectionId(
+                          detail,
+                          conflict,
+                          sourceId,
+                        );
+                        return (
+                          <button
+                            className="quiet-button"
+                            type="button"
+                            key={sourceId}
+                            disabled={busy !== null || !detectionId}
+                            title={
+                              detectionId
+                                ? undefined
+                                : "No reviewable detection is retained for this source"
+                            }
+                            onClick={() =>
+                              onResolveConflict(
+                                conflict.conflict_id,
+                                "use_source",
+                                sourceId,
+                              )
+                            }
+                          >
+                            Review source {sourceId}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         </div>
       ) : null}
@@ -1070,6 +1171,122 @@ export default function PlayerApp() {
             handleRequestError(
               refreshError,
               `${friendlyError(approvalError)} The approval outcome could not be refreshed; reload the records before retrying.`,
+            );
+          }
+        }
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const resolveImportConflict = async (
+    conflictId: string,
+    resolution: PlayerHandConflictResolution,
+    selectedRawSourceId: string,
+  ) => {
+    if (!credentials || !handDetail) return;
+    const conflict = handDetail.conflicts.find(
+      (item) => item.conflict_id === conflictId,
+    );
+    if (!conflict || conflict.status !== "unresolved") {
+      setError("The conflict is no longer unresolved. Reload the hand.");
+      return;
+    }
+    const confirmed = window.confirm(
+      resolution === "keep_active"
+        ? "Confirm keeping the preserved canonical state. The competing source remains retained for audit, but this conflict will be closed."
+        : `Confirm source ${selectedRawSourceId} for review. An active hand will become pending review and stop contributing to learning until you explicitly approve reviewed canonical state.`,
+    );
+    if (!confirmed) return;
+
+    const requestedDetail = handDetail;
+    const targetStatus =
+      resolution === "keep_active"
+        ? "resolved_keep_active"
+        : "resolved_use_source";
+    setBusy("resolve");
+    setError(null);
+    setActionNotice(null);
+    try {
+      const updated = await resolvePlayerHandConflict(
+        credentials,
+        requestedDetail.summary.record_key,
+        conflictId,
+        resolution,
+        selectedRawSourceId,
+        requestedDetail.summary,
+      );
+      const updatedConflict = updated.conflicts.find(
+        (item) => item.conflict_id === conflictId,
+      );
+      const reviewDetectionId =
+        resolution === "use_source" && updatedConflict
+          ? conflictReviewDetectionId(
+              updated,
+              updatedConflict,
+              selectedRawSourceId,
+            )
+          : undefined;
+      replaceHandDetail(updated, approvalDraftFor(updated, reviewDetectionId));
+      setActionNotice(
+        resolution === "keep_active"
+          ? "Conflict resolved. The preserved canonical state remains in effect."
+          : "Conflict resolved to the selected source. Review and explicitly approve its detected state before it can contribute to learning.",
+      );
+    } catch (resolutionError) {
+      if (resolutionError instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(resolutionError.message);
+      } else if (
+        resolutionError instanceof PlayerApiError &&
+        resolutionError.status === 401
+      ) {
+        handleRequestError(resolutionError);
+      } else {
+        try {
+          const refreshed = await loadPlayerHand(
+            credentials,
+            requestedDetail.summary.record_key,
+          );
+          const refreshedConflict = refreshed.conflicts.find(
+            (item) => item.conflict_id === conflictId,
+          );
+          const exactResolutionCommitted =
+            refreshedConflict?.status === targetStatus &&
+            refreshedConflict.selected_raw_source_id === selectedRawSourceId;
+          const reviewDetectionId =
+            resolution === "use_source" && refreshedConflict
+              ? conflictReviewDetectionId(
+                  refreshed,
+                  refreshedConflict,
+                  selectedRawSourceId,
+                )
+              : undefined;
+          replaceHandDetail(
+            refreshed,
+            approvalDraftFor(refreshed, reviewDetectionId),
+          );
+          if (exactResolutionCommitted) {
+            setActionNotice(
+              "The conflict resolution committed even though the original response was interrupted. The audit detail was refreshed.",
+            );
+          } else {
+            handleRequestError(
+              resolutionError,
+              "The conflict was not resolved. The audit detail was refreshed.",
+            );
+          }
+        } catch (refreshError) {
+          if (refreshError instanceof PlayerHandRecoveryRequiredError) {
+            requireHandRecovery(
+              `${friendlyError(resolutionError)} ${refreshError.message}`,
+            );
+          } else {
+            setHandDetail(null);
+            setApprovalDraft(null);
+            handleRequestError(
+              refreshError,
+              `${friendlyError(resolutionError)} The conflict outcome could not be refreshed; reload the records before retrying.`,
             );
           }
         }
@@ -1818,6 +2035,9 @@ export default function PlayerApp() {
                   markDraftChanged();
                   setCloseReason(reason);
                 }}
+                onResolveConflict={(conflictId, resolution, sourceId) =>
+                  void resolveImportConflict(conflictId, resolution, sourceId)
+                }
                 onReviewedStateChange={(reviewedState) => {
                   markDraftChanged();
                   setApprovalDraft((current) =>
