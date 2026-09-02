@@ -67,6 +67,7 @@ def test_cash_hand_preserves_evidence_positions_origin_and_reconciliation(
     assert candidate.raw.identity.site == "pokerstars"
     assert candidate.raw.identity.source_hand_id == "900000000001"
     assert candidate.raw.chronology.source_timezone == "ET"
+    assert candidate.raw.chronology.source_session_id is None
     assert candidate.raw.chronology.hand_ordinal == 1
     assert candidate.raw.provenance.adapter_id == POKERSTARS_ADAPTER_ID
     assert candidate.raw.provenance.adapter_version == POKERSTARS_ADAPTER_VERSION

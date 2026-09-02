@@ -420,9 +420,7 @@ def _parse_hand(
     occurrence_digest = sha256(
         f"{context.import_id}\0{block.ordinal}".encode("utf-8")
     ).hexdigest()
-    session_digest = sha256(context.import_id.encode("utf-8")).hexdigest()
     raw_source_id = f"ps-source-{occurrence_digest[:32]}"
-    source_session_id = f"ps-session-{session_digest[:32]}"
     import_id = f"ps-import-{occurrence_digest[:32]}"
     detection_id = f"ps-detection-{occurrence_digest[:32]}"
 
@@ -448,7 +446,6 @@ def _parse_hand(
     chronology = SourceChronology(
         played_at=played_at,
         source_timezone=header.group("timezone"),
-        source_session_id=source_session_id,
         source_file_id=raw_source_id,
         hand_ordinal=block.ordinal,
     )
