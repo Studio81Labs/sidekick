@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.application.learning_evidence import (
+    HeroDecisionSnapshot,
     LearningContentReadinessError,
     LearningContentReadyGrade,
     prepare_grade_for_content_activation,
@@ -86,7 +87,7 @@ def test_readiness_retains_complete_grade_content_and_approval_provenance() -> N
 
     assert result.readiness == "content_ready"
     assert result.learning_eligibility == "requires_reference_activation"
-    assert result.decision == fixture.decision
+    assert result.decision_snapshot.restore() == fixture.decision
     assert result.grade == fixture.grade
     assert result.taxonomy == fixture.taxonomy
     assert result.mapping == fixture.mapping
@@ -113,6 +114,34 @@ def test_learning_reference_binding_stays_aligned_with_grading() -> None:
     assert set(LearningReferencePolicyBinding.model_fields) == set(
         ReferencePolicyQualificationBinding.model_fields
     )
+
+
+def test_readiness_retains_a_deeply_immutable_decision_snapshot() -> None:
+    fixture = readiness_fixture()
+    result = prepare(fixture)
+    retained_json = result.decision_snapshot.canonical_json
+    retained_grade = result.grade
+    retained_tagging = result.tagging
+
+    restored = result.decision_snapshot.restore()
+    restored.decision_index += 1
+    restored.state.hero_cards.reverse()
+
+    assert result.decision_snapshot.canonical_json == retained_json
+    assert result.decision_snapshot.restore() == fixture.decision
+    assert result.grade == retained_grade
+    assert result.tagging == retained_tagging
+    assert (
+        LearningContentReadyGrade.model_validate_json(result.model_dump_json())
+        == result
+    )
+    with pytest.raises(ValidationError, match="frozen"):
+        result.decision_snapshot.canonical_json = b"{}"
+
+    payload = result.model_dump(mode="python")
+    payload["decision_snapshot"]["canonical_json"] = b" " + retained_json
+    with pytest.raises(ValidationError, match="canonical encoding"):
+        LearningContentReadyGrade.model_validate(payload)
 
 
 def test_readiness_rejects_an_ungradeable_or_incomplete_grade() -> None:
@@ -379,12 +408,13 @@ def test_readiness_contract_rejects_a_forged_full_policy_binding() -> None:
 
 def test_readiness_contract_recomputes_grade_for_the_retained_action() -> None:
     result = prepare(readiness_fixture())
+    retained_decision = result.decision_snapshot.restore()
     hero = next(
         seat
-        for seat in result.decision.state.seats
-        if seat.position == result.decision.state.hero_position
+        for seat in retained_decision.state.seats
+        if seat.position == retained_decision.state.hero_position
     )
-    other_action = result.decision.table_action.model_copy(
+    other_action = retained_decision.table_action.model_copy(
         update={
             "action_type": "fold",
             "amount": None,
@@ -392,11 +422,13 @@ def test_readiness_contract_recomputes_grade_for_the_retained_action() -> None:
             "all_in": False,
         }
     )
-    other_decision = result.decision.model_copy(
+    other_decision = retained_decision.model_copy(
         update={"table_action": other_action}
     )
     payload = result.model_dump(mode="python")
-    payload["decision"] = other_decision.model_dump(mode="python")
+    payload["decision_snapshot"] = HeroDecisionSnapshot.from_decision(
+        other_decision
+    ).model_dump(mode="python")
 
     with pytest.raises(ValidationError, match="derived from the retained"):
         LearningContentReadyGrade.model_validate(payload)

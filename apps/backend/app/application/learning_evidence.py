@@ -12,7 +12,10 @@ from app.domain.grading import (
     decision_grading_context_sha256,
     grade_decision,
 )
-from app.domain.imported_hands import HeroDecisionPoint
+from app.domain.imported_hands import (
+    HeroDecisionPoint,
+    imported_hand_canonical_json,
+)
 from app.domain.learning_content import (
     ApprovedPrincipleBinding,
     ConceptMappingRevision,
@@ -31,6 +34,31 @@ class LearningContentReadinessError(ValueError):
     """A grade cannot be proven ready for a future reference activation."""
 
 
+class HeroDecisionSnapshot(BaseModel):
+    """Deeply immutable canonical JSON snapshot of one validated decision."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    canonical_json: bytes
+
+    @model_validator(mode="after")
+    def validate_snapshot(self) -> Self:
+        decision = _decision_from_canonical_json(self.canonical_json)
+        if self.canonical_json != _canonical_decision_json(decision):
+            raise ValueError("decision snapshot JSON must use canonical encoding")
+        return self
+
+    @classmethod
+    def from_decision(cls, decision: HeroDecisionPoint) -> Self:
+        decision = _validated_decision(decision)
+        return cls(canonical_json=_canonical_decision_json(decision))
+
+    def restore(self) -> HeroDecisionPoint:
+        """Return a fresh mutable decision without exposing retained state."""
+
+        return _decision_from_canonical_json(self.canonical_json)
+
+
 class LearningContentReadyGrade(BaseModel):
     """Immutable evidence that one grade has compatible reviewed content.
 
@@ -40,7 +68,7 @@ class LearningContentReadyGrade(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
-    decision: HeroDecisionPoint
+    decision_snapshot: HeroDecisionSnapshot
     grade: DecisionGrade
     taxonomy: TaxonomyRevision
     mapping: ConceptMappingRevision
@@ -56,8 +84,9 @@ class LearningContentReadyGrade(BaseModel):
     @model_validator(mode="after")
     def validate_readiness(self) -> Self:
         _revalidate_content_ready_grade(self)
+        decision = self.decision_snapshot.restore()
         problem = _content_readiness_problem(
-            decision=self.decision,
+            decision=decision,
             grade=self.grade,
             tagging=self.tagging,
             activation=self.activation,
@@ -68,7 +97,7 @@ class LearningContentReadyGrade(BaseModel):
         assert self.grade.reference is not None
 
         expected_tagging = tag_primary_concept(
-            self.decision,
+            decision,
             taxonomy=self.taxonomy,
             mapping=self.mapping,
         )
@@ -113,6 +142,7 @@ def prepare_grade_for_content_activation(
     """Recompute and retain compatible content evidence for one solved grade."""
 
     decision = _validated_decision(decision)
+    decision_snapshot = HeroDecisionSnapshot.from_decision(decision)
     grade = _validated_grade(grade)
     taxonomy = _validated_taxonomy(taxonomy)
     mapping = _validated_mapping(mapping)
@@ -175,7 +205,7 @@ def prepare_grade_for_content_activation(
         raise LearningContentReadinessError(problem)
     try:
         return LearningContentReadyGrade(
-            decision=decision,
+            decision_snapshot=decision_snapshot,
             grade=grade,
             taxonomy=taxonomy,
             mapping=mapping,
@@ -337,7 +367,9 @@ def _principle_key(
 
 def _revalidate_content_ready_grade(evidence: LearningContentReadyGrade) -> None:
     try:
-        _validated_decision(evidence.decision)
+        HeroDecisionSnapshot.model_validate(
+            evidence.decision_snapshot.model_dump(mode="python")
+        )
         _validated_grade(evidence.grade)
         _validated_taxonomy(evidence.taxonomy)
         _validated_mapping(evidence.mapping)
@@ -363,6 +395,17 @@ def _validated_decision(value: HeroDecisionPoint) -> HeroDecisionPoint:
         raise LearningContentReadinessError(
             "decision snapshot failed canonical validation"
         ) from exc
+
+
+def _canonical_decision_json(decision: HeroDecisionPoint) -> bytes:
+    return imported_hand_canonical_json(decision.model_dump(mode="json"))
+
+
+def _decision_from_canonical_json(payload: bytes) -> HeroDecisionPoint:
+    try:
+        return HeroDecisionPoint.model_validate_json(payload)
+    except (TypeError, ValueError, ValidationError) as exc:
+        raise ValueError("decision snapshot failed canonical validation") from exc
 
 
 def _validated_grade(value: DecisionGrade) -> DecisionGrade:

@@ -54,6 +54,11 @@ The boundary fails closed unless:
 - the retained approved principle records reproduce the exact eligible bindings,
   including semantic digests.
 
+The readiness artifact stores the complete canonical decision as canonical JSON
+bytes behind a frozen snapshot value. Restoring the decision produces a fresh
+mutable model, so consumer mutation cannot alter the retained evidence graph
+after validation.
+
 The output retains the full decision, grade, taxonomy, mapping, recomputed tag,
 recomputed activation check, exact qualification binding, and complete approved
 principle records with their immutable reference bindings. Keeping the records

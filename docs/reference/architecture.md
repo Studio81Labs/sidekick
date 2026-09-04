@@ -603,7 +603,10 @@ revision-identity collisions before compatibility filtering. The full binding
 is part of each principle revision's pre-approval semantic digest and is retained
 by activation checks, reveals, and cache keys. The immutable
 `LearningContentReadyGrade` retains the nested qualification, content, and human
-review provenance. It is labeled only `content_ready` and remains
+review provenance. Its canonical decision is retained as immutable canonical
+JSON bytes and restored only as a fresh mutable copy, preventing nested model
+mutation from invalidating already-validated evidence. It is labeled only
+`content_ready` and remains
 `requires_reference_activation`; it does not grant learning eligibility without
 a future authoritative concept/coverage-band catalog. It also does not authorize
 a remote provider, persist grades or evidence, calculate aggregate mixing
