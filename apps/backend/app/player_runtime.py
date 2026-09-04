@@ -73,6 +73,7 @@ from app.player_workspace import (
     PlayerDataDirectoryError,
     PlayerHandApprovalInvalid,
     PlayerHandConflictResolutionInvalid,
+    PlayerHandDecisionsUnavailable,
     PlayerHandRecoveryRequired,
     PlayerHandReimportInvalid,
     PlayerHandTransitionConflict,
@@ -80,7 +81,10 @@ from app.player_workspace import (
     PlayerWorkspace,
 )
 from app.storage.cascade_journal import PendingCascadeError
-from app.storage.imported_hand_store import ImportedHandNotFoundError
+from app.storage.imported_hand_store import (
+    DecisionArtifactIntegrityError,
+    ImportedHandNotFoundError,
+)
 
 
 PLAYER_HOST = "127.0.0.1"
@@ -1030,6 +1034,40 @@ def create_player_runtime(
                 return _json_denial(
                     500,
                     "Stored imported hand record could not be read safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    @app.get(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/decisions")
+    async def player_hand_decisions(
+        request: Request,
+        record_key: str,
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.get_active_hand_decisions,
+                    record_key,
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except PlayerHandDecisionsUnavailable as exc:
+                return _json_denial(409, str(exc))
+            except PlayerHandRecoveryRequired as exc:
+                return _json_denial(503, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except DecisionArtifactIntegrityError:
+                return _json_denial(
+                    500,
+                    "Active decision extraction could not be read safely",
+                )
+            except (DataLockError, OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "Stored active decision extraction could not be read safely",
                 )
         return JSONResponse(payload.model_dump(mode="json"))
 

@@ -53,6 +53,7 @@ from app.domain.imported_hands import (
     extract_hero_decision_points,
 )
 from app.player_hands import (
+    PlayerActiveHandDecisions,
     PlayerHandApprovalRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
@@ -64,8 +65,10 @@ from app.player_hands import (
     get_player_hand,
     list_player_hands,
     player_hand_record_version,
+    project_player_active_hand_decisions,
 )
 from app.storage.imported_hand_store import (
+    DecisionArtifactIntegrityError,
     IMPORTED_HANDS_DIRNAME,
     FileImportedHandStore,
     imported_hand_record_key,
@@ -90,6 +93,10 @@ class PlayerHandConflictResolutionInvalid(ValueError):
 
 class PlayerHandReimportInvalid(ValueError):
     """A parsed source cannot replace the selected deleted incarnation."""
+
+
+class PlayerHandDecisionsUnavailable(LookupError):
+    """The retained hand has no current decision extraction to serve."""
 
 
 class PlayerHandRecoveryRequired(RuntimeError):
@@ -934,6 +941,44 @@ class PlayerWorkspace:
                     self.require_current_layout()
                     self._require_final_hand_record(record_key)
                     return get_player_hand(self.imported_hands, record_key)
+
+    def get_active_hand_decisions(
+        self,
+        record_key: str,
+        *,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> PlayerActiveHandDecisions:
+        """Read only the artifact derived from the current approved state."""
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=False,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self.require_current_layout()
+                    self._require_final_hand_record(record_key)
+                    record = self.imported_hands.get(record_key)
+                    if not record.lifecycle.learning_eligible or any(
+                        conflict.status == "unresolved" for conflict in record.conflicts
+                    ):
+                        raise PlayerHandDecisionsUnavailable(
+                            "This hand has no active decision extraction"
+                        )
+                    extraction = self.imported_hands.active_decisions(record_key)
+                    if extraction is None:
+                        raise DecisionArtifactIntegrityError(
+                            "the active decision artifact is missing"
+                        )
+                    return project_player_active_hand_decisions(
+                        record_key,
+                        record,
+                        extraction,
+                    )
 
     def ingest_detected_hand(
         self,

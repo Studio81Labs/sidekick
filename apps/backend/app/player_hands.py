@@ -22,6 +22,7 @@ from pydantic import (
 
 from app.domain.imported_hands import (
     DeletionReceipt,
+    HandDecisionExtraction,
     ImportConflict,
     ImportedHandLifecycle,
     ImportedHandRecord,
@@ -150,6 +151,14 @@ class PlayerHandDetail(PlayerHandProjection):
     conflicts: list[ImportConflict]
     canonical_revisions: list[PlayerCanonicalRevisionAudit]
     deletion_receipt: DeletionReceipt | None
+
+
+class PlayerActiveHandDecisions(PlayerHandProjection):
+    """Sanitized current decision artifact for one retained player hand."""
+
+    record_key: str
+    record_version: str
+    extraction: dict[str, JsonValue]
 
 
 PlayerHandCloseAction = Literal["withdraw", "reject"]
@@ -499,6 +508,23 @@ def get_player_hand(
     """Return review metadata for one record while keeping raw text private."""
 
     return project_player_hand(record_key, store.get(record_key))
+
+
+def project_player_active_hand_decisions(
+    record_key: str,
+    record: ImportedHandRecord,
+    extraction: HandDecisionExtraction,
+) -> PlayerActiveHandDecisions:
+    """Project current learning evidence without exposing source excerpts."""
+
+    sanitized = _without_evidence_excerpts(extraction.model_dump(mode="json"))
+    if not isinstance(sanitized, dict):  # pragma: no cover - model dump invariant
+        raise ValueError("decision extraction must serialize as a JSON object")
+    return PlayerActiveHandDecisions(
+        record_key=record_key,
+        record_version=player_hand_record_version(record),
+        extraction=sanitized,
+    )
 
 
 def project_player_hand(
