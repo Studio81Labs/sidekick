@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+import app.storage.remote_reference_consent_store as consent_store_module
 from app.player_remote_references import (
     PlayerRemoteReferenceConsentConflict,
     PlayerRemoteReferenceConsentRequest,
@@ -15,7 +16,6 @@ from app.player_remote_references import (
     revoke_player_remote_reference_consent,
 )
 from app.player_workspace import PlayerWorkspace
-from app.storage import remote_reference_consent_store as consent_store_module
 from app.storage.remote_reference_consent_store import (
     RemoteReferenceConsentStorageError,
 )
