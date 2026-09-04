@@ -596,6 +596,19 @@ reference, authorize a remote provider, persist grades, calculate aggregate
 mixing deviations, move mastery, or schedule drills. Those application and
 Phase 0 gates remain open under issues #412, #414, #416, and #418.
 
+The local player runtime exposes the current checkpoint at
+`GET /api/player/hands/{record_key}/evaluations`. It reads only the
+integrity-checked active decision artifact and returns a revision- and
+generation-bound `player-active-hand-decision-evaluations/v1` projection. This
+schema is intentionally limited to the default local-only state: every decision
+is visibly `heuristic`, `reference_unavailable`, `ungraded`, and ineligible for
+learning, while remote-reference preflight is visibly `unavailable` with the
+`local_only` reason and contains no outbound request. The read performs no
+provider selection, network access, consent mutation, grade persistence,
+content activation, mastery update, or drill scheduling. A future solved-policy
+application seam must use a new response contract rather than widening this
+fail-closed v1 projection in place.
+
 Optional remote-reference preflight contracts live under
 `app/domain/remote_references`. This pure, non-networking boundary is local-only
 by default and evaluates a dispatch candidate only when active provider-policy

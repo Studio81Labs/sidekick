@@ -1,6 +1,6 @@
 import asyncio
 import ctypes
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 import errno
 from ipaddress import ip_address
@@ -2043,6 +2043,146 @@ def test_player_active_decisions_fail_closed_on_canonical_mismatch(
     }
 
 
+def test_player_active_decision_evaluations_are_local_ungraded_and_read_only(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = hero_fold_decision_record()
+    key = imported_hand_record_key(record.identity)
+    extraction = extract_hero_decision_points(record)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(key, extraction)
+
+    path = f"/api/player/hands/{key}/evaluations"
+    assert client.get(path).status_code == 401
+    session = exchange_session(client, runtime)
+    records_dir = runtime.workspace.imported_hands.records_dir
+    stored_before = {
+        str(file.relative_to(records_dir)): file.read_bytes()
+        for file in records_dir.rglob("*")
+        if file.is_file()
+    }
+
+    response = client.get(
+        path,
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    payload = response.json()
+    assert payload["schema"] == "player-active-hand-decision-evaluations/v1"
+    assert payload["record_key"] == key
+    assert payload["record_version"] == player_hand_record_version(record)
+    assert payload["identity"] == {
+        "namespace": record.identity.namespace,
+        "site": record.identity.site,
+        "source_hand_id": record.identity.source_hand_id,
+    }
+    assert payload["active_canonical_revision"] == 1
+    assert payload["deletion_generation"] == 0
+    assert payload["extraction_outcome"] == "decisions"
+    assert payload["extraction_rejection"] is None
+    assert datetime.fromisoformat(payload["evaluated_at"]).tzinfo is not None
+    assert len(payload["evaluations"]) == 1
+    evaluation = payload["evaluations"][0]
+    assert evaluation["decision"]["decision_index"] == 0
+    assert evaluation["grade"] == {
+        "decision_context_sha256": evaluation["grade"][
+            "decision_context_sha256"
+        ],
+        "grade_source": "heuristic",
+        "classification": "reference_unavailable",
+        "policy_grade_eligibility": "ungraded",
+        "learning_eligibility": "ineligible",
+        "reason": "reference_unavailable",
+        "framing": "conditional_educational_reference_guidance",
+    }
+    assert len(evaluation["grade"]["decision_context_sha256"]) == 64
+    assert evaluation["remote_reference"] == {
+        "evaluated_at": payload["evaluated_at"],
+        "outcome": "unavailable",
+        "reason": "local_only",
+        "policy_grade_eligibility": "ungraded",
+        "outbound_request": None,
+        "resolved_reference": None,
+    }
+    assert RAW_TEXT not in response.text
+    assert "excerpt" not in response.text
+    assert "evidence" not in response.text
+    assert "outbound_categories" not in response.text
+    assert {
+        str(file.relative_to(records_dir)): file.read_bytes()
+        for file in records_dir.rglob("*")
+        if file.is_file()
+    } == stored_before
+
+
+@pytest.mark.parametrize(
+    ("record_factory", "expected_outcome", "expected_rejection"),
+    [
+        (big_blind_walk_record, "no_decision", None),
+        (approved_record, "not_extractable", "incomplete_hand_state"),
+    ],
+)
+def test_player_active_decision_evaluations_preserve_empty_outcomes(
+    tmp_path: Path,
+    record_factory,
+    expected_outcome: str,
+    expected_rejection: str | None,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = record_factory()
+    key = imported_hand_record_key(record.identity)
+    extraction = extract_hero_decision_points(record)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(key, extraction)
+    session = exchange_session(client, runtime)
+
+    response = client.get(
+        f"/api/player/hands/{key}/evaluations",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["extraction_outcome"] == expected_outcome
+    assert response.json()["extraction_rejection"] == expected_rejection
+    assert response.json()["evaluations"] == []
+
+
+def test_player_active_decision_evaluations_require_current_integrity(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = hero_fold_decision_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    authorization = {"Authorization": f"Bearer {session['session_token']}"}
+
+    missing_artifact = client.get(
+        f"/api/player/hands/{key}/evaluations",
+        headers=authorization,
+    )
+    runtime.workspace.imported_hands.save(
+        key,
+        withdrawn_record(identity=record.identity),
+    )
+    inactive = client.get(
+        f"/api/player/hands/{key}/evaluations",
+        headers=authorization,
+    )
+
+    assert missing_artifact.status_code == 500
+    assert missing_artifact.json() == {
+        "detail": "Active decision evaluation could not be read safely"
+    }
+    assert inactive.status_code == 409
+    assert inactive.json() == {
+        "detail": "This hand has no active decision extraction"
+    }
+
+
 def test_player_hand_routes_validate_pagination_and_missing_keys(tmp_path: Path) -> None:
     client, runtime = player_client(tmp_path)
     session = exchange_session(client, runtime)
@@ -2065,11 +2205,16 @@ def test_player_hand_routes_validate_pagination_and_missing_keys(tmp_path: Path)
         f"/api/player/hands/{'a' * 64}/decisions",
         headers=authorization,
     )
+    missing_evaluations = client.get(
+        f"/api/player/hands/{'a' * 64}/evaluations",
+        headers=authorization,
+    )
 
     assert invalid_limit.status_code == 422
     assert missing.status_code == 404
     assert malformed.status_code == 404
     assert missing_decisions.status_code == 404
+    assert missing_evaluations.status_code == 404
     assert missing.json() == {"detail": "Imported hand record not found"}
 
 
