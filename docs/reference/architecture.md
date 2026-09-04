@@ -679,18 +679,43 @@ utility, and abstraction revisions remain pinned in local audit provenance;
 the canonical decision binding and state digest remain pinned through dispatch
 preflight and recorded lookup failures, but stay local and are never promoted
 to an outbound identifier or digest.
-The candidate is not transport authorization: a future application boundary
-must atomically re-read authoritative provider status, consent status, and the
-current consent generation immediately before each dispatch or retry. Revocation,
-policy drift, missing routes, and provider, network, or response failure remain
-visibly unavailable and ungraded, with no remote or heuristic-to-solved fallback;
-response digests are computed locally instead of accepted as provider claims.
-There is intentionally no provider selection, HTTP adapter, credential loading,
-persistence for provider results, source activation, or resolved-reference
-promotion yet, so this checkpoint does not close the source qualification and
-lifecycle work in issues #412 and #416. A future transport must also enforce its
-configured-origin allowlist after DNS resolution and reject private, loopback,
-link-local, and redirected destinations.
+The candidate is not transport authorization. The application-layer
+`remote_reference_dispatch` guard accepts one candidate, rebuilds its route from
+the current canonical decision, and runs one attempt inside a serialized
+authority scope that reloads local/remote mode, provider policy, consent, and
+the current active canonical decision immediately before each injected
+transport call or retry. A fresh lock context is created for every guarded
+attempt so a generator-backed interprocess lock remains retry-safe. A future
+composition can share this scope with consent and hand-lifecycle mutation so revocation, reapproval, withdrawal, rejection,
+or deletion cannot race the reload and call. A missing current decision,
+revoked or expired consent, local-only mode, changed
+provider/disclosure/manifest, changed consent generation, changed route,
+reversed clock, or stale candidate results in zero transport calls. Only the
+closed `RemoteReferenceRouteRequest` crosses the injected seam; local
+decision identity, state digests, consent, provider policy, and learning state
+stay outside it. The injected adapter must expose a binding to the exact fresh
+provider identity, configuration, policy digest, and HTTPS origin before it can
+run. Explicit provider, network, and adapter-contract failures remain
+unavailable and ungraded with no fallback.
+
+The adapter contract receives a 1 MiB read cap and the guard independently
+checks the returned length. Empty or oversized bodies become auditable
+`response_invalid` results with a locally computed digest. A bounded response is
+only an immutable `pending` validation candidate and remains ungraded with no
+resolved reference; decoding, source-qualification binding, persistence, and
+solved-reference promotion remain separate future gates. Route and decision
+hashing renders decimal coefficient/exponent tuples as exact fixed-point text
+without active-context arithmetic, preserving existing ordinary encodings while
+preventing long exact route values from collapsing under Decimal rounding. When
+the wall clock becomes invalid after egress, the result retains the
+dispatch-authorization time and labels it explicitly as a fallback instead of
+dropping request/response provenance.
+There is intentionally no provider selection, configured transport, HTTP
+adapter, credential loading, runtime composition, result persistence, source
+activation, or resolved-reference promotion yet, so this checkpoint does not
+close the source qualification and lifecycle work in issues #412 and #416. A
+future HTTP adapter must enforce its configured-origin allowlist after DNS
+resolution and reject private, loopback, link-local, and redirected destinations.
 
 The local player application can now persist one authoritative
 remote-reference consent snapshot when its embedding composition supplies a
@@ -707,9 +732,10 @@ owner-only state file. The file contains no credentials, outbound request,
 route binding, response, or player record. Consent is deliberately excluded
 from player backup and restore so an archive cannot resurrect authorization
 after revocation. Workspace layout v2 and ADR 0066 record the v1-to-v2
-migration. The runtime remains local-only because no transport consumes the
-consent yet, and a future dispatch owner must still atomically reread provider
-and consent state immediately before each request or retry.
+migration. The runtime remains local-only because no configured transport
+consumes the consent. The transport-neutral application guard can consume only
+an injected atomic authority snapshot and is not wired into the packaged
+composition.
 
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact

@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.domain.imported_hands.decisions import HeroDecisionPoint
 from app.domain.imported_hands.models import structural_position_labels
 from app.domain.learning_content.models import DecisionBinding
 
@@ -91,15 +92,21 @@ RemoteDispatchReason = Literal[
     "route_binding_mismatch",
     "route_schema_mismatch",
     "route_manifest_mismatch",
+    "decision_unavailable",
+    "transport_binding_mismatch",
+    "preflight_candidate_stale",
     "preflight_passed",
 ]
 RemoteLookupUnavailableReason = Literal[
     "provider_failure",
     "network_failure",
+    "transport_contract_failure",
     "response_invalid",
     "remote_coverage_unavailable",
 ]
+RemoteEventTimeBasis = Literal["observed", "dispatch_authorization_fallback"]
 _JSON_VALUE_ADAPTER = TypeAdapter(object)
+MAX_REMOTE_REFERENCE_RESPONSE_BYTES = 1_048_576
 RemoteStreet = Literal["preflop", "flop", "turn", "river"]
 RemoteAction = Literal["fold", "check", "call", "bet", "raise"]
 PositionLabel = Literal[
@@ -162,11 +169,29 @@ def _canonical_json_bytes(model: BaseModel) -> bytes:
     return payload
 
 
+def _canonical_decimal(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    sign, digits, exponent = value.as_tuple()
+    canonical_digits = list(digits)
+    while canonical_digits[-1] == 0:
+        canonical_digits.pop()
+        exponent += 1
+    coefficient = "".join(str(digit) for digit in canonical_digits)
+    if exponent >= 0:
+        unsigned = coefficient + "0" * exponent
+    else:
+        point_index = len(coefficient) + exponent
+        if point_index <= 0:
+            unsigned = f"0.{('0' * -point_index)}{coefficient}"
+        else:
+            unsigned = f"{coefficient[:point_index]}.{coefficient[point_index:]}"
+    return f"{'-' if sign else ''}{unsigned}"
+
+
 def _normalize_canonical_json_values(value: object) -> object:
     if isinstance(value, Decimal):
-        if value == 0:
-            return "0"
-        return format(value.normalize(), "f")
+        return _canonical_decimal(value)
     if isinstance(value, dict):
         return {
             key: _normalize_canonical_json_values(item)
@@ -454,6 +479,25 @@ class RemoteReferenceConsent(RemoteReferenceModel):
             if self.revoked_at < self.consented_at:
                 raise ValueError("consent revocation cannot predate consent")
         return self
+
+
+class RemoteReferenceDispatchAuthority(RemoteReferenceModel):
+    """One atomic application snapshot reloaded immediately before dispatch."""
+
+    mode: RemoteReferenceMode
+    decision: HeroDecisionPoint | None = None
+    policy: RemoteReferenceProviderPolicy | None = None
+    consent: RemoteReferenceConsent | None = None
+
+
+class RemoteReferenceTransportBinding(RemoteReferenceModel):
+    """Non-secret provider identity one injected transport must be configured for."""
+
+    provider_id: Identifier
+    provider_configuration_revision: Identifier
+    provider_policy_revision: Identifier
+    provider_policy_sha256: Sha256Digest
+    endpoint_origin: HttpsOrigin
 
 
 class GameEconomicsRoute(RemoteReferenceModel):
@@ -1204,6 +1248,7 @@ class RemoteReferenceLookupUnavailable(RemoteReferenceModel):
     decision_state_sha256: Sha256Digest
     preflight_evaluated_at: AwareDatetime
     occurred_at: AwareDatetime
+    occurred_at_basis: RemoteEventTimeBasis = "observed"
     reason: RemoteLookupUnavailableReason
     provider_id: Identifier
     provider_configuration_revision: Identifier
@@ -1233,9 +1278,74 @@ class RemoteReferenceLookupUnavailable(RemoteReferenceModel):
     def validate_response_evidence(self) -> Self:
         if self.occurred_at < self.preflight_evaluated_at:
             raise ValueError("remote unavailability cannot predate its preflight")
-        if self.reason in {"provider_failure", "network_failure"}:
+        if (
+            self.occurred_at_basis == "dispatch_authorization_fallback"
+            and self.occurred_at != self.preflight_evaluated_at
+        ):
+            raise ValueError(
+                "a fallback event time must equal the dispatch authorization time"
+            )
+        if self.reason in {
+            "provider_failure",
+            "network_failure",
+            "transport_contract_failure",
+        }:
             if self.response_sha256 is not None:
                 raise ValueError("transport failures cannot claim response evidence")
         elif self.response_sha256 is None:
             raise ValueError("response outcomes require a local response digest")
+        return self
+
+
+class RemoteReferenceLookupResponseCandidate(RemoteReferenceModel):
+    """Bounded untrusted response bytes awaiting separate schema validation."""
+
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        frozen=True,
+        ser_json_bytes="base64",
+        val_json_bytes="base64",
+    )
+
+    preflight: RemoteReferenceDispatchPreflight
+    dispatched_at: AwareDatetime
+    received_at: AwareDatetime
+    received_at_basis: RemoteEventTimeBasis = "observed"
+    response_body: Annotated[
+        bytes,
+        Field(
+            min_length=1,
+            max_length=MAX_REMOTE_REFERENCE_RESPONSE_BYTES,
+            strict=True,
+            repr=False,
+        ),
+    ]
+    response_sha256: Sha256Digest
+    fresh_authority_recheck: Literal["passed_immediately_before_dispatch"] = (
+        "passed_immediately_before_dispatch"
+    )
+    response_validation: Literal["pending"] = "pending"
+    policy_grade_eligibility: Literal["ungraded"] = "ungraded"
+    fallback_behavior: Literal["forbidden"] = "forbidden"
+    resolved_reference: None = None
+
+    @model_validator(mode="after")
+    def validate_response_candidate(self) -> Self:
+        if self.preflight.outcome != "dispatch_candidate":
+            raise ValueError("a response candidate requires a passing fresh preflight")
+        assert self.preflight.evaluated_at is not None
+        if self.dispatched_at < self.preflight.evaluated_at:
+            raise ValueError("remote dispatch cannot predate its fresh preflight")
+        if self.received_at < self.dispatched_at:
+            raise ValueError("remote response cannot predate its dispatch")
+        if (
+            self.received_at_basis == "dispatch_authorization_fallback"
+            and self.received_at != self.dispatched_at
+        ):
+            raise ValueError(
+                "a fallback response time must equal the dispatch authorization time"
+            )
+        if sha256(self.response_body).hexdigest() != self.response_sha256:
+            raise ValueError("response digest must match the exact received bytes")
         return self

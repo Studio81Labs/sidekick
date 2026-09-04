@@ -16,6 +16,18 @@ from app.application.jobs import (
     JobUploadService,
 )
 from app.application.mcp_admin import McpAdminService
+from app.application.remote_reference_dispatch import (
+    RemoteReferenceAuthorityGuard,
+    RemoteReferenceAuthorityLoader,
+    RemoteReferenceAuthorityLockFactory,
+    RemoteReferenceAuthorityOperation,
+    RemoteReferenceClock,
+    RemoteReferenceDispatchAttempt,
+    RemoteReferenceNetworkError,
+    RemoteReferenceProviderError,
+    RemoteReferenceTransport,
+    dispatch_remote_reference_lookup,
+)
 from app.application.system import SystemQueryService
 
 __all__ = [
@@ -32,5 +44,15 @@ __all__ = [
     "JobUploadRequest",
     "JobUploadService",
     "McpAdminService",
+    "RemoteReferenceAuthorityGuard",
+    "RemoteReferenceAuthorityLoader",
+    "RemoteReferenceAuthorityLockFactory",
+    "RemoteReferenceAuthorityOperation",
+    "RemoteReferenceClock",
+    "RemoteReferenceDispatchAttempt",
+    "RemoteReferenceNetworkError",
+    "RemoteReferenceProviderError",
+    "RemoteReferenceTransport",
     "SystemQueryService",
+    "dispatch_remote_reference_lookup",
 ]
