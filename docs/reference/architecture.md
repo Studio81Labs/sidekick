@@ -596,6 +596,23 @@ reference, authorize a remote provider, persist grades, calculate aggregate
 mixing deviations, move mastery, or schedule drills. Those application and
 Phase 0 gates remain open under issues #412, #414, #416, and #418.
 
+Solved comparison additionally requires an independent
+`ReferenceSourceQualification` argument. The immutable qualification records
+the reviewed source and assessment revision, independent-solved evidence,
+coverage manifest, delivery-mode-specific rights, benchmark suite and threshold
+outcome, and an exact binding to the reference, policy, tolerance, route,
+canonical policy content, decision context, engine, economics, utility, EV-unit,
+and support-threshold identity being used.
+Missing, staged, rejected, failed, or mismatched qualification remains
+heuristic and ungraded. A shipped static lookup must carry commercial-use,
+embedding, redistribution, and update rights. A server-side feed must carry
+commercial-serving and derived-output rights, but source qualification alone
+cannot grade it: until a later transport boundary supplies exact
+consent/request/response delivery provenance, it remains visibly unavailable
+and ungraded. No current runtime constructs a qualified reference. ADR 0067
+records this separation between source qualification, policy comparison,
+remote delivery, and content activation.
+
 The local player runtime exposes the current checkpoint at
 `GET /api/player/hands/{record_key}/evaluations`. It reads only the
 integrity-checked active decision artifact and returns a revision- and

@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from decimal import Decimal
+from hashlib import sha256
 from typing import Annotated, Literal, Self
 
 from pydantic import (
+    AwareDatetime,
     BaseModel,
     ConfigDict,
     Field,
@@ -59,6 +62,9 @@ PolicyGradeEligibility = Literal["ungraded", "gradeable"]
 LearningEligibility = Literal["ineligible", "requires_content_activation"]
 GradeReason = Literal[
     "reference_unavailable",
+    "reference_source_unqualified",
+    "reference_qualification_mismatch",
+    "reference_delivery_unverified",
     "decision_context_mismatch",
     "decision_sizing_unverified",
     "reference_policy_illegal",
@@ -69,6 +75,26 @@ GradeReason = Literal[
 ]
 GradeEvUnit = Literal["bb", "chips", "currency", "utility"]
 GradeFraming = Literal["conditional_educational_reference_guidance"]
+ReferenceQualificationStatus = Literal["staged", "qualified", "rejected"]
+ReferenceDeliveryMode = Literal["shipped_static_lookup", "server_side_feed"]
+ReferenceRight = Literal[
+    "commercial_use",
+    "embedding",
+    "redistribution",
+    "updates",
+    "commercial_serving",
+    "derived_outputs",
+]
+ReferenceBenchmarkOutcome = Literal["pending", "passed", "failed"]
+EvidencePointer = Annotated[
+    str,
+    StringConstraints(
+        strip_whitespace=True,
+        min_length=1,
+        max_length=1000,
+        strict=True,
+    ),
+]
 
 WAGER_ACTIONS = {"bet", "raise"}
 
@@ -77,6 +103,90 @@ class GradingModel(BaseModel):
     """Strict immutable base for data that may later become learning evidence."""
 
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+
+def _canonical_decimal(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    sign, digits, exponent = value.as_tuple()
+    canonical_digits = list(digits)
+    while canonical_digits[-1] == 0:
+        canonical_digits.pop()
+        exponent += 1
+    coefficient = "".join(str(digit) for digit in canonical_digits)
+    return f"{'-' if sign else ''}{coefficient}e{exponent}"
+
+
+def _normalize_policy_content(value: object) -> object:
+    if isinstance(value, Decimal):
+        return _canonical_decimal(value)
+    if isinstance(value, dict):
+        return {
+            key: _normalize_policy_content(item) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_policy_content(item) for item in value]
+    return value
+
+
+class ReferenceEvidence(GradingModel):
+    """One immutable evidence record retained outside the runtime payload."""
+
+    revision: Identifier
+    pointer: EvidencePointer
+    sha256: Sha256Digest
+
+
+class ReferenceRightsEvidence(GradingModel):
+    """Rights that match the selected reference delivery mode."""
+
+    basis: Literal["owned", "licensed"]
+    delivery_mode: ReferenceDeliveryMode
+    grants: tuple[ReferenceRight, ...] = Field(min_length=1, max_length=6)
+    evidence: ReferenceEvidence
+
+    @model_validator(mode="after")
+    def validate_delivery_rights(self) -> Self:
+        if len(self.grants) != len(set(self.grants)):
+            raise ValueError("reference rights grants must be unique")
+        required = {
+            "shipped_static_lookup": {
+                "commercial_use",
+                "embedding",
+                "redistribution",
+                "updates",
+            },
+            "server_side_feed": {
+                "commercial_use",
+                "commercial_serving",
+                "derived_outputs",
+            },
+        }[self.delivery_mode]
+        missing = required.difference(self.grants)
+        if missing:
+            raise ValueError(
+                f"{self.delivery_mode} rights evidence is missing grants:"
+                f" {', '.join(sorted(missing))}"
+            )
+        return self
+
+
+class ReferenceBenchmarkEvidence(GradingModel):
+    """Versioned pass/fail evidence from an independent reference benchmark."""
+
+    suite_revision: Identifier
+    threshold_revision: Identifier
+    outcome: ReferenceBenchmarkOutcome
+    evidence: ReferenceEvidence | None = None
+
+    @model_validator(mode="after")
+    def validate_outcome_evidence(self) -> Self:
+        if (self.outcome == "pending") != (self.evidence is None):
+            raise ValueError(
+                "pending benchmark evidence must be absent and completed evidence"
+                " must be retained"
+            )
+        return self
 
 
 class PolicyLine(GradingModel):
@@ -117,6 +227,8 @@ class ResolvedReferencePolicy(GradingModel):
     tolerance_revision: Identifier
     reference_evidence_sha256: Sha256Digest
     policy_artifact_sha256: Sha256Digest
+    coverage_revision: Identifier
+    coverage_sha256: Sha256Digest
     route_binding_id: Identifier
     route_binding_revision: Identifier
     context_sha256: Sha256Digest
@@ -199,6 +311,158 @@ class ResolvedReferencePolicy(GradingModel):
         )
         return max(concrete_values) - line.expected_value
 
+    def policy_content_sha256(self) -> str:
+        """Fingerprint the exact completeness, action, frequency, sizing, and EV data."""
+
+        ordered_lines = sorted(
+            self.policy_lines,
+            key=lambda line: (
+                line.action,
+                (
+                    ""
+                    if line.total_committed_bb is None
+                    else _canonical_decimal(line.total_committed_bb)
+                ),
+            ),
+        )
+        payload = json.dumps(
+            _normalize_policy_content(
+                {
+                    "policy_complete": self.policy_complete,
+                    "policy_lines": [
+                        line.model_dump(mode="python")
+                        for line in ordered_lines
+                    ],
+                }
+            ),
+            ensure_ascii=True,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        return sha256(payload).hexdigest()
+
+
+class ReferencePolicyQualificationBinding(GradingModel):
+    """Exact immutable policy identity approved by a source qualification."""
+
+    reference_revision: Identifier
+    policy_revision: Identifier
+    tolerance_revision: Identifier
+    reference_evidence_sha256: Sha256Digest
+    policy_artifact_sha256: Sha256Digest
+    policy_content_sha256: Sha256Digest
+    coverage_revision: Identifier
+    coverage_sha256: Sha256Digest
+    route_binding_id: Identifier
+    route_binding_revision: Identifier
+    context_sha256: Sha256Digest
+    engine_id: Identifier
+    engine_revision: Identifier
+    engine_configuration_sha256: Sha256Digest
+    economic_model: Identifier
+    economic_model_revision: Identifier
+    economic_configuration_sha256: Sha256Digest
+    utility_model: Identifier
+    utility_model_revision: Identifier
+    utility_configuration_sha256: Sha256Digest
+    ev_unit: GradeEvUnit
+    minimum_supported_frequency: PositiveProbability
+    maximum_equivalent_ev_cost: NonNegativeDecimal
+    sizing_tolerance_bb: PositiveDecimal
+
+    @classmethod
+    def from_reference(
+        cls,
+        reference: ResolvedReferencePolicy,
+    ) -> "ReferencePolicyQualificationBinding":
+        return cls(
+            reference_revision=reference.reference_revision,
+            policy_revision=reference.policy_revision,
+            tolerance_revision=reference.tolerance_revision,
+            reference_evidence_sha256=reference.reference_evidence_sha256,
+            policy_artifact_sha256=reference.policy_artifact_sha256,
+            policy_content_sha256=reference.policy_content_sha256(),
+            coverage_revision=reference.coverage_revision,
+            coverage_sha256=reference.coverage_sha256,
+            route_binding_id=reference.route_binding_id,
+            route_binding_revision=reference.route_binding_revision,
+            context_sha256=reference.context_sha256,
+            engine_id=reference.engine_id,
+            engine_revision=reference.engine_revision,
+            engine_configuration_sha256=reference.engine_configuration_sha256,
+            economic_model=reference.economic_model,
+            economic_model_revision=reference.economic_model_revision,
+            economic_configuration_sha256=(
+                reference.economic_configuration_sha256
+            ),
+            utility_model=reference.utility_model,
+            utility_model_revision=reference.utility_model_revision,
+            utility_configuration_sha256=(
+                reference.utility_configuration_sha256
+            ),
+            ev_unit=reference.ev_unit,
+            minimum_supported_frequency=reference.minimum_supported_frequency,
+            maximum_equivalent_ev_cost=reference.maximum_equivalent_ev_cost,
+            sizing_tolerance_bb=reference.sizing_tolerance_bb,
+        )
+
+    def matches(self, reference: ResolvedReferencePolicy) -> bool:
+        return self == self.from_reference(reference)
+
+
+class ReferenceSourceQualification(GradingModel):
+    """Independent reviewed authority for one exact reference-policy identity.
+
+    This snapshot records evidence; it does not fetch a source, execute a
+    benchmark, authorize remote transport, or activate learning content.
+    """
+
+    qualification_revision: Identifier
+    status: ReferenceQualificationStatus
+    assessed_at: AwareDatetime
+    assessor_id: Identifier
+    source_id: Identifier
+    source_revision: Identifier
+    source_artifact_sha256: Sha256Digest
+    source_configuration_sha256: Sha256Digest
+    qualification_evidence: ReferenceEvidence
+    independent_solved_evidence: ReferenceEvidence
+    coverage_evidence: ReferenceEvidence
+    rights: ReferenceRightsEvidence
+    benchmark: ReferenceBenchmarkEvidence
+    policy_binding: ReferencePolicyQualificationBinding
+
+    @model_validator(mode="after")
+    def validate_qualification(self) -> Self:
+        if self.status == "qualified" and self.benchmark.outcome != "passed":
+            raise ValueError(
+                "a qualified reference source requires a passed benchmark"
+            )
+        if (
+            self.coverage_evidence.revision
+            != self.policy_binding.coverage_revision
+            or self.coverage_evidence.sha256
+            != self.policy_binding.coverage_sha256
+        ):
+            raise ValueError(
+                "qualification coverage evidence must match its policy binding"
+            )
+        return self
+
+    @property
+    def source_is_qualified(self) -> bool:
+        return self.status == "qualified" and self.benchmark.outcome == "passed"
+
+    def matches(self, reference: ResolvedReferencePolicy) -> bool:
+        return self.policy_binding.matches(reference)
+
+    def permits_local_grading(self, reference: ResolvedReferencePolicy) -> bool:
+        return (
+            self.source_is_qualified
+            and self.matches(reference)
+            and self.rights.delivery_mode == "shipped_static_lookup"
+        )
+
 
 class DecisionGrade(GradingModel):
     """One reviewable policy comparison; not persisted mastery authorization."""
@@ -211,6 +475,7 @@ class DecisionGrade(GradingModel):
     learning_eligibility: LearningEligibility
     reason: GradeReason
     reference: ResolvedReferencePolicy | None = None
+    source_qualification: ReferenceSourceQualification | None = None
     supported_policy_lines: tuple[PolicyLine, ...] = ()
     matched_policy_line: PolicyLine | None = None
     ev_cost: NonNegativeDecimal | None = None
@@ -220,6 +485,11 @@ class DecisionGrade(GradingModel):
     @model_validator(mode="after")
     def validate_grade_state(self) -> Self:
         gradeable = self.policy_grade_eligibility == "gradeable"
+        qualification_ready = (
+            self.reference is not None
+            and self.source_qualification is not None
+            and self.source_qualification.permits_local_grading(self.reference)
+        )
         if gradeable != (self.classification in {"supported", "mistake"}):
             raise ValueError(
                 "only supported or mistake classifications are policy-gradeable"
@@ -233,14 +503,23 @@ class DecisionGrade(GradingModel):
                 " later content activation"
             )
 
-        if self.grade_source == "solved" and self.reference is None:
-            raise ValueError("solved evidence requires its resolved reference")
+        if self.grade_source == "solved" and not qualification_ready:
+            raise ValueError(
+                "solved evidence requires an exactly qualified local reference"
+            )
         if gradeable and self.grade_source != "solved":
             raise ValueError("a gradeable policy comparison must be solved")
+        if self.source_qualification is not None and self.reference is None:
+            raise ValueError(
+                "source qualification cannot exist without its resolved reference"
+            )
 
         if self.classification == "reference_unavailable":
             if self.grade_source != "heuristic" or self.reason not in {
                 "reference_unavailable",
+                "reference_source_unqualified",
+                "reference_qualification_mismatch",
+                "reference_delivery_unverified",
                 "decision_context_mismatch",
                 "decision_sizing_unverified",
                 "reference_policy_illegal",
@@ -248,6 +527,49 @@ class DecisionGrade(GradingModel):
                 raise ValueError(
                     "reference-unavailable results must be heuristic and explain"
                     " why no reference matched"
+                )
+            if self.reason == "reference_unavailable" and (
+                self.reference is not None or self.source_qualification is not None
+            ):
+                raise ValueError(
+                    "a missing-reference result cannot retain reference evidence"
+                )
+            if self.reason == "reference_source_unqualified" and (
+                self.reference is None
+                or (
+                    self.source_qualification is not None
+                    and self.source_qualification.source_is_qualified
+                )
+            ):
+                raise ValueError(
+                    "an unqualified-source result requires an unqualified source"
+                )
+            if self.reason == "reference_qualification_mismatch" and (
+                self.reference is None
+                or self.source_qualification is None
+                or self.source_qualification.matches(self.reference)
+            ):
+                raise ValueError(
+                    "a qualification-mismatch result requires mismatched evidence"
+                )
+            if self.reason == "reference_delivery_unverified" and (
+                self.reference is None
+                or self.source_qualification is None
+                or not self.source_qualification.source_is_qualified
+                or not self.source_qualification.matches(self.reference)
+                or self.source_qualification.rights.delivery_mode
+                != "server_side_feed"
+            ):
+                raise ValueError(
+                    "an unverified-delivery result requires a qualified remote feed"
+                )
+            if self.reason in {
+                "decision_context_mismatch",
+                "decision_sizing_unverified",
+                "reference_policy_illegal",
+            } and not qualification_ready:
+                raise ValueError(
+                    "policy validation failures require a qualified local reference"
                 )
             if any(
                 value is not None
@@ -260,6 +582,7 @@ class DecisionGrade(GradingModel):
         elif self.classification == "policy_incomplete":
             if (
                 self.grade_source != "solved"
+                or not qualification_ready
                 or self.reason != "policy_incomplete"
                 or self.reference is None
                 or self.reference.policy_complete
@@ -277,6 +600,10 @@ class DecisionGrade(GradingModel):
 
         if gradeable:
             assert self.reference is not None
+            if not qualification_ready:
+                raise ValueError(
+                    "a policy grade requires an exactly qualified local reference"
+                )
             if not self.reference.policy_complete:
                 raise ValueError("a policy grade requires a complete reference policy")
             if self.reference.context_sha256 != self.decision_context_sha256:

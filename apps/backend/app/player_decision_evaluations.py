@@ -137,7 +137,11 @@ def evaluate_player_active_hand_decisions(
 
     evaluations: list[PlayerActiveDecisionEvaluation] = []
     for point in extraction.decision_points:
-        grade = grade_decision(point, reference=None)
+        grade = grade_decision(
+            point,
+            reference=None,
+            source_qualification=None,
+        )
         remote_reference = evaluate_remote_reference_preflight(
             point,
             mode="local_only",
