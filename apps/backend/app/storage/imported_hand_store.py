@@ -4,6 +4,7 @@ Layout, relative to the data directory::
 
     imported-hands/<record_key>/record.json
     imported-hands/<record_key>/decisions/r<revision>-g<generation>.json
+    imported-hands/<record_key>/grades/r<revision>-g<generation>-d<index>-<identity>.json
     imported-hands/.cascade/...            (the write journal's scratch area)
 
 ``<record_key>`` is a sha256 of the hand's stable identity, computed once
@@ -55,13 +56,24 @@ for an active canonical artifact. Either way, a rejection is still
 generation-stamped, which is what lets a caller tell "still not extractable
 at generation 2" apart from a stale verdict computed at generation 1.
 
+Reference-activated grades are retained separately under ``grades/``. Their
+filename binds the hand revision, deletion generation, decision index, and a
+digest of the catalog/activation/mastery-series authority identity. Presence on
+disk is historical audit evidence only: the stored grade deliberately retains
+``requires_current_catalog_hand_and_content`` and no reader here claims it is
+currently eligible for mastery or drills. Exact retries preserve the existing
+bytes; a different payload at the same authority identity is rejected. Purge
+and authorized reimport remove grades only through the same hand cascade that
+removes decision artifacts.
+
 Every write goes through :class:`app.storage.cascade_journal.CascadeJournal`
 rather than a bare atomic file write, even though a record write touches
 one file today. A later lifecycle transition has to move a record and its
 derived decision artifacts together, and only a cascade can make that one
 durable unit. ``begin_cascade`` is that composition primitive: it opens one
 cascade over a record key and hands back an ``ImportedHandCascade`` through
-which a caller stages a record, decision artifacts, or an artifact deletion
+which a caller stages a record, decision artifacts, grade evidence, or an
+artifact deletion
 -- any mix, in one unit, committed or discarded together. ``save`` and
 ``save_decisions`` are single-operation convenience wrappers built on top of
 it, each opening its own cascade for exactly the one thing it stages; a
@@ -126,7 +138,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 from stat import S_ISREG
-from typing import Sequence
+from typing import Literal, Sequence
 
 from pydantic import ValidationError
 
@@ -135,6 +147,7 @@ from app.application.imported_hand_ports import (
     ImportedHandRepository,
     ReimportResolution,
 )
+from app.application.reference_activation import ReferenceActivatedGrade
 from app.data_lock import (
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     InterprocessDataLock,
@@ -147,6 +160,7 @@ from app.domain.imported_hands import (
     StableHandIdentity,
     classify_reimport,
     extract_hero_decision_points,
+    extract_hero_decision_points_for_revision,
     imported_hand_canonical_json,
 )
 from app.storage.cascade_journal import CascadeJournal, CascadeStaging
@@ -156,6 +170,12 @@ RECORD_FILENAME = "record.json"
 RECORD_KEY_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 DECISIONS_DIRNAME = "decisions"
 DECISION_ARTIFACT_PATTERN = re.compile(r"^r(?P<revision>\d+)-g(?P<generation>\d+)\.json$")
+GRADES_DIRNAME = "grades"
+GRADE_ARTIFACT_PATTERN = re.compile(
+    r"^r(?P<revision>\d+)-g(?P<generation>\d+)-d(?P<decision_index>\d+)-"
+    r"(?P<identity>[0-9a-f]{64})\.json$"
+)
+MAX_PORTABLE_IMPORTED_HAND_ARTIFACT_BYTES = 8 * 1024 * 1024
 # HandDecisionExtraction.canonical_revision is a PositiveInteger whenever it
 # is set, so 0 is never a real revision: reserved as the filename's revision
 # component for a not_extractable extraction, which binds no canonical
@@ -210,6 +230,14 @@ class DecisionArtifactIntegrityError(RuntimeError):
     """
 
 
+class GradeArtifactRetentionError(RuntimeError):
+    """A persisted grade would replace different evidence at one identity."""
+
+
+class GradeArtifactSizeError(ValueError):
+    """A grade cannot fit in the mandatory portable player backup."""
+
+
 class ClosedCascadeError(RuntimeError):
     """A ``stage_*`` call reached an ``ImportedHandCascade`` after its
     ``with`` block already exited.
@@ -244,11 +272,19 @@ class ImportedHandSnapshotArtifact:
 
 
 @dataclass(frozen=True)
+class ImportedHandGradeSnapshotArtifact:
+    filename: str
+    payload: bytes
+    grade: ReferenceActivatedGrade
+
+
+@dataclass(frozen=True)
 class ImportedHandStoredSnapshot:
     record_key: str
     record_payload: bytes
     record: ImportedHandRecord
     decision_artifacts: tuple[ImportedHandSnapshotArtifact, ...]
+    grade_artifacts: tuple[ImportedHandGradeSnapshotArtifact, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -257,6 +293,8 @@ class ImportedHandRestoreWrite:
     write_record: bool
     decision_artifacts: tuple[ImportedHandSnapshotArtifact, ...]
     delete_decision_artifacts: tuple[str, ...]
+    grade_artifacts: tuple[ImportedHandGradeSnapshotArtifact, ...] = ()
+    delete_grade_artifacts: tuple[str, ...] = ()
 
 
 def imported_hand_record_key(identity: StableHandIdentity) -> str:
@@ -285,6 +323,43 @@ def imported_hand_record_key(identity: StableHandIdentity) -> str:
     return sha256(
         imported_hand_canonical_json(identity.model_dump(mode="json"))
     ).hexdigest()
+
+
+def reference_activated_grade_artifact_filename(
+    grade: ReferenceActivatedGrade,
+) -> str:
+    """Return the immutable authority identity for one historical grade.
+
+    The digest deliberately excludes the grade's derived classification and
+    content payload. Recomputing a different grade for the same decision under
+    the same catalog activation therefore resolves to the same name and is
+    rejected by retention enforcement instead of becoming a second history.
+    """
+
+    validated = ReferenceActivatedGrade.model_validate(
+        grade.model_dump(mode="python")
+    )
+    if validated != grade:
+        raise ValueError("reference-activated grade must be canonical")
+    decision = validated.readiness.decision_snapshot.restore()
+    identity_sha256 = sha256(
+        imported_hand_canonical_json(
+            {
+                "schema": "reference-activated-grade-identity/v1",
+                "canonical_revision": decision.canonical_revision,
+                "deletion_generation": decision.deletion_generation,
+                "decision_index": decision.decision_index,
+                "catalog_sha256": validated.catalog_sha256,
+                "coverage_band_id": validated.coverage_band_id,
+                "activation_id": validated.activation_id,
+                "mastery_series_id": validated.mastery_series_id,
+            }
+        )
+    ).hexdigest()
+    return (
+        f"r{decision.canonical_revision}-g{decision.deletion_generation}-"
+        f"d{decision.decision_index}-{identity_sha256}.json"
+    )
 
 
 class FileImportedHandStore:
@@ -406,9 +481,9 @@ class FileImportedHandStore:
         """Open one cascade over ``record_key`` for a caller composing a write.
 
         Yields an ``ImportedHandCascade`` through which the caller stages
-        any mix of the record itself, one or more decision artifacts, and a
-        decision-artifact deletion (the lifecycle purge only -- see
-        ``ImportedHandCascade.stage_decisions_delete``); everything staged
+        any mix of the record itself, decision artifacts, revalidated grade
+        evidence, and exact artifact deletions (lifecycle purge only);
+        everything staged
         commits together when the ``with`` block exits normally, or nothing
         does if it raises. ``save`` and ``save_decisions`` are
         single-operation convenience wrappers built on this same primitive,
@@ -417,11 +492,10 @@ class FileImportedHandStore:
         purge -- must call this directly instead of composing calls to
         those wrappers, none of which this store implements itself.
 
-        A decision artifact staged through the returned handle is not
-        written until the ``with`` block finishes: which revision it
-        resolves to can depend on a record staged *later* in the same
-        cascade, so resolution happens once, at the end, against whatever
-        record the cascade ends up staging -- never against call order.
+        Derived artifacts staged through the returned handle are not written
+        until the ``with`` block finishes. Resolution happens once, at the end,
+        against whatever record the cascade ends up staging, never against call
+        order.
         The handle is invalidated the instant the block exits, success or
         failure alike; a ``stage_*`` call afterward raises
         ``ClosedCascadeError`` rather than writing into scratch space
@@ -596,6 +670,60 @@ class FileImportedHandStore:
                 )
         return sorted(artifacts)
 
+    def get_reference_activated_grade(
+        self,
+        record_key: str,
+        filename: str,
+    ) -> ReferenceActivatedGrade | None:
+        """Read one retained grade as historical evidence, never authority."""
+
+        if GRADE_ARTIFACT_PATTERN.fullmatch(filename) is None:
+            return None
+        try:
+            path = self._grades_dir(record_key) / filename
+        except ImportedHandNotFoundError:
+            return None
+        try:
+            payload = path.read_bytes()
+        except FileNotFoundError:
+            return None
+        grade = ReferenceActivatedGrade.model_validate_json(payload)
+        try:
+            record = self.get(record_key)
+        except ImportedHandNotFoundError:
+            return None
+        self._validate_grade_snapshot_artifact(
+            record_key,
+            filename,
+            grade,
+            record=record,
+        )
+        return grade
+
+    def list_reference_activated_grade_artifacts(
+        self,
+        record_key: str,
+    ) -> list[tuple[int, int, int, str]]:
+        """Return retained grade identities without opening their payloads."""
+
+        try:
+            entries = list(self._grades_dir(record_key).iterdir())
+        except (FileNotFoundError, ImportedHandNotFoundError):
+            return []
+        artifacts: list[tuple[int, int, int, str]] = []
+        for path in entries:
+            match = GRADE_ARTIFACT_PATTERN.fullmatch(path.name)
+            if match is not None and path.is_file():
+                artifacts.append(
+                    (
+                        int(match.group("revision")),
+                        int(match.group("generation")),
+                        int(match.group("decision_index")),
+                        path.name,
+                    )
+                )
+        return sorted(artifacts)
+
     def backup_snapshot(
         self,
         *,
@@ -674,9 +802,45 @@ class FileImportedHandStore:
                         extraction=extraction,
                     )
                 )
-            if record.lifecycle.status == "deleted" and artifacts:
+            grade_artifacts: list[ImportedHandGradeSnapshotArtifact] = []
+            for (
+                _revision,
+                _generation,
+                _decision_index,
+                filename,
+            ) in self.list_reference_activated_grade_artifacts(record_key):
+                payload = self._read_bounded_snapshot_file(
+                    self._grades_dir(record_key) / filename,
+                    subject=f"grade artifact {record_key}/{filename}",
+                    max_file_bytes=max_artifact_bytes,
+                    max_total_bytes=max_total_bytes,
+                    total_bytes=total_bytes,
+                )
+                total_bytes += len(payload)
+                try:
+                    grade = ReferenceActivatedGrade.model_validate_json(payload)
+                except ValidationError as exc:
+                    raise ImportedHandSnapshotError(
+                        f"Stored grade artifact {record_key}/{filename} is invalid"
+                    ) from exc
+                self._validate_grade_snapshot_artifact(
+                    record_key,
+                    filename,
+                    grade,
+                    record=record,
+                )
+                grade_artifacts.append(
+                    ImportedHandGradeSnapshotArtifact(
+                        filename=filename,
+                        payload=payload,
+                        grade=grade,
+                    )
+                )
+            if record.lifecycle.status == "deleted" and (
+                artifacts or grade_artifacts
+            ):
                 raise ImportedHandSnapshotError(
-                    f"Deleted record {record_key} still has decision artifacts"
+                    f"Deleted record {record_key} still has derived artifacts"
                 )
             self._validate_active_snapshot_artifact(
                 record_key,
@@ -689,6 +853,7 @@ class FileImportedHandStore:
                     record_payload=record_payload,
                     record=record,
                     decision_artifacts=tuple(artifacts),
+                    grade_artifacts=tuple(grade_artifacts),
                 )
             )
         return tuple(snapshots)
@@ -799,6 +964,27 @@ class FileImportedHandStore:
                         "Backup decision artifact "
                         f"{snapshot.record_key}/{artifact.filename} changed after validation"
                     )
+            for artifact in write.grade_artifacts:
+                self._validate_grade_snapshot_artifact(
+                    snapshot.record_key,
+                    artifact.filename,
+                    artifact.grade,
+                    record=snapshot.record,
+                )
+                try:
+                    parsed_grade = ReferenceActivatedGrade.model_validate_json(
+                        artifact.payload
+                    )
+                except ValidationError as exc:
+                    raise ImportedHandSnapshotError(
+                        "Backup grade artifact "
+                        f"{snapshot.record_key}/{artifact.filename} is invalid"
+                    ) from exc
+                if parsed_grade != artifact.grade:
+                    raise ImportedHandSnapshotError(
+                        "Backup grade artifact "
+                        f"{snapshot.record_key}/{artifact.filename} changed after validation"
+                    )
             delete_filenames = write.delete_decision_artifacts
             if len(delete_filenames) != len(set(delete_filenames)):
                 raise ImportedHandSnapshotError(
@@ -813,6 +999,23 @@ class FileImportedHandStore:
                         f"{filename!r} is not a decision artifact filename"
                     )
                 if filename in staged_filenames:
+                    raise ImportedHandSnapshotError(
+                        f"Backup restore cannot write and delete {filename!r}"
+                    )
+            delete_grade_filenames = write.delete_grade_artifacts
+            if len(delete_grade_filenames) != len(set(delete_grade_filenames)):
+                raise ImportedHandSnapshotError(
+                    "Backup restore grade-artifact deletions must be unique"
+                )
+            staged_grade_filenames = {
+                artifact.filename for artifact in write.grade_artifacts
+            }
+            for filename in delete_grade_filenames:
+                if GRADE_ARTIFACT_PATTERN.fullmatch(filename) is None:
+                    raise ImportedHandSnapshotError(
+                        f"{filename!r} is not a grade artifact filename"
+                    )
+                if filename in staged_grade_filenames:
                     raise ImportedHandSnapshotError(
                         f"Backup restore cannot write and delete {filename!r}"
                     )
@@ -835,10 +1038,21 @@ class FileImportedHandStore:
                         f"{DECISIONS_DIRNAME}/{artifact.filename}",
                         artifact.payload,
                     )
+                for artifact in write.grade_artifacts:
+                    staging.stage(
+                        snapshot.record_key,
+                        f"{GRADES_DIRNAME}/{artifact.filename}",
+                        artifact.payload,
+                    )
                 for filename in write.delete_decision_artifacts:
                     staging.stage_delete(
                         snapshot.record_key,
                         f"{DECISIONS_DIRNAME}/{filename}",
+                    )
+                for filename in write.delete_grade_artifacts:
+                    staging.stage_delete(
+                        snapshot.record_key,
+                        f"{GRADES_DIRNAME}/{filename}",
                     )
 
     def existing_decision_artifact_payload(
@@ -855,6 +1069,24 @@ class FileImportedHandStore:
             return self._read_snapshot_file(
                 path,
                 subject=f"decision artifact {record_key}/{filename}",
+            )
+        except FileNotFoundError:
+            return None
+
+    def existing_grade_artifact_payload(
+        self,
+        record_key: str,
+        filename: str,
+    ) -> bytes | None:
+        if GRADE_ARTIFACT_PATTERN.fullmatch(filename) is None:
+            raise ImportedHandSnapshotError(
+                f"{filename!r} is not a grade artifact filename"
+            )
+        path = self._grades_dir(record_key) / filename
+        try:
+            return self._read_snapshot_file(
+                path,
+                subject=f"grade artifact {record_key}/{filename}",
             )
         except FileNotFoundError:
             return None
@@ -967,6 +1199,79 @@ class FileImportedHandStore:
                 f"Deleted record {record_key} cannot retain decision artifacts"
             )
 
+    def _validate_grade_snapshot_artifact(
+        self,
+        record_key: str,
+        filename: str,
+        grade: ReferenceActivatedGrade,
+        *,
+        record: ImportedHandRecord,
+    ) -> None:
+        match = GRADE_ARTIFACT_PATTERN.fullmatch(filename)
+        if match is None:
+            raise ImportedHandSnapshotError(
+                f"{filename!r} is not a grade artifact filename"
+            )
+        try:
+            expected_filename = reference_activated_grade_artifact_filename(grade)
+        except (AttributeError, ValidationError, ValueError) as exc:
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} is not canonical"
+            ) from exc
+        if filename != expected_filename:
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} has a mismatched identity"
+            )
+        decision = grade.readiness.decision_snapshot.restore()
+        try:
+            self._require_matching_identity(
+                record_key,
+                decision.identity,
+                subject="grade decision",
+            )
+        except ValueError as exc:
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} has a mismatched hand identity"
+            ) from exc
+        if decision.identity != record.identity:
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} does not match its record"
+            )
+        if decision.deletion_generation > record.lifecycle.deletion_generation:
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} is from a future generation"
+            )
+        retained_revisions = {
+            retained.revision for retained in record.canonical_revisions
+        }
+        if decision.canonical_revision not in retained_revisions:
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} names an unknown revision"
+            )
+        try:
+            expected = extract_hero_decision_points_for_revision(
+                record,
+                canonical_revision=decision.canonical_revision,
+                deletion_generation=decision.deletion_generation,
+            )
+        except (ValidationError, ValueError) as exc:
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} cannot be re-derived"
+            ) from exc
+        if (
+            expected.outcome != "decisions"
+            or decision.decision_index >= len(expected.decision_points)
+            or expected.decision_points[decision.decision_index] != decision
+        ):
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} does not match its "
+                "canonical revision"
+            )
+        if record.lifecycle.status == "deleted":
+            raise ImportedHandSnapshotError(
+                f"Deleted record {record_key} cannot retain grade artifacts"
+            )
+
     @staticmethod
     def _validate_active_snapshot_artifact(
         record_key: str,
@@ -1069,6 +1374,9 @@ class FileImportedHandStore:
 
     def _decisions_dir(self, record_key: str) -> Path:
         return self._record_dir(record_key) / DECISIONS_DIRNAME
+
+    def _grades_dir(self, record_key: str) -> Path:
+        return self._record_dir(record_key) / GRADES_DIRNAME
 
     def _decision_artifact_path(
         self, record_key: str, revision: int, generation: int
@@ -1189,15 +1497,13 @@ class ImportedHandCascade:
     ``CascadeStaging``, so everything staged through one instance commits
     or is discarded as a single unit -- see ``begin_cascade``'s docstring.
 
-    A decision artifact staged here is buffered, not written immediately:
-    which revision it resolves to can depend on a record staged *later* in
-    the same cascade (``stage_record``), so every buffered artifact is
-    resolved once, at cascade exit, against whichever record this cascade
-    ends up staging -- never against the order the caller happened to call
-    these methods in. Invalidated the instant the caller's ``with`` block
-    exits, success or failure alike: a ``stage_*`` call afterward raises
-    ``ClosedCascadeError`` rather than writing into scratch space nothing
-    will ever commit.
+    Derived artifacts staged here are buffered, not written immediately. A
+    decision artifact's revision can depend on a record staged *later* in the
+    same cascade; a grade must be validated against the cascade's final record.
+    Both are resolved once, at cascade exit, never against method-call order.
+    Invalidated the instant the caller's ``with`` block exits, success or
+    failure alike: a ``stage_*`` call afterward raises ``ClosedCascadeError``
+    rather than writing into scratch space nothing will ever commit.
     """
 
     def __init__(
@@ -1211,6 +1517,7 @@ class ImportedHandCascade:
         self._staging = staging
         self._staged_record: ImportedHandRecord | None = None
         self._pending_extractions: list[HandDecisionExtraction] = []
+        self._pending_grades: list[ReferenceActivatedGrade] = []
         self._closed = False
 
     def stage_record(self, record: ImportedHandRecord) -> None:
@@ -1295,6 +1602,45 @@ class ImportedHandCascade:
             self._record_key, f"{DECISIONS_DIRNAME}/{filename}"
         )
 
+    def stage_reference_activated_grade(
+        self,
+        grade: ReferenceActivatedGrade,
+    ) -> None:
+        """Stage one revalidated grade as immutable historical evidence.
+
+        This storage primitive does not grant current learning authority. Its
+        caller must revalidate the grade against current hand, reference, and
+        content state and keep those authority locks through cascade commit.
+        """
+
+        self._require_open()
+        validated = ReferenceActivatedGrade.model_validate(
+            grade.model_dump(mode="python")
+        )
+        if validated != grade:
+            raise ValueError("reference-activated grade must be canonical")
+        decision = validated.readiness.decision_snapshot.restore()
+        self._store._require_matching_identity(
+            self._record_key,
+            decision.identity,
+            subject="grade decision",
+        )
+        self._pending_grades.append(validated)
+
+    def stage_reference_activated_grade_delete(self, filename: str) -> None:
+        """Stage purge of one exact retained grade-artifact filename."""
+
+        self._require_open()
+        if GRADE_ARTIFACT_PATTERN.fullmatch(filename) is None:
+            raise ValueError(
+                f"{filename!r} is not a grade artifact filename; pass the exact "
+                "name list_reference_activated_grade_artifacts reported"
+            )
+        self._staging.stage_delete(
+            self._record_key,
+            f"{GRADES_DIRNAME}/{filename}",
+        )
+
     def _require_open(self) -> None:
         if self._closed:
             raise ClosedCascadeError(
@@ -1304,7 +1650,7 @@ class ImportedHandCascade:
             )
 
     def _finalize(self, *, unwinding: bool = False) -> None:
-        """Resolve and write every buffered decision artifact, then close.
+        """Resolve and write every buffered derived artifact, then close.
 
         Called exactly once, by ``begin_cascade``, in a ``finally`` after
         the caller's block has finished, whether it raised or not -- so a
@@ -1348,7 +1694,39 @@ class ImportedHandCascade:
                     f"r{revision}-g{extraction.deletion_generation}.json"
                 )
                 payload = extraction.model_dump_json(indent=2).encode("utf-8")
-                self._require_retention_preserved(relative_path, payload, staged)
+                self._require_retention_preserved(
+                    relative_path,
+                    payload,
+                    staged,
+                    artifact_kind="decision",
+                )
+                self._staging.stage(self._record_key, relative_path, payload)
+                staged[relative_path] = payload
+            record = self._staged_record
+            if record is None and self._pending_grades:
+                record = self._store.get(self._record_key)
+            for grade in self._pending_grades:
+                assert record is not None
+                filename = reference_activated_grade_artifact_filename(grade)
+                self._store._validate_grade_snapshot_artifact(
+                    self._record_key,
+                    filename,
+                    grade,
+                    record=record,
+                )
+                relative_path = f"{GRADES_DIRNAME}/{filename}"
+                payload = grade.model_dump_json(indent=2).encode("utf-8")
+                if len(payload) > MAX_PORTABLE_IMPORTED_HAND_ARTIFACT_BYTES:
+                    raise GradeArtifactSizeError(
+                        "reference-activated grade exceeds the portable player "
+                        "backup artifact limit"
+                    )
+                self._require_retention_preserved(
+                    relative_path,
+                    payload,
+                    staged,
+                    artifact_kind="grade",
+                )
                 self._staging.stage(self._record_key, relative_path, payload)
                 staged[relative_path] = payload
         except Exception:
@@ -1361,7 +1739,12 @@ class ImportedHandCascade:
             self._closed = True
 
     def _require_retention_preserved(
-        self, relative_path: str, payload: bytes, staged: dict[str, bytes]
+        self,
+        relative_path: str,
+        payload: bytes,
+        staged: dict[str, bytes],
+        *,
+        artifact_kind: Literal["decision", "grade"],
     ) -> None:
         """Refuse ``payload`` if a different artifact already holds its name.
 
@@ -1379,11 +1762,16 @@ class ImportedHandCascade:
                 return
         if previous == payload:
             return
-        raise DecisionArtifactRetentionError(
+        error_type = (
+            DecisionArtifactRetentionError
+            if artifact_kind == "decision"
+            else GradeArtifactRetentionError
+        )
+        raise error_type(
             f"staging {relative_path!r} for record {self._record_key} would "
             "replace a different artifact already retained under that name; "
-            "issue #432 retains a superseded artifact for audit, and only a "
-            "purge may remove one"
+            "derived evidence is retained for audit, and only a purge may "
+            "remove one"
         )
 
 

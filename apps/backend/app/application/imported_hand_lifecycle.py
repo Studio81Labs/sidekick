@@ -403,9 +403,9 @@ class ImportedHandLifecycleService:
         against the retained request before publishing it. A retry carrying
         the receipt already stored on a tombstone is idempotent.
 
-        Decision artifacts are enumerated after the compare-and-swap check and
-        their exact storage-reported filenames are deleted in the same durable
-        cascade as the tombstone. A pre-commit failure therefore leaves the
+        Decision and grade artifacts are enumerated after the compare-and-swap
+        check and their exact storage-reported filenames are deleted in the
+        same durable cascade as the tombstone. A pre-commit failure leaves the
         complete deletion-pending record in place. Once commit begins, the
         tombstone is learning-ineligible even if recovery still has artifact
         deletions to roll forward.
@@ -417,7 +417,12 @@ class ImportedHandLifecycleService:
                     f"record {record_key} was already purged with a different "
                     "deletion receipt"
                 )
-            if not self._store.list_decision_artifacts(record_key):
+            if (
+                not self._store.list_decision_artifacts(record_key)
+                and not self._store.list_reference_activated_grade_artifacts(
+                    record_key
+                )
+            ):
                 return record
             # A tombstone can be visible while the original purge's artifact
             # deletions still wait for roll-forward recovery. Do not report
@@ -454,14 +459,19 @@ class ImportedHandLifecycleService:
         *,
         expected: ImportedHandRecord,
     ) -> ImportedHandRecord:
-        """Publish ``tombstone`` and delete all currently retained decisions."""
+        """Publish ``tombstone`` and delete all hand-derived audit evidence."""
         cascade: ImportedHandCascadeHandle
         with self._store.begin_cascade(record_key, operation="purge") as cascade:
             self._require_unchanged(record_key, expected)
             artifacts = self._store.list_decision_artifacts(record_key)
+            grades = self._store.list_reference_activated_grade_artifacts(
+                record_key
+            )
             cascade.stage_record(tombstone)
             for _revision, _generation, filename in artifacts:
                 cascade.stage_decisions_delete(filename)
+            for _revision, _generation, _index, filename in grades:
+                cascade.stage_reference_activated_grade_delete(filename)
         return tombstone
 
     def _current(self, record_key: str) -> ImportedHandRecord:

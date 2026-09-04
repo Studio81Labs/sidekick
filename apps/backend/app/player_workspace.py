@@ -1424,6 +1424,47 @@ class PlayerWorkspace:
                         active_hand_decisions=extraction,
                     )
 
+    def persist_current_reference_activated_grade(
+        self,
+        record_key: str,
+        evidence: ReferenceActivatedGrade,
+        *,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> ReferenceActivatedGrade:
+        """Revalidate and retain one historical grade in one authority scope.
+
+        The stored artifact keeps its
+        ``requires_current_catalog_hand_and_content`` literal. Persistence is
+        audit retention only; any future mastery or drill mutation must reload
+        and revalidate the three authorities again inside its own write scope.
+        """
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    _, extraction = self._load_active_hand_decisions(record_key)
+                    reference_catalog = self.reference_activation_catalog.load()
+                    learning_content = self.learning_content_catalog.load()
+                    revalidated = revalidate_reference_grade(
+                        evidence,
+                        current_reference_catalog=reference_catalog.catalog,
+                        current_learning_content=learning_content.catalog,
+                        active_hand_decisions=extraction,
+                    )
+                    with self.imported_hands.begin_cascade(
+                        record_key,
+                        operation="persist_grade",
+                    ) as cascade:
+                        cascade.stage_reference_activated_grade(revalidated)
+                    return revalidated
+
     def get_active_hand_decision_evaluations(
         self,
         record_key: str,

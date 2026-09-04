@@ -917,6 +917,7 @@ def test_the_file_store_satisfies_every_call_the_repository_protocol_declares() 
         "has_interrupted_writes",
         "list_decision_artifacts",
         "list_keys",
+        "list_reference_activated_grade_artifacts",
         "recover",
         "resolve_reimport",
         "save",
@@ -950,6 +951,7 @@ def test_the_cascade_satisfies_every_call_the_handle_protocol_declares() -> None
         "stage_decisions",
         "stage_decisions_delete",
         "stage_record",
+        "stage_reference_activated_grade_delete",
     ]
 
     for name in declared:

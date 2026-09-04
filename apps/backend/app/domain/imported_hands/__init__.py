@@ -12,6 +12,7 @@ from app.domain.imported_hands.decisions import (
     HeroTableAction,
     StreetActionHistory,
     extract_hero_decision_points,
+    extract_hero_decision_points_for_revision,
 )
 from app.domain.imported_hands.models import (
     ActionOrigin,
@@ -140,6 +141,7 @@ __all__ = [
     "detected_imported_hand_semantic_sha256",
     "derive_structural_positions",
     "extract_hero_decision_points",
+    "extract_hero_decision_points_for_revision",
     "imported_hand_canonical_json",
     "imported_hand_state_sha256",
     "reconcile_pot",

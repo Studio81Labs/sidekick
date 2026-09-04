@@ -286,9 +286,14 @@ class AuthorizedHandReimportService:
                     "the retained hand changed before reimport publication"
                 )
             artifacts = self._store.list_decision_artifacts(record_key)
+            grades = self._store.list_reference_activated_grade_artifacts(
+                record_key
+            )
             cascade.stage_record(successor)
             for _revision, _generation, filename in artifacts:
                 cascade.stage_decisions_delete(filename)
+            for _revision, _generation, _index, filename in grades:
+                cascade.stage_reference_activated_grade_delete(filename)
         return AuthorizedHandReimportResult(
             record_key=record_key,
             disposition="restored_pending_review",

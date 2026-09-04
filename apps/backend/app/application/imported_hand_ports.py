@@ -150,6 +150,10 @@ class ImportedHandCascadeHandle(Protocol):
         """
         ...
 
+    def stage_reference_activated_grade_delete(self, filename: str) -> None:
+        """Stage one exact retained grade-artifact filename for purge."""
+        ...
+
 
 class ImportedHandRepository(Protocol):
     """Durable storage for imported-hand aggregates, keyed by record key."""
@@ -199,6 +203,13 @@ class ImportedHandRepository(Protocol):
         spelling such as ``r01-g0.json``, rather than guessing a path from
         the parsed revision and generation.
         """
+        ...
+
+    def list_reference_activated_grade_artifacts(
+        self,
+        record_key: str,
+    ) -> list[tuple[int, int, int, str]]:
+        """Return retained grade artifacts with their exact filenames."""
         ...
 
     def save(self, record_key: str, record: ImportedHandRecord) -> ImportedHandRecord:

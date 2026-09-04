@@ -2940,6 +2940,9 @@ describe("PlayerApp", () => {
           imported_decision_artifacts: 2,
           reused_decision_artifacts: 1,
           removed_decision_artifacts: 0,
+          imported_grade_artifacts: 1,
+          reused_grade_artifacts: 0,
+          removed_grade_artifacts: 0,
           total_records: 5,
         }),
       )
@@ -3103,6 +3106,9 @@ describe("PlayerApp", () => {
             imported_decision_artifacts: 2,
             reused_decision_artifacts: 1,
             removed_decision_artifacts: 1,
+            imported_grade_artifacts: 1,
+            reused_grade_artifacts: 0,
+            removed_grade_artifacts: 1,
             total_records: 5,
           }),
         )
@@ -3124,8 +3130,8 @@ describe("PlayerApp", () => {
 
     expect(await screen.findByText("Restore committed.")).toBeInTheDocument();
     expect(
-      screen.getByText(/1 removed by restored deletion evidence/),
-    ).toBeInTheDocument();
+      screen.getAllByText(/1 removed by restored deletion evidence/),
+    ).toHaveLength(2);
     expect(
       await screen.findByText(
         /Restore committed, but storage status could not be refreshed/,
