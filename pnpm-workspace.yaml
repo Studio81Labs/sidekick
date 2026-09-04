@@ -19,6 +19,8 @@ trustPolicy: no-downgrade
 # Advisory floors for transitive packages whose parents have not yet widened
 # their ranges. OSV in security-scan.yml is the removal signal.
 overrides:
+  # GHSA-5jgf-p345-68v8 and related 3.1.5 advisories
+  fast-uri: ">=3.1.6 <4"
   # GHSA-28wg-ghj8-5hjv / GHSA-2v37-7h3g-55p8
   "nanoid@3": ">=3.3.18 <4"
   # GHSA-fxqj-rqcc-2cmp / GHSA-r28c-9q8g-f849
