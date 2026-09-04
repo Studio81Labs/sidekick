@@ -12,6 +12,10 @@ import pytest
 
 import app.player_backup as player_backup_module
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
+from app.application.reference_activation import (
+    ReferenceActivationCatalog,
+    bind_grade_to_active_reference,
+)
 from app.domain.imported_hands import ImportedHandRecord, extract_hero_decision_points
 from app.player_backup import (
     PlayerBackupConflictError,
@@ -34,6 +38,7 @@ from app.storage.cascade_journal import CascadeJournal
 from app.storage.imported_hand_store import (
     ImportedHandNotFoundError,
     imported_hand_record_key,
+    reference_activated_grade_artifact_filename,
 )
 from app.storage.learning_content_catalog_store import (
     LEARNING_CONTENT_CATALOG_FILENAME,
@@ -45,6 +50,7 @@ from app.storage.reference_activation_catalog_store import (
     REFERENCE_ACTIVATION_CATALOG_FILENAME,
 )
 from test_current_learning_revalidation import configured_workspace
+from test_imported_hand_decisions import hero_fold_decision_record
 from test_imported_hand_store import (
     approved_record,
     extraction_for,
@@ -54,6 +60,7 @@ from test_imported_hand_store import (
 )
 from test_learning_content_catalog_store import initial_catalog
 from test_player_runtime import exchange_session, player_client
+from test_reference_activation import activate, solved_readiness
 from test_remote_references import provider_policy
 
 
@@ -243,6 +250,59 @@ def test_player_backup_preserves_historical_grade_artifacts(
     assert first.imported_grade_artifacts == 1
     assert second.reused_grade_artifacts == 1
     assert target.imported_hands.backup_snapshot() == expected_snapshot
+
+
+def test_player_backup_rejects_grade_from_different_canonical_decision(
+    tmp_path: Path,
+) -> None:
+    source, record_key, retained, _ = configured_workspace(tmp_path / "source")
+    source.persist_current_reference_activated_grade(record_key, retained)
+    payload = archive_bytes(source)
+    alternate_decision = extract_hero_decision_points(
+        hero_fold_decision_record()
+    ).decision_points[0]
+    alternate_readiness = solved_readiness(alternate_decision)
+    alternate_catalog = activate(
+        ReferenceActivationCatalog.empty(retained.catalog.catalog_id),
+        alternate_readiness,
+    )
+    alternate = bind_grade_to_active_reference(
+        alternate_catalog,
+        alternate_readiness,
+        coverage_band_id="cash.preflop.bb-defense.100bb",
+    )
+    alternate_payload = alternate.model_dump_json(indent=2).encode("utf-8")
+    alternate_filename = reference_activated_grade_artifact_filename(alternate)
+    changed_payload = BytesIO()
+
+    with ZipFile(BytesIO(payload)) as original:
+        manifest = json.loads(original.read("manifest.json"))
+        artifact = manifest["records"][0]["grade_artifacts"][0]
+        original_file = artifact["file"]
+        artifact.update(
+            {
+                "filename": alternate_filename,
+                "file": f"hands/{record_key}/grades/{alternate_filename}",
+                "sha256": sha256(alternate_payload).hexdigest(),
+                "size": len(alternate_payload),
+            }
+        )
+        with ZipFile(changed_payload, mode="w", compression=ZIP_DEFLATED) as changed:
+            for info in original.infolist():
+                if info.filename in {"manifest.json", original_file}:
+                    continue
+                changed.writestr(info.filename, original.read(info))
+            changed.writestr(artifact["file"], alternate_payload)
+            changed.writestr(
+                "manifest.json",
+                (json.dumps(manifest, indent=2) + "\n").encode(),
+            )
+
+    with pytest.raises(PlayerBackupError, match="does not match its canonical"):
+        parse_player_backup_archive(
+            changed_payload.getvalue(),
+            max_archive_bytes=10 * 1024 * 1024,
+        )
 
 
 def test_player_backup_decodes_legacy_schema_without_grades(

@@ -160,6 +160,7 @@ from app.domain.imported_hands import (
     StableHandIdentity,
     classify_reimport,
     extract_hero_decision_points,
+    extract_hero_decision_points_for_revision,
     imported_hand_canonical_json,
 )
 from app.storage.cascade_journal import CascadeJournal, CascadeStaging
@@ -174,6 +175,7 @@ GRADE_ARTIFACT_PATTERN = re.compile(
     r"^r(?P<revision>\d+)-g(?P<generation>\d+)-d(?P<decision_index>\d+)-"
     r"(?P<identity>[0-9a-f]{64})\.json$"
 )
+MAX_PORTABLE_IMPORTED_HAND_ARTIFACT_BYTES = 8 * 1024 * 1024
 # HandDecisionExtraction.canonical_revision is a PositiveInteger whenever it
 # is set, so 0 is never a real revision: reserved as the filename's revision
 # component for a not_extractable extraction, which binds no canonical
@@ -230,6 +232,10 @@ class DecisionArtifactIntegrityError(RuntimeError):
 
 class GradeArtifactRetentionError(RuntimeError):
     """A persisted grade would replace different evidence at one identity."""
+
+
+class GradeArtifactSizeError(ValueError):
+    """A grade cannot fit in the mandatory portable player backup."""
 
 
 class ClosedCascadeError(RuntimeError):
@@ -1242,6 +1248,25 @@ class FileImportedHandStore:
             raise ImportedHandSnapshotError(
                 f"Grade artifact {record_key}/{filename} names an unknown revision"
             )
+        try:
+            expected = extract_hero_decision_points_for_revision(
+                record,
+                canonical_revision=decision.canonical_revision,
+                deletion_generation=decision.deletion_generation,
+            )
+        except (ValidationError, ValueError) as exc:
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} cannot be re-derived"
+            ) from exc
+        if (
+            expected.outcome != "decisions"
+            or decision.decision_index >= len(expected.decision_points)
+            or expected.decision_points[decision.decision_index] != decision
+        ):
+            raise ImportedHandSnapshotError(
+                f"Grade artifact {record_key}/{filename} does not match its "
+                "canonical revision"
+            )
         if record.lifecycle.status == "deleted":
             raise ImportedHandSnapshotError(
                 f"Deleted record {record_key} cannot retain grade artifacts"
@@ -1691,6 +1716,11 @@ class ImportedHandCascade:
                 )
                 relative_path = f"{GRADES_DIRNAME}/{filename}"
                 payload = grade.model_dump_json(indent=2).encode("utf-8")
+                if len(payload) > MAX_PORTABLE_IMPORTED_HAND_ARTIFACT_BYTES:
+                    raise GradeArtifactSizeError(
+                        "reference-activated grade exceeds the portable player "
+                        "backup artifact limit"
+                    )
                 self._require_retention_preserved(
                     relative_path,
                     payload,

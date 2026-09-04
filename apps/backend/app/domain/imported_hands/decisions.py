@@ -23,6 +23,7 @@ from app.domain.imported_hands.models import (
     HeroDecisionGateRejection,
     Identifier,
     ImportedAction,
+    ImportedHandLifecycle,
     ImportedHandModel,
     ImportedHandRecord,
     ImportedHandState,
@@ -833,6 +834,41 @@ def extract_hero_decision_points(
         decision_points=decision_points,
         excluded_actions=excluded_actions,
     )
+
+
+def extract_hero_decision_points_for_revision(
+    record: ImportedHandRecord,
+    *,
+    canonical_revision: int,
+    deletion_generation: int,
+) -> HandDecisionExtraction:
+    """Re-derive one retained canonical revision for historical validation.
+
+    Later lifecycle state and conflicts must not make a historical grade appear
+    to describe another approved revision. Rebuild a validated active snapshot
+    ending at the named immutable revision, then use the canonical extractor.
+    Conflicts are intentionally omitted: their effect is captured by whichever
+    canonical state the player ultimately approved, while later conflict events
+    must not alter that retained state.
+    """
+
+    retained = record.revalidated_snapshot()
+    if not 1 <= canonical_revision <= len(retained.canonical_revisions):
+        raise ValueError("canonical revision is not retained by this hand")
+    historical = ImportedHandRecord(
+        identity=retained.identity,
+        raw_sources=retained.raw_sources,
+        detections=retained.detections,
+        conflicts=[],
+        canonical_revisions=retained.canonical_revisions[:canonical_revision],
+        lifecycle=ImportedHandLifecycle(
+            status="active",
+            active_canonical_revision=canonical_revision,
+            deletion_generation=deletion_generation,
+            changed_at=retained.lifecycle.changed_at,
+        ),
+    )
+    return extract_hero_decision_points(historical)
 
 
 def _hero_actions(

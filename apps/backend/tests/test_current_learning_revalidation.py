@@ -8,6 +8,7 @@ from threading import Event, Thread
 import pytest
 
 import app.player_workspace as player_workspace_module
+import app.storage.imported_hand_store as imported_hand_store_module
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.reference_activation import (
     ReferenceActivatedGrade,
@@ -19,6 +20,7 @@ from app.player_hands import PlayerHandCloseRequest
 from app.player_workspace import PlayerHandDecisionsUnavailable, PlayerWorkspace
 from app.storage.imported_hand_store import (
     GradeArtifactRetentionError,
+    GradeArtifactSizeError,
     GRADES_DIRNAME,
     ImportedHandCascade,
     imported_hand_record_key,
@@ -150,6 +152,29 @@ def test_grade_retention_refuses_different_bytes_at_one_authority_identity(
         record_key,
         filename,
     ) == retained
+
+
+def test_workspace_refuses_grade_that_cannot_fit_in_portable_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, record_key, retained, _ = configured_workspace(tmp_path)
+    payload_size = len(retained.model_dump_json(indent=2).encode("utf-8"))
+    monkeypatch.setattr(
+        imported_hand_store_module,
+        "MAX_PORTABLE_IMPORTED_HAND_ARTIFACT_BYTES",
+        payload_size - 1,
+    )
+
+    with pytest.raises(GradeArtifactSizeError, match="portable player backup"):
+        workspace.persist_current_reference_activated_grade(record_key, retained)
+
+    assert (
+        workspace.imported_hands.list_reference_activated_grade_artifacts(
+            record_key
+        )
+        == []
+    )
 
 
 def test_permanent_hand_purge_removes_retained_grade_evidence(

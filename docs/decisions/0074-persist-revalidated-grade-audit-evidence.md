@@ -33,6 +33,9 @@ identity binds canonical revision, deletion generation, decision index, catalog
 digest, coverage band, activation ID, and mastery-series ID. Repeating the exact
 write is idempotent. Different serialized evidence resolving to that same
 identity is rejected rather than replacing or duplicating audit history.
+Before commit, the serialized artifact must fit the portable player's fixed
+per-artifact backup limit; persistence cannot create data that blocks the
+mandatory export-before-uninstall path.
 
 The artifact stores the complete `ReferenceActivatedGrade`, including reference,
 policy, economics, utility model, EV unit, content, review, catalog, and hand
@@ -50,8 +53,11 @@ Player backup schema v2 enumerates and checksums grade artifacts. Restore accept
 legacy schema v1 archives with no grade field, conflict-checks same-name retained
 bytes, and restores grades only as player audit data. It never restores the
 install-local reference-activation or learning-content catalogs as current
-authority. The workspace layout version does not change because `grades/` is an
-optional child owned by the already-versioned imported-hand store.
+authority. Storage and restore also rebuild the named retained canonical
+revision and require the indexed canonical decision to equal the grade's
+snapshot. Matching only hand identity and revision number is insufficient. The
+workspace layout version does not change because `grades/` is an optional child
+owned by the already-versioned imported-hand store.
 
 ## Consequences
 

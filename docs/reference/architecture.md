@@ -656,7 +656,11 @@ exclusive, keeps the shared volume lock across revalidation and cascade commit,
 and keys the artifact by canonical revision, deletion generation, decision
 index, catalog digest, coverage band, activation, and mastery-series identity.
 Exact retries reuse the bytes; different bytes at the same authority identity
-fail rather than replace history. The stored model deliberately keeps
+fail rather than replace history. Persistence refuses an artifact larger than
+the portable-backup per-artifact limit. Storage and restore rebuild the named
+retained canonical revision and require its indexed decision to equal the grade
+snapshot, so a self-consistent foreign decision cannot borrow the hand's
+identity and revision number. The stored model deliberately keeps
 `requires_current_catalog_hand_and_content`, so persistence neither updates
 mastery nor authorizes a drill. Hand withdrawal or reapproval makes older grades
 historical through lifecycle status or revision identity, while permanent purge and authorized

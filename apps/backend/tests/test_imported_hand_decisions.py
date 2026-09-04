@@ -22,6 +22,7 @@ from app.domain.imported_hands import (
     ImportedHandState,
     UserCorrection,
     extract_hero_decision_points,
+    extract_hero_decision_points_for_revision,
 )
 from test_imported_hand_models import (
     IDENTITY,
@@ -1185,6 +1186,47 @@ def test_extraction_binds_every_decision_to_the_active_revision() -> None:
     assert all(
         point.state.hero_cards[0].rank == "T"
         for point in extraction.decision_points
+    )
+
+
+def test_extraction_can_rederive_each_retained_revision() -> None:
+    detected_state = multi_street_decision_record().canonical_revisions[0].state
+    corrected_payload = detected_state.model_dump()
+    corrected_payload["hero_cards"][0] = {"rank": "T", "suit": "hearts"}
+    corrected_state = ImportedHandState.model_validate(corrected_payload)
+    record = reapproval_extraction_record(
+        detected_state,
+        corrected_state,
+        [
+            UserCorrection(
+                field_pointer="/hero_cards/0/rank",
+                detected_value="A",
+                approved_value="T",
+                corrected_at=NOW,
+                reason="Hero's hole card corrected from a reread of the hand history",
+            )
+        ],
+    )
+
+    first = extract_hero_decision_points_for_revision(
+        record,
+        canonical_revision=1,
+        deletion_generation=3,
+    )
+    second = extract_hero_decision_points_for_revision(
+        record,
+        canonical_revision=2,
+        deletion_generation=3,
+    )
+
+    assert first.canonical_revision == 1
+    assert second.canonical_revision == 2
+    assert first.deletion_generation == second.deletion_generation == 3
+    assert all(
+        point.state.hero_cards[0].rank == "A" for point in first.decision_points
+    )
+    assert all(
+        point.state.hero_cards[0].rank == "T" for point in second.decision_points
     )
 
 

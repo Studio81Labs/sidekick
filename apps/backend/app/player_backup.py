@@ -30,6 +30,7 @@ from app.domain.imported_hands import (
     ImportedHandRecord,
     classify_restore,
     extract_hero_decision_points,
+    extract_hero_decision_points_for_revision,
 )
 from app.player_workspace import PlayerWorkspace
 from app.storage.cascade_journal import (
@@ -39,6 +40,7 @@ from app.storage.cascade_journal import (
 from app.storage.imported_hand_store import (
     DECISION_ARTIFACT_PATTERN,
     GRADE_ARTIFACT_PATTERN,
+    MAX_PORTABLE_IMPORTED_HAND_ARTIFACT_BYTES,
     NO_CANONICAL_REVISION,
     FileImportedHandStore,
     ImportedHandGradeSnapshotArtifact,
@@ -63,7 +65,7 @@ MAX_PLAYER_BACKUP_ARTIFACTS_PER_RECORD = 1_000
 MAX_PLAYER_BACKUP_ENTRIES = 50_000
 MAX_PLAYER_BACKUP_MANIFEST_BYTES = 8 * 1024 * 1024
 MAX_PLAYER_BACKUP_RECORD_BYTES = 8 * 1024 * 1024
-MAX_PLAYER_BACKUP_ARTIFACT_BYTES = 8 * 1024 * 1024
+MAX_PLAYER_BACKUP_ARTIFACT_BYTES = MAX_PORTABLE_IMPORTED_HAND_ARTIFACT_BYTES
 MAX_PLAYER_BACKUP_EXPANSION_RATIO = 4
 
 
@@ -756,6 +758,24 @@ def _read_grade_artifact(
     }:
         raise PlayerBackupError(
             f"Player backup grade {entry.filename} names an unknown revision"
+        )
+    try:
+        expected = extract_hero_decision_points_for_revision(
+            record,
+            canonical_revision=decision.canonical_revision,
+            deletion_generation=decision.deletion_generation,
+        )
+    except (ValidationError, ValueError) as exc:
+        raise PlayerBackupError(
+            f"Player backup grade {entry.filename} cannot be re-derived"
+        ) from exc
+    if (
+        expected.outcome != "decisions"
+        or decision.decision_index >= len(expected.decision_points)
+        or expected.decision_points[decision.decision_index] != decision
+    ):
+        raise PlayerBackupError(
+            f"Player backup grade {entry.filename} does not match its canonical revision"
         )
     return ImportedHandGradeSnapshotArtifact(
         filename=entry.filename,
