@@ -35,6 +35,7 @@ from app.application.imported_hand_ingestion import (
 )
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
+from app.application.reference_activation import ReferenceActivationCatalog
 from app.data_lock import (
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
@@ -91,6 +92,11 @@ from app.storage.remote_reference_consent_store import (
     FileRemoteReferenceConsentStore,
     RemoteReferenceConsentStorageError,
 )
+from app.storage.reference_activation_catalog_store import (
+    FileReferenceActivationCatalogStore,
+    ReferenceActivationCatalogState,
+    ReferenceActivationCatalogStorageError,
+)
 
 
 class PlayerDataDirectoryError(RuntimeError):
@@ -129,7 +135,7 @@ DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
 PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
 PLAYER_WORKSPACE_MANIFEST_FILENAME = ".poker-hero-player-workspace.json"
 PLAYER_WORKSPACE_SCHEMA = "poker-hero-player-workspace"
-PLAYER_WORKSPACE_LAYOUT_VERSION = 2
+PLAYER_WORKSPACE_LAYOUT_VERSION = 3
 MAX_PLAYER_WORKSPACE_MANIFEST_BYTES = 4096
 
 
@@ -137,7 +143,7 @@ class _PlayerWorkspaceManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_name: Literal[PLAYER_WORKSPACE_SCHEMA] = Field(alias="schema")
-    layout_version: Literal[1, PLAYER_WORKSPACE_LAYOUT_VERSION]
+    layout_version: Literal[1, 2, PLAYER_WORKSPACE_LAYOUT_VERSION]
 
     @field_validator("layout_version", mode="before")
     @classmethod
@@ -714,6 +720,8 @@ class PlayerWorkspace:
     imported_hands: FileImportedHandStore
     remote_reference_consent: FileRemoteReferenceConsentStore
     remote_reference_consent_lock: LockType
+    reference_activation_catalog: FileReferenceActivationCatalogStore
+    reference_activation_catalog_lock: LockType
     imported_hand_recovery: ImportedHandRecoveryReport
     imported_hand_locks: tuple[LockType, ...]
     imported_hand_process_locks: tuple[InterprocessFileLock, ...]
@@ -810,6 +818,13 @@ class PlayerWorkspace:
                     remote_reference_consent.load()
                 except RemoteReferenceConsentStorageError as exc:
                     raise PlayerDataDirectoryError(str(exc)) from exc
+                reference_activation_catalog = (
+                    FileReferenceActivationCatalogStore(private_data_dir)
+                )
+                try:
+                    reference_activation_catalog.load()
+                except ReferenceActivationCatalogStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
                 imported_hands = FileImportedHandStore(
                     private_data_dir,
                     write_lock_timeout_seconds=write_lock_timeout_seconds,
@@ -821,6 +836,9 @@ class PlayerWorkspace:
                         data_lock=data_lock,
                         imported_hands=imported_hands,
                         remote_reference_consent=remote_reference_consent,
+                        reference_activation_catalog=(
+                            reference_activation_catalog
+                        ),
                         recovery=recovery,
                     )
 
@@ -849,6 +867,13 @@ class PlayerWorkspace:
                     remote_reference_consent.initialize_empty()
                 except RemoteReferenceConsentStorageError as exc:
                     raise PlayerDataDirectoryError(str(exc)) from exc
+                reference_activation_catalog = (
+                    FileReferenceActivationCatalogStore(private_data_dir)
+                )
+                try:
+                    reference_activation_catalog.initialize_empty()
+                except ReferenceActivationCatalogStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
                 _publish_player_workspace_manifest(private_data_dir)
                 manifest = _read_player_workspace_manifest(private_data_dir)
                 if (
@@ -870,6 +895,42 @@ class PlayerWorkspace:
                 try:
                     remote_reference_consent.initialize_empty()
                 except RemoteReferenceConsentStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
+                reference_activation_catalog = (
+                    FileReferenceActivationCatalogStore(private_data_dir)
+                )
+                try:
+                    reference_activation_catalog.initialize_empty()
+                except ReferenceActivationCatalogStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
+                _replace_player_workspace_manifest(private_data_dir)
+                manifest = _read_player_workspace_manifest(private_data_dir)
+                if (
+                    manifest is None
+                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
+                ):
+                    raise PlayerDataDirectoryError(
+                        "The player workspace manifest is missing after upgrade"
+                    )
+            elif manifest.layout_version == 2:
+                _require_durable_player_workspace_manifest(private_data_dir)
+                _require_imported_hands_dir(
+                    private_data_dir,
+                    create_if_missing=False,
+                )
+                remote_reference_consent = FileRemoteReferenceConsentStore(
+                    private_data_dir
+                )
+                try:
+                    remote_reference_consent.load()
+                except RemoteReferenceConsentStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
+                reference_activation_catalog = (
+                    FileReferenceActivationCatalogStore(private_data_dir)
+                )
+                try:
+                    reference_activation_catalog.initialize_empty()
+                except ReferenceActivationCatalogStorageError as exc:
                     raise PlayerDataDirectoryError(str(exc)) from exc
                 _replace_player_workspace_manifest(private_data_dir)
                 manifest = _read_player_workspace_manifest(private_data_dir)
@@ -893,6 +954,13 @@ class PlayerWorkspace:
                     remote_reference_consent.load()
                 except RemoteReferenceConsentStorageError as exc:
                     raise PlayerDataDirectoryError(str(exc)) from exc
+                reference_activation_catalog = (
+                    FileReferenceActivationCatalogStore(private_data_dir)
+                )
+                try:
+                    reference_activation_catalog.load()
+                except ReferenceActivationCatalogStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
             imported_hands = FileImportedHandStore(
                 private_data_dir,
                 write_lock_timeout_seconds=write_lock_timeout_seconds,
@@ -905,6 +973,7 @@ class PlayerWorkspace:
                 data_lock=data_lock,
                 imported_hands=imported_hands,
                 remote_reference_consent=remote_reference_consent,
+                reference_activation_catalog=reference_activation_catalog,
                 recovery=recovery,
             )
 
@@ -917,6 +986,7 @@ class PlayerWorkspace:
         data_lock: InterprocessDataLock,
         imported_hands: FileImportedHandStore,
         remote_reference_consent: FileRemoteReferenceConsentStore,
+        reference_activation_catalog: FileReferenceActivationCatalogStore,
         recovery: ImportedHandRecoveryReport,
     ) -> "PlayerWorkspace":
         return cls(
@@ -926,6 +996,8 @@ class PlayerWorkspace:
             imported_hands=imported_hands,
             remote_reference_consent=remote_reference_consent,
             remote_reference_consent_lock=Lock(),
+            reference_activation_catalog=reference_activation_catalog,
+            reference_activation_catalog_lock=Lock(),
             imported_hand_recovery=recovery,
             imported_hand_locks=tuple(
                 Lock() for _ in range(DEFAULT_PLAYER_HAND_LOCK_STRIPES)
@@ -1046,6 +1118,42 @@ class PlayerWorkspace:
                     policy=policy,
                     consent=consent,
                     at=at,
+                )
+
+    def current_reference_activation_catalog(
+        self,
+        *,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> ReferenceActivationCatalogState:
+        """Load the install-local current catalog authority."""
+
+        with self.data_lock.hold(
+            exclusive=False,
+            timeout_seconds=lock_timeout_seconds,
+        ):
+            self.require_current_layout()
+            return self.reference_activation_catalog.load()
+
+    def publish_reference_activation_catalog(
+        self,
+        successor: ReferenceActivationCatalog,
+        *,
+        expected_catalog_revision: int,
+        expected_catalog_sha256: str,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> ReferenceActivationCatalogState:
+        """Atomically publish one catalog append from an exact current snapshot."""
+
+        with self.reference_activation_catalog_lock:
+            with self.data_lock.hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                self.require_current_layout()
+                return self.reference_activation_catalog.save(
+                    successor,
+                    expected_catalog_revision=expected_catalog_revision,
+                    expected_catalog_sha256=expected_catalog_sha256,
                 )
 
     def status_payload(

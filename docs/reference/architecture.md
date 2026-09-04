@@ -631,15 +631,23 @@ lifecycle, canonical revision, and deletion generation. ADR 0070 records this
 boundary.
 
 The catalog's deterministic digest chain detects inconsistent or accidentally
-rewritten snapshots; it is not a signature. Future persistence must own the
-trusted current catalog revision and digest, and later mastery composition must
-reload that authority rather than trusting the point-in-time snapshot nested in
-a grade.
+rewritten snapshots; it is not a signature. The local player workspace now owns
+the trusted current catalog revision and digest in a bounded, owner-only,
+versioned state file. Publication runs under the exclusive volume lock, requires
+the expected current revision and digest, preserves the exact prior history, and
+atomically appends one validated activation. Workspace layout v3 initializes an
+empty fixed-identity catalog and migrates v1/v2 only after the new authority is
+durable. Current startup rejects missing, malformed, shared, symlinked, or
+digest-invalid catalog state. Locked readers reload this authority rather than
+trusting the point-in-time snapshot nested in a grade. ADR 0071 records the
+persistence and compare-and-swap boundary.
 
-No production composition yet persists or publishes the catalog, authorizes a
-remote provider, persists grades, calculates aggregate mixing deviations, moves
-mastery, or schedules drills. Those application and Phase 0 gates remain open
-under issues #412, #414, #416, and #418.
+The packaged catalog remains empty and no API publishes activations. Production
+composition still does not authorize a solved reference or remote provider,
+persist grades or learning content, revalidate current hand/content evidence,
+calculate aggregate mixing deviations, move mastery, or schedule drills. Those
+application and Phase 0 gates remain open under issues #412, #414, #416, and
+#418.
 
 Solved comparison additionally requires an independent
 `ReferenceSourceQualification` argument. The immutable qualification records
@@ -776,11 +784,12 @@ generations under the exclusive player-volume lock and atomically replace an
 owner-only state file. The file contains no credentials, outbound request,
 route binding, response, or player record. Consent is deliberately excluded
 from player backup and restore so an archive cannot resurrect authorization
-after revocation. Workspace layout v2 and ADR 0066 record the v1-to-v2
-migration. The runtime remains local-only because no configured transport
-consumes the consent. The transport-neutral application guard can consume only
-an injected atomic authority snapshot and is not wired into the packaged
-composition.
+after revocation. Workspace layout v2 and ADR 0066 record the v1-to-v2 consent
+migration; current layout v3 retains that state and adds the
+reference-activation catalog authority from ADR 0071. The runtime remains
+local-only because no configured transport consumes the consent. The
+transport-neutral application guard can consume only an injected atomic
+authority snapshot and is not wired into the packaged composition.
 
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact

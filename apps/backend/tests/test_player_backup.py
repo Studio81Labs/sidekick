@@ -38,6 +38,9 @@ from app.storage.imported_hand_store import (
 from app.storage.remote_reference_consent_store import (
     REMOTE_REFERENCE_CONSENT_FILENAME,
 )
+from app.storage.reference_activation_catalog_store import (
+    REFERENCE_ACTIVATION_CATALOG_FILENAME,
+)
 from test_imported_hand_store import (
     approved_record,
     extraction_for,
@@ -92,7 +95,7 @@ def restore(
 
 def write_future_workspace_manifest(workspace: PlayerWorkspace) -> None:
     (workspace.data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":4,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
@@ -103,6 +106,7 @@ def test_empty_player_backup_round_trips(tmp_path: Path) -> None:
     with ZipFile(BytesIO(payload)) as archive:
         assert PLAYER_WORKSPACE_MANIFEST_FILENAME not in archive.namelist()
         assert REMOTE_REFERENCE_CONSENT_FILENAME not in archive.namelist()
+        assert REFERENCE_ACTIVATION_CATALOG_FILENAME not in archive.namelist()
 
     parsed = parse_player_backup_archive(
         payload,
