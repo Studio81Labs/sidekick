@@ -27,7 +27,8 @@ grant access not represented by the mode bits.
 The runtime creates `.player-runtime-key` there with owner-only file
 permissions and opens the V2 imported-hand store under `imported-hands/` plus
 the owner-only `.poker-hero-remote-reference-consent.json` and
-`.poker-hero-reference-activation-catalog.json` states. The hand store directory
+`.poker-hero-reference-activation-catalog.json` states and the owner-only
+`.poker-hero-learning-content-catalog.json` authority. The hand store directory
 must satisfy the same ownership, mode, and macOS ACL checks. The runtime does
 not open the V1 screenshot-job or benchmark stores. Do not copy the key into
 browser storage, a URL, logs, or a hosted deployment.
@@ -36,21 +37,24 @@ browser storage, a URL, logs, or a hosted deployment.
 
 The player data root is identified by the owner-only
 `.poker-hero-player-workspace.json` manifest. The local storage panel reports
-its layout version next to the resolved data directory. Version 3 contains the
+its layout version next to the resolved data directory. Version 4 contains the
 private `imported-hands/` store and its existing recovery journal, the
 install-local remote-reference consent state, and the current
-reference-activation catalog authority. Backup ZIPs have their own independent
-schema version and contain none of the workspace manifest, consent state, or
-reference catalog.
+reference-activation and learning-content catalog authorities. Backup ZIPs have
+their own independent schema version and contain none of the workspace
+manifest, consent state, or either product/reference catalog.
 
 The first start after upgrading from a manifestless local runtime adopts the
 existing store automatically. Adoption takes the exclusive data-volume lock,
 validates the private imported-hand directory, creates empty consent and
-reference-catalog state, and publishes the version 3 manifest. An existing
+reference and learning-content catalog state, and publishes the version 4
+manifest. An existing
 version 1 workspace is upgraded under the same exclusive lock: consent and then
-the empty reference catalog become durable before the manifest is atomically
-replaced with version 3. An existing version 2 workspace preserves consent and
-adds only the empty reference catalog before publishing version 3. None of these
+the empty reference and learning-content catalogs become durable before the
+manifest is atomically replaced with version 4. An existing version 2 workspace
+preserves consent and adds the two empty catalogs. An existing version 3
+workspace preserves consent and reference activation and adds only the empty
+learning-content catalog before publishing version 4. None of these
 paths rewrites hand records, canonical revisions, decision artifacts, or cascade
 evidence. A crash before publication can retry the same adoption or upgrade. If
 the marker was published before a later startup failure, the next start
@@ -63,8 +67,8 @@ downgrading. Export a player backup before an application upgrade. If startup
 rejects a manifest, preserve the complete data directory and repair or migrate
 it with tooling for that exact source version; do not delete the marker to
 force legacy adoption. A missing, symlinked, shared-permission, malformed, or
-unsupported consent or reference-catalog state file under layout version 3 also
-fails startup.
+unsupported consent, reference-catalog, or learning-content-catalog state file
+under layout version 4 also fails startup.
 
 Remote-reference consent is local-only by default. The packaged runtime does
 not supply a provider policy, so consent cannot be accepted and no remote

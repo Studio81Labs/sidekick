@@ -635,19 +635,31 @@ rewritten snapshots; it is not a signature. The local player workspace now owns
 the trusted current catalog revision and digest in a bounded, owner-only,
 versioned state file. Publication runs under the exclusive volume lock, requires
 the expected current revision and digest, preserves the exact prior history, and
-atomically appends one validated activation. Workspace layout v3 initializes an
-empty fixed-identity catalog and migrates v1/v2 only after the new authority is
+atomically appends one validated activation. Workspace layout v3 initialized an
+empty fixed-identity catalog and migrated v1/v2 only after the new authority was
 durable. Current startup rejects missing, malformed, shared, symlinked, or
 digest-invalid catalog state. Locked readers reload this authority rather than
 trusting the point-in-time snapshot nested in a grade. ADR 0071 records the
 persistence and compare-and-swap boundary.
 
-The packaged catalog remains empty and no API publishes activations. Production
-composition still does not authorize a solved reference or remote provider,
-persist grades or learning content, revalidate current hand/content evidence,
-calculate aggregate mixing deviations, move mastery, or schedule drills. Those
-application and Phase 0 gates remain open under issues #412, #414, #416, and
-#418.
+The player workspace now also owns the current learning-content authority that
+ADR 0070's eventual revalidation requires. Its fixed-identity catalog retains
+complete taxonomy and mapping lineages together with immutable principle
+revisions and their full reviewer-lifecycle histories. The last taxonomy and
+mapping are current and compatible; publication uses an exact predecessor
+digest and revision compare-and-swap under the exclusive volume lock and can
+only append revisions or lifecycle events. Workspace layout v4 adds an empty,
+owner-only, bounded, atomic catalog while preserving v1-v3 hand, consent, and
+reference-catalog state. The catalog is product/reference authority and is
+excluded from portable player backup and restore. ADR 0072 records this
+boundary.
+
+The packaged reference and learning-content catalogs remain empty and no API
+publishes either one. Production composition still does not authorize a solved
+reference or remote provider, persist grades, revalidate current hand/content
+evidence, calculate aggregate mixing deviations, move mastery, or schedule
+drills. Those application and Phase 0 gates remain open under issues #412,
+#414, #416, and #418.
 
 Solved comparison additionally requires an independent
 `ReferenceSourceQualification` argument. The immutable qualification records
@@ -785,8 +797,9 @@ owner-only state file. The file contains no credentials, outbound request,
 route binding, response, or player record. Consent is deliberately excluded
 from player backup and restore so an archive cannot resurrect authorization
 after revocation. Workspace layout v2 and ADR 0066 record the v1-to-v2 consent
-migration; current layout v3 retains that state and adds the
-reference-activation catalog authority from ADR 0071. The runtime remains
+migration; current layout v4 retains that state and the reference-activation
+catalog authority from ADR 0071, and adds the learning-content authority from
+ADR 0072. The runtime remains
 local-only because no configured transport consumes the consent. The
 transport-neutral application guard can consume only an injected atomic
 authority snapshot and is not wired into the packaged composition.
