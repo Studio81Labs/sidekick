@@ -22,6 +22,12 @@ from app.storage.remote_reference_consent_store import (
     REMOTE_REFERENCE_CONSENT_FILENAME,
     RemoteReferenceConsentStorageError,
 )
+from app.storage.reference_activation_catalog_store import (
+    FileReferenceActivationCatalogStore,
+    REFERENCE_ACTIVATION_CATALOG_FILENAME,
+    REFERENCE_ACTIVATION_CATALOG_ID,
+    ReferenceActivationCatalogStorageError,
+)
 from test_imported_hand_store import pending_review_record, seed_interrupted_cascade
 
 
@@ -46,7 +52,7 @@ def _stored_payloads(records_dir: Path) -> dict[str, bytes]:
     }
 
 
-def test_fresh_workspace_publishes_private_layout_v2_manifest(
+def test_fresh_workspace_publishes_private_layout_v3_manifest(
     tmp_path: Path,
 ) -> None:
     workspace = PlayerWorkspace.open(tmp_path)
@@ -65,6 +71,16 @@ def test_fresh_workspace_publishes_private_layout_v2_manifest(
         "schema_version": 1,
     }
     assert consent_path.stat().st_mode & 0o077 == 0
+    catalog_path = tmp_path / REFERENCE_ACTIVATION_CATALOG_FILENAME
+    catalog_payload = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert catalog_payload["catalog"]["catalog_id"] == (
+        REFERENCE_ACTIVATION_CATALOG_ID
+    )
+    assert catalog_payload["catalog"]["catalog_revision"] == 0
+    assert catalog_payload["catalog_sha256"] == (
+        workspace.reference_activation_catalog.load().catalog_sha256
+    )
+    assert catalog_path.stat().st_mode & 0o077 == 0
     assert workspace.status_payload()["layout_version"] == (
         PLAYER_WORKSPACE_LAYOUT_VERSION
     )
@@ -117,7 +133,7 @@ def test_concurrent_workspace_adoption_publishes_one_valid_manifest(
     "payload",
     [
         b"not-json",
-        b'{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
+        b'{"layout_version":4,"schema":"poker-hero-player-workspace"}\n',
         b'{"layout_version":true,"schema":"poker-hero-player-workspace"}\n',
         b'{"extra":1,"layout_version":1,"schema":"poker-hero-player-workspace"}\n',
     ],
@@ -157,7 +173,7 @@ def test_workspace_rejects_symlinked_or_shared_manifest(tmp_path: Path) -> None:
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v1_migrates_to_v2_without_touching_imported_hands(
+def test_layout_v1_migrates_to_v3_without_touching_imported_hands(
     tmp_path: Path,
 ) -> None:
     legacy_store, record_key = _legacy_store(tmp_path)
@@ -177,6 +193,7 @@ def test_layout_v1_migrates_to_v2_without_touching_imported_hands(
         "layout_version"
     ] == PLAYER_WORKSPACE_LAYOUT_VERSION
     assert workspace.remote_reference_consent.load().consent is None
+    assert workspace.reference_activation_catalog.load().catalog.catalog_revision == 0
 
 
 def test_layout_v1_consent_initialization_failure_keeps_v1_manifest(
@@ -241,9 +258,63 @@ def test_layout_v1_manifest_upgrade_failure_is_retryable(
     workspace = PlayerWorkspace.open(tmp_path)
     assert workspace.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
     assert workspace.remote_reference_consent.load().consent is None
+    assert workspace.reference_activation_catalog.load().catalog.catalog_revision == 0
 
 
-def test_layout_v2_requires_valid_private_consent_state(tmp_path: Path) -> None:
+def test_layout_v2_migrates_to_v3_without_touching_existing_state(
+    tmp_path: Path,
+) -> None:
+    legacy_store, record_key = _legacy_store(tmp_path)
+    retained_before = _stored_payloads(legacy_store.records_dir)
+    consent_store = FileRemoteReferenceConsentStore(tmp_path)
+    consent_store.initialize_empty()
+    manifest_path = _manifest_path(tmp_path)
+    manifest_path.write_bytes(
+        player_workspace_module._player_workspace_manifest_payload(2)
+    )
+    manifest_path.chmod(0o600)
+
+    workspace = PlayerWorkspace.open(tmp_path)
+
+    assert workspace.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
+    assert workspace.imported_hands.get(record_key) == legacy_store.get(record_key)
+    assert _stored_payloads(workspace.imported_hands.records_dir) == retained_before
+    assert workspace.remote_reference_consent.load() == consent_store.load()
+    assert workspace.reference_activation_catalog.load().catalog.catalog_revision == 0
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
+        "layout_version"
+    ] == PLAYER_WORKSPACE_LAYOUT_VERSION
+
+
+def test_layout_v2_catalog_initialization_failure_keeps_v2_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "imported-hands").mkdir(mode=0o700)
+    FileRemoteReferenceConsentStore(tmp_path).initialize_empty()
+    manifest_path = _manifest_path(tmp_path)
+    manifest_path.write_bytes(
+        player_workspace_module._player_workspace_manifest_payload(2)
+    )
+    manifest_path.chmod(0o600)
+
+    def fail_initialization(_store: FileReferenceActivationCatalogStore):
+        raise ReferenceActivationCatalogStorageError("injected catalog failure")
+
+    monkeypatch.setattr(
+        FileReferenceActivationCatalogStore,
+        "initialize_empty",
+        fail_initialization,
+    )
+
+    with pytest.raises(PlayerDataDirectoryError, match="injected catalog failure"):
+        PlayerWorkspace.open(tmp_path)
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
+        "layout_version"
+    ] == 2
+
+
+def test_layout_v3_requires_valid_private_consent_state(tmp_path: Path) -> None:
     PlayerWorkspace.open(tmp_path)
     consent_path = tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME
 
@@ -266,7 +337,7 @@ def test_layout_v2_requires_valid_private_consent_state(tmp_path: Path) -> None:
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v2_rejects_a_symlinked_consent_state(tmp_path: Path) -> None:
+def test_layout_v3_rejects_a_symlinked_consent_state(tmp_path: Path) -> None:
     PlayerWorkspace.open(tmp_path)
     consent_path = tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME
     target = tmp_path / "outside-consent"
@@ -274,6 +345,39 @@ def test_layout_v2_rejects_a_symlinked_consent_state(tmp_path: Path) -> None:
     target.chmod(0o600)
     consent_path.unlink()
     consent_path.symlink_to(target)
+
+    with pytest.raises(PlayerDataDirectoryError, match="Cannot safely open"):
+        PlayerWorkspace.open(tmp_path)
+
+
+def test_layout_v3_requires_valid_private_reference_catalog(tmp_path: Path) -> None:
+    PlayerWorkspace.open(tmp_path)
+    catalog_path = tmp_path / REFERENCE_ACTIVATION_CATALOG_FILENAME
+    canonical_payload = catalog_path.read_bytes()
+
+    catalog_path.unlink()
+    with pytest.raises(PlayerDataDirectoryError, match="Cannot safely open"):
+        PlayerWorkspace.open(tmp_path)
+
+    catalog_path.write_text("not-json", encoding="utf-8")
+    catalog_path.chmod(0o600)
+    with pytest.raises(PlayerDataDirectoryError, match="malformed or unsupported"):
+        PlayerWorkspace.open(tmp_path)
+
+    catalog_path.write_bytes(canonical_payload)
+    catalog_path.chmod(0o644)
+    with pytest.raises(PlayerDataDirectoryError, match="only by its owner"):
+        PlayerWorkspace.open(tmp_path)
+
+
+def test_layout_v3_rejects_a_symlinked_reference_catalog(tmp_path: Path) -> None:
+    PlayerWorkspace.open(tmp_path)
+    catalog_path = tmp_path / REFERENCE_ACTIVATION_CATALOG_FILENAME
+    target = tmp_path / "outside-reference-catalog"
+    target.write_bytes(catalog_path.read_bytes())
+    target.chmod(0o600)
+    catalog_path.unlink()
+    catalog_path.symlink_to(target)
 
     with pytest.raises(PlayerDataDirectoryError, match="Cannot safely open"):
         PlayerWorkspace.open(tmp_path)
@@ -361,7 +465,7 @@ def test_versioned_workspace_is_reread_beneath_the_startup_lock(
         read_count += 1
         if read_count == 2:
             _manifest_path(data_dir).write_text(
-                '{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
+                '{"layout_version":4,"schema":"poker-hero-player-workspace"}\n',
                 encoding="utf-8",
             )
             _manifest_path(data_dir).chmod(0o600)
@@ -413,7 +517,7 @@ def test_open_runtime_rejects_a_layout_changed_between_operations(
 ) -> None:
     workspace = PlayerWorkspace.open(tmp_path)
     _manifest_path(tmp_path).write_text(
-        '{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":4,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 

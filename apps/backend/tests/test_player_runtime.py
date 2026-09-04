@@ -72,6 +72,9 @@ from app.storage.imported_hand_store import (
     FileImportedHandStore,
     imported_hand_record_key,
 )
+from app.storage.reference_activation_catalog_store import (
+    REFERENCE_ACTIVATION_CATALOG_FILENAME,
+)
 from app.storage.remote_reference_consent_store import (
     REMOTE_REFERENCE_CONSENT_FILENAME,
 )
@@ -367,6 +370,7 @@ def test_player_runtime_opens_only_the_player_store(tmp_path: Path) -> None:
         ".poker-hero-data.lock",
         PLAYER_WORKSPACE_MANIFEST_FILENAME,
         REMOTE_REFERENCE_CONSENT_FILENAME,
+        REFERENCE_ACTIVATION_CATALOG_FILENAME,
         "imported-hands",
     }
 
@@ -1154,7 +1158,7 @@ def test_player_api_reports_a_layout_change_as_restart_required(
     client, runtime = player_client(tmp_path)
     session = exchange_session(client, runtime)
     (tmp_path / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":4,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
