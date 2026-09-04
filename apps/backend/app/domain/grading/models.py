@@ -105,6 +105,20 @@ class GradingModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
+def _normalize_policy_content(value: object) -> object:
+    if isinstance(value, Decimal):
+        if value == 0:
+            return "0"
+        return format(value.normalize(), "f")
+    if isinstance(value, dict):
+        return {
+            key: _normalize_policy_content(item) for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_normalize_policy_content(item) for item in value]
+    return value
+
+
 class ReferenceEvidence(GradingModel):
     """One immutable evidence record retained outside the runtime payload."""
 
@@ -291,12 +305,15 @@ class ResolvedReferencePolicy(GradingModel):
         """Fingerprint the exact completeness, action, frequency, sizing, and EV data."""
 
         payload = json.dumps(
-            {
-                "policy_complete": self.policy_complete,
-                "policy_lines": [
-                    line.model_dump(mode="json") for line in self.policy_lines
-                ],
-            },
+            _normalize_policy_content(
+                {
+                    "policy_complete": self.policy_complete,
+                    "policy_lines": [
+                        line.model_dump(mode="python")
+                        for line in self.policy_lines
+                    ],
+                }
+            ),
             ensure_ascii=True,
             separators=(",", ":"),
             sort_keys=True,

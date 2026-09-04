@@ -432,6 +432,31 @@ def test_source_qualification_must_bind_the_exact_policy_identity(
     assert result.learning_eligibility == "ineligible"
 
 
+def test_policy_content_binding_normalizes_equivalent_decimal_spellings() -> None:
+    target = decision()
+    resolved = reference(target)
+    equivalent = reference(
+        target,
+        lines=(
+            line("call", "0.6000", "-0"),
+            line("raise", "0.400", "-0.0300", total_committed_bb="3.000"),
+        ),
+    )
+    qualification = source_qualification(resolved)
+
+    assert resolved.policy_content_sha256() == equivalent.policy_content_sha256()
+
+    result = grade_decision(
+        target,
+        reference=equivalent,
+        source_qualification=qualification,
+    )
+
+    assert result.classification == "supported"
+    assert result.reason == "supported_policy_match"
+    assert result.policy_grade_eligibility == "gradeable"
+
+
 def test_context_mismatch_fails_closed_without_losing_attempted_reference() -> None:
     target = decision()
     attempted = reference(target, context_sha256="f" * 64)
