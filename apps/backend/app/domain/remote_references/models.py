@@ -39,6 +39,10 @@ Sha256Digest = Annotated[
     str,
     StringConstraints(pattern=r"^[a-f0-9]{64}$", strict=True),
 ]
+PolicyText = Annotated[
+    str,
+    StringConstraints(min_length=1, max_length=262_144, strict=True),
+]
 PositiveInteger = Annotated[int, Field(gt=0, strict=True)]
 TableSize = Annotated[int, Field(ge=2, le=10, strict=True)]
 PositiveDecimal = Annotated[
@@ -252,14 +256,19 @@ class RemoteReferenceDisclosure(RemoteReferenceModel):
     disclosure_revision: Identifier
     terms_revision: Identifier
     terms_sha256: Sha256Digest
+    terms_text: PolicyText
     privacy_policy_revision: Identifier
     privacy_policy_sha256: Sha256Digest
+    privacy_policy_text: PolicyText
     retention_policy_revision: Identifier
     retention_policy_sha256: Sha256Digest
+    retention_policy_text: PolicyText
     training_use_policy_revision: Identifier
     training_use_policy_sha256: Sha256Digest
+    training_use_policy_text: PolicyText
     logging_policy_revision: Identifier
     logging_policy_sha256: Sha256Digest
+    logging_policy_text: PolicyText
     route_schema_revision: Identifier
     route_schema_sha256: Sha256Digest
     outbound_categories: tuple[RemoteOutboundCategory, ...] = Field(min_length=1)
@@ -277,6 +286,41 @@ class RemoteReferenceDisclosure(RemoteReferenceModel):
     ) -> tuple[RemoteOutboundCategory, ...]:
         _validate_sorted_unique_categories(value)
         return value
+
+    @model_validator(mode="after")
+    def validate_policy_text_digests(self) -> Self:
+        policy_documents = (
+            ("terms", self.terms_text, self.terms_sha256),
+            (
+                "privacy policy",
+                self.privacy_policy_text,
+                self.privacy_policy_sha256,
+            ),
+            (
+                "retention policy",
+                self.retention_policy_text,
+                self.retention_policy_sha256,
+            ),
+            (
+                "training-use policy",
+                self.training_use_policy_text,
+                self.training_use_policy_sha256,
+            ),
+            (
+                "logging policy",
+                self.logging_policy_text,
+                self.logging_policy_sha256,
+            ),
+        )
+        for label, text, expected_sha256 in policy_documents:
+            if not text.strip():
+                raise ValueError(f"{label} text must contain displayable content")
+            actual_sha256 = sha256(text.encode("utf-8")).hexdigest()
+            if actual_sha256 != expected_sha256:
+                raise ValueError(
+                    f"{label} SHA-256 must match the exact UTF-8 policy text"
+                )
+        return self
 
     def semantic_digest(self) -> str:
         return _canonical_sha256(self)

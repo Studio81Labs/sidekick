@@ -666,9 +666,11 @@ The local player application can now persist one authoritative
 remote-reference consent snapshot when its embedding composition supplies a
 fully validated active provider-policy snapshot. Consent remains unavailable
 when no such policy is supplied; the default packaged composition does not
-configure one. Authenticated local API routes disclose the active policy and
-exact outbound categories, accept only affirmative acknowledgements bound to
-the displayed complete policy digest and policy/disclosure revisions, and revoke the current
+configure one. Authenticated local API routes disclose the active policy, exact
+outbound categories, and exact UTF-8 terms, privacy, retention, training-use,
+and logging policy text whose individual hashes are covered by the complete
+policy digest. They accept only affirmative acknowledgements bound to that
+displayed digest and the policy/disclosure revisions, and revoke the current
 generation idempotently. Acceptance and revocation use compare-and-set
 generations under the exclusive player-volume lock and atomically replace an
 owner-only state file. The file contains no credentials, outbound request,

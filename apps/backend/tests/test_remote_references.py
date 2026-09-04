@@ -63,6 +63,19 @@ CATEGORIES = (
     "stack_wager_pot",
     "table_position",
 )
+TERMS_TEXT = (
+    "Remote solved-reference lookups provide conditional educational guidance only."
+)
+PRIVACY_POLICY_TEXT = (
+    "The provider receives only the outbound categories listed in this disclosure."
+)
+RETENTION_POLICY_TEXT = "Request and response payloads are retained for 30 days."
+TRAINING_USE_POLICY_TEXT = (
+    "Request and response payloads are not used to train provider models."
+)
+LOGGING_POLICY_TEXT = (
+    "Operational logs retain request identifiers and failure metadata for 30 days."
+)
 
 
 def decision_point() -> HeroDecisionPoint:
@@ -145,15 +158,28 @@ def disclosure(**updates: object) -> RemoteReferenceDisclosure:
     values = {
         "disclosure_revision": "disclosure-v1",
         "terms_revision": "terms-v1",
-        "terms_sha256": DIGEST_A,
+        "terms_sha256": sha256(TERMS_TEXT.encode("utf-8")).hexdigest(),
+        "terms_text": TERMS_TEXT,
         "privacy_policy_revision": "privacy-v1",
-        "privacy_policy_sha256": DIGEST_B,
+        "privacy_policy_sha256": sha256(
+            PRIVACY_POLICY_TEXT.encode("utf-8")
+        ).hexdigest(),
+        "privacy_policy_text": PRIVACY_POLICY_TEXT,
         "retention_policy_revision": "retention-v1",
-        "retention_policy_sha256": DIGEST_C,
+        "retention_policy_sha256": sha256(
+            RETENTION_POLICY_TEXT.encode("utf-8")
+        ).hexdigest(),
+        "retention_policy_text": RETENTION_POLICY_TEXT,
         "training_use_policy_revision": "training-v1",
-        "training_use_policy_sha256": DIGEST_D,
+        "training_use_policy_sha256": sha256(
+            TRAINING_USE_POLICY_TEXT.encode("utf-8")
+        ).hexdigest(),
+        "training_use_policy_text": TRAINING_USE_POLICY_TEXT,
         "logging_policy_revision": "logging-v1",
-        "logging_policy_sha256": DIGEST_A,
+        "logging_policy_sha256": sha256(
+            LOGGING_POLICY_TEXT.encode("utf-8")
+        ).hexdigest(),
+        "logging_policy_text": LOGGING_POLICY_TEXT,
         "route_schema_revision": "route-v1",
         "route_schema_sha256": DIGEST_B,
         "outbound_categories": CATEGORIES,
@@ -2103,6 +2129,29 @@ def test_disclosure_rejects_ambiguous_or_noncanonical_categories(
 ) -> None:
     with pytest.raises(ValidationError):
         disclosure(outbound_categories=categories)
+
+
+@pytest.mark.parametrize(
+    "text_field",
+    [
+        "terms_text",
+        "privacy_policy_text",
+        "retention_policy_text",
+        "training_use_policy_text",
+        "logging_policy_text",
+    ],
+)
+def test_disclosure_requires_exact_digest_bound_policy_text(text_field: str) -> None:
+    with pytest.raises(
+        ValidationError,
+        match="must match the exact UTF-8 policy text",
+    ):
+        disclosure(**{text_field: "Changed after its digest was published."})
+
+
+def test_disclosure_rejects_blank_policy_text() -> None:
+    with pytest.raises(ValidationError, match="must contain displayable content"):
+        disclosure(terms_text="   ")
 
 
 def test_remote_failures_remain_ungraded_without_fallback() -> None:

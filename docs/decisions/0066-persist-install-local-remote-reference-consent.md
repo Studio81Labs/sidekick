@@ -42,11 +42,14 @@ composition supplies none. Authenticated local routes expose the non-secret
 policy/disclosure required for an informed UI, accept consent, and revoke it.
 Mutation routes retain the runtime's Origin and CSRF enforcement.
 
-Clients acknowledge the displayed provider-policy digest and policy/disclosure
-revisions and affirm the disclosure, network dependency, and retention/use
-terms. They cannot choose provider identity, endpoint, outbound categories,
-consent ID, or timestamps. The server checks the complete policy digest and
-derives the persisted values from its policy snapshot. Acceptance
+The offer includes the exact UTF-8 terms, privacy, retention, training-use, and
+logging policy text. Every document must match its declared SHA-256, and all
+text and hashes are covered by the displayed complete provider-policy digest.
+Clients acknowledge that digest and the policy/disclosure revisions and affirm
+the disclosure, network dependency, and retention/use terms. They cannot choose
+provider identity, endpoint, outbound categories, consent ID, or timestamps.
+The server checks the complete policy digest and derives the persisted values
+from its policy snapshot. Acceptance
 compare-and-sets the current generation and creates the next one. Revocation
 compare-and-sets the current generation, changes it to `revoked` without
 changing that acceptance generation, and is idempotent for retries. Both

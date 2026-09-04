@@ -65,11 +65,13 @@ not supply a provider policy, so consent cannot be accepted and no remote
 request is possible. An embedding application must supply an already validated,
 active provider-policy snapshot before the authenticated API will disclose an
 offer or accept consent. Consent records the exact complete policy digest,
-policy/disclosure revisions, and disclosed outbound categories; revocation
-takes effect in the authoritative local state immediately. No remote transport
-consumes this state yet. Consent is intentionally absent from backup and
-restore, so a restored installation must consent again after a future provider
-is configured.
+policy/disclosure revisions, and disclosed outbound categories. The offer
+includes the exact terms, privacy, retention, training-use, and logging policy
+text, and validates each text against its declared SHA-256 before it can be
+shown or accepted. Revocation takes effect in the authoritative local state
+immediately. No remote transport consumes this state yet. Consent is
+intentionally absent from backup and restore, so a restored installation must
+consent again after a future provider is configured.
 
 ## Start and stop
 

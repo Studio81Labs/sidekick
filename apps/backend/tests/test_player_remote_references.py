@@ -1,5 +1,6 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,12 @@ from app.player_remote_references import (
     revoke_player_remote_reference_consent,
 )
 from app.player_workspace import PlayerWorkspace
-from test_remote_references import provider_policy
+from test_remote_references import (
+    RETENTION_POLICY_TEXT,
+    TERMS_TEXT,
+    disclosure,
+    provider_policy,
+)
 
 
 NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -66,6 +72,10 @@ def test_consent_is_server_derived_from_the_exact_active_policy() -> None:
     assert status.provider is not None
     assert status.provider.provider_policy_sha256 == policy.semantic_digest()
     assert status.provider.disclosure == policy.disclosure
+    assert status.provider.disclosure.terms_text == TERMS_TEXT
+    assert (
+        status.provider.disclosure.retention_policy_text == RETENTION_POLICY_TEXT
+    )
     assert status.consent is not None
     assert status.consent.consent_generation == 1
     serialized = status.model_dump(mode="json", by_alias=True)
@@ -133,6 +143,34 @@ def test_acceptance_requires_every_affirmation(field: str) -> None:
 
     with pytest.raises(ValidationError):
         PlayerRemoteReferenceConsentRequest.model_validate(values)
+
+
+def test_acceptance_is_bound_to_the_exact_displayed_policy_text() -> None:
+    changed_terms = "Changed terms that must be reviewed before consent."
+    policy = provider_policy(
+        disclosure=disclosure(
+            terms_text=changed_terms,
+            terms_sha256=sha256(changed_terms.encode("utf-8")).hexdigest(),
+        )
+    )
+
+    with pytest.raises(PlayerRemoteReferenceConsentConflict, match="review it again"):
+        accept_player_remote_reference_consent(
+            policy=policy,
+            current=None,
+            request=consent_request(),
+            at=NOW,
+        )
+
+    accepted = accept_player_remote_reference_consent(
+        policy=policy,
+        current=None,
+        request=consent_request(
+            expected_provider_policy_sha256=policy.semantic_digest()
+        ),
+        at=NOW,
+    )
+    assert accepted.disclosure_sha256 == policy.disclosure.semantic_digest()
 
 
 def test_revocation_is_immediate_idempotent_and_allows_a_new_generation() -> None:
