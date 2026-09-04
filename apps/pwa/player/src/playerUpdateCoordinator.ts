@@ -14,6 +14,7 @@ export interface PlayerDraftState {
   backupSelected: boolean;
   importFilesSelected: boolean;
   permanentDeletionReasonChanged: boolean;
+  reimportFileSelected: boolean;
 }
 
 interface PlayerUpdateState {
@@ -37,6 +38,7 @@ export function playerUpdateDirtyReasons(drafts: PlayerDraftState): string[] {
   return [
     drafts.backupSelected ? "selected backup archive" : null,
     drafts.importFilesSelected ? "selected hand-history files" : null,
+    drafts.reimportFileSelected ? "selected deleted-hand reimport file" : null,
     drafts.approvalChanged ? "canonical approval draft" : null,
     drafts.approvalStateReasonChanged ? "approval-state reason" : null,
     drafts.permanentDeletionReasonChanged ? "permanent-deletion reason" : null,

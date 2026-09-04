@@ -23,7 +23,7 @@ async function sha256(value: BufferSource): Promise<string> {
   return bytesToHex(await window.crypto.subtle.digest("SHA-256", value));
 }
 
-async function fingerprintFile(file: File): Promise<string> {
+export async function fingerprintPlayerImportFile(file: File): Promise<string> {
   const filenameHash = await sha256(new TextEncoder().encode(file.name));
   const contentHash = await sha256(await file.arrayBuffer());
   return `${filenameHash}:${file.size}:${contentHash}`;
@@ -32,7 +32,7 @@ async function fingerprintFile(file: File): Promise<string> {
 async function fingerprintFiles(files: File[]): Promise<string[]> {
   const fingerprints: string[] = [];
   for (const file of files) {
-    fingerprints.push(await fingerprintFile(file));
+    fingerprints.push(await fingerprintPlayerImportFile(file));
   }
   return fingerprints;
 }

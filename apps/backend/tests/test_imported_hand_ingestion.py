@@ -9,6 +9,8 @@ from time import sleep
 import pytest
 
 from app.application.imported_hand_ingestion import (
+    AuthorizedHandReimportConflict,
+    AuthorizedHandReimportService,
     ImportedHandImportIdConflict,
     ImportedHandIngestionBlocked,
     ImportedHandIngestionError,
@@ -16,6 +18,7 @@ from app.application.imported_hand_ingestion import (
     ParsedImportedHandCandidate,
 )
 from app.domain.imported_hands import (
+    DeletionRequest,
     DetectedImportedHand,
     ImportedHandLifecycle,
     ImportedHandRecord,
@@ -42,6 +45,7 @@ from app.player_workspace import (
 from app.storage.imported_hand_store import (
     DecisionArtifactIntegrityError,
     FileImportedHandStore,
+    ImportedHandCascade,
     imported_hand_record_key,
 )
 from test_imported_hand_store import (
@@ -101,6 +105,166 @@ def parsed_candidate(
         content_sha256=imported_hand_state_sha256(state),
     )
     return ParsedImportedHandCandidate(raw=raw, detection=detection)
+
+
+def test_authorized_reimport_replaces_tombstone_with_fresh_pending_evidence(
+    tmp_path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    candidate = parsed_candidate(1)
+    key = imported_hand_record_key(candidate.raw.identity)
+    approved = approved_record(candidate.raw.identity)
+    store.save(key, approved)
+    store.save_decisions(key, extract_hero_decision_points(approved))
+    tombstone = tombstone_record(generation=3)
+    store.save(key, tombstone)
+
+    result = AuthorizedHandReimportService(store=store).reimport(
+        key,
+        candidate,
+        expected=tombstone,
+        changed_at=tombstone.lifecycle.changed_at,
+    )
+
+    assert result.disposition == "restored_pending_review"
+    assert result.record.lifecycle.status == "pending_review"
+    assert result.record.lifecycle.reason == "authorized reimport"
+    assert result.record.lifecycle.deletion_generation == 4
+    assert result.record.lifecycle.changed_at > tombstone.lifecycle.changed_at
+    assert result.record.identity == candidate.raw.identity
+    assert result.record.raw_sources[0].raw_text == RAW_TEXT
+    assert result.record.raw_sources[0].initial_detection_id == "detection-1"
+    assert result.record.detections == [candidate.detection]
+    assert result.record.conflicts == []
+    assert result.record.canonical_revisions == []
+    assert result.record.deletion_receipt is None
+    assert store.list_decision_artifacts(key) == []
+    assert classify_restore(result.record, tombstone).kind == (
+        "stale_deletion_generation"
+    )
+
+
+def test_authorized_reimport_replaces_deletion_pending_audit_atomically(
+    tmp_path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    candidate = parsed_candidate(1)
+    key = imported_hand_record_key(candidate.raw.identity)
+    approved = approved_record(candidate.raw.identity)
+    pending = approved.model_copy(
+        update={
+            "lifecycle": ImportedHandLifecycle(
+                status="deletion_pending",
+                deletion_generation=2,
+                changed_at=NOW + timedelta(hours=1),
+                reason="remove retained evidence",
+                deletion_request=DeletionRequest(
+                    generation=2,
+                    requested_at=NOW + timedelta(hours=1),
+                ),
+            )
+        }
+    )
+    pending = ImportedHandRecord.model_validate(pending.model_dump(mode="python"))
+    store.save(key, pending)
+    store.save_decisions(key, extract_hero_decision_points(approved))
+
+    result = AuthorizedHandReimportService(store=store).reimport(
+        key,
+        candidate,
+        expected=pending,
+        changed_at=NOW + timedelta(hours=2),
+    )
+
+    assert result.record.lifecycle.deletion_generation == 3
+    assert result.record.lifecycle.deletion_request is None
+    assert len(result.record.raw_sources) == 1
+    assert result.record.raw_sources[0].raw_source_id == "source-1"
+    assert result.record.canonical_revisions == []
+    assert store.list_decision_artifacts(key) == []
+
+
+def test_authorized_reimport_exact_retry_keeps_first_observation(tmp_path) -> None:
+    store = FileImportedHandStore(tmp_path)
+    service = AuthorizedHandReimportService(store=store)
+    candidate = parsed_candidate(1)
+    key = imported_hand_record_key(candidate.raw.identity)
+    tombstone = tombstone_record(generation=1)
+    store.save(key, tombstone)
+    first = service.reimport(
+        key,
+        candidate,
+        expected=tombstone,
+        changed_at=NOW + timedelta(hours=1),
+    )
+    raw_payload = candidate.raw.model_dump(mode="python")
+    raw_payload["provenance"]["imported_at"] = NOW + timedelta(hours=2)
+    detection_payload = candidate.detection.model_dump(mode="python")
+    detection_payload["detected_at"] = NOW + timedelta(hours=2)
+    replay = ParsedImportedHandCandidate(
+        raw=RawHandHistory.model_validate(raw_payload),
+        detection=DetectedImportedHand.model_validate(detection_payload),
+    )
+
+    duplicate = service.retry(
+        key,
+        replay,
+        expected_deletion_generation=1,
+    )
+
+    assert duplicate is not None
+    assert duplicate.disposition == "duplicate_request"
+    assert duplicate.record == first.record
+
+
+def test_authorized_reimport_refuses_an_unrelated_record_key(tmp_path) -> None:
+    store = FileImportedHandStore(tmp_path)
+    candidate = parsed_candidate(1)
+    other_key = imported_hand_record_key(sample_identity(hand_ordinal=2))
+    tombstone = tombstone_record(generation=1)
+    store.save(other_key, tombstone)
+
+    with pytest.raises(AuthorizedHandReimportConflict, match="identity"):
+        AuthorizedHandReimportService(store=store).reimport(
+            other_key,
+            candidate,
+            expected=tombstone,
+            changed_at=NOW + timedelta(hours=1),
+        )
+
+    assert store.get(other_key) == tombstone
+
+
+def test_authorized_reimport_precommit_failure_preserves_old_incarnation(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    candidate = parsed_candidate(1)
+    key = imported_hand_record_key(candidate.raw.identity)
+    approved = approved_record(candidate.raw.identity)
+    store.save(key, approved)
+    store.save_decisions(key, extract_hero_decision_points(approved))
+    tombstone = tombstone_record(generation=2)
+    store.save(key, tombstone)
+    artifacts = store.list_decision_artifacts(key)
+
+    def fail_stage_record(*_args, **_kwargs) -> None:
+        raise OSError("simulated reimport staging failure")
+
+    monkeypatch.setattr(ImportedHandCascade, "stage_record", fail_stage_record)
+
+    with pytest.raises(OSError, match="staging failure"):
+        AuthorizedHandReimportService(store=store).reimport(
+            key,
+            candidate,
+            expected=tombstone,
+            changed_at=NOW + timedelta(hours=1),
+        )
+
+    assert store.get(key) == tombstone
+    assert store.list_decision_artifacts(key) == artifacts
+    assert store.has_interrupted_write(key) is False
 
 
 def test_ingestion_creates_a_pending_review_record(tmp_path) -> None:

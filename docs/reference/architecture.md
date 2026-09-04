@@ -84,7 +84,11 @@ binds exact retries to a unique approval ID.
 stale-safe explicit resolution of retained import conflicts. Keeping the
 preserved source may retain active learning; selecting a source first returns
 an active hand to pending review and requires a separate explicit approval.
-Authorized tombstone reimport, grading, and learning routes remain unwired.
+[ADR 0064](../decisions/0064-expose-authorized-deleted-hand-reimport.md) adds
+explicit deleted-hand reimport. It advances the deletion generation and creates
+a fresh pending-review aggregate while atomically removing the old
+incarnation's retained decision artifacts. Grading and learning routes remain
+unwired.
 CI exercises that separation over real listeners. A browser consumes a one-use
 launch URL from the production Uvicorn player application, proves all player
 API traffic stays on its exact loopback origin, and verifies the service worker
@@ -508,19 +512,21 @@ Retries of the published request or completed purge are idempotent. Older
 backups remain subject to `classify_restore`, so they cannot reactivate a
 purged generation without an explicit authorized reimport.
 
-What is deliberately not wired yet: there is no conflict-resolution or
-authorized tombstone re-import HTTP surface, and the hosted screenshot workflow
-is not a V2 player-data path.
+The hosted screenshot workflow is not a V2 player-data path.
 The local runtime constructs and recovers the player store and exposes
 authenticated storage metadata, sanitized record projections, canonical
 correction/approval/reapproval, approval withdrawal/rejection, permanent
-deletion, bounded PokerStars import, and whole-store V2 backup/restore.
+deletion, bounded PokerStars import, explicit deleted-hand reimport, import
+conflict resolution, and whole-store V2 backup/restore.
 These lifecycle mutations inherit the session, Host/Origin, and CSRF boundary
 established by ADR 0050. Withdrawal and rejection retain inactive audit;
 deletion first deactivates the record, then purges its hand-linked audit and
-derived artifacts to a generation-bound tombstone. No player route can promote
-V1 screenshot state; canonical approval accepts only a complete review of one
-retained imported-hand detection.
+derived artifacts to a generation-bound tombstone. Authorized reimport advances
+that generation again, replaces only the selected deleted incarnation with
+fresh parser evidence at `pending_review`, and removes any prior-incarnation
+artifact in the same cascade. No player route can promote V1 screenshot state;
+canonical approval accepts only a complete review of one retained imported-hand
+detection.
 
 Hero decision-point extraction lives in
 `app/domain/imported_hands/decisions.py` and consumes the aggregate's

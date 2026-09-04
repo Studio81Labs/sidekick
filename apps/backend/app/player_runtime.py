@@ -52,6 +52,7 @@ from app.player_hands import (
     PlayerHandCloseRequest,
     PlayerHandConflictResolutionRequest,
     PlayerHandDeleteRequest,
+    PlayerHandReimportRequest,
     PlayerRequestId,
 )
 from app.player_imports import (
@@ -67,11 +68,13 @@ from app.player_namespace import (
     PLAYER_API_PREFIX,
     is_player_api_scope,
 )
+from app.player_reimports import reimport_pokerstars_hand
 from app.player_workspace import (
     PlayerDataDirectoryError,
     PlayerHandApprovalInvalid,
     PlayerHandConflictResolutionInvalid,
     PlayerHandRecoveryRequired,
+    PlayerHandReimportInvalid,
     PlayerHandTransitionConflict,
     PlayerStorageRecoveryRequired,
     PlayerWorkspace,
@@ -465,12 +468,26 @@ def _valid_player_import_filename(filename: str) -> bool:
     )
 
 
+def _is_player_import_upload_path(path: str) -> bool:
+    if path == f"{PLAYER_API_PREFIX}/imports":
+        return True
+    prefix = f"{PLAYER_API_PREFIX}/hands/"
+    return path.startswith(prefix) and path.endswith("/reimport")
+
+
 class PlayerImportBodyLimitMiddleware:
     """Bound the raw multipart body before Starlette can spool file parts."""
 
-    def __init__(self, app: ASGIApp, *, limit: int) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        limit: int,
+        reimport_limit: int | None = None,
+    ) -> None:
         self.app = app
         self.limit = limit
+        self.reimport_limit = reimport_limit if reimport_limit is not None else limit
 
     async def __call__(
         self,
@@ -481,11 +498,16 @@ class PlayerImportBodyLimitMiddleware:
         if not (
             scope["type"] == "http"
             and scope.get("method", "").upper() == "POST"
-            and scope.get("path") == f"{PLAYER_API_PREFIX}/imports"
+            and _is_player_import_upload_path(scope.get("path", ""))
         ):
             await self.app(scope, receive, send)
             return
 
+        body_limit = (
+            self.reimport_limit
+            if scope.get("path", "").endswith("/reimport")
+            else self.limit
+        )
         content_lengths = _header_values(scope, b"content-length")
         if len(content_lengths) > 1:
             await _json_denial(400, "Content-Length must be unambiguous")(
@@ -506,7 +528,7 @@ class PlayerImportBodyLimitMiddleware:
                     send,
                 )
                 return
-            if declared_length > self.limit:
+            if declared_length > body_limit:
                 await _json_denial(413, "The player import body is too large")(
                     scope,
                     receive,
@@ -522,7 +544,7 @@ class PlayerImportBodyLimitMiddleware:
             if message["type"] != "http.request":
                 continue
             chunk = message.get("body", b"")
-            if len(chunk) > self.limit - len(body):
+            if len(chunk) > body_limit - len(body):
                 await _json_denial(413, "The player import body is too large")(
                     scope,
                     receive,
@@ -1198,6 +1220,131 @@ def create_player_runtime(
                 )
         return JSONResponse(payload.model_dump(mode="json"))
 
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/reimport")
+    async def reimport_deleted_player_hand(
+        request: Request,
+        record_key: str,
+    ) -> JSONResponse:
+        media_type = request.headers.get("content-type", "").partition(";")[0]
+        if media_type.strip().lower() != "multipart/form-data":
+            return _json_denial(
+                415,
+                "Authorized hand reimports require multipart form data",
+            )
+        try:
+            async with request.form(
+                max_files=1,
+                max_fields=5,
+                max_part_size=4096,
+            ) as form:
+                allowed_fields = {
+                    "request_id",
+                    "expected_record_version",
+                    "expected_lifecycle_status",
+                    "expected_deletion_generation",
+                    "expected_lifecycle_changed_at",
+                    "file",
+                }
+                if any(
+                    key not in allowed_fields
+                    for key, _value in form.multi_items()
+                ):
+                    return _json_denial(
+                        400,
+                        "Authorized hand reimport form contains an unsupported field",
+                    )
+                raw_fields: dict[str, str] = {}
+                for field_name in allowed_fields - {"file"}:
+                    values = form.getlist(field_name)
+                    if len(values) != 1 or not isinstance(values[0], str):
+                        return _json_denial(
+                            400,
+                            f"Authorized hand reimport requires one {field_name} field",
+                        )
+                    raw_fields[field_name] = values[0]
+                try:
+                    deletion_generation = int(
+                        raw_fields["expected_deletion_generation"]
+                    )
+                    reimport_request = PlayerHandReimportRequest.model_validate(
+                        {
+                            **raw_fields,
+                            "expected_deletion_generation": deletion_generation,
+                        }
+                    )
+                except (ValidationError, ValueError):
+                    return _json_denial(
+                        400,
+                        "Authorized hand reimport preconditions are invalid",
+                    )
+                file_values = form.getlist("file")
+                if len(file_values) != 1 or not isinstance(
+                    file_values[0],
+                    UploadFile,
+                ):
+                    return _json_denial(
+                        400,
+                        "Authorized hand reimport requires one PokerStars text file",
+                    )
+                sources_or_error = await _read_player_import_files(
+                    [file_values[0]],
+                    max_player_import_file_bytes=max_player_import_file_bytes,
+                    max_player_import_batch_bytes=max_player_import_file_bytes,
+                )
+        except StarletteHTTPException:
+            return _json_denial(
+                413,
+                "Authorized hand reimport multipart limits exceeded",
+            )
+        if isinstance(sources_or_error, JSONResponse):
+            return sources_or_error
+        source_or_rejection = sources_or_error[0]
+        if isinstance(source_or_rejection, PlayerImportFileOutcome):
+            diagnostic = source_or_rejection.diagnostics[0]
+            status_code = (
+                413
+                if diagnostic.code == "file_too_large"
+                else 415
+                if diagnostic.code == "unsupported_media_type"
+                else 422
+            )
+            return _json_denial(status_code, diagnostic.message)
+
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                outcome = await run_in_threadpool(
+                    reimport_pokerstars_hand,
+                    workspace,
+                    record_key,
+                    request=reimport_request,
+                    imported_at=datetime.now(timezone.utc),
+                    source=source_or_rejection,
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except PlayerHandReimportInvalid as exc:
+                return _json_denial(422, str(exc))
+            except (PlayerHandTransitionConflict, LifecycleCascadeError) as exc:
+                return _json_denial(409, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (PendingCascadeError, PlayerHandRecoveryRequired):
+                return _json_denial(
+                    503,
+                    "This hand has an interrupted authorized reimport; restart"
+                    " the local player runtime so recovery can finish",
+                )
+            except (DataLockError, OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "Authorized reimport did not finish safely; retry the exact"
+                    " request before selecting another file",
+                )
+        return JSONResponse(outcome.model_dump(mode="json"))
+
     @app.post(f"{PLAYER_API_PREFIX}/imports")
     async def import_player_pokerstars_files(
         request: Request,
@@ -1383,6 +1530,10 @@ def create_player_runtime(
         app,
         limit=(
             max_player_import_batch_bytes
+            + PLAYER_IMPORT_MULTIPART_OVERHEAD_BYTES
+        ),
+        reimport_limit=(
+            max_player_import_file_bytes
             + PLAYER_IMPORT_MULTIPART_OVERHEAD_BYTES
         ),
     )

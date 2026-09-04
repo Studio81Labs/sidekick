@@ -34,6 +34,10 @@ class ImportedHandImportIdConflict(ImportedHandIngestionError):
     """One import id was reused for different source evidence."""
 
 
+class AuthorizedHandReimportConflict(ImportedHandIngestionError):
+    """A candidate cannot cross the retained deletion boundary as requested."""
+
+
 @dataclass(frozen=True)
 class ParsedImportedHandCandidate:
     """One adapter-produced raw source and its detected, unapproved state."""
@@ -54,6 +58,21 @@ IngestionDisposition = Literal[
 class ImportedHandIngestionResult:
     record_key: str
     disposition: IngestionDisposition
+    record: ImportedHandRecord
+
+
+AuthorizedReimportDisposition = Literal[
+    "restored_pending_review",
+    "duplicate_request",
+]
+
+
+@dataclass(frozen=True)
+class AuthorizedHandReimportResult:
+    """One explicit deletion-boundary replacement or its exact retry."""
+
+    record_key: str
+    disposition: AuthorizedReimportDisposition
     record: ImportedHandRecord
 
 
@@ -147,6 +166,152 @@ class ImportedHandIngestionService:
             disposition=disposition,
             record=record,
         )
+
+
+class AuthorizedHandReimportService:
+    """Replace one deleted incarnation with fresh, unapproved parser evidence.
+
+    Callers must hold the same identity-exclusive thread, process, and data
+    locks as ordinary ingestion for the complete retry/precondition/cascade
+    sequence. The candidate provenance is the durable authorization-attempt
+    binding: exact retries keep the first server timestamps, while another
+    candidate reusing that import ID fails closed.
+    """
+
+    def __init__(self, *, store: ImportedHandRepository) -> None:
+        self._store = store
+
+    def retry(
+        self,
+        record_key: str,
+        candidate: ParsedImportedHandCandidate,
+        *,
+        expected_deletion_generation: int,
+    ) -> AuthorizedHandReimportResult | None:
+        """Recognize only the fresh successor produced by this exact request."""
+
+        raw, detection = _validated_candidate(candidate)
+        resolution = self._store.resolve_reimport(
+            raw.identity,
+            raw,
+            candidate_detection=detection,
+        )
+        if resolution.record_key != record_key:
+            raise AuthorizedHandReimportConflict(
+                "the parsed hand identity does not match the selected tombstone"
+            )
+        current = self._store.get(record_key)
+        duplicate = _duplicate_import_result(
+            record_key,
+            current,
+            raw,
+            detection,
+        )
+        if duplicate is None:
+            return None
+        if not _is_authorized_reimport_successor(
+            current,
+            expected_deletion_generation=expected_deletion_generation,
+        ):
+            raise AuthorizedHandReimportConflict(
+                "this reimport request ID is already bound outside the expected"
+                " deletion generation"
+            )
+        return AuthorizedHandReimportResult(
+            record_key=record_key,
+            disposition="duplicate_request",
+            record=current,
+        )
+
+    def reimport(
+        self,
+        record_key: str,
+        candidate: ParsedImportedHandCandidate,
+        *,
+        expected: ImportedHandRecord,
+        changed_at: datetime,
+    ) -> AuthorizedHandReimportResult:
+        """Publish a new pending-review incarnation and purge old artifacts."""
+
+        raw, detection = _validated_candidate(candidate)
+        resolution = self._store.resolve_reimport(
+            raw.identity,
+            raw,
+            candidate_detection=detection,
+        )
+        if resolution.record_key != record_key:
+            raise AuthorizedHandReimportConflict(
+                "the parsed hand identity does not match the selected tombstone"
+            )
+        if expected.lifecycle.status not in {"deleted", "deletion_pending"}:
+            raise AuthorizedHandReimportConflict(
+                "only a deleted or deletion-pending hand can be explicitly reimported"
+            )
+
+        bound_raw = _bind_initial_detection(raw, detection)
+        successor_changed_at = max(
+            changed_at,
+            raw.provenance.imported_at,
+            detection.detected_at,
+        )
+        if successor_changed_at <= expected.lifecycle.changed_at:
+            try:
+                successor_changed_at = expected.lifecycle.changed_at + timedelta(
+                    microseconds=1
+                )
+            except OverflowError as exc:
+                raise AuthorizedHandReimportConflict(
+                    "the hand lifecycle timestamp cannot advance beyond its stored value"
+                ) from exc
+        successor = ImportedHandRecord(
+            identity=raw.identity,
+            raw_sources=[bound_raw],
+            detections=[detection],
+            lifecycle=ImportedHandLifecycle(
+                status="pending_review",
+                deletion_generation=(
+                    expected.lifecycle.deletion_generation + 1
+                ),
+                changed_at=successor_changed_at,
+                reason="authorized reimport",
+            ),
+        )
+
+        with self._store.begin_cascade(
+            record_key,
+            operation="authorized_reimport",
+        ) as cascade:
+            if self._store.get(record_key) != expected:
+                raise AuthorizedHandReimportConflict(
+                    "the retained hand changed before reimport publication"
+                )
+            artifacts = self._store.list_decision_artifacts(record_key)
+            cascade.stage_record(successor)
+            for _revision, _generation, filename in artifacts:
+                cascade.stage_decisions_delete(filename)
+        return AuthorizedHandReimportResult(
+            record_key=record_key,
+            disposition="restored_pending_review",
+            record=successor,
+        )
+
+
+def _is_authorized_reimport_successor(
+    record: ImportedHandRecord,
+    *,
+    expected_deletion_generation: int,
+) -> bool:
+    return (
+        record.lifecycle.status == "pending_review"
+        and record.lifecycle.reason == "authorized reimport"
+        and record.lifecycle.deletion_generation
+        == expected_deletion_generation + 1
+        and len(record.raw_sources) == 1
+        and len(record.detections) == 1
+        and not record.conflicts
+        and not record.canonical_revisions
+        and record.deletion_receipt is None
+    )
 
 
 def _validated_candidate(

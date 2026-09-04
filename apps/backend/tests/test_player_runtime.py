@@ -38,7 +38,7 @@ from app.player_main import (
     packaged_player_data_dir,
 )
 from app.player_backup import PlayerBackupRestoreResult, PlayerBackupStorageError
-from app.player_hands import player_hand_record_version
+from app.player_hands import get_player_hand, player_hand_record_version
 from app.player_namespace import (
     DenyHostedPlayerNamespaceMiddleware,
     is_player_api_path,
@@ -89,9 +89,19 @@ APPROVAL_REQUEST_ID = "33333333-3333-4333-8333-333333333333"
 APPROVAL_RETRY_REQUEST_ID = "44444444-4444-4444-8444-444444444444"
 IMPORT_REQUEST_ID = "55555555-5555-4555-8555-555555555555"
 SECOND_IMPORT_REQUEST_ID = "66666666-6666-4666-8666-666666666666"
+REIMPORT_REQUEST_ID = "77777777-7777-4777-8777-777777777777"
 
 
-def test_player_import_body_limit_rejects_a_chunk_before_copying_it() -> None:
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/player/imports",
+        f"/api/player/hands/{'a' * 64}/reimport",
+    ],
+)
+def test_player_import_body_limit_rejects_a_chunk_before_copying_it(
+    path: str,
+) -> None:
     downstream_called = False
     sent: list[dict[str, object]] = []
 
@@ -115,8 +125,8 @@ def test_player_import_body_limit_rejects_a_chunk_before_copying_it() -> None:
         "http_version": "1.1",
         "method": "POST",
         "scheme": "http",
-        "path": "/api/player/imports",
-        "raw_path": b"/api/player/imports",
+        "path": path,
+        "raw_path": path.encode("ascii"),
         "query_string": b"",
         "root_path": "",
         "headers": [],
@@ -1459,6 +1469,162 @@ def test_player_import_marks_retryable_storage_outcomes(
         "storage_busy"
     )
     assert runtime.workspace.imported_hands.list_keys() == []
+
+
+def test_player_authorized_reimport_replaces_tombstone_and_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    source = (POKERSTARS_FIXTURES_DIR / "synthetic-heads-up.txt").read_bytes()
+    headers = player_mutation_headers(session)
+    imported = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers=headers,
+    )
+    key = imported.json()["files"][0]["hands"][0]["record_key"]
+    live = runtime.workspace.imported_hands.get(key)
+    deleted = client.post(
+        f"/api/player/hands/{key}/delete",
+        json=hand_delete_payload(live, reason="Remove this imported hand"),
+        headers=headers,
+    )
+    tombstone = runtime.workspace.imported_hands.get(key)
+    form = {
+        "request_id": REIMPORT_REQUEST_ID,
+        "expected_record_version": player_hand_record_version(tombstone),
+        "expected_lifecycle_status": "deleted",
+        "expected_deletion_generation": str(
+            tombstone.lifecycle.deletion_generation
+        ),
+        "expected_lifecycle_changed_at": (
+            tombstone.lifecycle.changed_at.isoformat()
+        ),
+    }
+
+    unauthorized = client.post(
+        f"/api/player/hands/{key}/reimport",
+        data=form,
+        files={"file": ("heads-up.txt", source, "text/plain")},
+        headers={"Origin": PLAYER_ORIGIN},
+    )
+    missing_csrf = client.post(
+        f"/api/player/hands/{key}/reimport",
+        data=form,
+        files={"file": ("heads-up.txt", source, "text/plain")},
+        headers={
+            "Authorization": f"Bearer {session['session_token']}",
+            "Origin": PLAYER_ORIGIN,
+        },
+    )
+    first = client.post(
+        f"/api/player/hands/{key}/reimport",
+        data=form,
+        files={"file": ("heads-up.txt", source, "text/plain")},
+        headers=headers,
+    )
+    replay = client.post(
+        f"/api/player/hands/{key}/reimport",
+        data=form,
+        files={"file": ("heads-up.txt", source, "text/plain")},
+        headers=headers,
+    )
+    conflicting_retry = client.post(
+        f"/api/player/hands/{key}/reimport",
+        data=form,
+        files={"file": ("renamed.txt", source, "text/plain")},
+        headers=headers,
+    )
+
+    assert deleted.status_code == 200
+    assert unauthorized.status_code == 401
+    assert missing_csrf.status_code == 403
+    assert first.status_code == 200
+    assert first.json()["request_id"] == REIMPORT_REQUEST_ID
+    assert first.json()["disposition"] == "restored_pending_review"
+    assert first.json()["parser_disposition"] == "clean"
+    assert first.json()["reconciliation_status"] == "pass"
+    detail = first.json()["hand"]
+    assert detail["summary"]["record_key"] == key
+    assert detail["summary"]["lifecycle_status"] == "pending_review"
+    assert detail["summary"]["deletion_generation"] == 2
+    assert detail["summary"]["learning_eligible"] is False
+    assert detail["summary"]["canonical_revision_count"] == 0
+    assert detail["lifecycle"]["reason"] == "authorized reimport"
+    assert detail["deletion_receipt"] is None
+    assert len(detail["raw_sources"]) == 1
+    assert len(detail["detections"]) == 1
+    assert RAW_TEXT.rstrip("\n") not in first.text
+    assert replay.status_code == 200
+    assert replay.json()["disposition"] == "duplicate_request"
+    assert replay.json()["hand"] == detail
+    assert conflicting_retry.status_code == 409
+    assert "import id is already bound" in conflicting_retry.json()["detail"]
+    assert get_player_hand(
+        runtime.workspace.imported_hands,
+        key,
+    ).model_dump(mode="json") == detail
+
+
+def test_player_authorized_reimport_rejects_wrong_or_stale_source(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    headers = player_mutation_headers(session)
+    source = (POKERSTARS_FIXTURES_DIR / "synthetic-heads-up.txt").read_bytes()
+    imported = client.post(
+        "/api/player/imports",
+        data={"request_id": IMPORT_REQUEST_ID},
+        files={"files": ("heads-up.txt", source, "text/plain")},
+        headers=headers,
+    )
+    key = imported.json()["files"][0]["hands"][0]["record_key"]
+    live = runtime.workspace.imported_hands.get(key)
+    client.post(
+        f"/api/player/hands/{key}/delete",
+        json=hand_delete_payload(live, reason="Remove this imported hand"),
+        headers=headers,
+    )
+    tombstone = runtime.workspace.imported_hands.get(key)
+    form = {
+        "request_id": REIMPORT_REQUEST_ID,
+        "expected_record_version": "0" * 64,
+        "expected_lifecycle_status": "deleted",
+        "expected_deletion_generation": str(
+            tombstone.lifecycle.deletion_generation
+        ),
+        "expected_lifecycle_changed_at": (
+            tombstone.lifecycle.changed_at.isoformat()
+        ),
+    }
+    wrong_source = (
+        POKERSTARS_FIXTURES_DIR / "synthetic-flop.txt"
+    ).read_bytes()
+
+    wrong = client.post(
+        f"/api/player/hands/{key}/reimport",
+        data={
+            **form,
+            "expected_record_version": player_hand_record_version(tombstone),
+        },
+        files={"file": ("wrong.txt", wrong_source, "text/plain")},
+        headers=headers,
+    )
+    stale = client.post(
+        f"/api/player/hands/{key}/reimport",
+        data=form,
+        files={"file": ("heads-up.txt", source, "text/plain")},
+        headers=headers,
+    )
+
+    assert wrong.status_code == 422
+    assert "matching this deleted record" in wrong.json()["detail"]
+    assert stale.status_code == 409
+    assert "deletion incarnation changed" in stale.json()["detail"]
+    assert runtime.workspace.imported_hands.get(key) == tombstone
 
 
 def test_player_hand_routes_require_auth_and_return_safe_review_projections(

@@ -75,6 +75,17 @@ export interface PlayerImportBatchOutcome {
   };
 }
 
+export interface PlayerHandReimportOutcome {
+  request_id: string;
+  disposition: "restored_pending_review" | "duplicate_request";
+  parser_disposition:
+    | "clean"
+    | "reconciliation_failed"
+    | "reconciliation_indeterminate";
+  reconciliation_status: "pass" | "fail" | "indeterminate";
+  hand: PlayerHandDetail;
+}
+
 export type PlayerHandLifecycleStatus =
   | "pending_review"
   | "active"
@@ -282,6 +293,15 @@ export class PlayerHandRecoveryRequiredError extends Error {
       "The hand lifecycle outcome is unresolved. Restart the local player runtime so journal recovery can finish, then reload the hand before retrying.",
     );
     this.name = "PlayerHandRecoveryRequiredError";
+  }
+}
+
+export class PlayerHandReimportAmbiguousError extends Error {
+  constructor() {
+    super(
+      "The authorized reimport may have committed, but the browser did not receive a complete response. The same file and request identity remain ready for a safe retry.",
+    );
+    this.name = "PlayerHandReimportAmbiguousError";
   }
 }
 
@@ -593,6 +613,106 @@ export async function deletePlayerHand(
     throw error;
   }
   return (await response.json()) as PlayerHandDetail;
+}
+
+function isPlayerHandReimportOutcome(
+  value: unknown,
+  requestId: string,
+  recordKey: string,
+  expectedDeletionGeneration: number,
+): value is PlayerHandReimportOutcome {
+  if (!value || typeof value !== "object") return false;
+  const payload = value as Record<string, unknown>;
+  const hand = payload.hand as PlayerHandDetail | undefined;
+  return (
+    payload.request_id === requestId &&
+    ["restored_pending_review", "duplicate_request"].includes(
+      String(payload.disposition),
+    ) &&
+    ["clean", "reconciliation_failed", "reconciliation_indeterminate"].includes(
+      String(payload.parser_disposition),
+    ) &&
+    ["pass", "fail", "indeterminate"].includes(
+      String(payload.reconciliation_status),
+    ) &&
+    !!hand &&
+    hand.summary?.record_key === recordKey &&
+    hand.summary.lifecycle_status === "pending_review" &&
+    hand.summary.learning_eligible === false &&
+    hand.summary.active_canonical_revision === null &&
+    hand.summary.deletion_generation === expectedDeletionGeneration + 1 &&
+    hand.summary.raw_source_count === 1 &&
+    hand.summary.detection_count === 1 &&
+    hand.summary.unresolved_conflict_count === 0 &&
+    hand.summary.canonical_revision_count === 0 &&
+    hand.lifecycle?.status === "pending_review" &&
+    hand.lifecycle.deletion_generation === expectedDeletionGeneration + 1 &&
+    hand.lifecycle.reason === "authorized reimport" &&
+    hand.raw_sources?.length === 1 &&
+    hand.detections?.length === 1 &&
+    hand.conflicts?.length === 0 &&
+    hand.canonical_revisions?.length === 0 &&
+    hand.deletion_receipt === null
+  );
+}
+
+export async function reimportPlayerHand(
+  credentials: PlayerCredentials,
+  recordKey: string,
+  file: File,
+  requestId: string,
+  expected: PlayerHandSummary,
+): Promise<PlayerHandReimportOutcome> {
+  if (
+    expected.lifecycle_status !== "deleted" &&
+    expected.lifecycle_status !== "deletion_pending"
+  ) {
+    throw new Error("Only a deleted hand incarnation can be reimported.");
+  }
+  const body = new FormData();
+  body.set("request_id", requestId);
+  body.set("expected_record_version", expected.record_version);
+  body.set("expected_lifecycle_status", expected.lifecycle_status);
+  body.set(
+    "expected_deletion_generation",
+    String(expected.deletion_generation),
+  );
+  body.set("expected_lifecycle_changed_at", expected.lifecycle_changed_at);
+  body.set("file", file, file.name);
+  let response: Response;
+  try {
+    response = await playerRequest(
+      credentials,
+      `/api/player/hands/${encodeURIComponent(recordKey)}/reimport`,
+      { method: "POST", body },
+    );
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerHandRecoveryRequiredError();
+    }
+    if (error instanceof PlayerApiError && error.status >= 500) {
+      throw new PlayerHandReimportAmbiguousError();
+    }
+    if (error instanceof PlayerApiError) throw error;
+    throw new PlayerHandReimportAmbiguousError();
+  }
+  try {
+    const payload = (await response.json()) as unknown;
+    if (
+      !isPlayerHandReimportOutcome(
+        payload,
+        requestId,
+        recordKey,
+        expected.deletion_generation,
+      )
+    ) {
+      throw new PlayerHandReimportAmbiguousError();
+    }
+    return payload;
+  } catch (error) {
+    if (error instanceof PlayerHandReimportAmbiguousError) throw error;
+    throw new PlayerHandReimportAmbiguousError();
+  }
 }
 
 function backupFilename(response: Response): string {

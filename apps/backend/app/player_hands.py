@@ -234,6 +234,16 @@ class PlayerHandDeleteRequest(PlayerHandProjection):
         return self
 
 
+class PlayerHandReimportRequest(PlayerHandProjection):
+    """Exact deletion-incarnation precondition for an authorized reimport."""
+
+    request_id: PlayerRequestId
+    expected_record_version: PlayerRecordVersion
+    expected_lifecycle_status: Literal["deleted", "deletion_pending"]
+    expected_deletion_generation: int = Field(ge=1, strict=True)
+    expected_lifecycle_changed_at: AwareDatetime
+
+
 class PlayerHandApprovalRequest(PlayerHandProjection):
     """Explicit reviewed state and exact retained-record precondition."""
 
@@ -488,7 +498,15 @@ def get_player_hand(
 ) -> PlayerHandDetail:
     """Return review metadata for one record while keeping raw text private."""
 
-    record = store.get(record_key)
+    return project_player_hand(record_key, store.get(record_key))
+
+
+def project_player_hand(
+    record_key: str,
+    record: ImportedHandRecord,
+) -> PlayerHandDetail:
+    """Project one already-serialized snapshot without rereading mutable storage."""
+
     approval_eligible_source_ids = {
         raw.raw_source_id for raw in record.raw_sources
     }

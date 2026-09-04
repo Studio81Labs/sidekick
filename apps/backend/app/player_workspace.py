@@ -25,6 +25,10 @@ from pydantic import (
 )
 
 from app.application.imported_hand_ingestion import (
+    AuthorizedHandReimportConflict,
+    AuthorizedHandReimportResult,
+    AuthorizedHandReimportService,
+    ImportedHandImportIdConflict,
     ImportedHandIngestionResult,
     ImportedHandIngestionService,
     ParsedImportedHandCandidate,
@@ -56,6 +60,7 @@ from app.player_hands import (
     PlayerHandDeleteRequest,
     PlayerHandDetail,
     PlayerHandList,
+    PlayerHandReimportRequest,
     get_player_hand,
     list_player_hands,
     player_hand_record_version,
@@ -81,6 +86,10 @@ class PlayerHandApprovalInvalid(ValueError):
 
 class PlayerHandConflictResolutionInvalid(ValueError):
     """A requested source choice cannot resolve the retained conflict."""
+
+
+class PlayerHandReimportInvalid(ValueError):
+    """A parsed source cannot replace the selected deleted incarnation."""
 
 
 class PlayerHandRecoveryRequired(RuntimeError):
@@ -950,6 +959,91 @@ class PlayerWorkspace:
                     return ImportedHandIngestionService(
                         store=self.imported_hands,
                     ).ingest(candidate)
+
+    def reimport_deleted_hand(
+        self,
+        record_key: str,
+        candidate: ParsedImportedHandCandidate,
+        *,
+        request: PlayerHandReimportRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> AuthorizedHandReimportResult:
+        """Explicitly replace one exact deletion incarnation for fresh review."""
+
+        candidate_key = imported_hand_record_key(candidate.raw.identity)
+        if candidate_key != record_key:
+            raise PlayerHandReimportInvalid(
+                "The selected file does not contain the deleted hand being reimported"
+            )
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self.require_current_layout()
+                    self._require_final_hand_record(record_key)
+                    service = AuthorizedHandReimportService(
+                        store=self.imported_hands,
+                    )
+                    try:
+                        retry = service.retry(
+                            record_key,
+                            candidate,
+                            expected_deletion_generation=(
+                                request.expected_deletion_generation
+                            ),
+                        )
+                    except ImportedHandImportIdConflict as exc:
+                        raise PlayerHandTransitionConflict(str(exc)) from exc
+                    except AuthorizedHandReimportConflict as exc:
+                        raise PlayerHandReimportInvalid(str(exc)) from exc
+                    if retry is not None:
+                        return retry
+
+                    record = self.imported_hands.get(record_key)
+                    lifecycle = record.lifecycle
+                    if (
+                        player_hand_record_version(record)
+                        != request.expected_record_version
+                        or lifecycle.status != request.expected_lifecycle_status
+                        or lifecycle.deletion_generation
+                        != request.expected_deletion_generation
+                        or lifecycle.changed_at
+                        != request.expected_lifecycle_changed_at
+                    ):
+                        raise PlayerHandTransitionConflict(
+                            "The retained deletion incarnation changed after this"
+                            " audit detail was loaded; refresh it before reimporting"
+                        )
+                    changed_at = _advanced_lifecycle_time(
+                        at,
+                        lifecycle.changed_at,
+                    )
+                    try:
+                        result = service.reimport(
+                            record_key,
+                            candidate,
+                            expected=record,
+                            changed_at=changed_at,
+                        )
+                    except AuthorizedHandReimportConflict as exc:
+                        raise PlayerHandReimportInvalid(str(exc)) from exc
+                    except (DataLockError, OSError) as exc:
+                        if self.imported_hands.has_interrupted_write(record_key):
+                            raise PlayerHandRecoveryRequired(
+                                "This hand has an interrupted authorized reimport;"
+                                " restart the local player runtime so recovery can"
+                                " finish"
+                            ) from exc
+                        raise
+                    self._require_final_hand_record(record_key)
+                    return result
 
     def close_hand_record(
         self,
