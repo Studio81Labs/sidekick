@@ -87,7 +87,13 @@ an active hand to pending review and requires a separate explicit approval.
 [ADR 0064](../decisions/0064-expose-authorized-deleted-hand-reimport.md) adds
 explicit deleted-hand reimport. It advances the deletion generation and creates
 a fresh pending-review aggregate while atomically removing the old
-incarnation's retained decision artifacts. Grading and learning routes remain
+incarnation's retained decision artifacts.
+[ADR 0065](../decisions/0065-expose-active-player-decision-read-model.md) adds
+an authenticated local-only read model for the exact active decision artifact.
+It re-derives the extraction from current canonical state, refuses inactive,
+conflicted, missing, stale, or mismatched evidence, preserves an explicit
+non-extractable verdict as reviewable but non-gradeable, and strips private
+source excerpts from the response. Grading and later learning routes remain
 unwired.
 CI exercises that separation over real listeners. A browser consumes a one-use
 launch URL from the production Uvicorn player application, proves all player
@@ -517,7 +523,8 @@ The local runtime constructs and recovers the player store and exposes
 authenticated storage metadata, sanitized record projections, canonical
 correction/approval/reapproval, approval withdrawal/rejection, permanent
 deletion, bounded PokerStars import, explicit deleted-hand reimport, import
-conflict resolution, and whole-store V2 backup/restore.
+conflict resolution, active decision extraction, and whole-store V2
+backup/restore.
 These lifecycle mutations inherit the session, Host/Origin, and CSRF boundary
 established by ADR 0050. Withdrawal and rejection retain inactive audit;
 deletion first deactivates the record, then purges its hand-linked audit and
@@ -667,6 +674,16 @@ inactive revision. Chronology and provenance intentionally remain on both the
 envelope and every point: the envelope preserves no-decision provenance, while
 each point stays a self-contained grading/audit unit. ADR 0049 records the
 boundary and the remaining structural choices.
+The local player route `GET /api/player/hands/{record_key}/decisions` exposes
+only that active read under the runtime's authenticated, loopback-only,
+restore-excluded and no-store boundary. The workspace rejects inactive or
+unresolved-conflict state; a missing active artifact or canonical mismatch is a
+sanitized integrity failure, never a historical fallback. A current
+`not_extractable` artifact remains visible with its rejection and no decision
+points. The response retains the complete decision-state, table-action, origin,
+exclusion, chronology and provenance contract while recursively removing
+source excerpts. ADR 0065 records this application boundary; it does not
+connect grading or a remote provider.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, and benchmarks

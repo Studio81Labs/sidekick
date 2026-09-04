@@ -4,6 +4,7 @@ from datetime import timedelta
 from decimal import Decimal
 import errno
 from ipaddress import ip_address
+import json
 import os
 from pathlib import Path
 import shutil
@@ -70,6 +71,12 @@ from app.storage.cascade_journal import CascadeJournal
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
     imported_hand_record_key,
+)
+from test_imported_hand_decisions import (
+    baseline_decision_record,
+    big_blind_walk_record,
+    hero_fold_decision_record,
+    unresolved_conflict_record,
 )
 from test_imported_hand_store import (
     RAW_TEXT,
@@ -1659,6 +1666,218 @@ def test_player_hand_routes_require_auth_and_return_safe_review_projections(
     assert "excerpt" not in detail.text
 
 
+def test_player_active_decisions_require_auth_and_serve_current_sanitized_state(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = hero_fold_decision_record()
+    key = imported_hand_record_key(record.identity)
+    extraction = extract_hero_decision_points(record)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(key, extraction)
+
+    assert client.get(f"/api/player/hands/{key}/decisions").status_code == 401
+    session = exchange_session(client, runtime)
+    response = client.get(
+        f"/api/player/hands/{key}/decisions",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    payload = response.json()
+    assert payload["record_key"] == key
+    assert payload["record_version"] == player_hand_record_version(record)
+    assert payload["extraction"]["canonical_revision"] == 1
+    assert payload["extraction"]["deletion_generation"] == 0
+    assert payload["extraction"]["outcome"] == "decisions"
+    decision = payload["extraction"]["decision_points"][0]
+    assert decision["table_action"]["action_type"] == "fold"
+    assert decision["table_action"]["origin"]["kind"] == "player_selected"
+    assert decision["table_action"]["evidence"] == [
+        {
+            "raw_source_id": "file-1",
+            "line_start": 1,
+            "line_end": None,
+            "marker": None,
+        }
+    ]
+    assert payload["extraction"]["excluded_actions"][0]["reason"] == (
+        "forced_or_system"
+    )
+    assert RAW_TEXT not in response.text
+    assert "PokerStars Hand #123456789" not in response.text
+    assert "excerpt" not in response.text
+
+
+@pytest.mark.parametrize("state", ["pending", "withdrawn"])
+def test_player_active_decisions_are_unavailable_outside_current_learning_state(
+    tmp_path: Path,
+    state: str,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    if state == "pending":
+        record = pending_review_record()
+        assert record.identity is not None
+        key = imported_hand_record_key(record.identity)
+        runtime.workspace.imported_hands.save(key, record)
+    else:
+        active = approved_record()
+        assert active.identity is not None
+        key = imported_hand_record_key(active.identity)
+        runtime.workspace.imported_hands.save(key, active)
+        runtime.workspace.imported_hands.save_decisions(
+            key,
+            extract_hero_decision_points(active),
+        )
+        runtime.workspace.imported_hands.save(
+            key,
+            withdrawn_record(identity=active.identity),
+        )
+    session = exchange_session(client, runtime)
+
+    response = client.get(
+        f"/api/player/hands/{key}/decisions",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "This hand has no active decision extraction"
+    }
+
+
+def test_player_active_decisions_serve_an_explicit_not_extractable_outcome(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = approved_record()
+    key = imported_hand_record_key(record.identity)
+    extraction = extract_hero_decision_points(record)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(key, extraction)
+    session = exchange_session(client, runtime)
+
+    response = client.get(
+        f"/api/player/hands/{key}/decisions",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["extraction"]["outcome"] == "not_extractable"
+    assert response.json()["extraction"]["rejection"] == "incomplete_hand_state"
+    assert response.json()["extraction"]["canonical_revision"] is None
+    assert response.json()["extraction"]["decision_points"] == []
+
+
+def test_player_active_decisions_serve_an_explicit_no_decision_outcome(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = big_blind_walk_record()
+    key = imported_hand_record_key(record.identity)
+    extraction = extract_hero_decision_points(record)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(key, extraction)
+    session = exchange_session(client, runtime)
+
+    response = client.get(
+        f"/api/player/hands/{key}/decisions",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["extraction"]["outcome"] == "no_decision"
+    assert response.json()["extraction"]["decision_points"] == []
+    assert [
+        action["reason"]
+        for action in response.json()["extraction"]["excluded_actions"]
+    ] == ["forced_or_system", "forced_or_system"]
+
+
+def test_player_active_decisions_never_fall_back_across_an_unresolved_conflict(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = unresolved_conflict_record()
+    key = imported_hand_record_key(record.identity)
+    prior = baseline_decision_record()
+    assert prior.identity == record.identity
+    prior_extraction = extract_hero_decision_points(prior)
+    runtime.workspace.imported_hands.save(key, prior)
+    runtime.workspace.imported_hands.save_decisions(key, prior_extraction)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.get(
+        f"/api/player/hands/{key}/decisions",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "This hand has no active decision extraction"
+    }
+    assert runtime.workspace.imported_hands.get_decisions(
+        key,
+        revision=1,
+        generation=0,
+    ) == prior_extraction
+
+
+def test_player_active_decisions_fail_closed_when_current_artifact_is_missing(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = hero_fold_decision_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.get(
+        f"/api/player/hands/{key}/decisions",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Active decision extraction could not be read safely"
+    }
+
+
+def test_player_active_decisions_fail_closed_on_canonical_mismatch(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = hero_fold_decision_record()
+    key = imported_hand_record_key(record.identity)
+    extraction = extract_hero_decision_points(record)
+    runtime.workspace.imported_hands.save(key, record)
+    runtime.workspace.imported_hands.save_decisions(key, extraction)
+    artifact_path = (
+        runtime.workspace.imported_hands.records_dir
+        / key
+        / "decisions"
+        / "r1-g0.json"
+    )
+    mismatched_artifact = json.loads(artifact_path.read_text())
+    mismatched_artifact["decision_points"][0]["state"][
+        "last_full_wager_increment"
+    ] = "13"
+    artifact_path.write_text(json.dumps(mismatched_artifact))
+    session = exchange_session(client, runtime)
+
+    response = client.get(
+        f"/api/player/hands/{key}/decisions",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 500
+    assert response.json() == {
+        "detail": "Active decision extraction could not be read safely"
+    }
+
+
 def test_player_hand_routes_validate_pagination_and_missing_keys(tmp_path: Path) -> None:
     client, runtime = player_client(tmp_path)
     session = exchange_session(client, runtime)
@@ -1677,10 +1896,15 @@ def test_player_hand_routes_validate_pagination_and_missing_keys(tmp_path: Path)
     )
     missing = client.get(f"/api/player/hands/{'a' * 64}", headers=authorization)
     malformed = client.get("/api/player/hands/not-a-key", headers=authorization)
+    missing_decisions = client.get(
+        f"/api/player/hands/{'a' * 64}/decisions",
+        headers=authorization,
+    )
 
     assert invalid_limit.status_code == 422
     assert missing.status_code == 404
     assert malformed.status_code == 404
+    assert missing_decisions.status_code == 404
     assert missing.json() == {"detail": "Imported hand record not found"}
 
 
