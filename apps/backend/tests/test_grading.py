@@ -457,6 +457,25 @@ def test_policy_content_binding_normalizes_equivalent_decimal_spellings() -> Non
     assert result.policy_grade_eligibility == "gradeable"
 
 
+def test_policy_content_binding_normalizes_policy_line_order() -> None:
+    target = decision()
+    resolved = reference(target)
+    reordered = reference(target, lines=tuple(reversed(resolved.policy_lines)))
+    qualification = source_qualification(resolved)
+
+    assert resolved.policy_content_sha256() == reordered.policy_content_sha256()
+
+    result = grade_decision(
+        target,
+        reference=reordered,
+        source_qualification=qualification,
+    )
+
+    assert result.classification == "supported"
+    assert result.reason == "supported_policy_match"
+    assert result.policy_grade_eligibility == "gradeable"
+
+
 def test_policy_content_binding_preserves_digits_beyond_decimal_context() -> None:
     target = decision()
     resolved = reference(

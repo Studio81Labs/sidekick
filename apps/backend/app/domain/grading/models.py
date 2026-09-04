@@ -105,17 +105,21 @@ class GradingModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
 
+def _canonical_decimal(value: Decimal) -> str:
+    if value == 0:
+        return "0"
+    sign, digits, exponent = value.as_tuple()
+    canonical_digits = list(digits)
+    while canonical_digits[-1] == 0:
+        canonical_digits.pop()
+        exponent += 1
+    coefficient = "".join(str(digit) for digit in canonical_digits)
+    return f"{'-' if sign else ''}{coefficient}e{exponent}"
+
+
 def _normalize_policy_content(value: object) -> object:
     if isinstance(value, Decimal):
-        if value == 0:
-            return "0"
-        sign, digits, exponent = value.as_tuple()
-        canonical_digits = list(digits)
-        while canonical_digits[-1] == 0:
-            canonical_digits.pop()
-            exponent += 1
-        coefficient = "".join(str(digit) for digit in canonical_digits)
-        return f"{'-' if sign else ''}{coefficient}e{exponent}"
+        return _canonical_decimal(value)
     if isinstance(value, dict):
         return {
             key: _normalize_policy_content(item) for key, item in value.items()
@@ -310,13 +314,24 @@ class ResolvedReferencePolicy(GradingModel):
     def policy_content_sha256(self) -> str:
         """Fingerprint the exact completeness, action, frequency, sizing, and EV data."""
 
+        ordered_lines = sorted(
+            self.policy_lines,
+            key=lambda line: (
+                line.action,
+                (
+                    ""
+                    if line.total_committed_bb is None
+                    else _canonical_decimal(line.total_committed_bb)
+                ),
+            ),
+        )
         payload = json.dumps(
             _normalize_policy_content(
                 {
                     "policy_complete": self.policy_complete,
                     "policy_lines": [
                         line.model_dump(mode="python")
-                        for line in self.policy_lines
+                        for line in ordered_lines
                     ],
                 }
             ),
