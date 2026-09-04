@@ -24,6 +24,7 @@ from app.player_backup import (
     restore_player_backup,
 )
 from app.player_runtime import PLAYER_ORIGIN, PlayerCredentialError
+from app.player_remote_references import PlayerRemoteReferenceConsentRequest
 from app.player_workspace import (
     PLAYER_WORKSPACE_MANIFEST_FILENAME,
     PlayerDataDirectoryError,
@@ -34,6 +35,9 @@ from app.storage.imported_hand_store import (
     ImportedHandNotFoundError,
     imported_hand_record_key,
 )
+from app.storage.remote_reference_consent_store import (
+    REMOTE_REFERENCE_CONSENT_FILENAME,
+)
 from test_imported_hand_store import (
     approved_record,
     extraction_for,
@@ -42,6 +46,7 @@ from test_imported_hand_store import (
     withdrawn_record,
 )
 from test_player_runtime import exchange_session, player_client
+from test_remote_references import provider_policy
 
 
 def workspace_at(path: Path) -> PlayerWorkspace:
@@ -87,7 +92,7 @@ def restore(
 
 def write_future_workspace_manifest(workspace: PlayerWorkspace) -> None:
     (workspace.data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":2,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
@@ -97,6 +102,7 @@ def test_empty_player_backup_round_trips(tmp_path: Path) -> None:
     payload = archive_bytes(source)
     with ZipFile(BytesIO(payload)) as archive:
         assert PLAYER_WORKSPACE_MANIFEST_FILENAME not in archive.namelist()
+        assert REMOTE_REFERENCE_CONSENT_FILENAME not in archive.namelist()
 
     parsed = parse_player_backup_archive(
         payload,
@@ -115,6 +121,35 @@ def test_empty_player_backup_round_trips(tmp_path: Path) -> None:
         "removed_decision_artifacts": 0,
         "total_records": 0,
     }
+
+
+def test_backup_restore_never_copies_remote_reference_consent(
+    tmp_path: Path,
+) -> None:
+    policy = provider_policy()
+    source = workspace_at(tmp_path / "source")
+    source.accept_remote_reference_consent(
+        policy=policy,
+        request=PlayerRemoteReferenceConsentRequest(
+            expected_consent_generation=0,
+            expected_provider_policy_revision=policy.provider_policy_revision,
+            expected_provider_policy_sha256=policy.semantic_digest(),
+            expected_disclosure_revision=policy.disclosure.disclosure_revision,
+            disclosure_accepted=True,
+            network_dependency_accepted=True,
+            retention_and_use_accepted=True,
+        ),
+        at=datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc),
+    )
+
+    payload = archive_bytes(source)
+    with ZipFile(BytesIO(payload)) as archive:
+        assert REMOTE_REFERENCE_CONSENT_FILENAME not in archive.namelist()
+
+    target = workspace_at(tmp_path / "target")
+    restore(target, payload)
+
+    assert target.remote_reference_consent.load().consent is None
 
 
 def test_player_backup_export_rejects_a_changed_workspace_layout(

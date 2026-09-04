@@ -17,6 +17,11 @@ from app.storage.imported_hand_store import (
     FileImportedHandStore,
     imported_hand_record_key,
 )
+from app.storage.remote_reference_consent_store import (
+    FileRemoteReferenceConsentStore,
+    REMOTE_REFERENCE_CONSENT_FILENAME,
+    RemoteReferenceConsentStorageError,
+)
 from test_imported_hand_store import pending_review_record, seed_interrupted_cascade
 
 
@@ -41,7 +46,7 @@ def _stored_payloads(records_dir: Path) -> dict[str, bytes]:
     }
 
 
-def test_fresh_workspace_publishes_private_layout_v1_manifest(
+def test_fresh_workspace_publishes_private_layout_v2_manifest(
     tmp_path: Path,
 ) -> None:
     workspace = PlayerWorkspace.open(tmp_path)
@@ -53,6 +58,13 @@ def test_fresh_workspace_publishes_private_layout_v1_manifest(
         "schema": PLAYER_WORKSPACE_SCHEMA,
     }
     assert manifest_path.stat().st_mode & 0o077 == 0
+    consent_path = tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME
+    assert json.loads(consent_path.read_text(encoding="utf-8")) == {
+        "consent": None,
+        "schema": "poker-hero-remote-reference-consent",
+        "schema_version": 1,
+    }
+    assert consent_path.stat().st_mode & 0o077 == 0
     assert workspace.status_payload()["layout_version"] == (
         PLAYER_WORKSPACE_LAYOUT_VERSION
     )
@@ -105,7 +117,7 @@ def test_concurrent_workspace_adoption_publishes_one_valid_manifest(
     "payload",
     [
         b"not-json",
-        b'{"layout_version":2,"schema":"poker-hero-player-workspace"}\n',
+        b'{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
         b'{"layout_version":true,"schema":"poker-hero-player-workspace"}\n',
         b'{"extra":1,"layout_version":1,"schema":"poker-hero-player-workspace"}\n',
     ],
@@ -142,6 +154,128 @@ def test_workspace_rejects_symlinked_or_shared_manifest(tmp_path: Path) -> None:
     )
     _manifest_path(tmp_path).chmod(0o644)
     with pytest.raises(PlayerDataDirectoryError, match="readable only by its owner"):
+        PlayerWorkspace.open(tmp_path)
+
+
+def test_layout_v1_migrates_to_v2_without_touching_imported_hands(
+    tmp_path: Path,
+) -> None:
+    legacy_store, record_key = _legacy_store(tmp_path)
+    retained_before = _stored_payloads(legacy_store.records_dir)
+    manifest_path = _manifest_path(tmp_path)
+    manifest_path.write_bytes(
+        player_workspace_module._player_workspace_manifest_payload(1)
+    )
+    manifest_path.chmod(0o600)
+
+    workspace = PlayerWorkspace.open(tmp_path)
+
+    assert workspace.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
+    assert workspace.imported_hands.get(record_key) == legacy_store.get(record_key)
+    assert _stored_payloads(workspace.imported_hands.records_dir) == retained_before
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
+        "layout_version"
+    ] == PLAYER_WORKSPACE_LAYOUT_VERSION
+    assert workspace.remote_reference_consent.load().consent is None
+
+
+def test_layout_v1_consent_initialization_failure_keeps_v1_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "imported-hands").mkdir(mode=0o700)
+    manifest_path = _manifest_path(tmp_path)
+    manifest_path.write_bytes(
+        player_workspace_module._player_workspace_manifest_payload(1)
+    )
+    manifest_path.chmod(0o600)
+
+    def fail_initialization(_store: FileRemoteReferenceConsentStore):
+        raise RemoteReferenceConsentStorageError("injected consent failure")
+
+    monkeypatch.setattr(
+        FileRemoteReferenceConsentStore,
+        "initialize_empty",
+        fail_initialization,
+    )
+
+    with pytest.raises(PlayerDataDirectoryError, match="injected consent failure"):
+        PlayerWorkspace.open(tmp_path)
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
+        "layout_version"
+    ] == 1
+
+
+def test_layout_v1_manifest_upgrade_failure_is_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "imported-hands").mkdir(mode=0o700)
+    manifest_path = _manifest_path(tmp_path)
+    manifest_path.write_bytes(
+        player_workspace_module._player_workspace_manifest_payload(1)
+    )
+    manifest_path.chmod(0o600)
+    real_replace = player_workspace_module._replace_player_workspace_manifest
+
+    def fail_upgrade(_data_dir: Path) -> None:
+        raise PlayerDataDirectoryError("injected manifest upgrade failure")
+
+    monkeypatch.setattr(
+        player_workspace_module,
+        "_replace_player_workspace_manifest",
+        fail_upgrade,
+    )
+    with pytest.raises(PlayerDataDirectoryError, match="injected manifest"):
+        PlayerWorkspace.open(tmp_path)
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
+        "layout_version"
+    ] == 1
+    assert (tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME).is_file()
+
+    monkeypatch.setattr(
+        player_workspace_module,
+        "_replace_player_workspace_manifest",
+        real_replace,
+    )
+    workspace = PlayerWorkspace.open(tmp_path)
+    assert workspace.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
+    assert workspace.remote_reference_consent.load().consent is None
+
+
+def test_layout_v2_requires_valid_private_consent_state(tmp_path: Path) -> None:
+    PlayerWorkspace.open(tmp_path)
+    consent_path = tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME
+
+    consent_path.unlink()
+    with pytest.raises(PlayerDataDirectoryError, match="Cannot safely open"):
+        PlayerWorkspace.open(tmp_path)
+
+    consent_path.write_text("not-json", encoding="utf-8")
+    consent_path.chmod(0o600)
+    with pytest.raises(PlayerDataDirectoryError, match="malformed or unsupported"):
+        PlayerWorkspace.open(tmp_path)
+
+    consent_path.write_text(
+        '{"consent":null,"schema":"poker-hero-remote-reference-consent",'
+        '"schema_version":1}\n',
+        encoding="utf-8",
+    )
+    consent_path.chmod(0o644)
+    with pytest.raises(PlayerDataDirectoryError, match="readable only by its owner"):
+        PlayerWorkspace.open(tmp_path)
+
+
+def test_layout_v2_rejects_a_symlinked_consent_state(tmp_path: Path) -> None:
+    PlayerWorkspace.open(tmp_path)
+    consent_path = tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME
+    target = tmp_path / "outside-consent"
+    target.write_bytes(consent_path.read_bytes())
+    target.chmod(0o600)
+    consent_path.unlink()
+    consent_path.symlink_to(target)
+
+    with pytest.raises(PlayerDataDirectoryError, match="Cannot safely open"):
         PlayerWorkspace.open(tmp_path)
 
 
@@ -227,7 +361,7 @@ def test_versioned_workspace_is_reread_beneath_the_startup_lock(
         read_count += 1
         if read_count == 2:
             _manifest_path(data_dir).write_text(
-                '{"layout_version":2,"schema":"poker-hero-player-workspace"}\n',
+                '{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
                 encoding="utf-8",
             )
             _manifest_path(data_dir).chmod(0o600)
@@ -246,12 +380,40 @@ def test_versioned_workspace_is_reread_beneath_the_startup_lock(
         PlayerWorkspace.open(tmp_path)
 
 
+def test_current_workspace_rejects_a_downgrade_during_startup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    PlayerWorkspace.open(tmp_path)
+    real_read = player_workspace_module._read_player_workspace_manifest
+    read_count = 0
+
+    def replace_with_v1_manifest(data_dir: Path):
+        nonlocal read_count
+        read_count += 1
+        if read_count == 2:
+            _manifest_path(data_dir).write_bytes(
+                player_workspace_module._player_workspace_manifest_payload(1)
+            )
+            _manifest_path(data_dir).chmod(0o600)
+        return real_read(data_dir)
+
+    monkeypatch.setattr(
+        player_workspace_module,
+        "_read_player_workspace_manifest",
+        replace_with_v1_manifest,
+    )
+
+    with pytest.raises(PlayerDataDirectoryError, match="changed during startup"):
+        PlayerWorkspace.open(tmp_path)
+
+
 def test_open_runtime_rejects_a_layout_changed_between_operations(
     tmp_path: Path,
 ) -> None:
     workspace = PlayerWorkspace.open(tmp_path)
     _manifest_path(tmp_path).write_text(
-        '{"layout_version":2,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 

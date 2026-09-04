@@ -47,6 +47,9 @@ from app.storage.imported_hand_store import (
     RECORD_FILENAME,
     RECORD_KEY_PATTERN,
 )
+from app.storage.remote_reference_consent_store import (
+    REMOTE_REFERENCE_CONSENT_FILENAME,
+)
 
 
 PLAYER_REMOVAL_DIRECTORY_PREFIX = ".poker-hero-player-removed-"
@@ -307,6 +310,7 @@ def _require_portable_workspace_inventory(workspace: PlayerWorkspace) -> None:
         DATA_LOCK_FILENAME,
         PLAYER_INSTALLATION_SECRET_FILENAME,
         PLAYER_WORKSPACE_MANIFEST_FILENAME,
+        REMOTE_REFERENCE_CONSENT_FILENAME,
         *(
             f"{PLAYER_HAND_LOCK_PREFIX}-{index:02d}.lock"
             for index in range(DEFAULT_PLAYER_HAND_LOCK_STRIPES)

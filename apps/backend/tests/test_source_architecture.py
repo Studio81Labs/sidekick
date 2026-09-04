@@ -224,6 +224,7 @@ def test_remote_reference_domain_has_only_pure_dependencies() -> None:
         "json",
         "pydantic",
         "typing",
+        "unicodedata",
         "urllib.parse",
     }
     violations = [
