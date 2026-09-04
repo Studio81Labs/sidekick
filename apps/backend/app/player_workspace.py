@@ -36,7 +36,11 @@ from app.application.imported_hand_ingestion import (
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.imported_hand_ports import ImportedHandRecoveryReport
 from app.application.learning_content_catalog import LearningContentCatalog
-from app.application.reference_activation import ReferenceActivationCatalog
+from app.application.reference_activation import (
+    ReferenceActivatedGrade,
+    ReferenceActivationCatalog,
+    revalidate_reference_activated_grade as revalidate_reference_grade,
+)
 from app.data_lock import (
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
@@ -1384,6 +1388,40 @@ class PlayerWorkspace:
                         record_key,
                         record,
                         extraction,
+                    )
+
+    def revalidate_reference_activated_grade(
+        self,
+        record_key: str,
+        evidence: ReferenceActivatedGrade,
+        *,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> ReferenceActivatedGrade:
+        """Recheck one grade against coherent current install-local authority.
+
+        The check is deliberately bounded and read-only. Its return value still
+        requires a future mastery or drill consumer to repeat revalidation and
+        commit its mutation before releasing the same authority scope.
+        """
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=False,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    _, extraction = self._load_active_hand_decisions(record_key)
+                    reference_catalog = self.reference_activation_catalog.load()
+                    learning_content = self.learning_content_catalog.load()
+                    return revalidate_reference_grade(
+                        evidence,
+                        current_reference_catalog=reference_catalog.catalog,
+                        current_learning_content=learning_content.catalog,
+                        active_hand_decisions=extraction,
                     )
 
     def get_active_hand_decision_evaluations(
