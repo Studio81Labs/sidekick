@@ -608,10 +608,38 @@ JSON bytes and restored only as a fresh mutable copy, preventing nested model
 mutation from invalidating already-validated evidence. It is labeled only
 `content_ready` and remains
 `requires_reference_activation`; it does not grant learning eligibility without
-a future authoritative concept/coverage-band catalog. It also does not authorize
-a remote provider, persist grades or evidence, calculate aggregate mixing
-deviations, move mastery, or schedule drills. Those application and Phase 0
-gates remain open under issues #412, #414, #416, and #418.
+an authoritative concept/coverage-band catalog.
+
+The application-layer `reference_activation` boundary now models that catalog
+as a pure immutable transition. A stable coverage-band ID embeds a deterministic
+canonical-decision selector and pins its digest, reviewed definition, and the
+qualified coverage manifest. Ambiguous matching active bands fail closed. Each
+digest-chained append-only activation binds one concept/band to exact taxonomy
+and mapping revisions and content digests, a broad comparable reference series,
+compatible approved principle records, and a globally distinct mastery-series
+ID. Reused revision labels with changed content fail closed. The catalog
+selects exactly the latest activation per concept/band; replacement always
+starts a new series, so old and new policy classifications cannot mix. Exact
+route, decision-context, and policy-content evidence remains on each
+content-ready grade and is revalidated before it can be bound to the broader
+active series. The resulting `ReferenceActivatedGrade` pins the complete catalog
+digest but remains
+`requires_current_catalog_hand_and_content`; it is not mastery or drill
+authority until a later boundary reloads the current catalog, principle records,
+and approved canonical hand, then verifies the catalog digest, content
+lifecycle, canonical revision, and deletion generation. ADR 0070 records this
+boundary.
+
+The catalog's deterministic digest chain detects inconsistent or accidentally
+rewritten snapshots; it is not a signature. Future persistence must own the
+trusted current catalog revision and digest, and later mastery composition must
+reload that authority rather than trusting the point-in-time snapshot nested in
+a grade.
+
+No production composition yet persists or publishes the catalog, authorizes a
+remote provider, persists grades, calculates aggregate mixing deviations, moves
+mastery, or schedules drills. Those application and Phase 0 gates remain open
+under issues #412, #414, #416, and #418.
 
 Solved comparison additionally requires an independent
 `ReferenceSourceQualification` argument. The immutable qualification records
