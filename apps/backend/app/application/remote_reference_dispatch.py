@@ -28,6 +28,9 @@ from app.domain.remote_references import (
 RemoteReferenceAuthorityLoader: TypeAlias = Callable[
     [], RemoteReferenceDispatchAuthority
 ]
+RemoteReferenceAuthorityLockFactory: TypeAlias = Callable[
+    [], AbstractContextManager[object]
+]
 RemoteReferenceClock: TypeAlias = Callable[[], datetime]
 RemoteReferenceDispatchAttempt: TypeAlias = (
     RemoteReferenceDispatchPreflight
@@ -58,17 +61,17 @@ class RemoteReferenceAuthorityGuard:
     def __init__(
         self,
         *,
-        lock: AbstractContextManager[object],
+        lock_factory: RemoteReferenceAuthorityLockFactory,
         load_authority: RemoteReferenceAuthorityLoader,
     ) -> None:
-        self._lock = lock
+        self._lock_factory = lock_factory
         self._load_authority = load_authority
 
     def run(
         self,
         operation: RemoteReferenceAuthorityOperation,
     ) -> RemoteReferenceDispatchAttempt:
-        with self._lock:
+        with self._lock_factory():
             snapshot = self._load_authority()
             authority = RemoteReferenceDispatchAuthority.model_validate(
                 snapshot.model_dump(mode="python")

@@ -684,8 +684,9 @@ The candidate is not transport authorization. The application-layer
 the current canonical decision, and runs one attempt inside a serialized
 authority scope that reloads local/remote mode, provider policy, consent, and
 the current active canonical decision immediately before each injected
-transport call or retry. A future composition can share this scope with consent
-and hand-lifecycle mutation so revocation, reapproval, withdrawal, rejection,
+transport call or retry. A fresh lock context is created for every guarded
+attempt so a generator-backed interprocess lock remains retry-safe. A future
+composition can share this scope with consent and hand-lifecycle mutation so revocation, reapproval, withdrawal, rejection,
 or deletion cannot race the reload and call. A missing current decision,
 revoked or expired consent, local-only mode, changed
 provider/disclosure/manifest, changed consent generation, changed route,

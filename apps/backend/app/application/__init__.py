@@ -19,6 +19,7 @@ from app.application.mcp_admin import McpAdminService
 from app.application.remote_reference_dispatch import (
     RemoteReferenceAuthorityGuard,
     RemoteReferenceAuthorityLoader,
+    RemoteReferenceAuthorityLockFactory,
     RemoteReferenceAuthorityOperation,
     RemoteReferenceClock,
     RemoteReferenceDispatchAttempt,
@@ -45,6 +46,7 @@ __all__ = [
     "McpAdminService",
     "RemoteReferenceAuthorityGuard",
     "RemoteReferenceAuthorityLoader",
+    "RemoteReferenceAuthorityLockFactory",
     "RemoteReferenceAuthorityOperation",
     "RemoteReferenceClock",
     "RemoteReferenceDispatchAttempt",

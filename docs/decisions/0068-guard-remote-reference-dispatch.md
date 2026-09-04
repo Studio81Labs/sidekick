@@ -23,10 +23,10 @@ adapter, credentials, response decoder, or runtime wiring would be premature.
 Add a transport-neutral application guard around one remote lookup attempt. The
 caller supplies a prior dispatch candidate, an authority guard, an injected
 transport adapter, and a clock. The guard supplies mode, provider policy,
-consent, and the current active canonical decision as one snapshot and retains
-its serialized authorization scope while the guarded attempt performs its one
-transport call. A future composition can therefore use the same lock or
-equivalent exclusion boundary as consent and hand-lifecycle mutation,
+consent, and the current active canonical decision as one snapshot and creates
+a fresh serialized authorization scope for every attempt while the guarded
+attempt performs its one transport call. A future composition can therefore
+use the same lock or equivalent exclusion boundary as consent and hand-lifecycle mutation,
 eliminating revocation, reapproval, withdrawal, rejection, and deletion races
 between the reload and the call.
 

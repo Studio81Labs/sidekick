@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from hashlib import sha256
 from threading import Lock
@@ -84,8 +85,9 @@ def authority_guard(
     current: RemoteReferenceDispatchAuthority | None = None,
 ) -> RemoteReferenceAuthorityGuard:
     snapshot = current or authority()
+    shared_lock = Lock()
     return RemoteReferenceAuthorityGuard(
-        lock=Lock(),
+        lock_factory=lambda: shared_lock,
         load_authority=lambda: snapshot,
     )
 
@@ -153,7 +155,7 @@ def test_authority_guard_holds_its_lock_through_the_transport_call() -> None:
     result = dispatch_remote_reference_lookup(
         candidate=preflight(),
         authority_guard=RemoteReferenceAuthorityGuard(
-            lock=shared_lock,
+            lock_factory=lambda: shared_lock,
             load_authority=load_authority,
         ),
         transport=RecordingTransport(on_call=observe_transport),
@@ -163,6 +165,39 @@ def test_authority_guard_holds_its_lock_through_the_transport_call() -> None:
     assert isinstance(result, RemoteReferenceLookupResponseCandidate)
     assert observed == ["loaded", "transported"]
     assert not shared_lock.locked()
+
+
+def test_authority_guard_creates_a_fresh_lock_context_for_every_attempt() -> None:
+    shared_lock = Lock()
+    acquisitions: list[int] = []
+
+    @contextmanager
+    def fresh_lock_context():
+        with shared_lock:
+            acquisitions.append(len(acquisitions) + 1)
+            yield
+
+    guard = RemoteReferenceAuthorityGuard(
+        lock_factory=fresh_lock_context,
+        load_authority=authority,
+    )
+
+    first = dispatch_remote_reference_lookup(
+        candidate=preflight(),
+        authority_guard=guard,
+        transport=RecordingTransport(),
+        clock=clock(NOW + timedelta(seconds=1), NOW + timedelta(seconds=2)),
+    )
+    second = dispatch_remote_reference_lookup(
+        candidate=preflight(),
+        authority_guard=guard,
+        transport=RecordingTransport(),
+        clock=clock(NOW + timedelta(seconds=3), NOW + timedelta(seconds=4)),
+    )
+
+    assert isinstance(first, RemoteReferenceLookupResponseCandidate)
+    assert isinstance(second, RemoteReferenceLookupResponseCandidate)
+    assert acquisitions == [1, 2]
 
 
 def test_dispatch_requires_an_initial_candidate() -> None:
