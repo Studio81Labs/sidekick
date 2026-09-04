@@ -5,7 +5,11 @@ Status: accepted
 Date: 2026-09-01
 
 Amended by [ADR 0066](0066-persist-install-local-remote-reference-consent.md),
-which defines the supported layout v1-to-v2 migration.
+which defines the supported layout v1-to-v2 migration; by
+[ADR 0071](0071-persist-current-reference-activation-catalog.md), which adds
+layout v3; and by
+[ADR 0072](0072-persist-current-learning-content-catalog.md), which adds the
+current learning-content authority in layout v4.
 
 ## Context
 

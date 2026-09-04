@@ -47,6 +47,9 @@ from app.storage.imported_hand_store import (
     RECORD_FILENAME,
     RECORD_KEY_PATTERN,
 )
+from app.storage.learning_content_catalog_store import (
+    LEARNING_CONTENT_CATALOG_FILENAME,
+)
 from app.storage.reference_activation_catalog_store import (
     REFERENCE_ACTIVATION_CATALOG_FILENAME,
 )
@@ -313,6 +316,7 @@ def _require_portable_workspace_inventory(workspace: PlayerWorkspace) -> None:
         DATA_LOCK_FILENAME,
         PLAYER_INSTALLATION_SECRET_FILENAME,
         PLAYER_WORKSPACE_MANIFEST_FILENAME,
+        LEARNING_CONTENT_CATALOG_FILENAME,
         REFERENCE_ACTIVATION_CATALOG_FILENAME,
         REMOTE_REFERENCE_CONSENT_FILENAME,
         *(

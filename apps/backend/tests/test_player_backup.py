@@ -35,6 +35,9 @@ from app.storage.imported_hand_store import (
     ImportedHandNotFoundError,
     imported_hand_record_key,
 )
+from app.storage.learning_content_catalog_store import (
+    LEARNING_CONTENT_CATALOG_FILENAME,
+)
 from app.storage.remote_reference_consent_store import (
     REMOTE_REFERENCE_CONSENT_FILENAME,
 )
@@ -48,6 +51,7 @@ from test_imported_hand_store import (
     tombstone_record,
     withdrawn_record,
 )
+from test_learning_content_catalog_store import initial_catalog
 from test_player_runtime import exchange_session, player_client
 from test_remote_references import provider_policy
 
@@ -95,7 +99,7 @@ def restore(
 
 def write_future_workspace_manifest(workspace: PlayerWorkspace) -> None:
     (workspace.data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":4,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":5,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
@@ -107,6 +111,7 @@ def test_empty_player_backup_round_trips(tmp_path: Path) -> None:
         assert PLAYER_WORKSPACE_MANIFEST_FILENAME not in archive.namelist()
         assert REMOTE_REFERENCE_CONSENT_FILENAME not in archive.namelist()
         assert REFERENCE_ACTIVATION_CATALOG_FILENAME not in archive.namelist()
+        assert LEARNING_CONTENT_CATALOG_FILENAME not in archive.namelist()
 
     parsed = parse_player_backup_archive(
         payload,
@@ -127,7 +132,7 @@ def test_empty_player_backup_round_trips(tmp_path: Path) -> None:
     }
 
 
-def test_backup_restore_never_copies_remote_reference_consent(
+def test_backup_restore_never_copies_install_local_authorities(
     tmp_path: Path,
 ) -> None:
     policy = provider_policy()
@@ -145,15 +150,23 @@ def test_backup_restore_never_copies_remote_reference_consent(
         ),
         at=datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc),
     )
+    current_content = source.current_learning_content_catalog()
+    source.publish_learning_content_catalog(
+        initial_catalog(current_content.catalog),
+        expected_catalog_revision=current_content.catalog.catalog_revision,
+        expected_catalog_sha256=current_content.catalog_sha256,
+    )
 
     payload = archive_bytes(source)
     with ZipFile(BytesIO(payload)) as archive:
         assert REMOTE_REFERENCE_CONSENT_FILENAME not in archive.namelist()
+        assert LEARNING_CONTENT_CATALOG_FILENAME not in archive.namelist()
 
     target = workspace_at(tmp_path / "target")
     restore(target, payload)
 
     assert target.remote_reference_consent.load().consent is None
+    assert target.learning_content_catalog.load().catalog.catalog_revision == 0
 
 
 def test_player_backup_export_rejects_a_changed_workspace_layout(
