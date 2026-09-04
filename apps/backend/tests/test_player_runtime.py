@@ -72,6 +72,9 @@ from app.storage.imported_hand_store import (
     FileImportedHandStore,
     imported_hand_record_key,
 )
+from app.storage.remote_reference_consent_store import (
+    REMOTE_REFERENCE_CONSENT_FILENAME,
+)
 from test_imported_hand_decisions import (
     baseline_decision_record,
     big_blind_walk_record,
@@ -86,6 +89,7 @@ from test_imported_hand_store import (
     withdrawn_record,
 )
 from test_imported_hand_ingestion import parsed_candidate
+from test_remote_references import provider_policy
 
 
 TEST_PLAYER_ASSETS_DIR = Path(__file__).parent / "fixtures" / "player-pwa"
@@ -362,6 +366,7 @@ def test_player_runtime_opens_only_the_player_store(tmp_path: Path) -> None:
         ".player-runtime-key",
         ".poker-hero-data.lock",
         PLAYER_WORKSPACE_MANIFEST_FILENAME,
+        REMOTE_REFERENCE_CONSENT_FILENAME,
         "imported-hands",
     }
 
@@ -983,13 +988,173 @@ def test_player_storage_status_preserves_recovery_attention(
     }
 
 
+def test_remote_reference_consent_defaults_to_authenticated_local_only(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+
+    assert client.get("/api/player/remote-reference/consent").status_code == 401
+    session = exchange_session(client, runtime)
+    response = client.get(
+        "/api/player/remote-reference/consent",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    assert response.json() == {
+        "schema": "player-remote-reference-consent-status/v1",
+        "state": "local_only",
+        "reason": "provider_unconfigured",
+        "consent_generation": 0,
+        "provider": None,
+        "consent": None,
+    }
+
+
+def test_remote_reference_consent_accept_revoke_and_restart_lifecycle(
+    tmp_path: Path,
+) -> None:
+    policy = provider_policy()
+    client, runtime = player_client(
+        tmp_path,
+        remote_reference_provider_policy=policy,
+    )
+    session = exchange_session(client, runtime)
+    authorization = {"Authorization": f"Bearer {session['session_token']}"}
+    mutation_headers = player_mutation_headers(session)
+
+    offered = client.get(
+        "/api/player/remote-reference/consent",
+        headers=authorization,
+    )
+    assert offered.status_code == 200
+    assert offered.json()["state"] == "consent_required"
+    assert offered.json()["reason"] == "consent_absent"
+    assert offered.json()["provider"]["disclosure"] == policy.disclosure.model_dump(
+        mode="json"
+    )
+    assert (
+        offered.json()["provider"]["provider_policy_sha256"]
+        == policy.semantic_digest()
+    )
+
+    acceptance = {
+        "expected_consent_generation": 0,
+        "expected_provider_policy_revision": policy.provider_policy_revision,
+        "expected_provider_policy_sha256": offered.json()["provider"][
+            "provider_policy_sha256"
+        ],
+        "expected_disclosure_revision": policy.disclosure.disclosure_revision,
+        "disclosure_accepted": True,
+        "network_dependency_accepted": True,
+        "retention_and_use_accepted": True,
+    }
+    assert client.post(
+        "/api/player/remote-reference/consent",
+        json=acceptance,
+        headers=authorization,
+    ).status_code == 403
+    rejected_affirmation = client.post(
+        "/api/player/remote-reference/consent",
+        json={**acceptance, "retention_and_use_accepted": False},
+        headers=mutation_headers,
+    )
+    assert rejected_affirmation.status_code == 422
+
+    accepted = client.post(
+        "/api/player/remote-reference/consent",
+        json=acceptance,
+        headers=mutation_headers,
+    )
+    assert accepted.status_code == 201
+    assert accepted.headers["Cache-Control"] == "no-store"
+    assert accepted.json()["state"] == "consent_active"
+    assert accepted.json()["reason"] == "consent_active"
+    assert accepted.json()["consent"]["status"] == "active"
+    assert accepted.json()["consent_generation"] == 1
+
+    stale = client.post(
+        "/api/player/remote-reference/consent",
+        json=acceptance,
+        headers=mutation_headers,
+    )
+    assert stale.status_code == 409
+
+    restarted = _create_player_runtime(
+        tmp_path,
+        remote_reference_provider_policy=policy,
+    )
+    restarted_client = TestClient(
+        restarted.app,
+        base_url=PLAYER_ORIGIN,
+        client=("127.0.0.1", 50001),
+    )
+    restarted_session = exchange_session(restarted_client, restarted)
+    restarted_headers = player_mutation_headers(restarted_session)
+    current = restarted_client.get(
+        "/api/player/remote-reference/consent",
+        headers={
+            "Authorization": f"Bearer {restarted_session['session_token']}"
+        },
+    )
+    assert current.status_code == 200
+    assert current.json()["state"] == "consent_active"
+
+    revoke = {"expected_consent_generation": 1}
+    revoked = restarted_client.post(
+        "/api/player/remote-reference/consent/revoke",
+        json=revoke,
+        headers=restarted_headers,
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["state"] == "consent_required"
+    assert revoked.json()["reason"] == "consent_revoked"
+    assert revoked.json()["consent"]["status"] == "revoked"
+    assert revoked.json()["consent_generation"] == 1
+
+    repeated = restarted_client.post(
+        "/api/player/remote-reference/consent/revoke",
+        json=revoke,
+        headers=restarted_headers,
+    )
+    assert repeated.status_code == 200
+    assert repeated.json() == revoked.json()
+
+
+def test_remote_reference_acceptance_fails_closed_without_a_provider(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        "/api/player/remote-reference/consent",
+        json={
+            "expected_consent_generation": 0,
+            "expected_provider_policy_revision": "policy-v1",
+            "expected_provider_policy_sha256": "a" * 64,
+            "expected_disclosure_revision": "disclosure-v1",
+            "disclosure_accepted": True,
+            "network_dependency_accepted": True,
+            "retention_and_use_accepted": True,
+        },
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "No active remote-reference provider policy is available"
+    }
+
+
 def test_player_api_reports_a_layout_change_as_restart_required(
     tmp_path: Path,
 ) -> None:
     client, runtime = player_client(tmp_path)
     session = exchange_session(client, runtime)
     (tmp_path / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":2,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":3,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 

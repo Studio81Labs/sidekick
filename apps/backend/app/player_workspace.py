@@ -52,6 +52,7 @@ from app.domain.imported_hands import (
     canonical_revision_from_review,
     extract_hero_decision_points,
 )
+from app.domain.remote_references import RemoteReferenceProviderPolicy
 from app.player_hands import (
     PlayerActiveHandDecisions,
     PlayerHandApprovalRequest,
@@ -67,11 +68,23 @@ from app.player_hands import (
     player_hand_record_version,
     project_player_active_hand_decisions,
 )
+from app.player_remote_references import (
+    PlayerRemoteReferenceConsentRequest,
+    PlayerRemoteReferenceConsentStatus,
+    PlayerRemoteReferenceRevokeRequest,
+    accept_player_remote_reference_consent,
+    project_player_remote_reference_consent_status,
+    revoke_player_remote_reference_consent,
+)
 from app.storage.imported_hand_store import (
     DecisionArtifactIntegrityError,
     IMPORTED_HANDS_DIRNAME,
     FileImportedHandStore,
     imported_hand_record_key,
+)
+from app.storage.remote_reference_consent_store import (
+    FileRemoteReferenceConsentStore,
+    RemoteReferenceConsentStorageError,
 )
 
 
@@ -111,7 +124,7 @@ DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
 PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
 PLAYER_WORKSPACE_MANIFEST_FILENAME = ".poker-hero-player-workspace.json"
 PLAYER_WORKSPACE_SCHEMA = "poker-hero-player-workspace"
-PLAYER_WORKSPACE_LAYOUT_VERSION = 1
+PLAYER_WORKSPACE_LAYOUT_VERSION = 2
 MAX_PLAYER_WORKSPACE_MANIFEST_BYTES = 4096
 
 
@@ -119,7 +132,7 @@ class _PlayerWorkspaceManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_name: Literal[PLAYER_WORKSPACE_SCHEMA] = Field(alias="schema")
-    layout_version: Literal[PLAYER_WORKSPACE_LAYOUT_VERSION]
+    layout_version: Literal[1, PLAYER_WORKSPACE_LAYOUT_VERSION]
 
     @field_validator("layout_version", mode="before")
     @classmethod
@@ -561,11 +574,13 @@ def _read_player_workspace_manifest(
         ) from exc
 
 
-def _player_workspace_manifest_payload() -> bytes:
+def _player_workspace_manifest_payload(
+    layout_version: int = PLAYER_WORKSPACE_LAYOUT_VERSION,
+) -> bytes:
     return (
         json.dumps(
             {
-                "layout_version": PLAYER_WORKSPACE_LAYOUT_VERSION,
+                "layout_version": layout_version,
                 "schema": PLAYER_WORKSPACE_SCHEMA,
             },
             ensure_ascii=True,
@@ -647,6 +662,37 @@ def _publish_player_workspace_manifest(data_dir: Path) -> None:
         ) from exc
 
 
+def _replace_player_workspace_manifest(data_dir: Path) -> None:
+    manifest_path = data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "wb",
+            dir=data_dir,
+            prefix=".poker-hero-player-workspace.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            os.fchmod(temp_file.fileno(), 0o600)
+            temp_file.write(_player_workspace_manifest_payload())
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+        os.replace(temp_path, manifest_path)
+        temp_path = None
+        _fsync_player_data_dir(data_dir)
+    except OSError as exc:
+        raise PlayerDataDirectoryError(
+            f"Cannot durably upgrade the player workspace manifest: {exc}"
+        ) from exc
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 @dataclass(frozen=True)
 class PlayerWorkspace:
     """The stores the local player runtime may open.
@@ -661,6 +707,8 @@ class PlayerWorkspace:
     layout_version: int
     data_lock: InterprocessDataLock
     imported_hands: FileImportedHandStore
+    remote_reference_consent: FileRemoteReferenceConsentStore
+    remote_reference_consent_lock: LockType
     imported_hand_recovery: ImportedHandRecoveryReport
     imported_hand_locks: tuple[LockType, ...]
     imported_hand_process_locks: tuple[InterprocessFileLock, ...]
@@ -726,7 +774,10 @@ class PlayerWorkspace:
                 "The existing player data directory is missing its versioned"
                 " workspace manifest"
             )
-        if manifest_hint is not None:
+        if (
+            manifest_hint is not None
+            and manifest_hint.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
+        ):
             # Re-read and construct beneath the shared hold. A future layout
             # migration must take the exclusive side, so it cannot publish a
             # new layout between validation and store construction.
@@ -735,7 +786,10 @@ class PlayerWorkspace:
                 timeout_seconds=startup_lock_timeout_seconds,
             ):
                 manifest = _read_player_workspace_manifest(private_data_dir)
-                if manifest is None:
+                if (
+                    manifest is None
+                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
+                ):
                     raise PlayerDataDirectoryError(
                         "The player workspace manifest changed during startup"
                     )
@@ -744,6 +798,13 @@ class PlayerWorkspace:
                     private_data_dir,
                     create_if_missing=False,
                 )
+                remote_reference_consent = FileRemoteReferenceConsentStore(
+                    private_data_dir
+                )
+                try:
+                    remote_reference_consent.load()
+                except RemoteReferenceConsentStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
                 imported_hands = FileImportedHandStore(
                     private_data_dir,
                     write_lock_timeout_seconds=write_lock_timeout_seconds,
@@ -754,6 +815,7 @@ class PlayerWorkspace:
                         manifest=manifest,
                         data_lock=data_lock,
                         imported_hands=imported_hands,
+                        remote_reference_consent=remote_reference_consent,
                         recovery=recovery,
                     )
 
@@ -775,11 +837,43 @@ class PlayerWorkspace:
                     private_data_dir,
                     create_if_missing=True,
                 )
+                remote_reference_consent = FileRemoteReferenceConsentStore(
+                    private_data_dir
+                )
+                try:
+                    remote_reference_consent.initialize_empty()
+                except RemoteReferenceConsentStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
                 _publish_player_workspace_manifest(private_data_dir)
                 manifest = _read_player_workspace_manifest(private_data_dir)
-                if manifest is None:
+                if (
+                    manifest is None
+                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
+                ):
                     raise PlayerDataDirectoryError(
                         "The player workspace manifest is missing after migration"
+                    )
+            elif manifest.layout_version == 1:
+                _require_durable_player_workspace_manifest(private_data_dir)
+                _require_imported_hands_dir(
+                    private_data_dir,
+                    create_if_missing=False,
+                )
+                remote_reference_consent = FileRemoteReferenceConsentStore(
+                    private_data_dir
+                )
+                try:
+                    remote_reference_consent.initialize_empty()
+                except RemoteReferenceConsentStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
+                _replace_player_workspace_manifest(private_data_dir)
+                manifest = _read_player_workspace_manifest(private_data_dir)
+                if (
+                    manifest is None
+                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
+                ):
+                    raise PlayerDataDirectoryError(
+                        "The player workspace manifest is missing after upgrade"
                     )
             else:
                 _require_durable_player_workspace_manifest(private_data_dir)
@@ -787,6 +881,13 @@ class PlayerWorkspace:
                     private_data_dir,
                     create_if_missing=False,
                 )
+                remote_reference_consent = FileRemoteReferenceConsentStore(
+                    private_data_dir
+                )
+                try:
+                    remote_reference_consent.load()
+                except RemoteReferenceConsentStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
             imported_hands = FileImportedHandStore(
                 private_data_dir,
                 write_lock_timeout_seconds=write_lock_timeout_seconds,
@@ -798,6 +899,7 @@ class PlayerWorkspace:
                 manifest=manifest,
                 data_lock=data_lock,
                 imported_hands=imported_hands,
+                remote_reference_consent=remote_reference_consent,
                 recovery=recovery,
             )
 
@@ -809,6 +911,7 @@ class PlayerWorkspace:
         manifest: _PlayerWorkspaceManifest,
         data_lock: InterprocessDataLock,
         imported_hands: FileImportedHandStore,
+        remote_reference_consent: FileRemoteReferenceConsentStore,
         recovery: ImportedHandRecoveryReport,
     ) -> "PlayerWorkspace":
         return cls(
@@ -816,6 +919,8 @@ class PlayerWorkspace:
             layout_version=manifest.layout_version,
             data_lock=data_lock,
             imported_hands=imported_hands,
+            remote_reference_consent=remote_reference_consent,
+            remote_reference_consent_lock=Lock(),
             imported_hand_recovery=recovery,
             imported_hand_locks=tuple(
                 Lock() for _ in range(DEFAULT_PLAYER_HAND_LOCK_STRIPES)
@@ -856,6 +961,85 @@ class PlayerWorkspace:
                 "The player workspace layout changed while this runtime was open;"
                 " restart with a compatible version"
             )
+
+    def remote_reference_consent_status(
+        self,
+        *,
+        policy: RemoteReferenceProviderPolicy | None,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> PlayerRemoteReferenceConsentStatus:
+        with self.data_lock.hold(
+            exclusive=False,
+            timeout_seconds=lock_timeout_seconds,
+        ):
+            self.require_current_layout()
+            state = self.remote_reference_consent.load()
+            return project_player_remote_reference_consent_status(
+                policy=policy,
+                consent=state.consent,
+                at=at,
+            )
+
+    def accept_remote_reference_consent(
+        self,
+        *,
+        policy: RemoteReferenceProviderPolicy | None,
+        request: PlayerRemoteReferenceConsentRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerRemoteReferenceConsentStatus:
+        with self.remote_reference_consent_lock:
+            with self.data_lock.hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                self.require_current_layout()
+                state = self.remote_reference_consent.load()
+                consent = accept_player_remote_reference_consent(
+                    policy=policy,
+                    current=state.consent,
+                    request=request,
+                    at=at,
+                )
+                self.remote_reference_consent.save(
+                    state.model_copy(update={"consent": consent})
+                )
+                return project_player_remote_reference_consent_status(
+                    policy=policy,
+                    consent=consent,
+                    at=at,
+                )
+
+    def revoke_remote_reference_consent(
+        self,
+        *,
+        policy: RemoteReferenceProviderPolicy | None,
+        request: PlayerRemoteReferenceRevokeRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerRemoteReferenceConsentStatus:
+        with self.remote_reference_consent_lock:
+            with self.data_lock.hold(
+                exclusive=True,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                self.require_current_layout()
+                state = self.remote_reference_consent.load()
+                consent = revoke_player_remote_reference_consent(
+                    current=state.consent,
+                    request=request,
+                    at=at,
+                )
+                if consent != state.consent:
+                    self.remote_reference_consent.save(
+                        state.model_copy(update={"consent": consent})
+                    )
+                return project_player_remote_reference_consent_status(
+                    policy=policy,
+                    consent=consent,
+                    at=at,
+                )
 
     def status_payload(
         self,

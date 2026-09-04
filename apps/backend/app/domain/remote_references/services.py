@@ -133,98 +133,36 @@ def evaluate_remote_reference_preflight(
         return _unavailable(decision, now=now, reason="mode_invalid")
     if mode == "local_only":
         return _unavailable(decision, now=now, reason="local_only")
-    if policy is None:
-        return _unavailable(decision, now=now, reason="provider_unconfigured")
+    consent_reason = evaluate_remote_reference_consent(
+        policy=policy,
+        consent=consent,
+        now=now,
+    )
+    if consent_reason != "preflight_passed":
+        unavailable_policy = (
+            None if consent_reason == "provider_unconfigured" else policy
+        )
+        unavailable_consent = (
+            None
+            if consent_reason
+            in {"provider_unconfigured", "provider_inactive", "consent_absent"}
+            else consent
+        )
+        return _unavailable(
+            decision,
+            now=now,
+            reason=consent_reason,
+            policy=unavailable_policy,
+            consent=unavailable_consent,
+        )
+    assert policy is not None
+    assert consent is not None
     policy = RemoteReferenceProviderPolicy.model_validate(
         policy.model_dump(mode="python")
     )
-    if policy.provider_status != "active":
-        return _unavailable(
-            decision,
-            now=now,
-            reason="provider_inactive",
-            policy=policy,
-        )
-    if consent is None:
-        return _unavailable(
-            decision,
-            now=now,
-            reason="consent_absent",
-            policy=policy,
-        )
     consent = RemoteReferenceConsent.model_validate(consent.model_dump(mode="python"))
-    if consent.status == "revoked":
-        return _unavailable(
-            decision,
-            now=now,
-            reason="consent_revoked",
-            policy=policy,
-            consent=consent,
-        )
-    if now < consent.consented_at:
-        return _unavailable(
-            decision,
-            now=now,
-            reason="consent_not_yet_active",
-            policy=policy,
-            consent=consent,
-        )
-    if consent.expires_at is not None and now >= consent.expires_at:
-        return _unavailable(
-            decision,
-            now=now,
-            reason="consent_expired",
-            policy=policy,
-            consent=consent,
-        )
-
-    if (
-        consent.provider_id,
-        consent.provider_configuration_revision,
-        consent.provider_policy_revision,
-        consent.endpoint_origin,
-    ) != (
-        policy.provider_id,
-        policy.provider_configuration_revision,
-        policy.provider_policy_revision,
-        policy.endpoint_origin,
-    ):
-        return _unavailable(
-            decision,
-            now=now,
-            reason="provider_policy_mismatch",
-            policy=policy,
-            consent=consent,
-        )
     disclosure = policy.disclosure
     disclosure_sha256 = disclosure.semantic_digest()
-    if (
-        consent.disclosure_revision != disclosure.disclosure_revision
-        or consent.disclosure_sha256 != disclosure_sha256
-    ):
-        return _unavailable(
-            decision,
-            now=now,
-            reason="disclosure_mismatch",
-            policy=policy,
-            consent=consent,
-        )
-    if consent.accepted_outbound_categories != disclosure.outbound_categories:
-        return _unavailable(
-            decision,
-            now=now,
-            reason="outbound_categories_mismatch",
-            policy=policy,
-            consent=consent,
-        )
-    if consent.provider_policy_sha256 != policy.semantic_digest():
-        return _unavailable(
-            decision,
-            now=now,
-            reason="provider_policy_mismatch",
-            policy=policy,
-            consent=consent,
-        )
     if route is None:
         return _unavailable(
             decision,
@@ -314,6 +252,59 @@ def evaluate_remote_reference_preflight(
         outbound_request=request,
         fresh_consent_recheck="required_immediately_before_dispatch",
     )
+
+
+def evaluate_remote_reference_consent(
+    *,
+    policy: RemoteReferenceProviderPolicy | None,
+    consent: RemoteReferenceConsent | None,
+    now: datetime,
+) -> RemoteDispatchReason:
+    """Evaluate only provider and consent snapshots, without route authorization."""
+
+    if not _is_aware(now):
+        return "clock_invalid"
+    if policy is None:
+        return "provider_unconfigured"
+    policy = RemoteReferenceProviderPolicy.model_validate(
+        policy.model_dump(mode="python")
+    )
+    if policy.provider_status != "active":
+        return "provider_inactive"
+    if consent is None:
+        return "consent_absent"
+    consent = RemoteReferenceConsent.model_validate(consent.model_dump(mode="python"))
+    if consent.status == "revoked":
+        return "consent_revoked"
+    if now < consent.consented_at:
+        return "consent_not_yet_active"
+    if consent.expires_at is not None and now >= consent.expires_at:
+        return "consent_expired"
+
+    if (
+        consent.provider_id,
+        consent.provider_configuration_revision,
+        consent.provider_policy_revision,
+        consent.endpoint_origin,
+    ) != (
+        policy.provider_id,
+        policy.provider_configuration_revision,
+        policy.provider_policy_revision,
+        policy.endpoint_origin,
+    ):
+        return "provider_policy_mismatch"
+    disclosure = policy.disclosure
+    disclosure_sha256 = disclosure.semantic_digest()
+    if (
+        consent.disclosure_revision != disclosure.disclosure_revision
+        or consent.disclosure_sha256 != disclosure_sha256
+    ):
+        return "disclosure_mismatch"
+    if consent.accepted_outbound_categories != disclosure.outbound_categories:
+        return "outbound_categories_mismatch"
+    if consent.provider_policy_sha256 != policy.semantic_digest():
+        return "provider_policy_mismatch"
+    return "preflight_passed"
 
 
 def bind_remote_reference_route(

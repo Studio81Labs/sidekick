@@ -36,6 +36,7 @@ from app.data_lock import (
     DataLockError,
     DataLockTimeoutError,
 )
+from app.domain.remote_references import RemoteReferenceProviderPolicy
 from app.player_backup import (
     DEFAULT_MAX_PLAYER_BACKUP_BYTES,
     PlayerBackupError,
@@ -68,6 +69,11 @@ from app.player_namespace import (
     PLAYER_API_PREFIX,
     is_player_api_scope,
 )
+from app.player_remote_references import (
+    PlayerRemoteReferenceConsentConflict,
+    PlayerRemoteReferenceConsentRequest,
+    PlayerRemoteReferenceRevokeRequest,
+)
 from app.player_reimports import reimport_pokerstars_hand
 from app.player_workspace import (
     PlayerDataDirectoryError,
@@ -84,6 +90,9 @@ from app.storage.cascade_journal import PendingCascadeError
 from app.storage.imported_hand_store import (
     DecisionArtifactIntegrityError,
     ImportedHandNotFoundError,
+)
+from app.storage.remote_reference_consent_store import (
+    RemoteReferenceConsentStorageError,
 )
 
 
@@ -901,6 +910,7 @@ def create_player_runtime(
     max_player_import_file_bytes: int = MAX_PLAYER_IMPORT_FILE_BYTES,
     max_player_import_batch_bytes: int = MAX_PLAYER_IMPORT_BATCH_BYTES,
     max_player_import_files: int = MAX_PLAYER_IMPORT_FILES,
+    remote_reference_provider_policy: RemoteReferenceProviderPolicy | None = None,
 ) -> PlayerRuntime:
     player_assets = validate_player_assets(player_assets_dir)
     workspace = PlayerWorkspace.open(
@@ -915,6 +925,13 @@ def create_player_runtime(
     )
     restore_access_gate = _RestoreAccessGate()
     restore_in_progress = False
+    provider_policy = (
+        None
+        if remote_reference_provider_policy is None
+        else RemoteReferenceProviderPolicy.model_validate(
+            remote_reference_provider_policy.model_dump(mode="python")
+        )
+    )
     app = FastAPI(
         title="Poker Hero Local Player Runtime",
         docs_url=None,
@@ -983,6 +1000,80 @@ def create_player_runtime(
             except PlayerStorageRecoveryRequired as exc:
                 return _json_denial(503, str(exc))
         return JSONResponse(payload)
+
+    @app.get(f"{PLAYER_API_PREFIX}/remote-reference/consent")
+    async def player_remote_reference_consent(request: Request) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.remote_reference_consent_status,
+                    policy=provider_policy,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (DataLockError, RemoteReferenceConsentStorageError):
+                return _json_denial(
+                    500,
+                    "Remote-reference consent state could not be read safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json", by_alias=True))
+
+    @app.post(f"{PLAYER_API_PREFIX}/remote-reference/consent")
+    async def accept_player_remote_reference_consent_route(
+        request: Request,
+        body: PlayerRemoteReferenceConsentRequest,
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.accept_remote_reference_consent,
+                    policy=provider_policy,
+                    request=body,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except (PlayerRemoteReferenceConsentConflict, DataLockTimeoutError) as exc:
+                return _json_denial(409, str(exc))
+            except (DataLockError, RemoteReferenceConsentStorageError):
+                return _json_denial(
+                    500,
+                    "Remote-reference consent could not be saved safely",
+                )
+        return JSONResponse(
+            payload.model_dump(mode="json", by_alias=True),
+            status_code=201,
+        )
+
+    @app.post(f"{PLAYER_API_PREFIX}/remote-reference/consent/revoke")
+    async def revoke_player_remote_reference_consent_route(
+        request: Request,
+        body: PlayerRemoteReferenceRevokeRequest,
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.revoke_remote_reference_consent,
+                    policy=provider_policy,
+                    request=body,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except (PlayerRemoteReferenceConsentConflict, DataLockTimeoutError) as exc:
+                return _json_denial(409, str(exc))
+            except (DataLockError, RemoteReferenceConsentStorageError):
+                return _json_denial(
+                    500,
+                    "Remote-reference consent could not be revoked safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json", by_alias=True))
 
     @app.get(f"{PLAYER_API_PREFIX}/hands")
     async def player_hands(

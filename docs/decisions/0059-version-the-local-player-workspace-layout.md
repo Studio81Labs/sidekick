@@ -4,6 +4,9 @@ Status: accepted
 
 Date: 2026-09-01
 
+Amended by [ADR 0066](0066-persist-install-local-remote-reference-consent.md),
+which defines the supported layout v1-to-v2 migration.
+
 ## Context
 
 The local player runtime already opens an owner-only workspace containing the

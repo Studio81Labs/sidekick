@@ -656,11 +656,28 @@ policy drift, missing routes, and provider, network, or response failure remain
 visibly unavailable and ungraded, with no remote or heuristic-to-solved fallback;
 response digests are computed locally instead of accepted as provider claims.
 There is intentionally no provider selection, HTTP adapter, credential loading,
-persistence, source activation, or resolved-reference promotion yet, so this
-checkpoint does not close the source qualification and lifecycle work in issues
-#412 and #416. A future transport must also enforce its configured-origin
-allowlist after DNS resolution and reject private, loopback, link-local, and
-redirected destinations.
+persistence for provider results, source activation, or resolved-reference
+promotion yet, so this checkpoint does not close the source qualification and
+lifecycle work in issues #412 and #416. A future transport must also enforce its
+configured-origin allowlist after DNS resolution and reject private, loopback,
+link-local, and redirected destinations.
+
+The local player application can now persist one authoritative
+remote-reference consent snapshot when its embedding composition supplies a
+fully validated active provider-policy snapshot. Consent remains unavailable
+when no such policy is supplied; the default packaged composition does not
+configure one. Authenticated local API routes disclose the active policy and
+exact outbound categories, accept only affirmative acknowledgements bound to
+the displayed complete policy digest and policy/disclosure revisions, and revoke the current
+generation idempotently. Acceptance and revocation use compare-and-set
+generations under the exclusive player-volume lock and atomically replace an
+owner-only state file. The file contains no credentials, outbound request,
+route binding, response, or player record. Consent is deliberately excluded
+from player backup and restore so an archive cannot resurrect authorization
+after revocation. Workspace layout v2 and ADR 0066 record the v1-to-v2
+migration. The runtime remains local-only because no transport consumes the
+consent yet, and a future dispatch owner must still atomically reread provider
+and consent state immediately before each request or retry.
 
 The canonical `ImportedHandRecord` is the trust authority for active decision
 artifacts. `FileImportedHandStore.active_decisions` first selects the artifact
