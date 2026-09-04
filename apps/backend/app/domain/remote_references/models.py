@@ -7,6 +7,7 @@ from decimal import Decimal
 from hashlib import sha256
 from ipaddress import ip_address
 from typing import Annotated, Literal, Self
+from unicodedata import category as unicode_category
 from urllib.parse import urlsplit
 
 from pydantic import (
@@ -313,7 +314,10 @@ class RemoteReferenceDisclosure(RemoteReferenceModel):
             ),
         )
         for label, text, expected_sha256 in policy_documents:
-            if not text.strip():
+            if not any(
+                unicode_category(character)[0] in {"L", "N", "P", "S"}
+                for character in text
+            ):
                 raise ValueError(f"{label} text must contain displayable content")
             actual_sha256 = sha256(text.encode("utf-8")).hexdigest()
             if actual_sha256 != expected_sha256:

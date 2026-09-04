@@ -2149,9 +2149,23 @@ def test_disclosure_requires_exact_digest_bound_policy_text(text_field: str) -> 
         disclosure(**{text_field: "Changed after its digest was published."})
 
 
-def test_disclosure_rejects_blank_policy_text() -> None:
+@pytest.mark.parametrize(
+    "policy_text",
+    [
+        "   ",
+        "\u200b",
+        "\u2060",
+        "\x00",
+        "\u200b \n\t\x00",
+        "\u0301",
+    ],
+)
+def test_disclosure_rejects_nonrendering_policy_text(policy_text: str) -> None:
     with pytest.raises(ValidationError, match="must contain displayable content"):
-        disclosure(terms_text="   ")
+        disclosure(
+            terms_text=policy_text,
+            terms_sha256=sha256(policy_text.encode("utf-8")).hexdigest(),
+        )
 
 
 def test_remote_failures_remain_ungraded_without_fallback() -> None:

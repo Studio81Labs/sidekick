@@ -44,6 +44,7 @@ Mutation routes retain the runtime's Origin and CSRF enforcement.
 
 The offer includes the exact UTF-8 terms, privacy, retention, training-use, and
 logging policy text. Every document must match its declared SHA-256, and all
+text must contain a rendering Unicode character before it can be offered. All
 text and hashes are covered by the displayed complete provider-policy digest.
 Clients acknowledge that digest and the policy/disclosure revisions and affirm
 the disclosure, network dependency, and retention/use terms. They cannot choose
