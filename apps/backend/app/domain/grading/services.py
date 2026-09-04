@@ -10,6 +10,7 @@ from app.domain.grading.models import (
     GradeClassification,
     GradeReason,
     PolicyLine,
+    ReferenceSourceQualification,
     ResolvedReferencePolicy,
     WAGER_ACTIONS,
 )
@@ -34,6 +35,7 @@ def grade_decision(
     decision: HeroDecisionPoint,
     *,
     reference: ResolvedReferencePolicy | None,
+    source_qualification: ReferenceSourceQualification | None,
 ) -> DecisionGrade:
     """Classify one voluntary action while keeping later learning gates closed."""
 
@@ -41,6 +43,10 @@ def grade_decision(
     binding = DecisionBinding.from_decision(validated)
     context_sha256 = decision_grading_context_sha256(validated)
     if reference is None:
+        if source_qualification is not None:
+            raise ValueError(
+                "source qualification cannot be evaluated without a reference"
+            )
         return _unavailable_grade(
             binding,
             context_sha256=context_sha256,
@@ -50,12 +56,47 @@ def grade_decision(
     reference = ResolvedReferencePolicy.model_validate(
         reference.model_dump(mode="python")
     )
+    if source_qualification is None:
+        return _unavailable_grade(
+            binding,
+            context_sha256=context_sha256,
+            reason="reference_source_unqualified",
+            reference=reference,
+        )
+    source_qualification = ReferenceSourceQualification.model_validate(
+        source_qualification.model_dump(mode="python")
+    )
+    if not source_qualification.matches(reference):
+        return _unavailable_grade(
+            binding,
+            context_sha256=context_sha256,
+            reason="reference_qualification_mismatch",
+            reference=reference,
+            source_qualification=source_qualification,
+        )
+    if not source_qualification.source_is_qualified:
+        return _unavailable_grade(
+            binding,
+            context_sha256=context_sha256,
+            reason="reference_source_unqualified",
+            reference=reference,
+            source_qualification=source_qualification,
+        )
+    if source_qualification.rights.delivery_mode != "shipped_static_lookup":
+        return _unavailable_grade(
+            binding,
+            context_sha256=context_sha256,
+            reason="reference_delivery_unverified",
+            reference=reference,
+            source_qualification=source_qualification,
+        )
     if reference.context_sha256 != context_sha256:
         return _unavailable_grade(
             binding,
             context_sha256=context_sha256,
             reason="decision_context_mismatch",
             reference=reference,
+            source_qualification=source_qualification,
         )
     if validated.table_action.action_type in WAGER_ACTIONS and (
         validated.table_action.total_committed is None
@@ -67,6 +108,7 @@ def grade_decision(
             context_sha256=context_sha256,
             reason="decision_sizing_unverified",
             reference=reference,
+            source_qualification=source_qualification,
         )
     if not _policy_lines_are_legal(validated, reference):
         return _unavailable_grade(
@@ -74,6 +116,7 @@ def grade_decision(
             context_sha256=context_sha256,
             reason="reference_policy_illegal",
             reference=reference,
+            source_qualification=source_qualification,
         )
     if not reference.policy_complete:
         return DecisionGrade(
@@ -85,6 +128,7 @@ def grade_decision(
             learning_eligibility="ineligible",
             reason="policy_incomplete",
             reference=reference,
+            source_qualification=source_qualification,
             ev_unit=reference.ev_unit,
         )
 
@@ -99,6 +143,7 @@ def grade_decision(
             binding,
             context_sha256=context_sha256,
             reference=reference,
+            source_qualification=source_qualification,
             supported_lines=supported_lines,
             matched_line=None,
             classification="mistake",
@@ -109,6 +154,7 @@ def grade_decision(
             binding,
             context_sha256=context_sha256,
             reference=reference,
+            source_qualification=source_qualification,
             supported_lines=supported_lines,
             matched_line=matched_line,
             classification="supported",
@@ -118,6 +164,7 @@ def grade_decision(
         binding,
         context_sha256=context_sha256,
         reference=reference,
+        source_qualification=source_qualification,
         supported_lines=supported_lines,
         matched_line=matched_line,
         classification="mistake",
@@ -238,6 +285,7 @@ def _unavailable_grade(
     context_sha256: str,
     reason: GradeReason,
     reference: ResolvedReferencePolicy | None = None,
+    source_qualification: ReferenceSourceQualification | None = None,
 ) -> DecisionGrade:
     return DecisionGrade(
         decision=binding,
@@ -248,6 +296,7 @@ def _unavailable_grade(
         learning_eligibility="ineligible",
         reason=reason,
         reference=reference,
+        source_qualification=source_qualification,
     )
 
 
@@ -256,6 +305,7 @@ def _gradeable_result(
     *,
     context_sha256: str,
     reference: ResolvedReferencePolicy,
+    source_qualification: ReferenceSourceQualification,
     supported_lines: tuple[PolicyLine, ...],
     matched_line: PolicyLine | None,
     classification: GradeClassification,
@@ -270,6 +320,7 @@ def _gradeable_result(
         learning_eligibility="requires_content_activation",
         reason=reason,
         reference=reference,
+        source_qualification=source_qualification,
         supported_policy_lines=supported_lines,
         matched_policy_line=matched_line,
         ev_cost=(
