@@ -457,6 +457,46 @@ def test_policy_content_binding_normalizes_equivalent_decimal_spellings() -> Non
     assert result.policy_grade_eligibility == "gradeable"
 
 
+def test_policy_content_binding_preserves_digits_beyond_decimal_context() -> None:
+    target = decision()
+    resolved = reference(
+        target,
+        lines=(
+            line("call", "0.1234567890123456789012345678901", "0"),
+            line(
+                "raise",
+                "0.8765432109876543210987654321099",
+                "-0.03",
+                total_committed_bb="3",
+            ),
+        ),
+    )
+    changed = reference(
+        target,
+        lines=(
+            line("call", "0.1234567890123456789012345678902", "0"),
+            line(
+                "raise",
+                "0.8765432109876543210987654321098",
+                "-0.03",
+                total_committed_bb="3",
+            ),
+        ),
+    )
+
+    assert resolved.policy_content_sha256() != changed.policy_content_sha256()
+
+    result = grade_decision(
+        target,
+        reference=changed,
+        source_qualification=source_qualification(resolved),
+    )
+
+    assert result.grade_source == "heuristic"
+    assert result.reason == "reference_qualification_mismatch"
+    assert result.policy_grade_eligibility == "ungraded"
+
+
 def test_context_mismatch_fails_closed_without_losing_attempted_reference() -> None:
     target = decision()
     attempted = reference(target, context_sha256="f" * 64)

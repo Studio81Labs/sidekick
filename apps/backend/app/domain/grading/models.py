@@ -109,7 +109,13 @@ def _normalize_policy_content(value: object) -> object:
     if isinstance(value, Decimal):
         if value == 0:
             return "0"
-        return format(value.normalize(), "f")
+        sign, digits, exponent = value.as_tuple()
+        canonical_digits = list(digits)
+        while canonical_digits[-1] == 0:
+            canonical_digits.pop()
+            exponent += 1
+        coefficient = "".join(str(digit) for digit in canonical_digits)
+        return f"{'-' if sign else ''}{coefficient}e{exponent}"
     if isinstance(value, dict):
         return {
             key: _normalize_policy_content(item) for key, item in value.items()
