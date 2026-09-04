@@ -296,9 +296,10 @@ def evaluate_learning_content_activation(
     taxonomy: TaxonomyRevision,
     mapping: ConceptMappingRevision,
     reference_policy_binding: LearningReferencePolicyBinding,
+    affected_concept_ids: tuple[str, ...],
     principles: tuple[PrincipleRecord, ...],
 ) -> LearningContentActivationCheck:
-    """Gate activation on compatible approved principles for mapped concepts."""
+    """Gate one explicit mapped-concept scope on compatible approved content."""
 
     validate_mapping_revision(taxonomy, mapping)
     reference_policy_binding = _validated_reference_policy_binding(
@@ -331,7 +332,18 @@ def evaluate_learning_content_activation(
         raise LearningContentCompatibilityError(
             "activation requires one current record per principle revision"
         )
-    affected = tuple(sorted({rule.concept_id for rule in mapping.rules}))
+    affected = tuple(sorted(set(affected_concept_ids)))
+    if affected != affected_concept_ids:
+        raise LearningContentCompatibilityError(
+            "affected concept ids must be sorted and unique"
+        )
+    mapped_concepts = {rule.concept_id for rule in mapping.rules}
+    unknown = tuple(sorted(set(affected) - mapped_concepts))
+    if unknown:
+        raise LearningContentCompatibilityError(
+            "affected concepts must be targets of the supplied mapping:"
+            f" {', '.join(unknown)}"
+        )
     definitions = {
         concept.concept_id: concept.definition_revision
         for concept in taxonomy.concepts

@@ -9,13 +9,13 @@ Date: 2026-09-04
 The grading domain can produce an independently qualified, complete solved-policy
 comparison for one active canonical decision, but intentionally marks it
 `requires_content_activation`. The learning-content domain can map that decision
-to zero or one revision-pinned primary concept and prove that every concept
-reachable from a mapping has at least one compatible human-approved principle.
-Those contracts were separate, so the application layer could not yet prove that
-a grade had compatible reviewed teaching content without trusting
-caller-assembled tags or activation snapshots. A principle's policy-revision
-label alone also cannot distinguish two otherwise different qualified reference
-identities if an identifier is incorrectly reused.
+to zero or one revision-pinned primary concept and prove that an explicit scope
+of mapped concepts has compatible human-approved principles. Those contracts
+were separate, so the application layer could not yet prove that a grade had
+compatible reviewed teaching content without trusting caller-assembled tags or
+activation snapshots. A principle's policy-revision label alone also cannot
+distinguish two otherwise different qualified reference identities if an
+identifier is incorrectly reused.
 
 Issue #416 requires heuristic and policy-incomplete decisions to remain outside
 mastery and drills. It also forbids mixing reference revisions within a concept
@@ -49,8 +49,8 @@ The boundary fails closed unless:
   threshold, and immutable artifact identities;
 - the supplied taxonomy and mapping produce exactly one supported primary
   concept for the decision;
-- every concept reachable from the mapping has compatible approved content
-  bound to that exact qualified reference; and
+- the recomputed primary concept has compatible approved content bound to that
+  exact decision-specific qualified reference; and
 - the retained approved principle records reproduce the exact eligible bindings,
   including semantic digests.
 
@@ -72,7 +72,11 @@ missing concept IDs and eligible principle bindings must be sorted and unique,
 eligible bindings may target only affected concepts, and the missing set must
 exactly equal affected concepts without eligible principles. These invariants
 make malformed snapshots invalid, while application composition still
-recomputes the snapshot rather than trusting it.
+recomputes the snapshot rather than trusting it. The application passes only the
+recomputed primary concept as the explicit affected scope; it does not apply one
+decision-specific context/route binding to unrelated concepts in the mapping.
+Duplicate principle revision identities are validated over the complete supplied
+record set before compatible content is selected.
 
 ## Consequences
 

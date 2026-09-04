@@ -641,7 +641,7 @@ class ApprovedPrincipleBinding(LearningContentModel):
 
 
 class LearningContentActivationCheck(LearningContentModel):
-    """Compatibility evidence for activating one taxonomy/reference pair."""
+    """Compatibility evidence for one explicit mapped-concept scope."""
 
     taxonomy_series_id: Identifier
     taxonomy_revision: Identifier

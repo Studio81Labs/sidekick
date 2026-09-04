@@ -283,6 +283,72 @@ def test_readiness_rejects_principles_bound_to_another_reference_identity() -> N
         )
 
 
+def test_readiness_scopes_coverage_to_the_recomputed_primary_concept() -> None:
+    fixture = readiness_fixture()
+    primary_rule = matching_rule()
+    secondary_concept = fixture.taxonomy.concepts[0].model_copy(
+        update={
+            "concept_id": "postflop.flop-defense",
+            "definition_revision": "flop-definition-v1",
+            "contexts": ("flop", "facing-wager"),
+            "testable_definition": "Choose a response to a flop wager.",
+        }
+    )
+    expanded_taxonomy = fixture.taxonomy.model_copy(
+        update={
+            "concepts": (*fixture.taxonomy.concepts, secondary_concept),
+        }
+    )
+    secondary_rule = primary_rule.model_copy(
+        update={
+            "rule_id": "flop-defense",
+            "concept_id": secondary_concept.concept_id,
+            "selector": primary_rule.selector.model_copy(update={"street": "flop"}),
+        }
+    )
+    expanded_mapping = fixture.mapping.model_copy(
+        update={"rules": (primary_rule, secondary_rule)}
+    )
+
+    result = prepare_grade_for_content_activation(
+        fixture.decision,
+        grade=fixture.grade,
+        taxonomy=expanded_taxonomy,
+        mapping=expanded_mapping,
+        principles=fixture.principles,
+    )
+
+    assert result.tagging.tag is not None
+    assert result.activation.affected_concept_ids == (
+        result.tagging.tag.concept_id,
+    )
+    assert result.activation.allowed
+
+
+def test_readiness_validates_principle_identity_collisions_before_selection() -> None:
+    fixture = readiness_fixture()
+    active = fixture.principles[0]
+    other_binding = active.principle.reference_policy_binding.model_copy(
+        update={"reference_revision": "reference-2026.10"}
+    )
+    conflicting = approved_record(
+        reference_policy_binding=other_binding,
+        content="Conflicting content under the same principle revision.",
+    )
+
+    with pytest.raises(
+        LearningContentReadinessError,
+        match="learning content inputs are not compatible",
+    ):
+        prepare_grade_for_content_activation(
+            fixture.decision,
+            grade=fixture.grade,
+            taxonomy=fixture.taxonomy,
+            mapping=fixture.mapping,
+            principles=(active, conflicting),
+        )
+
+
 def test_readiness_rejects_unapproved_principle_evidence() -> None:
     fixture = readiness_fixture()
     unapproved = fixture.principles[0].model_copy(

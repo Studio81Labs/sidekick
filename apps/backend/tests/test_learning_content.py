@@ -711,6 +711,7 @@ def test_activation_excludes_drafts_and_requires_exact_compatibility() -> None:
         taxonomy=active_taxonomy,
         mapping=active_mapping,
         reference_policy_binding=reference_binding("reference-v1"),
+        affected_concept_ids=("preflop.big-blind-defense",),
         principles=(draft,),
     )
     assert not blocked.allowed
@@ -725,6 +726,7 @@ def test_activation_excludes_drafts_and_requires_exact_compatibility() -> None:
         taxonomy=active_taxonomy,
         mapping=active_mapping,
         reference_policy_binding=reference_binding("reference-v1"),
+        affected_concept_ids=("preflop.big-blind-defense",),
         principles=(wrong_reference,),
     )
     assert not still_blocked.allowed
@@ -734,6 +736,7 @@ def test_activation_excludes_drafts_and_requires_exact_compatibility() -> None:
         taxonomy=active_taxonomy,
         mapping=active_mapping,
         reference_policy_binding=reference_binding("reference-v1"),
+        affected_concept_ids=("preflop.big-blind-defense",),
         principles=(draft, wrong_reference, approved),
     )
     assert allowed.allowed
@@ -760,6 +763,7 @@ def test_principle_approval_and_activation_pin_the_complete_reference() -> None:
         taxonomy=taxonomy(),
         mapping=mapping(matching_rule()),
         reference_policy_binding=active_binding,
+        affected_concept_ids=("preflop.big-blind-defense",),
         principles=(other,),
     )
     assert not blocked.allowed
@@ -777,6 +781,7 @@ def test_activation_rejects_duplicate_principle_revision_snapshots() -> None:
             taxonomy=taxonomy(),
             mapping=mapping(matching_rule()),
             reference_policy_binding=reference_binding("reference-v1"),
+            affected_concept_ids=("preflop.big-blind-defense",),
             principles=(draft, approved),
         )
 
@@ -791,6 +796,7 @@ def test_activation_rejects_duplicate_principle_revision_snapshots() -> None:
             taxonomy=taxonomy(),
             mapping=mapping(matching_rule()),
             reference_policy_binding=reference_binding("reference-v1"),
+            affected_concept_ids=("preflop.big-blind-defense",),
             principles=(approved, rewritten),
         )
 
@@ -814,6 +820,7 @@ def test_approval_boundaries_revalidate_forged_lifecycle_snapshots() -> None:
             taxonomy=taxonomy(),
             mapping=mapping(matching_rule()),
             reference_policy_binding=reference_binding("reference-v1"),
+            affected_concept_ids=("preflop.big-blind-defense",),
             principles=(forged_record,),
         )
     with pytest.raises(

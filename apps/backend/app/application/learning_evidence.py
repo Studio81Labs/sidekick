@@ -77,12 +77,14 @@ class LearningContentReadyGrade(BaseModel):
                 "concept tagging must be derived from the retained decision and"
                 " content revisions"
             )
+        assert expected_tagging.tag is not None
         expected_activation = evaluate_learning_content_activation(
             taxonomy=self.taxonomy,
             mapping=self.mapping,
             reference_policy_binding=_learning_reference_binding(
                 self.reference_policy_binding
             ),
+            affected_concept_ids=(expected_tagging.tag.concept_id,),
             principles=self.approved_principles,
         )
         if self.activation != expected_activation:
@@ -124,24 +126,12 @@ def prepare_grade_for_content_activation(
     learning_reference_policy_binding = _learning_reference_binding(
         reference_policy_binding
     )
-    compatible_principles = tuple(
-        record
-        for record in validated_principles
-        if record.principle.reference_policy_binding
-        == learning_reference_policy_binding
-    )
 
     try:
         tagging = tag_primary_concept(
             decision,
             taxonomy=taxonomy,
             mapping=mapping,
-        )
-        activation = evaluate_learning_content_activation(
-            taxonomy=taxonomy,
-            mapping=mapping,
-            reference_policy_binding=learning_reference_policy_binding,
-            principles=compatible_principles,
         )
     except ValueError as exc:
         raise LearningContentReadinessError(
@@ -152,13 +142,26 @@ def prepare_grade_for_content_activation(
         raise LearningContentReadinessError(
             "content readiness requires one supported primary concept"
         )
+    try:
+        activation = evaluate_learning_content_activation(
+            taxonomy=taxonomy,
+            mapping=mapping,
+            reference_policy_binding=learning_reference_policy_binding,
+            affected_concept_ids=(tagging.tag.concept_id,),
+            principles=validated_principles,
+        )
+    except ValueError as exc:
+        raise LearningContentReadinessError(
+            "learning content inputs are not compatible"
+        ) from exc
+
     if not activation.allowed:
         raise LearningContentReadinessError(
             "content readiness requires approved coverage for every affected concept"
         )
 
     approved_principles = _eligible_principle_records(
-        compatible_principles,
+        validated_principles,
         activation.eligible_principles,
     )
     problem = _content_readiness_problem(
