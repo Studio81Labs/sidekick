@@ -5,9 +5,11 @@ import os
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 import app.storage.reference_activation_catalog_store as store_module
 from app.application.reference_activation import ReferenceActivationCatalog
+from app.domain.learning_content import DecisionSelector
 from app.player_workspace import PlayerWorkspace
 from app.storage.reference_activation_catalog_store import (
     FileReferenceActivationCatalogStore,
@@ -17,7 +19,12 @@ from app.storage.reference_activation_catalog_store import (
     ReferenceActivationCatalogConflict,
     ReferenceActivationCatalogStorageError,
 )
-from test_reference_activation import activate, readiness
+from test_reference_activation import (
+    activate,
+    coverage_band,
+    readiness,
+    rewrite_activation,
+)
 
 
 def test_store_initializes_one_private_canonical_empty_catalog(
@@ -262,6 +269,70 @@ def test_store_rejects_self_consistent_foreign_catalog_identity(
                 ),
                 "catalog_sha256": foreign.semantic_digest(),
                 "catalog": foreign.model_dump(mode="json"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    store.path.chmod(0o600)
+
+    with pytest.raises(
+        ReferenceActivationCatalogStorageError,
+        match="malformed or unsupported",
+    ):
+        store.load()
+
+
+def test_store_rejects_history_with_an_invalid_catalog_prefix(
+    tmp_path: Path,
+) -> None:
+    store = FileReferenceActivationCatalogStore(tmp_path)
+    evidence = readiness()
+    first = activate(
+        ReferenceActivationCatalog.empty(REFERENCE_ACTIVATION_CATALOG_ID),
+        evidence,
+    ).activations[0]
+    second = rewrite_activation(
+        first,
+        sequence=2,
+        activation_id="activation-2",
+        predecessor_activation_sha256=first.activation_sha256,
+        coverage_band=coverage_band(
+            evidence,
+            coverage_band_id="cash.preflop.bb-defense.alias",
+        ),
+        mastery_series_id="mastery-series-2",
+    )
+    third = rewrite_activation(
+        second,
+        sequence=3,
+        activation_id="activation-3",
+        predecessor_activation_sha256=second.activation_sha256,
+        coverage_band=coverage_band(
+            evidence,
+            coverage_band_id="cash.preflop.bb-defense.alias",
+            selector=DecisionSelector(street="flop"),
+        ),
+        mastery_series_id="mastery-series-3",
+    )
+    forged = ReferenceActivationCatalog.model_construct(
+        catalog_id=REFERENCE_ACTIVATION_CATALOG_ID,
+        catalog_revision=3,
+        activations=(first, second, third),
+        active_activation_ids=(first.activation_id, third.activation_id),
+    )
+    with pytest.raises(ValidationError, match="every catalog revision"):
+        ReferenceActivationCatalog.model_validate(
+            forged.model_dump(mode="python")
+        )
+    store.path.write_text(
+        json.dumps(
+            {
+                "schema": store_module.REFERENCE_ACTIVATION_CATALOG_SCHEMA,
+                "schema_version": (
+                    store_module.REFERENCE_ACTIVATION_CATALOG_SCHEMA_VERSION
+                ),
+                "catalog_sha256": forged.semantic_digest(),
+                "catalog": forged.model_dump(mode="json"),
             }
         ),
         encoding="utf-8",

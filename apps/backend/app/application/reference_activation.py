@@ -373,24 +373,33 @@ class ReferenceActivationCatalog(ReferenceActivationModel):
             raise ValueError("active activation ids must belong to the catalog")
 
         latest_by_key: dict[tuple[str, str], ReferenceActivation] = {}
+        active_selector_owners: dict[tuple[str, str], tuple[str, str]] = {}
         for activation in activations:
+            prior = latest_by_key.get(activation.key)
+            if prior is not None:
+                active_selector_owners.pop(
+                    (
+                        prior.concept_id,
+                        prior.coverage_band.selector_sha256,
+                    )
+                )
+            selector_key = (
+                activation.concept_id,
+                activation.coverage_band.selector_sha256,
+            )
+            if selector_key in active_selector_owners:
+                raise ValueError(
+                    "active coverage bands for one concept require distinct"
+                    " selectors at every catalog revision"
+                )
             latest_by_key[activation.key] = activation
+            active_selector_owners[selector_key] = activation.key
         expected_active = tuple(
             sorted(item.activation_id for item in latest_by_key.values())
         )
         if self.active_activation_ids != expected_active:
             raise ValueError(
                 "catalog must select the latest activation for every concept band"
-            )
-        active = tuple(
-            item for item in activations if item.activation_id in expected_active
-        )
-        selector_keys = tuple(
-            (item.concept_id, item.coverage_band.selector_sha256) for item in active
-        )
-        if len(set(selector_keys)) != len(selector_keys):
-            raise ValueError(
-                "active coverage bands for one concept require distinct selectors"
             )
         return self
 
