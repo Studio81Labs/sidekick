@@ -13,6 +13,7 @@ from app.domain.learning_content.models import (
     DecisionBinding,
     DecisionConceptTagging,
     LearningContentActivationCheck,
+    LearningReferencePolicyBinding,
     PrimaryConceptTag,
     PrincipleCacheKey,
     PrincipleRecord,
@@ -294,12 +295,15 @@ def evaluate_learning_content_activation(
     *,
     taxonomy: TaxonomyRevision,
     mapping: ConceptMappingRevision,
-    reference_policy_revision: str,
+    reference_policy_binding: LearningReferencePolicyBinding,
     principles: tuple[PrincipleRecord, ...],
 ) -> LearningContentActivationCheck:
     """Gate activation on compatible approved principles for mapped concepts."""
 
     validate_mapping_revision(taxonomy, mapping)
+    reference_policy_binding = _validated_reference_policy_binding(
+        reference_policy_binding
+    )
     validated_principles = tuple(
         _validated_principle_record(record) for record in principles
     )
@@ -346,8 +350,8 @@ def evaluate_learning_content_activation(
         and record.principle.taxonomy_revision == taxonomy.taxonomy_revision
         and record.principle.concept_definition_revision
         == definitions[record.principle.concept_id]
-        and record.principle.reference_policy_revision
-        == reference_policy_revision
+        and record.principle.reference_policy_binding
+        == reference_policy_binding
     }
     eligible_bindings = tuple(
         ApprovedPrincipleBinding(
@@ -368,7 +372,7 @@ def evaluate_learning_content_activation(
         taxonomy_series_id=taxonomy.series_id,
         taxonomy_revision=taxonomy.taxonomy_revision,
         mapping_revision=mapping.mapping_revision,
-        reference_policy_revision=reference_policy_revision,
+        reference_policy_binding=reference_policy_binding,
         affected_concept_ids=affected,
         eligible_principles=eligible_bindings,
         missing_concept_ids=tuple(
@@ -380,9 +384,12 @@ def evaluate_learning_content_activation(
 def _require_approved_compatibility(
     tag: PrimaryConceptTag,
     *,
-    reference_policy_revision: str,
+    reference_policy_binding: LearningReferencePolicyBinding,
     record: PrincipleRecord,
 ) -> PrincipleRecord:
+    reference_policy_binding = _validated_reference_policy_binding(
+        reference_policy_binding
+    )
     validated_record = _validated_principle_record(record)
     principle = validated_record.principle
     if validated_record.current_status != "approved":
@@ -394,14 +401,14 @@ def _require_approved_compatibility(
         tag.taxonomy_series_id,
         tag.taxonomy_revision,
         tag.concept_definition_revision,
-        reference_policy_revision,
+        reference_policy_binding,
     )
     actual = (
         principle.concept_id,
         principle.taxonomy_series_id,
         principle.taxonomy_revision,
         principle.concept_definition_revision,
-        principle.reference_policy_revision,
+        principle.reference_policy_binding,
     )
     if actual != expected:
         raise ApprovedPrincipleUnavailableError(
@@ -435,17 +442,30 @@ def _validated_principle_revision(
         ) from error
 
 
+def _validated_reference_policy_binding(
+    binding: LearningReferencePolicyBinding,
+) -> LearningReferencePolicyBinding:
+    try:
+        return LearningReferencePolicyBinding.model_validate(
+            binding.model_dump(mode="python")
+        )
+    except (AttributeError, ValidationError) as error:
+        raise LearningContentCompatibilityError(
+            "reference policy binding failed canonical validation"
+        ) from error
+
+
 def build_principle_reveal(
     tag: PrimaryConceptTag,
     *,
-    reference_policy_revision: str,
+    reference_policy_binding: LearningReferencePolicyBinding,
     record: PrincipleRecord,
 ) -> PrincipleReveal:
     """Build a conditionally framed reveal with exact semantic provenance."""
 
     validated_record = _require_approved_compatibility(
         tag,
-        reference_policy_revision=reference_policy_revision,
+        reference_policy_binding=reference_policy_binding,
         record=record,
     )
     principle = validated_record.principle
@@ -456,7 +476,7 @@ def build_principle_reveal(
         taxonomy_revision=tag.taxonomy_revision,
         mapping_revision=tag.mapping_revision,
         concept_definition_revision=tag.concept_definition_revision,
-        reference_policy_revision=reference_policy_revision,
+        reference_policy_binding=reference_policy_binding,
         principle_id=principle.principle_id,
         principle_revision=principle.principle_revision,
         principle_semantic_digest=principle.semantic_digest(),
@@ -467,14 +487,14 @@ def build_principle_reveal(
 def principle_cache_key(
     tag: PrimaryConceptTag,
     *,
-    reference_policy_revision: str,
+    reference_policy_binding: LearningReferencePolicyBinding,
     record: PrincipleRecord,
 ) -> PrincipleCacheKey:
     """Return a cache key that changes with every semantic input revision."""
 
     validated_record = _require_approved_compatibility(
         tag,
-        reference_policy_revision=reference_policy_revision,
+        reference_policy_binding=reference_policy_binding,
         record=record,
     )
     principle = validated_record.principle
@@ -484,7 +504,7 @@ def principle_cache_key(
         taxonomy_revision=tag.taxonomy_revision,
         mapping_revision=tag.mapping_revision,
         concept_definition_revision=tag.concept_definition_revision,
-        reference_policy_revision=reference_policy_revision,
+        reference_policy_binding=reference_policy_binding,
         principle_id=principle.principle_id,
         principle_revision=principle.principle_revision,
         principle_semantic_digest=principle.semantic_digest(),

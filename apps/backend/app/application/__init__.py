@@ -15,6 +15,11 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService,
 )
+from app.application.learning_evidence import (
+    LearningContentReadinessError,
+    LearningContentReadyGrade,
+    prepare_grade_for_content_activation,
+)
 from app.application.mcp_admin import McpAdminService
 from app.application.remote_reference_dispatch import (
     RemoteReferenceAuthorityGuard,
@@ -43,6 +48,8 @@ __all__ = [
     "JobUploadPipelineRequest",
     "JobUploadRequest",
     "JobUploadService",
+    "LearningContentReadinessError",
+    "LearningContentReadyGrade",
     "McpAdminService",
     "RemoteReferenceAuthorityGuard",
     "RemoteReferenceAuthorityLoader",
@@ -55,4 +62,5 @@ __all__ = [
     "RemoteReferenceTransport",
     "SystemQueryService",
     "dispatch_remote_reference_lookup",
+    "prepare_grade_for_content_activation",
 ]

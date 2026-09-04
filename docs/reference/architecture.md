@@ -567,10 +567,11 @@ Principle revisions begin as drafts, retain append-only reviewer provenance,
 and become activation- or reveal-eligible only after compatible human approval.
 Complete-lineage successor validation prevents principle revision identities
 from being recycled. Activation checks cover every concept reachable from the
-mapping; principle reveals and cache keys bind the exact taxonomy series,
-taxonomy revision, mapping, definition, reference, principle version, and
-immutable principle-content digest and apply conditional educational framing.
-These pure contracts do not attach live taxonomy state to
+mapping and validate that their affected, eligible, and missing sets are
+canonical and complete. Principle reveals and cache keys bind the exact taxonomy
+series, taxonomy revision, mapping, definition, reference, principle version,
+and immutable principle-content digest and apply conditional educational
+framing. These pure contracts do not attach live taxonomy state to
 `HandDecisionExtraction` or yet
 publish persisted learning artifacts; ADR 0057 records that boundary and the
 remaining #417 persistence/migration work. The application lifecycle boundary
@@ -591,10 +592,20 @@ actions and wager sizes must be legal in the bound canonical state. Bet and
 raise sizes compare exact total commitments in BB using a pinned tolerance; an
 unverified blind or commitment leaves the comparison heuristic and ungraded.
 The result is immutable and persistence-free, and even a gradeable comparison
-remains `requires_content_activation`; this domain does not activate a
-reference, authorize a remote provider, persist grades, calculate aggregate
-mixing deviations, move mastery, or schedule drills. Those application and
-Phase 0 gates remain open under issues #412, #414, #416, and #418.
+remains `requires_content_activation`. The application-layer
+`learning_evidence` boundary can recompute tagging and content coverage from the
+complete canonical decision, grade, taxonomy, mapping, and approved principle
+records. It recomputes the grade to bind the selected action, and only exact
+reference-bound principle records participate in coverage. The full binding is
+part of each principle revision's pre-approval semantic digest and is retained
+by activation checks, reveals, and cache keys. The immutable
+`LearningContentReadyGrade` retains the nested qualification, content, and human
+review provenance. It is labeled only `content_ready` and remains
+`requires_reference_activation`; it does not grant learning eligibility without
+a future authoritative concept/coverage-band catalog. It also does not authorize
+a remote provider, persist grades or evidence, calculate aggregate mixing
+deviations, move mastery, or schedule drills. Those application and Phase 0
+gates remain open under issues #412, #414, #416, and #418.
 
 Solved comparison additionally requires an independent
 `ReferenceSourceQualification` argument. The immutable qualification records

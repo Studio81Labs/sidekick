@@ -38,6 +38,10 @@ Identifier = Annotated[
         strict=True,
     ),
 ]
+Sha256Digest = Annotated[
+    str,
+    StringConstraints(pattern=r"^[a-f0-9]{64}$", strict=True),
+]
 NonEmptyText = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=4000, strict=True),
@@ -47,6 +51,14 @@ NonNegativeInteger = Annotated[int, Field(ge=0, strict=True)]
 NonNegativeDecimal = Annotated[
     Decimal,
     Field(ge=0, allow_inf_nan=False, strict=True),
+]
+PositiveDecimal = Annotated[
+    Decimal,
+    Field(gt=0, allow_inf_nan=False, strict=True),
+]
+PositiveProbability = Annotated[
+    Decimal,
+    Field(gt=0, le=1, allow_inf_nan=False, strict=True),
 ]
 PositionLabel = Literal[
     "BTN/SB",
@@ -68,6 +80,7 @@ PrincipleStatus = Literal["draft", "approved", "superseded", "retired"]
 PrincipleAuthorKind = Literal["human", "llm"]
 PrincipleActorKind = Literal["human", "system"]
 PrincipleFraming = Literal["conditional_educational_reference_guidance"]
+ReferenceEvUnit = Literal["bb", "chips", "currency", "utility"]
 STREET_ORDER: tuple[StreetName, ...] = ("preflop", "flop", "turn", "river")
 
 EDUCATIONAL_GUIDANCE_PREFIX = (
@@ -498,6 +511,39 @@ class DecisionConceptTagging(LearningContentModel):
         return self
 
 
+class LearningReferencePolicyBinding(LearningContentModel):
+    """Exact qualified reference identity approved with learning content.
+
+    This structurally mirrors the grading qualification binding without making
+    the learning-content domain depend on the grading domain.
+    """
+
+    reference_revision: Identifier
+    policy_revision: Identifier
+    tolerance_revision: Identifier
+    reference_evidence_sha256: Sha256Digest
+    policy_artifact_sha256: Sha256Digest
+    policy_content_sha256: Sha256Digest
+    coverage_revision: Identifier
+    coverage_sha256: Sha256Digest
+    route_binding_id: Identifier
+    route_binding_revision: Identifier
+    context_sha256: Sha256Digest
+    engine_id: Identifier
+    engine_revision: Identifier
+    engine_configuration_sha256: Sha256Digest
+    economic_model: Identifier
+    economic_model_revision: Identifier
+    economic_configuration_sha256: Sha256Digest
+    utility_model: Identifier
+    utility_model_revision: Identifier
+    utility_configuration_sha256: Sha256Digest
+    ev_unit: ReferenceEvUnit
+    minimum_supported_frequency: PositiveProbability
+    maximum_equivalent_ev_cost: NonNegativeDecimal
+    sizing_tolerance_bb: PositiveDecimal
+
+
 class PrincipleRevision(LearningContentModel):
     """Immutable authored principle text and its exact compatibility pins."""
 
@@ -507,7 +553,7 @@ class PrincipleRevision(LearningContentModel):
     taxonomy_series_id: Identifier
     taxonomy_revision: Identifier
     concept_definition_revision: Identifier
-    reference_policy_revision: Identifier
+    reference_policy_binding: LearningReferencePolicyBinding
     author_kind: PrincipleAuthorKind
     author_id: Identifier
     authored_at: AwareDatetime
@@ -591,7 +637,7 @@ class ApprovedPrincipleBinding(LearningContentModel):
     concept_id: Identifier
     principle_id: Identifier
     principle_revision: Identifier
-    principle_semantic_digest: Identifier
+    principle_semantic_digest: Sha256Digest
 
 
 class LearningContentActivationCheck(LearningContentModel):
@@ -600,10 +646,38 @@ class LearningContentActivationCheck(LearningContentModel):
     taxonomy_series_id: Identifier
     taxonomy_revision: Identifier
     mapping_revision: Identifier
-    reference_policy_revision: Identifier
+    reference_policy_binding: LearningReferencePolicyBinding
     affected_concept_ids: tuple[Identifier, ...]
     eligible_principles: tuple[ApprovedPrincipleBinding, ...]
     missing_concept_ids: tuple[Identifier, ...]
+
+    @model_validator(mode="after")
+    def validate_coverage(self) -> Self:
+        if self.affected_concept_ids != tuple(sorted(set(self.affected_concept_ids))):
+            raise ValueError("affected concept ids must be sorted and unique")
+        if self.missing_concept_ids != tuple(sorted(set(self.missing_concept_ids))):
+            raise ValueError("missing concept ids must be sorted and unique")
+        eligible_keys = tuple(
+            (
+                binding.concept_id,
+                binding.principle_id,
+                binding.principle_revision,
+                binding.principle_semantic_digest,
+            )
+            for binding in self.eligible_principles
+        )
+        if eligible_keys != tuple(sorted(set(eligible_keys))):
+            raise ValueError("eligible principle bindings must be sorted and unique")
+        affected = set(self.affected_concept_ids)
+        covered = {binding.concept_id for binding in self.eligible_principles}
+        if not covered.issubset(affected):
+            raise ValueError("eligible principles must target affected concepts")
+        expected_missing = tuple(sorted(affected - covered))
+        if self.missing_concept_ids != expected_missing:
+            raise ValueError(
+                "missing concept ids must exactly describe uncovered affected concepts"
+            )
+        return self
 
     @property
     def allowed(self) -> bool:
@@ -619,10 +693,10 @@ class PrincipleReveal(LearningContentModel):
     taxonomy_revision: Identifier
     mapping_revision: Identifier
     concept_definition_revision: Identifier
-    reference_policy_revision: Identifier
+    reference_policy_binding: LearningReferencePolicyBinding
     principle_id: Identifier
     principle_revision: Identifier
-    principle_semantic_digest: Identifier
+    principle_semantic_digest: Sha256Digest
     framing: PrincipleFraming = "conditional_educational_reference_guidance"
     display_text: FramedPrincipleText
 
@@ -644,10 +718,10 @@ class PrincipleCacheKey(LearningContentModel):
     taxonomy_revision: Identifier
     mapping_revision: Identifier
     concept_definition_revision: Identifier
-    reference_policy_revision: Identifier
+    reference_policy_binding: LearningReferencePolicyBinding
     principle_id: Identifier
     principle_revision: Identifier
-    principle_semantic_digest: Identifier
+    principle_semantic_digest: Sha256Digest
 
     def digest(self) -> str:
         payload = json.dumps(

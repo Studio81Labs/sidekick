@@ -18,6 +18,7 @@ from app.domain.learning_content import (
     DecisionConceptTagging,
     DecisionSelector,
     LearningContentCompatibilityError,
+    LearningReferencePolicyBinding,
     PrincipleLifecycleEvent,
     PrincipleRecord,
     PrincipleRevision,
@@ -101,6 +102,41 @@ def matching_rule(
     )
 
 
+def reference_binding(
+    policy_revision: str = "reference-v1",
+    *,
+    reference_revision: str = "reference-v1",
+    tolerance_revision: str = "tolerance-v1",
+    maximum_equivalent_ev_cost: str = "0.02",
+) -> LearningReferencePolicyBinding:
+    return LearningReferencePolicyBinding(
+        reference_revision=reference_revision,
+        policy_revision=policy_revision,
+        tolerance_revision=tolerance_revision,
+        reference_evidence_sha256="1" * 64,
+        policy_artifact_sha256="2" * 64,
+        policy_content_sha256="3" * 64,
+        coverage_revision="coverage-v1",
+        coverage_sha256="4" * 64,
+        route_binding_id="route.preflop.bb-defense",
+        route_binding_revision="route-v1",
+        context_sha256="5" * 64,
+        engine_id="test-solver",
+        engine_revision="solver-v1",
+        engine_configuration_sha256="6" * 64,
+        economic_model="cash-rake",
+        economic_model_revision="cash-rake-v1",
+        economic_configuration_sha256="7" * 64,
+        utility_model="cash-ev",
+        utility_model_revision="cash-ev-v1",
+        utility_configuration_sha256="8" * 64,
+        ev_unit="bb",
+        minimum_supported_frequency=Decimal("0.05"),
+        maximum_equivalent_ev_cost=Decimal(maximum_equivalent_ev_cost),
+        sizing_tolerance_bb=Decimal("0.05"),
+    )
+
+
 def principle(
     *,
     principle_id: str = "bb-defense-guidance",
@@ -109,6 +145,7 @@ def principle(
     taxonomy_revision: str = "taxonomy-v1",
     definition_revision: str = "definition-v1",
     reference_revision: str = "reference-v1",
+    reference_policy_binding: LearningReferencePolicyBinding | None = None,
     author_kind: str = "llm",
     content: str = (
         "Against this pinned reference, continue ranges depend on the"
@@ -123,7 +160,9 @@ def principle(
         taxonomy_series_id=taxonomy_series_id,
         taxonomy_revision=taxonomy_revision,
         concept_definition_revision=definition_revision,
-        reference_policy_revision=reference_revision,
+        reference_policy_binding=(
+            reference_policy_binding or reference_binding(reference_revision)
+        ),
         author_kind=author_kind,
         author_id="principle-author",
         authored_at=NOW,
@@ -132,7 +171,9 @@ def principle(
     )
 
 
-def draft_record(**kwargs: str) -> PrincipleRecord:
+def draft_record(
+    **kwargs: str | LearningReferencePolicyBinding,
+) -> PrincipleRecord:
     authored = principle(**kwargs)
     return principle_draft(
         authored,
@@ -141,7 +182,9 @@ def draft_record(**kwargs: str) -> PrincipleRecord:
     )
 
 
-def approved_record(**kwargs: str) -> PrincipleRecord:
+def approved_record(
+    **kwargs: str | LearningReferencePolicyBinding,
+) -> PrincipleRecord:
     draft = draft_record(**kwargs)
     return append_principle_lifecycle_event(
         draft,
@@ -667,7 +710,7 @@ def test_activation_excludes_drafts_and_requires_exact_compatibility() -> None:
     blocked = evaluate_learning_content_activation(
         taxonomy=active_taxonomy,
         mapping=active_mapping,
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         principles=(draft,),
     )
     assert not blocked.allowed
@@ -681,7 +724,7 @@ def test_activation_excludes_drafts_and_requires_exact_compatibility() -> None:
     still_blocked = evaluate_learning_content_activation(
         taxonomy=active_taxonomy,
         mapping=active_mapping,
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         principles=(wrong_reference,),
     )
     assert not still_blocked.allowed
@@ -690,7 +733,7 @@ def test_activation_excludes_drafts_and_requires_exact_compatibility() -> None:
     allowed = evaluate_learning_content_activation(
         taxonomy=active_taxonomy,
         mapping=active_mapping,
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         principles=(draft, wrong_reference, approved),
     )
     assert allowed.allowed
@@ -698,6 +741,29 @@ def test_activation_excludes_drafts_and_requires_exact_compatibility() -> None:
     assert [binding.principle_revision for binding in allowed.eligible_principles] == [
         "principle-v1"
     ]
+
+
+def test_principle_approval_and_activation_pin_the_complete_reference() -> None:
+    active_binding = reference_binding()
+    other_binding = active_binding.model_copy(
+        update={
+            "reference_revision": "reference-v2",
+            "tolerance_revision": "tolerance-v2",
+            "maximum_equivalent_ev_cost": Decimal("0.03"),
+        }
+    )
+    active = approved_record(reference_policy_binding=active_binding)
+    other = approved_record(reference_policy_binding=other_binding)
+
+    assert active.principle.semantic_digest() != other.principle.semantic_digest()
+    blocked = evaluate_learning_content_activation(
+        taxonomy=taxonomy(),
+        mapping=mapping(matching_rule()),
+        reference_policy_binding=active_binding,
+        principles=(other,),
+    )
+    assert not blocked.allowed
+    assert blocked.eligible_principles == ()
 
 
 def test_activation_rejects_duplicate_principle_revision_snapshots() -> None:
@@ -710,7 +776,7 @@ def test_activation_rejects_duplicate_principle_revision_snapshots() -> None:
         evaluate_learning_content_activation(
             taxonomy=taxonomy(),
             mapping=mapping(matching_rule()),
-            reference_policy_revision="reference-v1",
+            reference_policy_binding=reference_binding("reference-v1"),
             principles=(draft, approved),
         )
 
@@ -724,7 +790,7 @@ def test_activation_rejects_duplicate_principle_revision_snapshots() -> None:
         evaluate_learning_content_activation(
             taxonomy=taxonomy(),
             mapping=mapping(matching_rule()),
-            reference_policy_revision="reference-v1",
+            reference_policy_binding=reference_binding("reference-v1"),
             principles=(approved, rewritten),
         )
 
@@ -747,7 +813,7 @@ def test_approval_boundaries_revalidate_forged_lifecycle_snapshots() -> None:
         evaluate_learning_content_activation(
             taxonomy=taxonomy(),
             mapping=mapping(matching_rule()),
-            reference_policy_revision="reference-v1",
+            reference_policy_binding=reference_binding("reference-v1"),
             principles=(forged_record,),
         )
     with pytest.raises(
@@ -756,7 +822,7 @@ def test_approval_boundaries_revalidate_forged_lifecycle_snapshots() -> None:
     ):
         build_principle_reveal(
             tagged_decision(),
-            reference_policy_revision="reference-v1",
+            reference_policy_binding=reference_binding("reference-v1"),
             record=forged_record,
         )
 
@@ -766,19 +832,19 @@ def test_reveal_requires_approved_compatible_principle_and_exact_versions() -> N
     with pytest.raises(ApprovedPrincipleUnavailableError, match="human-approved"):
         build_principle_reveal(
             tag,
-            reference_policy_revision="reference-v1",
+            reference_policy_binding=reference_binding("reference-v1"),
             record=draft_record(),
         )
     with pytest.raises(ApprovedPrincipleUnavailableError, match="compatibility"):
         build_principle_reveal(
             tag,
-            reference_policy_revision="reference-v1",
+            reference_policy_binding=reference_binding("reference-v1"),
             record=approved_record(reference_revision="reference-v2"),
         )
 
     reveal = build_principle_reveal(
         tag,
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         record=approved_record(),
     )
     assert reveal.decision == tag.decision
@@ -786,7 +852,7 @@ def test_reveal_requires_approved_compatible_principle_and_exact_versions() -> N
     assert reveal.taxonomy_revision == tag.taxonomy_revision
     assert reveal.mapping_revision == tag.mapping_revision
     assert reveal.concept_definition_revision == tag.concept_definition_revision
-    assert reveal.reference_policy_revision == "reference-v1"
+    assert reveal.reference_policy_binding == reference_binding("reference-v1")
     assert reveal.principle_revision == "principle-v1"
     assert (
         reveal.principle_semantic_digest
@@ -817,7 +883,7 @@ def test_reveal_allows_the_maximum_principle_content_after_framing() -> None:
 
     reveal = build_principle_reveal(
         tagged_decision(),
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         record=approved,
     )
     assert len(reveal.display_text) == 4000 + len(EDUCATIONAL_GUIDANCE_PREFIX)
@@ -827,32 +893,32 @@ def test_reveal_allows_the_maximum_principle_content_after_framing() -> None:
 def test_cache_key_changes_with_every_semantic_revision() -> None:
     base = principle_cache_key(
         tagged_decision(),
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         record=approved_record(),
     )
     mapping_changed = principle_cache_key(
         tagged_decision(mapping_revision="mapping-v2"),
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         record=approved_record(),
     )
     reference_changed = principle_cache_key(
         tagged_decision(),
-        reference_policy_revision="reference-v2",
+        reference_policy_binding=reference_binding("reference-v2"),
         record=approved_record(reference_revision="reference-v2"),
     )
     principle_changed = principle_cache_key(
         tagged_decision(),
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         record=approved_record(principle_revision="principle-v2"),
     )
     content_changed_without_revision_change = principle_cache_key(
         tagged_decision(),
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         record=approved_record(content="Changed content must never alias in cache."),
     )
     other_taxonomy_series = principle_cache_key(
         tagged_decision(taxonomy_series_id="postflop-core"),
-        reference_policy_revision="reference-v1",
+        reference_policy_binding=reference_binding("reference-v1"),
         record=approved_record(taxonomy_series_id="postflop-core"),
     )
 
