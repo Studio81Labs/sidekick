@@ -1162,6 +1162,41 @@ def create_player_runtime(
                 )
         return JSONResponse(payload.model_dump(mode="json"))
 
+    @app.get(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/evaluations")
+    async def player_hand_decision_evaluations(
+        request: Request,
+        record_key: str,
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.get_active_hand_decision_evaluations,
+                    record_key,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except PlayerHandDecisionsUnavailable as exc:
+                return _json_denial(409, str(exc))
+            except PlayerHandRecoveryRequired as exc:
+                return _json_denial(503, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except DecisionArtifactIntegrityError:
+                return _json_denial(
+                    500,
+                    "Active decision evaluation could not be read safely",
+                )
+            except (DataLockError, OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "Stored active decision evaluation could not be read safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json", by_alias=True))
+
     async def close_player_hand(
         request: Request,
         record_key: str,

@@ -46,6 +46,7 @@ from app.data_lock import (
 from app.domain.imported_hands import (
     CanonicalHandRevision,
     DeletionReceipt,
+    HandDecisionExtraction,
     ImportConflict,
     ImportedHandLifecycle,
     ImportedHandRecord,
@@ -53,6 +54,10 @@ from app.domain.imported_hands import (
     extract_hero_decision_points,
 )
 from app.domain.remote_references import RemoteReferenceProviderPolicy
+from app.player_decision_evaluations import (
+    PlayerActiveHandDecisionEvaluations,
+    evaluate_player_active_hand_decisions,
+)
 from app.player_hands import (
     PlayerActiveHandDecisions,
     PlayerHandApprovalRequest,
@@ -1146,25 +1151,61 @@ class PlayerWorkspace:
                     exclusive=False,
                     timeout_seconds=lock_timeout_seconds,
                 ):
-                    self.require_current_layout()
-                    self._require_final_hand_record(record_key)
-                    record = self.imported_hands.get(record_key)
-                    if not record.lifecycle.learning_eligible or any(
-                        conflict.status == "unresolved" for conflict in record.conflicts
-                    ):
-                        raise PlayerHandDecisionsUnavailable(
-                            "This hand has no active decision extraction"
-                        )
-                    extraction = self.imported_hands.active_decisions(record_key)
-                    if extraction is None:
-                        raise DecisionArtifactIntegrityError(
-                            "the active decision artifact is missing"
-                        )
+                    record, extraction = self._load_active_hand_decisions(record_key)
                     return project_player_active_hand_decisions(
                         record_key,
                         record,
                         extraction,
                     )
+
+    def get_active_hand_decision_evaluations(
+        self,
+        record_key: str,
+        *,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> PlayerActiveHandDecisionEvaluations:
+        """Evaluate the current artifact locally without persistence or egress."""
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=False,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    record, extraction = self._load_active_hand_decisions(record_key)
+                    return evaluate_player_active_hand_decisions(
+                        record_key,
+                        record,
+                        extraction,
+                        at=at,
+                    )
+
+    def _load_active_hand_decisions(
+        self,
+        record_key: str,
+    ) -> tuple[ImportedHandRecord, HandDecisionExtraction]:
+        """Load one integrity-checked current artifact under the caller's locks."""
+
+        self.require_current_layout()
+        self._require_final_hand_record(record_key)
+        record = self.imported_hands.get(record_key)
+        if not record.lifecycle.learning_eligible or any(
+            conflict.status == "unresolved" for conflict in record.conflicts
+        ):
+            raise PlayerHandDecisionsUnavailable(
+                "This hand has no active decision extraction"
+            )
+        extraction = self.imported_hands.active_decisions(record_key)
+        if extraction is None:
+            raise DecisionArtifactIntegrityError(
+                "the active decision artifact is missing"
+            )
+        return record, extraction
 
     def ingest_detected_hand(
         self,
