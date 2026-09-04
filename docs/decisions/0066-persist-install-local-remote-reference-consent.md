@@ -54,7 +54,9 @@ compare-and-sets the current generation and creates the next one. Revocation
 compare-and-sets the current generation, changes it to `revoked` without
 changing that acceptance generation, and is idempotent for retries. Both
 mutations hold the exclusive data-volume lock and durably replace the state
-before returning success.
+before returning success. An idempotent revocation retry re-saves the revoked
+snapshot so it re-proves directory durability if a preceding attempt replaced
+the file but failed its final directory sync.
 
 Consent state is installation authorization, not portable hand data. Player
 backup export excludes it and restore never changes it. This prevents an older

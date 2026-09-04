@@ -1031,10 +1031,12 @@ class PlayerWorkspace:
                     request=request,
                     at=at,
                 )
-                if consent != state.consent:
-                    self.remote_reference_consent.save(
-                        state.model_copy(update={"consent": consent})
-                    )
+                # A prior attempt may have replaced the file and then failed
+                # its directory fsync. Re-saving an already-revoked snapshot
+                # makes an idempotent retry prove durability before success.
+                self.remote_reference_consent.save(
+                    state.model_copy(update={"consent": consent})
+                )
                 return project_player_remote_reference_consent_status(
                     policy=policy,
                     consent=consent,

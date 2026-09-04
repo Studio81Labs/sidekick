@@ -15,6 +15,10 @@ from app.player_remote_references import (
     revoke_player_remote_reference_consent,
 )
 from app.player_workspace import PlayerWorkspace
+from app.storage import remote_reference_consent_store as consent_store_module
+from app.storage.remote_reference_consent_store import (
+    RemoteReferenceConsentStorageError,
+)
 from test_remote_references import (
     RETENTION_POLICY_TEXT,
     TERMS_TEXT,
@@ -298,3 +302,55 @@ def test_workspace_serializes_concurrent_consent_acceptance(tmp_path: Path) -> N
     stored = workspace.remote_reference_consent.load().consent
     assert stored is not None
     assert stored.consent_generation == 1
+
+
+def test_retried_revocation_reproves_directory_durability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    policy = provider_policy()
+    workspace.accept_remote_reference_consent(
+        policy=policy,
+        request=consent_request(),
+        at=NOW,
+    )
+    original_fsync_directory = consent_store_module._fsync_directory
+    fsync_attempts = 0
+
+    def fail_first_directory_fsync(path: Path) -> None:
+        nonlocal fsync_attempts
+        fsync_attempts += 1
+        if fsync_attempts == 1:
+            raise OSError("injected directory fsync failure")
+        original_fsync_directory(path)
+
+    monkeypatch.setattr(
+        consent_store_module,
+        "_fsync_directory",
+        fail_first_directory_fsync,
+    )
+    revoke = PlayerRemoteReferenceRevokeRequest(expected_consent_generation=1)
+
+    with pytest.raises(
+        RemoteReferenceConsentStorageError,
+        match="injected directory fsync failure",
+    ):
+        workspace.revoke_remote_reference_consent(
+            policy=policy,
+            request=revoke,
+            at=NOW + timedelta(minutes=1),
+        )
+    replaced = workspace.remote_reference_consent.load().consent
+    assert replaced is not None
+    assert replaced.status == "revoked"
+
+    retried = workspace.revoke_remote_reference_consent(
+        policy=policy,
+        request=revoke,
+        at=NOW + timedelta(minutes=2),
+    )
+
+    assert retried.reason == "consent_revoked"
+    assert retried.consent_generation == 1
+    assert fsync_attempts == 2
