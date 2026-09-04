@@ -22,6 +22,7 @@ from app.player_workspace import (
     PlayerWorkspace,
 )
 from app.storage.imported_hand_store import imported_hand_record_key
+from test_current_learning_revalidation import configured_workspace
 from test_imported_hand_store import pending_review_record, seed_interrupted_cascade
 
 
@@ -72,6 +73,24 @@ def test_export_and_remove_publishes_verified_private_backup_first(
     )
     assert [snapshot.record_key for snapshot in parsed.records] == [record_key]
     assert not list(tmp_path.glob(f"{PLAYER_REMOVAL_DIRECTORY_PREFIX}*"))
+
+
+def test_export_and_remove_includes_retained_grade_evidence(tmp_path: Path) -> None:
+    data_dir = tmp_path / "player-data"
+    workspace, record_key, retained, _ = configured_workspace(data_dir)
+    workspace.persist_current_reference_activated_grade(record_key, retained)
+    archive_path = _backup_path(tmp_path)
+
+    result = _remove(data_dir, archive_path)
+
+    assert result.completed is True
+    assert not data_dir.exists()
+    parsed = parse_player_backup_archive(
+        archive_path.read_bytes(),
+        max_archive_bytes=MAX_ARCHIVE_BYTES,
+    )
+    assert len(parsed.records[0].grade_artifacts) == 1
+    assert parsed.records[0].grade_artifacts[0].grade == retained
 
 
 def test_cli_requires_explicit_confirmation_before_opening_data(

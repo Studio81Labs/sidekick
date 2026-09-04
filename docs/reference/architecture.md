@@ -461,7 +461,10 @@ cannot change code on the authenticated origin.
 The local runtime's imported-hand backup contract is a separate V2-only
 `poker-hero-player-backup` ZIP, not the hosted application's V1 job/benchmark
 archive. Export holds the data volume exclusively while validating and
-checksumming exact record and retained decision-artifact bytes. Restore verifies
+checksumming exact record, retained decision-artifact, and historical
+reference-activated-grade bytes. Backup schema v2 adds grade manifests while
+the decoder still accepts schema v1 archives that predate grade persistence.
+Restore verifies
 the whole archive before taking that exclusive hold, then classifies every
 candidate against live deletion generation and lifecycle state. Active
 artifacts are re-derived from their canonical record, not trusted from checksum
@@ -470,7 +473,9 @@ reactivation, and a tombstone not bound to the same deletion-pending generation
 reject the request before writes. Accepted records and missing artifacts publish
 through one multi-record cascade, preserving local audit artifacts the archive
 does not contain. A bound tombstone removes every retained artifact in that same
-cascade (ADR 0052). Within the local runtime, ordinary status, hand, lifecycle,
+cascade. Restored grades remain historical evidence and never replace the
+install-local current reference or content catalogs (ADRs 0052 and 0074). Within
+the local runtime, ordinary status, hand, lifecycle,
 and export requests share an asynchronous access gate and remain concurrent
 until their record and data-volume locks require narrower serialization. Restore
 owns that gate exclusively for the full request, including upload and archive
@@ -506,12 +511,13 @@ from being served (ADR 0048).
 
 A permanent-deletion request advances the deletion generation and atomically
 publishes `deletion_pending` with no active canonical pointer. The source,
-canonical revisions, conflicts, and superseded decision artifacts remain
-available for audit while cleanup is pending, but both lifecycle status and
-generation make them immediately learning-ineligible. Purge accepts a deletion
+canonical revisions, conflicts, superseded decision artifacts, and historical
+grades remain available for audit while cleanup is pending, but lifecycle
+status makes them immediately unavailable to current revalidation. Purge accepts a deletion
 receipt only for that pending generation, replaces the retained record with a
-non-sensitive tombstone, and deletes every exact decision-artifact filename the
-store reports in the same cascade. A failure before durable intent leaves the
+non-sensitive tombstone, and deletes every exact decision- and grade-artifact
+filename the store reports in the same cascade. A failure before durable intent
+leaves the
 complete pending hand intact; after durable intent, the tombstone is already
 inactive and startup recovery rolls any remaining artifact deletions forward.
 Retries of the published request or completed purge are idempotent. Older
@@ -644,6 +650,19 @@ as the read scope closes. A later mastery or drill writer must repeat the check
 and commit its mutation inside the same authority scope. ADR 0073 records this
 composition rule.
 
+The player workspace can retain that revalidated grade as immutable historical
+audit evidence. The operation upgrades the hand's interprocess stripe to
+exclusive, keeps the shared volume lock across revalidation and cascade commit,
+and keys the artifact by canonical revision, deletion generation, decision
+index, catalog digest, coverage band, activation, and mastery-series identity.
+Exact retries reuse the bytes; different bytes at the same authority identity
+fail rather than replace history. The stored model deliberately keeps
+`requires_current_catalog_hand_and_content`, so persistence neither updates
+mastery nor authorizes a drill. Hand withdrawal or reapproval makes older grades
+historical through lifecycle status or revision identity, while permanent purge and authorized
+reimport delete them atomically with the other hand-derived artifacts. ADR 0074
+records this boundary.
+
 The catalog's deterministic digest chain detects inconsistent or accidentally
 rewritten snapshots; it is not a signature. The local player workspace now owns
 the trusted current catalog revision and digest in a bounded, owner-only,
@@ -670,7 +689,7 @@ boundary.
 
 The packaged reference and learning-content catalogs remain empty and no API
 publishes either one. Production composition still does not authorize a solved
-reference or remote provider, persist grades, consume revalidated evidence,
+reference or remote provider, consume persisted evidence for mastery,
 calculate aggregate mixing deviations, move mastery, or schedule drills. Those
 application and Phase 0 gates remain open under issues #412, #414, #416, and
 #418.

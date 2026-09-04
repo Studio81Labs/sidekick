@@ -875,6 +875,11 @@ function RestoreSummary({ result }: { result: PlayerBackupRestoreResult }) {
         {result.removed_decision_artifacts} removed by restored deletion
         evidence.
       </span>
+      <span>
+        {result.imported_grade_artifacts} grade artifacts imported,{" "}
+        {result.reused_grade_artifacts} already present,{" "}
+        {result.removed_grade_artifacts} removed by restored deletion evidence.
+      </span>
       <span>{result.total_records} local records now retained.</span>
     </div>
   );

@@ -43,6 +43,8 @@ from app.player_workspace import (
 from app.storage.imported_hand_store import (
     DECISIONS_DIRNAME,
     DECISION_ARTIFACT_PATTERN,
+    GRADES_DIRNAME,
+    GRADE_ARTIFACT_PATTERN,
     IMPORTED_HANDS_DIRNAME,
     RECORD_FILENAME,
     RECORD_KEY_PATTERN,
@@ -424,6 +426,9 @@ def _require_record_inventory(record_dir: Path, record_key: str) -> None:
         if entry.name == DECISIONS_DIRNAME and entry.is_dir(follow_symlinks=False):
             _require_decision_inventory(Path(entry.path), record_key)
             continue
+        if entry.name == GRADES_DIRNAME and entry.is_dir(follow_symlinks=False):
+            _require_grade_inventory(Path(entry.path), record_key)
+            continue
         raise PlayerUninstallError(
             f"Imported-hand record entry {record_key}/{entry.name} is not covered"
             " by the portable backup; preserve or repair it before removal"
@@ -449,6 +454,24 @@ def _require_decision_inventory(decisions_dir: Path, record_key: str) -> None:
         ):
             raise PlayerUninstallError(
                 f"Decision entry {record_key}/{entry.name} is not covered by the"
+                " portable backup; preserve or repair it before removal"
+            )
+
+
+def _require_grade_inventory(grades_dir: Path, record_key: str) -> None:
+    try:
+        with os.scandir(grades_dir) as entries:
+            grade_entries = list(entries)
+    except OSError as exc:
+        raise PlayerUninstallError(
+            f"Cannot inventory grade artifacts for {record_key}"
+        ) from exc
+    for entry in grade_entries:
+        if GRADE_ARTIFACT_PATTERN.fullmatch(entry.name) is None or not entry.is_file(
+            follow_symlinks=False
+        ):
+            raise PlayerUninstallError(
+                f"Grade entry {record_key}/{entry.name} is not covered by the"
                 " portable backup; preserve or repair it before removal"
             )
 

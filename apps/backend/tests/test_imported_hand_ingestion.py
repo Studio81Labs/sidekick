@@ -25,6 +25,7 @@ from app.domain.imported_hands import (
     RawHandHistory,
     RawHandReimport,
     SourceChronology,
+    StableHandIdentity,
     canonical_revision_from_review,
     classify_restore,
     detected_imported_hand_semantic_sha256,
@@ -48,6 +49,7 @@ from app.storage.imported_hand_store import (
     ImportedHandCascade,
     imported_hand_record_key,
 )
+from test_current_learning_revalidation import configured_workspace
 from test_imported_hand_store import (
     NOW,
     RAW_TEXT,
@@ -63,8 +65,9 @@ def parsed_candidate(
     *,
     raw_text: str = RAW_TEXT,
     hero_player_id: str | None = None,
+    identity: StableHandIdentity | None = None,
 ) -> ParsedImportedHandCandidate:
-    identity = sample_identity()
+    identity = identity or sample_identity()
     raw_source_id = f"source-{occurrence}"
     imported_at = NOW + timedelta(minutes=occurrence)
     chronology = SourceChronology(
@@ -265,6 +268,31 @@ def test_authorized_reimport_precommit_failure_preserves_old_incarnation(
     assert store.get(key) == tombstone
     assert store.list_decision_artifacts(key) == artifacts
     assert store.has_interrupted_write(key) is False
+
+
+def test_authorized_reimport_removes_residual_grade_audit_evidence(tmp_path) -> None:
+    workspace, key, retained, _ = configured_workspace(tmp_path)
+    workspace.persist_current_reference_activated_grade(key, retained)
+    active = workspace.imported_hands.get(key)
+    assert active.identity is not None
+    tombstone = tombstone_record(generation=1)
+    workspace.imported_hands.save(key, tombstone)
+
+    result = AuthorizedHandReimportService(
+        store=workspace.imported_hands
+    ).reimport(
+        key,
+        parsed_candidate(1, identity=active.identity),
+        expected=tombstone,
+        changed_at=NOW + timedelta(hours=1),
+    )
+
+    assert result.disposition == "restored_pending_review"
+    assert workspace.imported_hands.list_decision_artifacts(key) == []
+    assert (
+        workspace.imported_hands.list_reference_activated_grade_artifacts(key)
+        == []
+    )
 
 
 def test_ingestion_creates_a_pending_review_record(tmp_path) -> None:

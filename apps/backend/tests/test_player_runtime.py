@@ -1200,6 +1200,9 @@ async def test_player_storage_waits_without_exhausting_restore_workers(
             imported_decision_artifacts=0,
             reused_decision_artifacts=0,
             removed_decision_artifacts=0,
+            imported_grade_artifacts=0,
+            reused_grade_artifacts=0,
+            removed_grade_artifacts=0,
             total_records=0,
         )
 

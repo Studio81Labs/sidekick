@@ -26,6 +26,9 @@ export interface PlayerBackupRestoreResult {
   imported_decision_artifacts: number;
   reused_decision_artifacts: number;
   removed_decision_artifacts: number;
+  imported_grade_artifacts: number;
+  reused_grade_artifacts: number;
+  removed_grade_artifacts: number;
   total_records: number;
 }
 
@@ -766,6 +769,9 @@ export async function restorePlayerBackup(
       "imported_decision_artifacts",
       "reused_decision_artifacts",
       "removed_decision_artifacts",
+      "imported_grade_artifacts",
+      "reused_grade_artifacts",
+      "removed_grade_artifacts",
       "total_records",
     ] as const;
     if (

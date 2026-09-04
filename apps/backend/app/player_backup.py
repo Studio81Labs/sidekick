@@ -23,6 +23,8 @@ from pydantic import (
     model_validator,
 )
 
+from app.application.reference_activation import ReferenceActivatedGrade
+
 from app.domain.imported_hands import (
     HandDecisionExtraction,
     ImportedHandRecord,
@@ -36,8 +38,10 @@ from app.storage.cascade_journal import (
 )
 from app.storage.imported_hand_store import (
     DECISION_ARTIFACT_PATTERN,
+    GRADE_ARTIFACT_PATTERN,
     NO_CANONICAL_REVISION,
     FileImportedHandStore,
+    ImportedHandGradeSnapshotArtifact,
     ImportedHandNotFoundError,
     ImportedHandRestoreWrite,
     ImportedHandSnapshotArtifact,
@@ -45,11 +49,12 @@ from app.storage.imported_hand_store import (
     ImportedHandSnapshotLimitError,
     ImportedHandStoredSnapshot,
     imported_hand_record_key,
+    reference_activated_grade_artifact_filename,
 )
 
 
 PLAYER_BACKUP_SCHEMA = "poker-hero-player-backup"
-PLAYER_BACKUP_SCHEMA_VERSION = 1
+PLAYER_BACKUP_SCHEMA_VERSION = 2
 DEFAULT_MAX_PLAYER_BACKUP_BYTES = 100 * 1024 * 1024
 PLAYER_BACKUP_MEMORY_LIMIT = 8 * 1024 * 1024
 PLAYER_BACKUP_STREAM_CHUNK_SIZE = 1024 * 1024
@@ -101,14 +106,22 @@ class _RecordManifest(BaseModel):
     decision_artifacts: list[_ArtifactManifest] = Field(
         max_length=MAX_PLAYER_BACKUP_ARTIFACTS_PER_RECORD
     )
+    grade_artifacts: list[_ArtifactManifest] = Field(
+        default_factory=list,
+        max_length=MAX_PLAYER_BACKUP_ARTIFACTS_PER_RECORD,
+    )
 
     @model_validator(mode="after")
     def validate_artifacts(self) -> Self:
-        filenames = [artifact.filename for artifact in self.decision_artifacts]
-        if len(filenames) != len(set(filenames)):
-            raise ValueError("decision artifact filenames must be unique")
-        if filenames != sorted(filenames):
-            raise ValueError("decision artifacts must be sorted by filename")
+        for label, artifacts in (
+            ("decision", self.decision_artifacts),
+            ("grade", self.grade_artifacts),
+        ):
+            filenames = [artifact.filename for artifact in artifacts]
+            if len(filenames) != len(set(filenames)):
+                raise ValueError(f"{label} artifact filenames must be unique")
+            if filenames != sorted(filenames):
+                raise ValueError(f"{label} artifacts must be sorted by filename")
         return self
 
 
@@ -116,7 +129,7 @@ class _PlayerBackupManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_name: Literal[PLAYER_BACKUP_SCHEMA] = Field(alias="schema")
-    schema_version: Literal[PLAYER_BACKUP_SCHEMA_VERSION]
+    schema_version: Literal[1, PLAYER_BACKUP_SCHEMA_VERSION]
     exported_at: AwareDatetime
     record_count: int = Field(ge=0, le=MAX_PLAYER_BACKUP_RECORDS)
     records: list[_RecordManifest] = Field(max_length=MAX_PLAYER_BACKUP_RECORDS)
@@ -137,12 +150,30 @@ class _PlayerBackupManifest(BaseModel):
             raise ValueError("record keys must be unique")
         if keys != sorted(keys):
             raise ValueError("records must be sorted by record key")
+        for record in self.records:
+            has_grade_field = "grade_artifacts" in record.model_fields_set
+            if self.schema_version == 1 and has_grade_field:
+                raise ValueError(
+                    "schema version 1 records cannot declare grade artifacts"
+                )
+            if (
+                self.schema_version == PLAYER_BACKUP_SCHEMA_VERSION
+                and not has_grade_field
+            ):
+                raise ValueError(
+                    "schema version 2 records must declare grade artifacts"
+                )
         paths = [
             *(record.record_file for record in self.records),
             *(
                 artifact.file
                 for record in self.records
                 for artifact in record.decision_artifacts
+            ),
+            *(
+                artifact.file
+                for record in self.records
+                for artifact in record.grade_artifacts
             ),
         ]
         if len(paths) != len(set(paths)):
@@ -165,6 +196,9 @@ class PlayerBackupRestoreResult(BaseModel):
     imported_decision_artifacts: int = Field(ge=0)
     reused_decision_artifacts: int = Field(ge=0)
     removed_decision_artifacts: int = Field(ge=0)
+    imported_grade_artifacts: int = Field(ge=0)
+    reused_grade_artifacts: int = Field(ge=0)
+    removed_grade_artifacts: int = Field(ge=0)
     total_records: int = Field(ge=0)
 
 
@@ -292,6 +326,11 @@ def parse_player_backup_archive(
                     for record in manifest.records
                     for artifact in record.decision_artifacts
                 ),
+                *(
+                    artifact.file
+                    for record in manifest.records
+                    for artifact in record.grade_artifacts
+                ),
             }
             if set(names) != expected_paths:
                 raise PlayerBackupError(
@@ -372,6 +411,10 @@ def _build_archive(
             raise PlayerBackupExportError(
                 f"Player record {snapshot.record_key} has too many decision artifacts"
             )
+        if len(snapshot.grade_artifacts) > MAX_PLAYER_BACKUP_ARTIFACTS_PER_RECORD:
+            raise PlayerBackupExportError(
+                f"Player record {snapshot.record_key} has too many grade artifacts"
+            )
         artifacts: list[_ArtifactManifest] = []
         sorted_artifacts = sorted(
             snapshot.decision_artifacts,
@@ -400,12 +443,38 @@ def _build_archive(
                 raise PlayerBackupExportError(
                     "Player backup contains too many files"
                 )
+        grade_artifacts: list[_ArtifactManifest] = []
+        sorted_grades = sorted(
+            snapshot.grade_artifacts,
+            key=lambda artifact: artifact.filename,
+        )
+        for artifact in sorted_grades:
+            if len(artifact.payload) > MAX_PLAYER_BACKUP_ARTIFACT_BYTES:
+                raise PlayerBackupExportError(
+                    "Grade artifact "
+                    f"{snapshot.record_key}/{artifact.filename} is too large"
+                )
+            grade_artifacts.append(
+                _ArtifactManifest(
+                    filename=artifact.filename,
+                    file=f"hands/{snapshot.record_key}/grades/{artifact.filename}",
+                    sha256=sha256(artifact.payload).hexdigest(),
+                    size=len(artifact.payload),
+                )
+            )
+            uncompressed_size += len(artifact.payload)
+            archive_entry_count += 1
+            if archive_entry_count > MAX_PLAYER_BACKUP_ENTRIES:
+                raise PlayerBackupExportError(
+                    "Player backup contains too many files"
+                )
         record_entry = _RecordManifest(
             record_key=snapshot.record_key,
             record_file=f"hands/{snapshot.record_key}/record.json",
             record_sha256=sha256(snapshot.record_payload).hexdigest(),
             record_size=len(snapshot.record_payload),
             decision_artifacts=artifacts,
+            grade_artifacts=grade_artifacts,
         )
         uncompressed_size += len(snapshot.record_payload)
         archive_entry_count += 1
@@ -452,6 +521,16 @@ def _build_archive(
                     archive.writestr(
                         artifact_entry.file,
                         artifacts_by_name[artifact_entry.filename].payload,
+                    )
+                    _ensure_archive_size(archive_file, max_archive_bytes)
+                grades_by_name = {
+                    artifact.filename: artifact
+                    for artifact in snapshot.grade_artifacts
+                }
+                for artifact_entry in entry.grade_artifacts:
+                    archive.writestr(
+                        artifact_entry.file,
+                        grades_by_name[artifact_entry.filename].payload,
                     )
                     _ensure_archive_size(archive_file, max_archive_bytes)
             archive.writestr("manifest.json", manifest_bytes)
@@ -505,9 +584,13 @@ def _read_record(
         _read_artifact(archive, entry.record_key, artifact, record=record)
         for artifact in entry.decision_artifacts
     )
-    if record.lifecycle.status == "deleted" and artifacts:
+    grade_artifacts = tuple(
+        _read_grade_artifact(archive, entry.record_key, artifact, record=record)
+        for artifact in entry.grade_artifacts
+    )
+    if record.lifecycle.status == "deleted" and (artifacts or grade_artifacts):
         raise PlayerBackupError(
-            f"Deleted player record {entry.record_key} contains decision artifacts"
+            f"Deleted player record {entry.record_key} contains derived artifacts"
         )
     _validate_active_artifact(entry.record_key, record, artifacts)
     return ImportedHandStoredSnapshot(
@@ -515,6 +598,7 @@ def _read_record(
         record_payload=record_payload,
         record=record,
         decision_artifacts=artifacts,
+        grade_artifacts=grade_artifacts,
     )
 
 
@@ -612,6 +696,74 @@ def _read_artifact(
     )
 
 
+def _read_grade_artifact(
+    archive: ZipFile,
+    record_key: str,
+    entry: _ArtifactManifest,
+    *,
+    record: ImportedHandRecord,
+) -> ImportedHandGradeSnapshotArtifact:
+    if GRADE_ARTIFACT_PATTERN.fullmatch(entry.filename) is None:
+        raise PlayerBackupError(
+            f"Player backup grade filename is invalid for {record_key}"
+        )
+    expected_file = f"hands/{record_key}/grades/{entry.filename}"
+    if entry.file != expected_file:
+        raise PlayerBackupError(
+            f"Player backup grade path is invalid for {record_key}"
+        )
+    info = _member_info(
+        archive,
+        entry.file,
+        MAX_PLAYER_BACKUP_ARTIFACT_BYTES,
+        "grade artifact",
+    )
+    if info.file_size != entry.size:
+        raise PlayerBackupError(
+            f"Player backup grade size does not match for {record_key}"
+        )
+    payload = _read_member(archive, info)
+    if sha256(payload).hexdigest() != entry.sha256:
+        raise PlayerBackupError(
+            f"Player backup checksum failed for grade {record_key}/{entry.filename}"
+        )
+    try:
+        grade = ReferenceActivatedGrade.model_validate_json(payload)
+        expected_filename = reference_activated_grade_artifact_filename(grade)
+    except (ValidationError, ValueError) as exc:
+        raise PlayerBackupError(
+            f"Player backup grade {record_key}/{entry.filename} is invalid"
+        ) from exc
+    if entry.filename != expected_filename:
+        raise PlayerBackupError(
+            f"Player backup grade identity does not match {entry.filename}"
+        )
+    decision = grade.readiness.decision_snapshot.restore()
+    if imported_hand_record_key(decision.identity) != record_key:
+        raise PlayerBackupError(
+            f"Player backup grade hand identity does not match {record_key}"
+        )
+    if decision.identity != record.identity:
+        raise PlayerBackupError(
+            f"Player backup grade {entry.filename} does not match its record"
+        )
+    if decision.deletion_generation > record.lifecycle.deletion_generation:
+        raise PlayerBackupError(
+            f"Player backup grade {entry.filename} is from a future generation"
+        )
+    if decision.canonical_revision not in {
+        retained.revision for retained in record.canonical_revisions
+    }:
+        raise PlayerBackupError(
+            f"Player backup grade {entry.filename} names an unknown revision"
+        )
+    return ImportedHandGradeSnapshotArtifact(
+        filename=entry.filename,
+        payload=payload,
+        grade=grade,
+    )
+
+
 def _restore_parsed_backup(
     backup: ParsedPlayerBackup,
     store: FileImportedHandStore,
@@ -631,6 +783,9 @@ def _restore_parsed_backup(
     imported_artifacts = 0
     reused_artifacts = 0
     removed_artifacts = 0
+    imported_grade_artifacts = 0
+    reused_grade_artifacts = 0
+    removed_grade_artifacts = 0
 
     for snapshot in backup.records:
         try:
@@ -690,7 +845,25 @@ def _restore_parsed_backup(
                     f"{snapshot.record_key}/{artifact.filename} conflicts with retained data"
                 )
 
+        grades_to_write: list[ImportedHandGradeSnapshotArtifact] = []
+        for artifact in snapshot.grade_artifacts:
+            existing = store.existing_grade_artifact_payload(
+                snapshot.record_key,
+                artifact.filename,
+            )
+            if existing is None:
+                grades_to_write.append(artifact)
+                imported_grade_artifacts += 1
+            elif existing == artifact.payload:
+                reused_grade_artifacts += 1
+            else:
+                raise PlayerBackupConflictError(
+                    "Player backup grade artifact "
+                    f"{snapshot.record_key}/{artifact.filename} conflicts with retained data"
+                )
+
         delete_artifacts: tuple[str, ...] = ()
+        delete_grades: tuple[str, ...] = ()
         if snapshot.record.lifecycle.status == "deleted":
             delete_artifacts = tuple(
                 filename
@@ -704,14 +877,36 @@ def _restore_parsed_backup(
                     f"{snapshot.record_key} cannot delete unbound local artifacts"
                 )
             removed_artifacts += len(delete_artifacts)
+            delete_grades = tuple(
+                filename
+                for _revision, _generation, _index, filename in (
+                    store.list_reference_activated_grade_artifacts(
+                        snapshot.record_key
+                    )
+                )
+            )
+            if current is None and delete_grades:
+                raise PlayerBackupConflictError(
+                    "Player backup tombstone "
+                    f"{snapshot.record_key} cannot delete unbound local grades"
+                )
+            removed_grade_artifacts += len(delete_grades)
 
-        if write_record or artifacts_to_write or delete_artifacts:
+        if (
+            write_record
+            or artifacts_to_write
+            or grades_to_write
+            or delete_artifacts
+            or delete_grades
+        ):
             writes.append(
                 ImportedHandRestoreWrite(
                     snapshot=snapshot,
                     write_record=write_record,
                     decision_artifacts=tuple(artifacts_to_write),
                     delete_decision_artifacts=delete_artifacts,
+                    grade_artifacts=tuple(grades_to_write),
+                    delete_grade_artifacts=delete_grades,
                 )
             )
 
@@ -729,6 +924,9 @@ def _restore_parsed_backup(
         imported_decision_artifacts=imported_artifacts,
         reused_decision_artifacts=reused_artifacts,
         removed_decision_artifacts=removed_artifacts,
+        imported_grade_artifacts=imported_grade_artifacts,
+        reused_grade_artifacts=reused_grade_artifacts,
+        removed_grade_artifacts=removed_grade_artifacts,
         total_records=len(store.list_keys()),
     )
 

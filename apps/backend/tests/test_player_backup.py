@@ -44,6 +44,7 @@ from app.storage.remote_reference_consent_store import (
 from app.storage.reference_activation_catalog_store import (
     REFERENCE_ACTIVATION_CATALOG_FILENAME,
 )
+from test_current_learning_revalidation import configured_workspace
 from test_imported_hand_store import (
     approved_record,
     extraction_for,
@@ -128,6 +129,9 @@ def test_empty_player_backup_round_trips(tmp_path: Path) -> None:
         "imported_decision_artifacts": 0,
         "reused_decision_artifacts": 0,
         "removed_decision_artifacts": 0,
+        "imported_grade_artifacts": 0,
+        "reused_grade_artifacts": 0,
+        "removed_grade_artifacts": 0,
         "total_records": 0,
     }
 
@@ -217,6 +221,61 @@ def test_player_backup_preserves_records_and_retained_decisions(
     assert second.reused_records == 1
     assert second.reused_decision_artifacts == 1
     assert target.imported_hands.backup_snapshot() == expected_snapshot
+
+
+def test_player_backup_preserves_historical_grade_artifacts(
+    tmp_path: Path,
+) -> None:
+    source, record_key, retained, _ = configured_workspace(tmp_path / "source")
+    source.persist_current_reference_activated_grade(record_key, retained)
+    expected_snapshot = source.imported_hands.backup_snapshot()
+
+    payload = archive_bytes(source)
+    with ZipFile(BytesIO(payload)) as archive:
+        manifest = json.loads(archive.read("manifest.json"))
+        assert manifest["schema_version"] == 2
+        assert len(manifest["records"][0]["grade_artifacts"]) == 1
+
+    target = workspace_at(tmp_path / "target")
+    first = restore(target, payload)
+    second = restore(target, payload)
+
+    assert first.imported_grade_artifacts == 1
+    assert second.reused_grade_artifacts == 1
+    assert target.imported_hands.backup_snapshot() == expected_snapshot
+
+
+def test_player_backup_decodes_legacy_schema_without_grades(
+    tmp_path: Path,
+) -> None:
+    source = workspace_at(tmp_path / "source")
+    identity = sample_identity(hand_ordinal=31)
+    record_key = imported_hand_record_key(identity)
+    save_record(source, record_key, approved_record(identity))
+    payload = archive_bytes(source)
+    legacy_payload = BytesIO()
+
+    with ZipFile(BytesIO(payload)) as original:
+        manifest = json.loads(original.read("manifest.json"))
+        manifest["schema_version"] = 1
+        for record in manifest["records"]:
+            record.pop("grade_artifacts")
+        with ZipFile(legacy_payload, mode="w", compression=ZIP_DEFLATED) as changed:
+            for info in original.infolist():
+                if info.filename == "manifest.json":
+                    continue
+                changed.writestr(info.filename, original.read(info))
+            changed.writestr(
+                "manifest.json",
+                (json.dumps(manifest, indent=2) + "\n").encode(),
+            )
+
+    target = workspace_at(tmp_path / "target")
+    result = restore(target, legacy_payload.getvalue())
+
+    assert result.imported_records == 1
+    assert result.imported_decision_artifacts == 1
+    assert result.imported_grade_artifacts == 0
 
 
 def test_player_backup_bounds_record_before_building_archive(
