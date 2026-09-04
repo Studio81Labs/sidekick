@@ -14,6 +14,7 @@ import {
   PLAYER_SESSION_STORAGE_KEY,
 } from "./playerApi";
 import { PLAYER_IMPORT_RETRY_STORAGE_KEY } from "./playerImportRetry";
+import { PLAYER_REIMPORT_RETRY_STORAGE_KEY } from "./playerReimportRetry";
 import { PLAYER_ACTIVATE_UPDATE_MESSAGE } from "./playerUpdateProtocol";
 
 class WaitingPlayerWorker extends EventTarget {
@@ -489,6 +490,30 @@ const deletedHandDetail = {
     deleted_at: "2026-08-30T13:00:00Z",
     tombstone_sha256: "f".repeat(64),
   },
+};
+
+const reimportedHandDetail = {
+  ...pendingHandDetail,
+  summary: {
+    ...pendingHand,
+    record_version: "8".repeat(64),
+    lifecycle_changed_at: "2026-08-30T14:00:00Z",
+    deletion_generation: 4,
+    raw_source_count: 1,
+    detection_count: 1,
+    warning_count: 1,
+  },
+  lifecycle: {
+    ...pendingHandDetail.lifecycle,
+    deletion_generation: 4,
+    changed_at: "2026-08-30T14:00:00Z",
+    reason: "authorized reimport",
+  },
+  raw_sources: pendingHandDetail.raw_sources.slice(0, 1),
+  detections: pendingHandDetail.detections.slice(0, 1),
+  conflicts: [],
+  canonical_revisions: [],
+  deletion_receipt: null,
 };
 
 describe("PlayerApp", () => {
@@ -2743,6 +2768,162 @@ describe("PlayerApp", () => {
       await screen.findByText(/Deletion receipt receipt-3/),
     ).toHaveTextContent("generation 3");
     expect(screen.getByText("f".repeat(64))).toBeInTheDocument();
+  });
+
+  it("explicitly reimports a tombstone as fresh pending-review evidence", async () => {
+    const user = userEvent.setup();
+    const requestId = "77777777-7777-4777-8777-777777777777" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [deletedHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(deletedHandDetail))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          request_id: requestId,
+          disposition: "restored_pending_review",
+          parser_disposition: "clean",
+          reconciliation_status: "pass",
+          hand: reimportedHandDetail,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    const file = new File(["PokerStars Hand #123456789"], "hands.txt", {
+      type: "text/plain",
+    });
+    await user.upload(
+      screen.getByLabelText("PokerStars file containing this deleted hand"),
+      file,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Authorize reimport for review" }),
+    );
+
+    expect(window.confirm).toHaveBeenCalledWith(
+      expect.stringMatching(/new deletion generation.*pending review/),
+    );
+    expect(
+      await screen.findByText(/Authorized reimport completed/),
+    ).toHaveTextContent("ineligible for learning");
+    expect(
+      screen.getByText(/Lifecycle reason: authorized reimport/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Approve canonical state" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Authorize reimport for review" }),
+    ).not.toBeInTheDocument();
+    expect(localStorage.getItem(PLAYER_REIMPORT_RETRY_STORAGE_KEY)).toBeNull();
+
+    const reimportRequest = fetchMock.mock.calls[4];
+    expect(reimportRequest?.[0]).toBe(
+      `/api/player/hands/${deletedHand.record_key}/reimport`,
+    );
+    expect(reimportRequest?.[1]?.method).toBe("POST");
+    const headers = new Headers(reimportRequest?.[1]?.headers);
+    expect(headers.get("Authorization")).toBe("Bearer player-session");
+    expect(headers.get("X-Poker-CSRF-Token")).toBe("csrf-token");
+    const body = reimportRequest?.[1]?.body as FormData;
+    expect(body.get("request_id")).toBe(requestId);
+    expect(body.get("expected_record_version")).toBe(
+      deletedHand.record_version,
+    );
+    expect(body.get("expected_lifecycle_status")).toBe("deleted");
+    expect(body.get("expected_deletion_generation")).toBe("3");
+    expect(body.get("expected_lifecycle_changed_at")).toBe(
+      deletedHand.lifecycle_changed_at,
+    );
+    const uploadedFile = body.get("file") as File;
+    expect(uploadedFile.name).toBe(file.name);
+    expect(await uploadedFile.text()).toBe(await file.text());
+  });
+
+  it("retries the same authorized reimport after an ambiguous response", async () => {
+    const user = userEvent.setup();
+    const requestId = "77777777-7777-4777-8777-777777777777" as ReturnType<
+      Crypto["randomUUID"]
+    >;
+    window.location.hash = "#ticket=one-use-ticket";
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    vi.spyOn(window.crypto, "randomUUID").mockReturnValue(requestId);
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          session_token: "player-session",
+          csrf_token: "csrf-token",
+          expires_in_seconds: 86400,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(readyStorage))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          items: [deletedHand],
+          unreadable: [],
+          next_cursor: null,
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse(deletedHandDetail))
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          request_id: requestId,
+          disposition: "duplicate_request",
+          parser_disposition: "clean",
+          reconciliation_status: "pass",
+          hand: reimportedHandDetail,
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.upload(
+      screen.getByLabelText("PokerStars file containing this deleted hand"),
+      new File(["PokerStars Hand #123456789"], "hands.txt"),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Authorize reimport for review" }),
+    );
+
+    expect(
+      await screen.findByText(/authorized reimport had already committed/i),
+    ).toHaveTextContent("without duplication");
+    expect(fetchMock.mock.calls[4]?.[0]).toBe(fetchMock.mock.calls[5]?.[0]);
+    const firstBody = fetchMock.mock.calls[4]?.[1]?.body as FormData;
+    const retryBody = fetchMock.mock.calls[5]?.[1]?.body as FormData;
+    expect(firstBody.get("request_id")).toBe(requestId);
+    expect(retryBody.get("request_id")).toBe(requestId);
   });
 
   it("restores with session and CSRF headers, then refreshes storage", async () => {

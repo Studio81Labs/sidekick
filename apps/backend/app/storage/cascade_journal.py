@@ -234,6 +234,7 @@ class CascadeIntent(BaseModel):
         "resolve_conflict",
         "request_deletion",
         "purge",
+        "authorized_reimport",
         "restore",
     ]
     record_keys: list[str] = Field(min_length=1)

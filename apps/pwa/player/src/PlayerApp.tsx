@@ -4,11 +4,13 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type RefObject,
 } from "react";
 
 import {
   PlayerApiError,
   PlayerHandRecoveryRequiredError,
+  PlayerHandReimportAmbiguousError,
   PlayerImportAmbiguousError,
   PlayerImportRecoveryRequiredError,
   PlayerRestoreAmbiguousError,
@@ -32,6 +34,7 @@ import {
   loadPlayerHand,
   loadPlayerHands,
   loadPlayerStorage,
+  reimportPlayerHand,
   resolvePlayerHandConflict,
   restorePlayerBackup,
   revokePlayerSession,
@@ -45,6 +48,10 @@ import {
   clearPlayerImportRetry,
   preservePlayerImportRetry,
 } from "./playerImportRetry";
+import {
+  clearPlayerHandReimportRetry,
+  preservePlayerHandReimportRetry,
+} from "./playerReimportRetry";
 
 type BusyAction =
   | "export"
@@ -57,6 +64,7 @@ type BusyAction =
   | "withdraw"
   | "reject"
   | "delete"
+  | "reimport"
   | "signout"
   | null;
 
@@ -234,12 +242,16 @@ interface HandDetailProps {
   closeReason: string;
   deleteReason: string;
   detail: PlayerHandDetail;
+  reimportFile: File | null;
+  reimportInput: RefObject<HTMLInputElement>;
   onApprove: () => void;
   onApprovalDetectionChange: (detectionId: string) => void;
   onCorrectionReasonChange: (reason: string) => void;
   onClose: (action: PlayerHandCloseAction) => void;
   onDelete: () => void;
   onDeleteReasonChange: (reason: string) => void;
+  onReimport: () => void;
+  onReimportFileChange: (file: File | null) => void;
   onReasonChange: (reason: string) => void;
   onResolveConflict: (
     conflictId: string,
@@ -255,12 +267,16 @@ function HandDetail({
   closeReason,
   deleteReason,
   detail,
+  reimportFile,
+  reimportInput,
   onApprove,
   onApprovalDetectionChange,
   onCorrectionReasonChange,
   onClose,
   onDelete,
   onDeleteReasonChange,
+  onReimport,
+  onReimportFileChange,
   onReasonChange,
   onResolveConflict,
   onReviewedStateChange,
@@ -493,6 +509,49 @@ function HandDetail({
               {busy === "reject" ? "Rejecting…" : "Reject as incorrect"}
             </button>
           </div>
+        </div>
+      ) : null}
+      {["deleted", "deletion_pending"].includes(summary.lifecycle_status) ? (
+        <div className="audit-block lifecycle-actions authorized-reimport">
+          <h4>Reimport deleted hand for review</h4>
+          <p>
+            Select a PokerStars text file containing this exact hand. This
+            explicitly crosses the deletion boundary, advances its deletion
+            generation, and creates a fresh unapproved parser proposal. It does
+            not restore prior sources, corrections, conflicts, approvals, or
+            learning data.
+          </p>
+          {summary.lifecycle_status === "deletion_pending" ? (
+            <p className="field-help">
+              Reimporting now cancels the pending cleanup by replacing the old
+              incarnation and atomically removing its retained audit artifacts.
+            </p>
+          ) : null}
+          <label className="file-field">
+            <span>PokerStars file containing this deleted hand</span>
+            <input
+              ref={reimportInput}
+              type="file"
+              accept=".txt,text/plain"
+              disabled={busy !== null}
+              onChange={(event) =>
+                onReimportFileChange(event.target.files?.[0] ?? null)
+              }
+            />
+          </label>
+          {reimportFile ? (
+            <p className="selected-files">Selected: {reimportFile.name}</p>
+          ) : null}
+          <button
+            className="primary-button"
+            type="button"
+            disabled={busy !== null || reimportFile === null}
+            onClick={onReimport}
+          >
+            {busy === "reimport"
+              ? "Reimporting for review…"
+              : "Authorize reimport for review"}
+          </button>
         </div>
       ) : null}
       {summary.lifecycle_status !== "deleted" ? (
@@ -878,6 +937,7 @@ function ImportSummary({ result }: { result: PlayerImportBatchOutcome }) {
 export default function PlayerApp() {
   const backupInput = useRef<HTMLInputElement>(null);
   const importInput = useRef<HTMLInputElement>(null);
+  const reimportInput = useRef<HTMLInputElement>(null);
   const permitNextUnloadRef = useRef(false);
   const [credentials, setCredentials] = useState<PlayerCredentials | null>(
     null,
@@ -892,6 +952,12 @@ export default function PlayerApp() {
     useState<PlayerImportBatchOutcome | null>(null);
   const [handPage, setHandPage] = useState<PlayerHandList | null>(null);
   const [handDetail, setHandDetail] = useState<PlayerHandDetail | null>(null);
+  const [selectedReimportFile, setSelectedReimportFile] = useState<File | null>(
+    null,
+  );
+  const [reimportRequestId, setReimportRequestId] = useState<string | null>(
+    null,
+  );
   const [approvalDraft, setApprovalDraft] = useState<HandApprovalDraft | null>(
     null,
   );
@@ -902,6 +968,12 @@ export default function PlayerApp() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
   const [draftRevision, setDraftRevision] = useState(0);
+
+  const clearReimportSelection = () => {
+    setSelectedReimportFile(null);
+    setReimportRequestId(null);
+    if (reimportInput.current) reimportInput.current.value = "";
+  };
 
   useEffect(() => {
     let active = true;
@@ -934,6 +1006,7 @@ export default function PlayerApp() {
       setApprovalDraft(null);
       setCloseReason("");
       setDeleteReason("");
+      clearReimportSelection();
       setActionNotice(null);
     }
     const message = friendlyError(reason);
@@ -949,6 +1022,7 @@ export default function PlayerApp() {
     setApprovalDraft(null);
     setCloseReason("");
     setDeleteReason("");
+    clearReimportSelection();
     setActionNotice(null);
     setError(message);
   };
@@ -991,6 +1065,7 @@ export default function PlayerApp() {
         setApprovalDraft(null);
         setCloseReason("");
         setDeleteReason("");
+        clearReimportSelection();
       }
     } catch (reason) {
       handleRequestError(reason);
@@ -1008,6 +1083,7 @@ export default function PlayerApp() {
     setApprovalDraft(null);
     setCloseReason("");
     setDeleteReason("");
+    clearReimportSelection();
     setLoadingHandKey(recordKey);
     try {
       const detail = await loadPlayerHand(credentials, recordKey);
@@ -1475,6 +1551,99 @@ export default function PlayerApp() {
     }
   };
 
+  const reimportDeletedHand = async () => {
+    if (!credentials || !handDetail || !selectedReimportFile) return;
+    if (
+      handDetail.summary.lifecycle_status !== "deleted" &&
+      handDetail.summary.lifecycle_status !== "deletion_pending"
+    ) {
+      return;
+    }
+    const confirmed = window.confirm(
+      "Authorize this exact PokerStars hand reimport. The deleted incarnation will not return: a new deletion generation with fresh parser evidence will be created as pending review, with no approval or learning eligibility.",
+    );
+    if (!confirmed) return;
+
+    const requestedDetail = handDetail;
+    const file = selectedReimportFile;
+    setBusy("reimport");
+    setError(null);
+    setActionNotice(null);
+    try {
+      const requestId = await preservePlayerHandReimportRetry(
+        requestedDetail.summary.record_key,
+        file,
+        reimportRequestId ?? crypto.randomUUID(),
+      );
+      setReimportRequestId(requestId);
+      const submit = () =>
+        reimportPlayerHand(
+          credentials,
+          requestedDetail.summary.record_key,
+          file,
+          requestId,
+          requestedDetail.summary,
+        );
+      let result;
+      try {
+        result = await submit();
+      } catch (reason) {
+        if (!(reason instanceof PlayerHandReimportAmbiguousError)) throw reason;
+        result = await submit();
+      }
+      replaceHandDetail(result.hand);
+      clearPlayerHandReimportRetry();
+      clearReimportSelection();
+      setDeleteReason("");
+      setActionNotice(
+        result.disposition === "duplicate_request"
+          ? "The authorized reimport had already committed. Its fresh pending-review evidence was loaded without duplication."
+          : "Authorized reimport completed. Fresh parser evidence is pending explicit canonical review and remains ineligible for learning.",
+      );
+    } catch (reason) {
+      if (reason instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(reason.message);
+      } else if (reason instanceof PlayerHandReimportAmbiguousError) {
+        setError(reason.message);
+      } else if (reason instanceof PlayerApiError && reason.status === 401) {
+        handleRequestError(reason);
+      } else {
+        try {
+          const refreshed = await loadPlayerHand(
+            credentials,
+            requestedDetail.summary.record_key,
+          );
+          replaceHandDetail(refreshed);
+          if (
+            refreshed.summary.lifecycle_status !== "deleted" &&
+            refreshed.summary.lifecycle_status !== "deletion_pending"
+          ) {
+            clearPlayerHandReimportRetry();
+            clearReimportSelection();
+          }
+          handleRequestError(
+            reason,
+            "Authorized reimport was not confirmed. The audit detail was refreshed.",
+          );
+        } catch (refreshError) {
+          if (refreshError instanceof PlayerHandRecoveryRequiredError) {
+            requireHandRecovery(
+              `${friendlyError(reason)} ${refreshError.message}`,
+            );
+          } else {
+            setHandDetail(null);
+            handleRequestError(
+              refreshError,
+              `${friendlyError(reason)} The reimport outcome could not be refreshed; reload the records before retrying.`,
+            );
+          }
+        }
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const importHandHistories = async () => {
     if (!credentials || selectedImportFiles.length === 0 || !importRequestId) {
       return;
@@ -1506,6 +1675,7 @@ export default function PlayerApp() {
       setApprovalDraft(null);
       setCloseReason("");
       setDeleteReason("");
+      clearReimportSelection();
       try {
         setStorage(await loadPlayerStorage(credentials));
         if (result.summary.retry_required) {
@@ -1530,6 +1700,7 @@ export default function PlayerApp() {
         setApprovalDraft(null);
         setCloseReason("");
         setDeleteReason("");
+        clearReimportSelection();
         setSelectedImportFiles([]);
         setImportRequestId(null);
         if (importInput.current) importInput.current.value = "";
@@ -1542,6 +1713,7 @@ export default function PlayerApp() {
         setApprovalDraft(null);
         setCloseReason("");
         setDeleteReason("");
+        clearReimportSelection();
         try {
           setStorage(await loadPlayerStorage(credentials));
           setError(
@@ -1576,6 +1748,7 @@ export default function PlayerApp() {
       setApprovalDraft(null);
       setCloseReason("");
       setDeleteReason("");
+      clearReimportSelection();
       setSelectedBackup(null);
       if (backupInput.current) backupInput.current.value = "";
       try {
@@ -1597,6 +1770,7 @@ export default function PlayerApp() {
         setApprovalDraft(null);
         setCloseReason("");
         setDeleteReason("");
+        clearReimportSelection();
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         setError(reason.message);
@@ -1606,6 +1780,7 @@ export default function PlayerApp() {
         setApprovalDraft(null);
         setCloseReason("");
         setDeleteReason("");
+        clearReimportSelection();
         setSelectedBackup(null);
         if (backupInput.current) backupInput.current.value = "";
         try {
@@ -1651,6 +1826,7 @@ export default function PlayerApp() {
       setApprovalDraft(null);
       setCloseReason("");
       setDeleteReason("");
+      clearReimportSelection();
       setActionNotice(null);
       if (backupInput.current) backupInput.current.value = "";
       if (importInput.current) importInput.current.value = "";
@@ -1678,6 +1854,7 @@ export default function PlayerApp() {
     backupSelected: selectedBackup !== null,
     importFilesSelected: selectedImportFiles.length > 0,
     permanentDeletionReasonChanged: deleteReason !== defaultDeleteReason,
+    reimportFileSelected: selectedReimportFile !== null,
   });
   const updateSafety: PlayerUpdateSafety = {
     dirtyRevision: draftRevision,
@@ -2014,6 +2191,8 @@ export default function PlayerApp() {
                 closeReason={closeReason}
                 deleteReason={deleteReason}
                 detail={handDetail}
+                reimportFile={selectedReimportFile}
+                reimportInput={reimportInput}
                 onApprove={() => void approveReviewedHand()}
                 onApprovalDetectionChange={(detectionId) => {
                   markDraftChanged();
@@ -2030,6 +2209,15 @@ export default function PlayerApp() {
                 onDeleteReasonChange={(reason) => {
                   markDraftChanged();
                   setDeleteReason(reason);
+                }}
+                onReimport={() => void reimportDeletedHand()}
+                onReimportFileChange={(file) => {
+                  markDraftChanged();
+                  if (file === null) clearPlayerHandReimportRetry();
+                  setSelectedReimportFile(file);
+                  setReimportRequestId(
+                    file === null ? null : crypto.randomUUID(),
+                  );
                 }}
                 onReasonChange={(reason) => {
                   markDraftChanged();
