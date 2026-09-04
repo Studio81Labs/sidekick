@@ -630,6 +630,20 @@ and approved canonical hand, then verifies the catalog digest, content
 lifecycle, canonical revision, and deletion generation. ADR 0070 records this
 boundary.
 
+The application now provides that evidence-only revalidation checkpoint. The
+player workspace acquires the hand's in-process stripe, its shared interprocess
+stripe, and the shared volume lock before loading the active decision artifact
+and both current catalogs. It requires the retained complete reference-catalog
+snapshot and digest to remain current, reproduces the exact retained decision
+and current content readiness, and requires the active activation's approved
+principle records to remain exact. Reference-catalog changes fail closed;
+unrelated content appends pass only when the relevant recomputed readiness is
+unchanged. The returned `ReferenceActivatedGrade` remains
+`requires_current_catalog_hand_and_content` because it can become stale as soon
+as the read scope closes. A later mastery or drill writer must repeat the check
+and commit its mutation inside the same authority scope. ADR 0073 records this
+composition rule.
+
 The catalog's deterministic digest chain detects inconsistent or accidentally
 rewritten snapshots; it is not a signature. The local player workspace now owns
 the trusted current catalog revision and digest in a bounded, owner-only,
@@ -656,10 +670,10 @@ boundary.
 
 The packaged reference and learning-content catalogs remain empty and no API
 publishes either one. Production composition still does not authorize a solved
-reference or remote provider, persist grades, revalidate current hand/content
-evidence, calculate aggregate mixing deviations, move mastery, or schedule
-drills. Those application and Phase 0 gates remain open under issues #412,
-#414, #416, and #418.
+reference or remote provider, persist grades, consume revalidated evidence,
+calculate aggregate mixing deviations, move mastery, or schedule drills. Those
+application and Phase 0 gates remain open under issues #412, #414, #416, and
+#418.
 
 Solved comparison additionally requires an independent
 `ReferenceSourceQualification` argument. The immutable qualification records

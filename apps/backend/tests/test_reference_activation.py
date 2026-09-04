@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -9,6 +9,7 @@ from app.application.learning_evidence import (
     LearningContentReadyGrade,
     prepare_grade_for_content_activation,
 )
+from app.application.learning_content_catalog import LearningContentCatalog
 from app.application.reference_activation import (
     CoverageBand,
     ReferenceActivation,
@@ -18,14 +19,22 @@ from app.application.reference_activation import (
     ReferenceSeriesBinding,
     activate_reference_series,
     bind_grade_to_active_reference,
+    revalidate_reference_activated_grade,
 )
 from app.domain.grading import grade_decision
+from app.domain.imported_hands import extract_hero_decision_points
 from app.domain.learning_content import (
     DecisionSelector,
     LearningReferencePolicyBinding,
+    PrincipleLifecycleEvent,
+    append_principle_lifecycle_event,
 )
 from test_grading import action_decision, reference, source_qualification
-from test_learning_content import approved_record
+from test_imported_hand_decisions import (
+    baseline_decision_record,
+    hero_fold_decision_record,
+)
+from test_learning_content import approved_record, draft_record
 from test_learning_content_readiness import readiness_fixture
 
 
@@ -117,6 +126,22 @@ def rewrite_activation(
     )
 
 
+def current_learning_content(
+    evidence: LearningContentReadyGrade,
+    *,
+    catalog_id: str = "learning-content-catalog",
+) -> LearningContentCatalog:
+    empty = LearningContentCatalog.empty(catalog_id)
+    return LearningContentCatalog(
+        catalog_id=catalog_id,
+        catalog_revision=1,
+        predecessor_catalog_sha256=empty.semantic_digest(),
+        taxonomy_lineage=(evidence.taxonomy,),
+        mapping_lineage=(evidence.mapping,),
+        principles=evidence.approved_principles,
+    )
+
+
 def test_activation_binds_only_the_exact_catalog_snapshot_series() -> None:
     evidence = readiness()
     band = coverage_band(evidence)
@@ -154,6 +179,186 @@ def test_activation_binds_only_the_exact_catalog_snapshot_series() -> None:
     assert eligible.catalog_sha256 == catalog.semantic_digest()
     assert eligible.activation_id == activation.activation_id
     assert eligible.mastery_series_id == activation.mastery_series_id
+
+
+def test_revalidation_reproduces_current_hand_reference_and_content() -> None:
+    evidence = readiness()
+    catalog = activate(ReferenceActivationCatalog.empty("catalog"), evidence)
+    retained = bind_grade_to_active_reference(
+        catalog,
+        evidence,
+        coverage_band_id="cash.preflop.bb-defense.100bb",
+    )
+    extraction = extract_hero_decision_points(baseline_decision_record())
+
+    result = revalidate_reference_activated_grade(
+        retained,
+        current_reference_catalog=catalog,
+        current_learning_content=current_learning_content(evidence),
+        active_hand_decisions=extraction,
+    )
+
+    assert result == retained
+    assert result.learning_eligibility == (
+        "requires_current_catalog_hand_and_content"
+    )
+    with pytest.raises(ReferenceActivationError, match="not published"):
+        revalidate_reference_activated_grade(
+            retained,
+            current_reference_catalog=catalog,
+            current_learning_content=LearningContentCatalog.empty(
+                "learning-content-catalog"
+            ),
+            active_hand_decisions=extraction,
+        )
+
+
+def test_revalidation_rejects_any_current_reference_catalog_change() -> None:
+    evidence = readiness()
+    first = activate(ReferenceActivationCatalog.empty("catalog"), evidence)
+    retained = bind_grade_to_active_reference(
+        first,
+        evidence,
+        coverage_band_id="cash.preflop.bb-defense.100bb",
+    )
+    other_evidence = solved_readiness(action_decision("raise"))
+    current = activate(
+        first,
+        other_evidence,
+        band=coverage_band(
+            other_evidence,
+            coverage_band_id="cash.preflop.bb-defense.40bb",
+        ),
+        activation_id="activation-2",
+        mastery_series_id="mastery-series-2",
+    )
+
+    with pytest.raises(ReferenceActivationError, match="current reference catalog"):
+        revalidate_reference_activated_grade(
+            retained,
+            current_reference_catalog=current,
+            current_learning_content=current_learning_content(evidence),
+            active_hand_decisions=extract_hero_decision_points(
+                baseline_decision_record()
+            ),
+        )
+
+
+def test_revalidation_requires_the_exact_current_active_decision() -> None:
+    evidence = readiness()
+    catalog = activate(ReferenceActivationCatalog.empty("catalog"), evidence)
+    retained = bind_grade_to_active_reference(
+        catalog,
+        evidence,
+        coverage_band_id="cash.preflop.bb-defense.100bb",
+    )
+
+    with pytest.raises(ReferenceActivationError, match="current active hand"):
+        revalidate_reference_activated_grade(
+            retained,
+            current_reference_catalog=catalog,
+            current_learning_content=current_learning_content(evidence),
+            active_hand_decisions=extract_hero_decision_points(
+                hero_fold_decision_record()
+            ),
+        )
+
+
+def test_revalidation_accepts_irrelevant_draft_content_but_rejects_retirement(
+) -> None:
+    evidence = readiness()
+    catalog = activate(ReferenceActivationCatalog.empty("catalog"), evidence)
+    retained = bind_grade_to_active_reference(
+        catalog,
+        evidence,
+        coverage_band_id="cash.preflop.bb-defense.100bb",
+    )
+    first_content = current_learning_content(evidence)
+    unrelated_draft = draft_record(
+        principle_id="zz-unpublished-guidance",
+        reference_policy_binding=LearningReferencePolicyBinding.model_validate(
+            evidence.reference_policy_binding.model_dump(mode="python")
+        ),
+    )
+    current_with_draft = LearningContentCatalog(
+        catalog_id=first_content.catalog_id,
+        catalog_revision=2,
+        predecessor_catalog_sha256=first_content.semantic_digest(),
+        taxonomy_lineage=first_content.taxonomy_lineage,
+        mapping_lineage=first_content.mapping_lineage,
+        principles=(*first_content.principles, unrelated_draft),
+    )
+    extraction = extract_hero_decision_points(baseline_decision_record())
+
+    assert revalidate_reference_activated_grade(
+        retained,
+        current_reference_catalog=catalog,
+        current_learning_content=current_with_draft,
+        active_hand_decisions=extraction,
+    ) == retained
+
+    retired = append_principle_lifecycle_event(
+        evidence.approved_principles[0],
+        PrincipleLifecycleEvent(
+            sequence=2,
+            status="retired",
+            actor_kind="human",
+            actor_id="reviewer-1",
+            occurred_at=ACTIVATED_AT + timedelta(minutes=1),
+        ),
+    )
+    retired_content = LearningContentCatalog(
+        catalog_id=first_content.catalog_id,
+        catalog_revision=2,
+        predecessor_catalog_sha256=first_content.semantic_digest(),
+        taxonomy_lineage=first_content.taxonomy_lineage,
+        mapping_lineage=first_content.mapping_lineage,
+        principles=(retired,),
+    )
+    with pytest.raises(ReferenceActivationError, match="does not reproduce"):
+        revalidate_reference_activated_grade(
+            retained,
+            current_reference_catalog=catalog,
+            current_learning_content=retired_content,
+            active_hand_decisions=extraction,
+        )
+
+
+def test_revalidation_requires_activation_principles_to_match_current_readiness(
+) -> None:
+    evidence = readiness()
+    different_principle = approved_record(
+        principle_id="alternative-guidance",
+        reference_policy_binding=LearningReferencePolicyBinding.model_validate(
+            evidence.reference_policy_binding.model_dump(mode="python")
+        ),
+    )
+    activation_readiness = prepare_grade_for_content_activation(
+        evidence.decision_snapshot.restore(),
+        grade=evidence.grade,
+        taxonomy=evidence.taxonomy,
+        mapping=evidence.mapping,
+        principles=(different_principle,),
+    )
+    catalog = activate(
+        ReferenceActivationCatalog.empty("catalog"),
+        activation_readiness,
+    )
+    retained = bind_grade_to_active_reference(
+        catalog,
+        evidence,
+        coverage_band_id="cash.preflop.bb-defense.100bb",
+    )
+
+    with pytest.raises(ReferenceActivationError, match="approved content"):
+        revalidate_reference_activated_grade(
+            retained,
+            current_reference_catalog=catalog,
+            current_learning_content=current_learning_content(evidence),
+            active_hand_decisions=extract_hero_decision_points(
+                baseline_decision_record()
+            ),
+        )
 
 
 def test_catalog_replacement_retains_audit_and_starts_a_separate_series() -> None:

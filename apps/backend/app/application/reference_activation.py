@@ -18,11 +18,17 @@ from pydantic import (
     model_validator,
 )
 
-from app.application.learning_evidence import LearningContentReadyGrade
+from app.application.learning_content_catalog import LearningContentCatalog
+from app.application.learning_evidence import (
+    LearningContentReadinessError,
+    LearningContentReadyGrade,
+    prepare_grade_for_content_activation,
+)
 from app.domain.grading import (
     ReferencePolicyQualificationBinding,
     ReferenceSourceQualification,
 )
+from app.domain.imported_hands import HandDecisionExtraction
 from app.domain.learning_content import (
     DecisionSelector,
     LearningReferencePolicyBinding,
@@ -627,6 +633,91 @@ def bind_grade_to_active_reference(
         ) from exc
 
 
+def revalidate_reference_activated_grade(
+    evidence: ReferenceActivatedGrade,
+    *,
+    current_reference_catalog: ReferenceActivationCatalog,
+    current_learning_content: LearningContentCatalog,
+    active_hand_decisions: HandDecisionExtraction,
+) -> ReferenceActivatedGrade:
+    """Recheck retained evidence without granting mastery or drill authority.
+
+    Currentness is true only while the caller holds the authority scope that
+    supplied these values. The returned snapshot intentionally keeps its
+    ``requires_current_catalog_hand_and_content`` eligibility literal so every
+    future consumer must repeat this check inside its own mutation scope.
+    """
+
+    evidence = _validated_reference_activated_grade(evidence)
+    current_reference_catalog = _validated_catalog(current_reference_catalog)
+    current_learning_content = _validated_learning_content_catalog(
+        current_learning_content
+    )
+    active_hand_decisions = _validated_hand_decisions(active_hand_decisions)
+
+    if (
+        evidence.catalog != current_reference_catalog
+        or evidence.catalog_sha256
+        != current_reference_catalog.semantic_digest()
+    ):
+        raise ReferenceActivationError(
+            "current reference catalog does not match the retained snapshot"
+        )
+
+    current_taxonomy = current_learning_content.current_taxonomy
+    current_mapping = current_learning_content.current_mapping
+    if current_taxonomy is None or current_mapping is None:
+        raise ReferenceActivationError(
+            "current learning content is not published"
+        )
+
+    retained_decision = evidence.readiness.decision_snapshot.restore()
+    retained_index = retained_decision.decision_index
+    if (
+        active_hand_decisions.outcome != "decisions"
+        or retained_index >= len(active_hand_decisions.decision_points)
+        or active_hand_decisions.decision_points[retained_index]
+        != retained_decision
+    ):
+        raise ReferenceActivationError(
+            "current active hand does not contain the retained decision"
+        )
+
+    try:
+        current_readiness = prepare_grade_for_content_activation(
+            retained_decision,
+            grade=evidence.readiness.grade,
+            taxonomy=current_taxonomy,
+            mapping=current_mapping,
+            principles=current_learning_content.principles,
+        )
+    except LearningContentReadinessError as exc:
+        raise ReferenceActivationError(
+            "current learning content does not reproduce the retained readiness"
+        ) from exc
+    if current_readiness != evidence.readiness:
+        raise ReferenceActivationError(
+            "current learning content does not match the retained readiness"
+        )
+
+    activation = _matching_active_activation(
+        current_reference_catalog,
+        current_readiness,
+        evidence.coverage_band_id,
+    )
+    if (
+        activation is None
+        or activation.activation_id != evidence.activation_id
+        or activation.mastery_series_id != evidence.mastery_series_id
+        or activation.approved_principles
+        != current_readiness.approved_principles
+    ):
+        raise ReferenceActivationError(
+            "current reference activation does not retain the approved content"
+        )
+    return evidence
+
+
 def _matching_active_activation(
     catalog: ReferenceActivationCatalog,
     readiness: LearningContentReadyGrade,
@@ -688,6 +779,45 @@ def _validated_catalog(
     except (AttributeError, ValidationError) as exc:
         raise ReferenceActivationError(
             "reference activation catalog failed canonical validation"
+        ) from exc
+
+
+def _validated_reference_activated_grade(
+    value: ReferenceActivatedGrade,
+) -> ReferenceActivatedGrade:
+    try:
+        return ReferenceActivatedGrade.model_validate(
+            value.model_dump(mode="python")
+        )
+    except (AttributeError, ValidationError) as exc:
+        raise ReferenceActivationError(
+            "reference-activated grade failed canonical validation"
+        ) from exc
+
+
+def _validated_learning_content_catalog(
+    value: LearningContentCatalog,
+) -> LearningContentCatalog:
+    try:
+        return LearningContentCatalog.model_validate(
+            value.model_dump(mode="python")
+        )
+    except (AttributeError, ValidationError) as exc:
+        raise ReferenceActivationError(
+            "learning content catalog failed canonical validation"
+        ) from exc
+
+
+def _validated_hand_decisions(
+    value: HandDecisionExtraction,
+) -> HandDecisionExtraction:
+    try:
+        return HandDecisionExtraction.model_validate(
+            value.model_dump(mode="python")
+        )
+    except (AttributeError, ValidationError) as exc:
+        raise ReferenceActivationError(
+            "active hand decisions failed canonical validation"
         ) from exc
 
 
