@@ -69,6 +69,8 @@ class ReferenceActivationCatalogState(BaseModel):
             raise ValueError("stored reference catalog must be canonical") from exc
         if catalog != self.catalog:
             raise ValueError("stored reference catalog must be canonical")
+        if catalog.catalog_id != REFERENCE_ACTIVATION_CATALOG_ID:
+            raise ValueError("stored reference catalog has an unsupported identity")
         if self.catalog_sha256 != catalog.semantic_digest():
             raise ValueError("stored reference catalog digest does not match")
         return self

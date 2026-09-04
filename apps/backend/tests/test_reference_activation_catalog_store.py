@@ -248,6 +248,33 @@ def test_store_rejects_tampered_malformed_or_oversized_state(
         store.load()
 
 
+def test_store_rejects_self_consistent_foreign_catalog_identity(
+    tmp_path: Path,
+) -> None:
+    store = FileReferenceActivationCatalogStore(tmp_path)
+    foreign = ReferenceActivationCatalog.empty("foreign-reference-activation")
+    store.path.write_text(
+        json.dumps(
+            {
+                "schema": store_module.REFERENCE_ACTIVATION_CATALOG_SCHEMA,
+                "schema_version": (
+                    store_module.REFERENCE_ACTIVATION_CATALOG_SCHEMA_VERSION
+                ),
+                "catalog_sha256": foreign.semantic_digest(),
+                "catalog": foreign.model_dump(mode="json"),
+            }
+        ),
+        encoding="utf-8",
+    )
+    store.path.chmod(0o600)
+
+    with pytest.raises(
+        ReferenceActivationCatalogStorageError,
+        match="malformed or unsupported",
+    ):
+        store.load()
+
+
 def test_store_rejects_shared_foreign_or_symlinked_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
