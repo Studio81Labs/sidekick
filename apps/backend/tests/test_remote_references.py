@@ -41,6 +41,7 @@ from app.domain.remote_references import (
     evaluate_remote_reference_preflight,
     record_remote_reference_unavailable,
 )
+from app.domain.remote_references.services import _decision_state_sha256
 from test_imported_hand_decisions import baseline_decision_record
 from test_imported_hand_models import (
     automatic_action,
@@ -1356,6 +1357,37 @@ def test_route_hash_normalizes_equivalent_decimal_exponents() -> None:
     assert original == equivalent
     assert original.canonical_bytes() == equivalent.canonical_bytes()
     assert original.semantic_digest() == equivalent.semantic_digest()
+    assert b'"hero_stack_bb":"99.5"' in original.canonical_bytes()
+
+
+def test_route_hash_preserves_digits_beyond_the_decimal_context() -> None:
+    original = canonical_route_request()
+    original_value = Decimal("99.1234567890123456789012345678901")
+    changed_value = Decimal("99.1234567890123456789012345678902")
+    changed_components = list(original.components)
+    original_components = list(original.components)
+    stack = original_components[3]
+    assert isinstance(stack, StackWagerPotRoute)
+
+    def stack_with_hero(value: Decimal) -> StackWagerPotRoute:
+        payload = stack.model_dump(mode="python")
+        payload["hero_stack_bb"] = value
+        payload["active_player_stacks"] = tuple(
+            item.model_copy(update={"remaining_stack_bb": value})
+            if item.position == "BTN/SB"
+            else item
+            for item in stack.active_player_stacks
+        )
+        return StackWagerPotRoute.model_validate(payload)
+
+    original_components[3] = stack_with_hero(original_value)
+    changed_components[3] = stack_with_hero(changed_value)
+    exact = canonical_route_request(components=tuple(original_components))
+    changed = canonical_route_request(components=tuple(changed_components))
+
+    assert exact != changed
+    assert exact.canonical_bytes() != changed.canonical_bytes()
+    assert exact.semantic_digest() != changed.semantic_digest()
 
 
 def test_decision_state_hash_normalizes_equivalent_decimal_exponents() -> None:
@@ -1378,6 +1410,22 @@ def test_decision_state_hash_normalizes_equivalent_decimal_exponents() -> None:
     assert original.state == equivalent.state
     assert result.outcome == "dispatch_candidate"
     assert result.reason == "preflight_passed"
+
+
+def test_decision_state_hash_preserves_digits_beyond_decimal_context() -> None:
+    original_payload = decision_point().model_dump(mode="python")
+    original_payload["state"]["economics"]["rake"]["percentage"] = Decimal(
+        "0.1234567890123456789012345678901"
+    )
+    changed_payload = decision_point().model_dump(mode="python")
+    changed_payload["state"]["economics"]["rake"]["percentage"] = Decimal(
+        "0.1234567890123456789012345678902"
+    )
+    original = HeroDecisionPoint.model_validate(original_payload)
+    changed = HeroDecisionPoint.model_validate(changed_payload)
+
+    assert original.state != changed.state
+    assert _decision_state_sha256(original) != _decision_state_sha256(changed)
 
 
 def test_postflop_ranges_cover_every_active_opponent_exactly() -> None:

@@ -20,6 +20,7 @@ from app.domain.remote_references.models import (
     PositionedStack,
     PriorActionsRoute,
     RemoteDispatchReason,
+    RemoteEventTimeBasis,
     RemoteLookupUnavailableReason,
     RemotePriorAction,
     RemoteReferenceConsent,
@@ -32,6 +33,7 @@ from app.domain.remote_references.models import (
     StackWagerPotRoute,
     TablePositionRoute,
     UtilityConfigurationBinding,
+    _canonical_decimal,
     _canonical_json_bytes,
 )
 
@@ -104,13 +106,6 @@ def derive_cash_economic_configuration(
         economic_model_revision=_CASH_ECONOMIC_CONFIGURATION_REVISION,
         economic_configuration_sha256=sha256(encoded).hexdigest(),
     )
-
-
-def _canonical_decimal(value: Decimal) -> str:
-    if value == 0:
-        return "0"
-    return format(value.normalize(), "f")
-
 
 def evaluate_remote_reference_preflight(
     decision: HeroDecisionPoint,
@@ -532,6 +527,7 @@ def record_remote_reference_unavailable(
     *,
     reason: RemoteLookupUnavailableReason,
     occurred_at: datetime,
+    occurred_at_basis: RemoteEventTimeBasis = "observed",
     response_body: bytes | None = None,
 ) -> RemoteReferenceLookupUnavailable:
     """Record one post-preflight failure without fallback or grade promotion."""
@@ -569,6 +565,7 @@ def record_remote_reference_unavailable(
         decision_state_sha256=preflight.decision_state_sha256,
         preflight_evaluated_at=preflight.evaluated_at,
         occurred_at=occurred_at,
+        occurred_at_basis=occurred_at_basis,
         reason=reason,
         provider_id=preflight.provider_id,
         provider_configuration_revision=(
