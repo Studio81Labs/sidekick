@@ -203,7 +203,13 @@ def _manifest_payload(
             "case_id": "synthetic-clean",
             "source_path": source_path,
             "hand_ordinal": 1,
-            "tags": ["cash", "heads_up", "uncalled_bet"],
+            "tags": [
+                "cash",
+                "forced_system_action",
+                "heads_up",
+                "uncalled_bet",
+                "unknown_action",
+            ],
             "expected": _parsed_expectation(),
         }
     ]
@@ -255,15 +261,19 @@ def test_assessment_matches_complete_labels_and_redacts_report(
     assert report.diagnostic_counts == {"unsupported_header": 1}
     assert report.labeled_tag_counts == {
         "cash": 1,
+        "forced_system_action": 1,
         "full_ring": 1,
         "heads_up": 1,
         "tournament": 1,
         "uncalled_bet": 1,
+        "unknown_action": 1,
     }
     assert report.verified_parse_tag_counts == {
         "cash": 1,
+        "forced_system_action": 1,
         "heads_up": 1,
         "uncalled_bet": 1,
+        "unknown_action": 1,
     }
     assert report.economics_counts == {"cash": 1}
     assert report.table_size_counts == {"2": 1}
@@ -302,6 +312,13 @@ def test_assessment_reports_ground_truth_categories_without_values(
             "confidence": "1",
         }
     )
+    payload["cases"][0]["tags"] = [
+        "cash",
+        "forced_system_action",
+        "heads_up",
+        "player_selected_action",
+        "uncalled_bet",
+    ]
     manifest_path = _write_manifest(tmp_path / "manifest.json", payload)
 
     report = assess_pokerstars_corpus(manifest_path, corpus_root=FIXTURES)
@@ -310,8 +327,8 @@ def test_assessment_reports_ground_truth_categories_without_values(
     assert report.failed_cases == 1
     assert report.cases[0].failure_codes == ["action_origins_mismatch"]
     serialized = report.model_dump_json()
-    assert "player_selected" not in serialized
-    assert "unknown" not in serialized
+    assert '"kind":"player_selected"' not in serialized
+    assert '"kind":"unknown"' not in serialized
 
 
 def test_assessment_compares_source_identity_without_emitting_it(

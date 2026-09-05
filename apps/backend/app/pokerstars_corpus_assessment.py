@@ -60,9 +60,11 @@ CorpusTag = Literal[
     "automatic_action",
     "cash",
     "disconnect",
+    "forced_system_action",
     "full_ring",
     "heads_up",
     "incomplete_hand",
+    "player_selected_action",
     "rake",
     "showdown",
     "side_pot",
@@ -71,6 +73,7 @@ CorpusTag = Literal[
     "timeout",
     "tournament",
     "uncalled_bet",
+    "unknown_action",
 ]
 LabeledCoverageTag = Literal["incomplete_hand"]
 ExpectedDisposition = Literal[
@@ -454,6 +457,15 @@ class PokerStarsCorpusCase(_AssessmentModel):
             ),
             "automatic_action": any(
                 action.origin.kind == "client_automatic" for action in actions
+            ),
+            "player_selected_action": any(
+                action.origin.kind == "player_selected" for action in actions
+            ),
+            "forced_system_action": any(
+                action.origin.kind == "forced_system" for action in actions
+            ),
+            "unknown_action": any(
+                action.origin.kind == "unknown" for action in actions
             ),
             "timeout": any(
                 action.origin.automatic_reason == "timeout" for action in actions

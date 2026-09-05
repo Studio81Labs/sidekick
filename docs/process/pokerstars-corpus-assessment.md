@@ -37,7 +37,8 @@ Every case includes sorted coverage `tags` and one expectation:
 
 Inferable tags such as `cash`, `tournament`, `heads_up`, `six_max`, `full_ring`,
 `sit_out`, `ante`, `uncalled_bet`, `automatic_action`, `timeout`, `disconnect`,
-`rake`, `showdown`, and `side_pot` must exactly match the parsed expectation.
+`player_selected_action`, `forced_system_action`, `unknown_action`, `rake`,
+`showdown`, and `side_pot` must exactly match the parsed expectation.
 `incomplete_hand` remains an explicit corpus label because it needs source-level
 review. All tags on a rejected case also require independent source review
 because there is no parsed projection from which to infer them.
@@ -67,7 +68,10 @@ pnpm backend:pokerstars-corpus /absolute/private/manifest.json \
   --minimum-tag-count rake=1 \
   --minimum-tag-count side_pot=1 \
   --minimum-tag-count showdown=1 \
+  --minimum-tag-count player_selected_action=1 \
+  --minimum-tag-count forced_system_action=1 \
   --minimum-tag-count automatic_action=1 \
+  --minimum-tag-count unknown_action=1 \
   --minimum-tag-count timeout=1 \
   --minimum-tag-count disconnect=1 \
   --minimum-labeled-tag-count incomplete_hand=1 \

@@ -53,6 +53,8 @@ relabeled out of the Phase 0 gate. Parsed coverage gates count only
 ground-truth-matching parsed cases, so expected rejections cannot prove parsed
 format or scenario coverage. The labeled-only gate is restricted to
 `incomplete_hand`, whose safe expected outcome may be a structured rejection.
+The canonical gate requires matching parsed examples of player-selected,
+forced/system, client-automatic, and unknown action origins.
 
 The command never opens `PlayerWorkspace`, imports a hand, writes player data,
 approves parser output, or exposes an HTTP route. It is evidence tooling only.
