@@ -21,3 +21,5 @@ Reference material includes the
 [PokerStars corpus assessment](./process/pokerstars-corpus-assessment.md), and
 the open Phase 0
 [V2 grading reference source assessment](./reference/v2-grading-reference-assessment.md).
+The current shared-gate status and explicit Phase 1 no-go are recorded in the
+[V2 Phase 0 gate-readiness ledger](./reference/v2-phase-0-gate-readiness.md).

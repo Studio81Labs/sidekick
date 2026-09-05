@@ -738,6 +738,13 @@ calculate aggregate mixing deviations, move mastery, or schedule drills. Those
 application and Phase 0 gates remain open under issues #412, #414, #416, and
 #418.
 
+The [Phase 0 gate-readiness ledger](./v2-phase-0-gate-readiness.md) separates
+these implemented contracts and completed safety/local-delivery prerequisites
+from the missing real corpus, source-rights, benchmark, coverage, cost, and
+review evidence. It records an explicit Phase 1 no-go while #409 and #412 remain
+open, but it is not the final `go`, `reshape`, or `stop` decision required by
+#414.
+
 Solved comparison additionally requires an independent
 `ReferenceSourceQualification` argument. The immutable qualification records
 the reviewed source and assessment revision, independent-solved evidence,
