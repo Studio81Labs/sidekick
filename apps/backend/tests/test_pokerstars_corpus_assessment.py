@@ -346,6 +346,21 @@ def test_assessment_compares_source_identity_without_emitting_it(
     assert "900000000003" not in serialized
 
 
+def test_assessment_compares_source_wall_time_and_offset(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest_payload()
+    payload["cases"][0]["expected"]["played_at"] = "2026-08-30T16:36:56Z"
+    manifest_path = _write_manifest(tmp_path / "manifest.json", payload)
+
+    report = assess_pokerstars_corpus(manifest_path, corpus_root=FIXTURES)
+
+    assert report.cases[0].failure_codes == ["chronology_mismatch"]
+    serialized = report.model_dump_json()
+    assert "2026-08-30T12:36:56-04:00" not in serialized
+    assert "2026-08-30T16:36:56Z" not in serialized
+
+
 def test_assessment_compares_results_without_emitting_values(
     tmp_path: Path,
 ) -> None:

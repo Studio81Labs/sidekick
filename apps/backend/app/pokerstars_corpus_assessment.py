@@ -131,6 +131,18 @@ def _path_from_invocation(path: Path) -> Path:
     return Path(invocation_root) / path if invocation_root else path
 
 
+def _same_source_timestamp(
+    expected: datetime | None,
+    actual: datetime | None,
+) -> bool:
+    if expected is None or actual is None:
+        return expected is actual
+    return (
+        expected.replace(tzinfo=None) == actual.replace(tzinfo=None)
+        and expected.utcoffset() == actual.utcoffset()
+    )
+
+
 class _AssessmentModel(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
 
@@ -930,13 +942,12 @@ def _parsed_hand_failure_codes(
     if expected.disposition != hand.disposition:
         failures.append("disposition_mismatch")
     if (
-        expected.played_at,
-        expected.source_timezone,
-        expected.source_session_id,
-    ) != (
-        state.chronology.played_at,
-        state.chronology.source_timezone,
-        state.chronology.source_session_id,
+        not _same_source_timestamp(
+            expected.played_at,
+            state.chronology.played_at,
+        )
+        or expected.source_timezone != state.chronology.source_timezone
+        or expected.source_session_id != state.chronology.source_session_id
     ):
         failures.append("chronology_mismatch")
     if (
