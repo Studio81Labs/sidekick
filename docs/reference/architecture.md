@@ -359,8 +359,11 @@ Labeled composition remains visible, while tag gates count only matching parsed
 cases so an expected rejection cannot stand in for verified parser coverage.
 The separate labeled-only gate is limited to independently reviewed incomplete
 hands, whose correct safe outcome may be rejection.
-Verified origin coverage separately includes player-selected, forced/system,
-client-automatic, and unknown actions.
+The documented runnable gate covers only the adapter's current matching-parse
+surface. Tournament parsing and player-selected or client-automatic origins,
+including timeout and disconnect, are still unsupported and remain explicit
+Phase 0 blockers. Their verified parsed gates must be added once the adapter can
+emit them; a current-surface exit status of zero is not full Phase 0 acceptance.
 
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit

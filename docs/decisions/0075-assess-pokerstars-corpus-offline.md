@@ -53,8 +53,12 @@ relabeled out of the Phase 0 gate. Parsed coverage gates count only
 ground-truth-matching parsed cases, so expected rejections cannot prove parsed
 format or scenario coverage. The labeled-only gate is restricted to
 `incomplete_hand`, whose safe expected outcome may be a structured rejection.
-The canonical gate requires matching parsed examples of player-selected,
-forced/system, client-automatic, and unknown action origins.
+The documented runnable gate covers only categories the bounded adapter can
+currently emit as matching parses. Tournament parsing and player-selected or
+client-automatic origins, including timeout and disconnect, remain explicit
+Phase 0 implementation blockers rather than impossible current gates. Their
+verified parsed gates must be added once the adapter can produce them; an exit
+status of zero before then is only a current-surface regression checkpoint.
 
 The command never opens `PlayerWorkspace`, imports a hand, writes player data,
 approves parser output, or exposes an HTTP route. It is evidence tooling only.
@@ -69,4 +73,5 @@ stored report is safe to compare and share within the project.
 This decision does not provide the representative corpus, establish source
 rights, expand the supported PokerStars syntax, prove 99% accuracy, approve any
 detected state, or close #409. Those claims require the actual corpus,
-independent labels, required format composition, and a passing gated run.
+independent labels, the currently unsupported Phase 0 categories and their
+verified gates, required format composition, and a passing full acceptance run.

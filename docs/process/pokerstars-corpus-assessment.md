@@ -48,9 +48,10 @@ The Pydantic models in
 contract. Invalid, duplicate, incomplete, unsorted, or path-escaping manifests
 are rejected before a result can be treated as evidence.
 
-## Run and gate
+## Run the current adapter checkpoint
 
-From the repository root:
+From the repository root, gate the format and scenarios the current bounded
+adapter can produce as matching parses:
 
 ```bash
 pnpm backend:pokerstars-corpus /absolute/private/manifest.json \
@@ -58,7 +59,6 @@ pnpm backend:pokerstars-corpus /absolute/private/manifest.json \
   --minimum-cases 1000 \
   --minimum-clean-parse-rate 0.99 \
   --minimum-tag-count cash=1 \
-  --minimum-tag-count tournament=1 \
   --minimum-tag-count heads_up=1 \
   --minimum-tag-count six_max=1 \
   --minimum-tag-count full_ring=1 \
@@ -68,15 +68,25 @@ pnpm backend:pokerstars-corpus /absolute/private/manifest.json \
   --minimum-tag-count rake=1 \
   --minimum-tag-count side_pot=1 \
   --minimum-tag-count showdown=1 \
-  --minimum-tag-count player_selected_action=1 \
   --minimum-tag-count forced_system_action=1 \
-  --minimum-tag-count automatic_action=1 \
   --minimum-tag-count unknown_action=1 \
-  --minimum-tag-count timeout=1 \
-  --minimum-tag-count disconnect=1 \
   --minimum-labeled-tag-count incomplete_hand=1 \
   --json > /absolute/private/pokerstars-assessment.json
 ```
+
+This is a regression checkpoint for the adapter's current supported surface,
+not the complete Phase 0 acceptance gate. The current format revision rejects
+tournament headers, classifies non-forced actions as `unknown`, and rejects
+timeout markers. It therefore cannot yet produce matching parsed cases tagged
+`tournament`, `player_selected_action`, `automatic_action`, `timeout`, or
+`disconnect`. Do not add impossible verified-parse gates merely to make the
+command look complete.
+
+Those categories remain Phase 0 blockers, not waived requirements. Before
+closing #409, implement their parser semantics, add each category to the command
+above as a `--minimum-tag-count`, and obtain matching parsed examples in the
+representative corpus. Until then, exit status `0` proves only the current
+adapter checkpoint and must not be reported as Phase 0 acceptance.
 
 After recording the first reviewed report, pin its printed digest on repeat
 runs:
@@ -110,7 +120,10 @@ redaction to make a report self-contained.
 
 ## Evidence boundary
 
-A passing synthetic run validates the assessment instrument only. Do not claim
-the #409 representative-corpus requirement, 99% Phase 0 gate, format coverage,
-or issue completion until the legally obtained or sanitized real corpus has the
-required composition, independent labels, and a passing pinned run.
+A passing synthetic run validates the assessment instrument only. A passing
+current-adapter checkpoint validates only its listed supported surface. Do not
+claim the #409 representative-corpus requirement, 99% Phase 0 gate, complete
+format/action-origin coverage, or issue completion until the unsupported
+categories above are implemented and gated and the legally obtained or
+sanitized real corpus has the required composition, independent labels, and a
+passing pinned run.
