@@ -56,9 +56,21 @@ pnpm backend:pokerstars-corpus /absolute/private/manifest.json \
   --corpus-root /absolute/private/pokerstars-corpus \
   --minimum-cases 1000 \
   --minimum-clean-parse-rate 0.99 \
+  --minimum-tag-count cash=1 \
+  --minimum-tag-count tournament=1 \
   --minimum-tag-count heads_up=1 \
   --minimum-tag-count six_max=1 \
   --minimum-tag-count full_ring=1 \
+  --minimum-tag-count sit_out=1 \
+  --minimum-tag-count ante=1 \
+  --minimum-tag-count uncalled_bet=1 \
+  --minimum-tag-count rake=1 \
+  --minimum-tag-count side_pot=1 \
+  --minimum-tag-count showdown=1 \
+  --minimum-tag-count automatic_action=1 \
+  --minimum-tag-count timeout=1 \
+  --minimum-tag-count disconnect=1 \
+  --minimum-labeled-tag-count incomplete_hand=1 \
   --json > /absolute/private/pokerstars-assessment.json
 ```
 
@@ -81,7 +93,10 @@ The clean-parse rate always divides clean matching parses by every labeled hand,
 including expected rejections; unsupported cases cannot be removed from the 99%
 denominator by changing their expected outcome. A `--minimum-tag-count` gate
 uses only ground-truth-matching parsed cases. Labeled rejected cases remain in
-the report's composition counts but cannot satisfy a parsed-coverage gate.
+the report's composition counts but cannot satisfy a parsed-coverage gate. The
+separate `--minimum-labeled-tag-count` gate accepts only `incomplete_hand`; it
+allows independently reviewed incomplete cases to count whether their safe
+expected result is a parse or a structured rejection.
 
 The report intentionally contains only aggregate counts, adapter/format
 revisions, the corpus fingerprint, and ordinal-only failure categories. It

@@ -46,11 +46,13 @@ counts, and one ordinal-only result with failure codes per case. It never
 contains manifest case IDs or source paths, parser messages, actual or expected
 field values, raw provenance identifiers, cards, or source excerpts. The
 command can gate minimum case count, verified parsed coverage-tag counts, clean
-parse rate, and an expected corpus fingerprint. The clean rate uses every
-labeled hand as its denominator, including expected rejections, so unsupported
-cases cannot be relabeled out of the Phase 0 gate. Coverage gates count only
+parse rate, independently source-reviewed incomplete-hand labels, and an
+expected corpus fingerprint. The clean rate uses every labeled hand as its
+denominator, including expected rejections, so unsupported cases cannot be
+relabeled out of the Phase 0 gate. Parsed coverage gates count only
 ground-truth-matching parsed cases, so expected rejections cannot prove parsed
-format or scenario coverage.
+format or scenario coverage. The labeled-only gate is restricted to
+`incomplete_hand`, whose safe expected outcome may be a structured rejection.
 
 The command never opens `PlayerWorkspace`, imports a hand, writes player data,
 approves parser output, or exposes an HTTP route. It is evidence tooling only.

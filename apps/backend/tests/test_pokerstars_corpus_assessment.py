@@ -534,7 +534,12 @@ def test_cli_emits_redacted_json_and_enforces_all_gates(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     payload = _manifest_payload()
-    payload["cases"][1]["tags"] = ["full_ring", "side_pot", "tournament"]
+    payload["cases"][1]["tags"] = [
+        "full_ring",
+        "incomplete_hand",
+        "side_pot",
+        "tournament",
+    ]
     manifest_path = _write_manifest(tmp_path / "manifest.json", payload)
 
     exit_code = main(
@@ -548,6 +553,8 @@ def test_cli_emits_redacted_json_and_enforces_all_gates(
             "1",
             "--minimum-tag-count",
             "side_pot=1",
+            "--minimum-labeled-tag-count",
+            "incomplete_hand=2",
             "--expected-corpus-fingerprint",
             "0" * 64,
             "--json",
@@ -565,6 +572,10 @@ def test_cli_emits_redacted_json_and_enforces_all_gates(
     assert "Corpus has 2 case(s), below the minimum 3" in captured.err
     assert (
         "Verified parsed corpus tag side_pot has 0 case(s), below the minimum 1"
+        in captured.err
+    )
+    assert (
+        "Labeled corpus tag incomplete_hand has 1 case(s), below the minimum 2"
         in captured.err
     )
     assert "Corpus fingerprint does not match" in captured.err

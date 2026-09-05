@@ -72,6 +72,7 @@ CorpusTag = Literal[
     "tournament",
     "uncalled_bet",
 ]
+LabeledCoverageTag = Literal["incomplete_hand"]
 ExpectedDisposition = Literal[
     "clean",
     "reconciliation_failed",
@@ -1177,6 +1178,17 @@ def _tag_count_requirement(value: str) -> tuple[CorpusTag, int]:
     return cast(CorpusTag, raw_tag), _positive_integer(raw_count)
 
 
+def _labeled_tag_count_requirement(
+    value: str,
+) -> tuple[LabeledCoverageTag, int]:
+    tag, count = _tag_count_requirement(value)
+    if tag not in get_args(LabeledCoverageTag):
+        raise argparse.ArgumentTypeError(
+            "labeled-only coverage gates support incomplete_hand"
+        )
+    return cast(LabeledCoverageTag, tag), count
+
+
 def _sha256(value: str) -> str:
     if len(value) != 64 or any(
         character not in "0123456789abcdef" for character in value
@@ -1214,7 +1226,18 @@ def _argument_parser() -> argparse.ArgumentParser:
         type=_tag_count_requirement,
         default=[],
         metavar="TAG=COUNT",
-        help="Repeat to require a minimum labeled count for one coverage tag",
+        help="Repeat to require a minimum verified parsed count for a coverage tag",
+    )
+    parser.add_argument(
+        "--minimum-labeled-tag-count",
+        action="append",
+        type=_labeled_tag_count_requirement,
+        default=[],
+        metavar="INCOMPLETE_HAND=COUNT",
+        help=(
+            "Repeat to require independently reviewed incomplete-hand labels,"
+            " including expected rejections"
+        ),
     )
     parser.add_argument(
         "--expected-corpus-fingerprint",
@@ -1231,12 +1254,14 @@ def _argument_parser() -> argparse.ArgumentParser:
 
 def _requirements(
     values: list[tuple[CorpusTag, int]],
+    *,
+    option_name: str,
 ) -> dict[CorpusTag, int]:
     requirements: dict[CorpusTag, int] = {}
     for tag, count in values:
         if tag in requirements:
             raise CorpusAssessmentError(
-                f"--minimum-tag-count repeats tag {tag}"
+                f"{option_name} repeats tag {tag}"
             )
         requirements[tag] = count
     return requirements
@@ -1248,6 +1273,7 @@ def _threshold_failures(
     minimum_cases: int | None,
     minimum_clean_parse_rate: float | None,
     minimum_tag_counts: dict[CorpusTag, int],
+    minimum_labeled_tag_counts: dict[CorpusTag, int],
     expected_corpus_fingerprint: str | None,
 ) -> list[str]:
     failures: list[str] = []
@@ -1274,6 +1300,13 @@ def _threshold_failures(
                 f"Verified parsed corpus tag {tag} has {count} case(s),"
                 f" below the minimum {minimum}"
             )
+    for tag, minimum in minimum_labeled_tag_counts.items():
+        count = report.labeled_tag_counts.get(tag, 0)
+        if count < minimum:
+            failures.append(
+                f"Labeled corpus tag {tag} has {count} case(s),"
+                f" below the minimum {minimum}"
+            )
     if (
         expected_corpus_fingerprint is not None
         and report.corpus_fingerprint != expected_corpus_fingerprint
@@ -1285,7 +1318,14 @@ def _threshold_failures(
 def main(argv: Sequence[str] | None = None) -> int:
     args = _argument_parser().parse_args(argv)
     try:
-        minimum_tag_counts = _requirements(args.minimum_tag_count)
+        minimum_tag_counts = _requirements(
+            args.minimum_tag_count,
+            option_name="--minimum-tag-count",
+        )
+        minimum_labeled_tag_counts = _requirements(
+            args.minimum_labeled_tag_count,
+            option_name="--minimum-labeled-tag-count",
+        )
         report = assess_pokerstars_corpus(
             _path_from_invocation(args.manifest),
             corpus_root=(
@@ -1307,6 +1347,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         minimum_cases=args.minimum_cases,
         minimum_clean_parse_rate=args.minimum_clean_parse_rate,
         minimum_tag_counts=minimum_tag_counts,
+        minimum_labeled_tag_counts=minimum_labeled_tag_counts,
         expected_corpus_fingerprint=args.expected_corpus_fingerprint,
     )
     for failure in failures:
