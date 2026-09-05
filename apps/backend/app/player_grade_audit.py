@@ -157,21 +157,23 @@ GradeArtifactIdentity = tuple[int, int, int, str]
 
 
 def select_grade_audit_page(
+    record_key: str,
     artifacts: list[GradeArtifactIdentity],
     *,
     limit: int,
     cursor: str | None,
 ) -> tuple[list[GradeArtifactIdentity], str | None]:
-    """Select one stable page without exposing storage filenames as cursors."""
+    """Select one snapshot-bound page without exposing storage filenames."""
 
     if limit < 1 or limit > MAX_PLAYER_GRADE_AUDIT_PAGE_SIZE:
         raise ValueError("grade audit page limit is out of bounds")
+    snapshot_sha256 = _grade_audit_snapshot_sha256(record_key, artifacts)
     start = 0
     if cursor is not None:
         matches = tuple(
             index
             for index, (*_, filename) in enumerate(artifacts)
-            if grade_audit_id(filename) == cursor
+            if _grade_audit_cursor(snapshot_sha256, filename) == cursor
         )
         if len(matches) != 1:
             raise PlayerGradeAuditCursorError(
@@ -181,7 +183,11 @@ def select_grade_audit_page(
     page = artifacts[start : start + limit + 1]
     has_more = len(page) > limit
     visible = page[:limit]
-    next_cursor = grade_audit_id(visible[-1][3]) if has_more else None
+    next_cursor = (
+        _grade_audit_cursor(snapshot_sha256, visible[-1][3])
+        if has_more
+        else None
+    )
     return visible, next_cursor
 
 
@@ -210,6 +216,34 @@ def grade_audit_id(filename: str) -> str:
 
     return sha256(
         b"player-retained-grade-audit/v1\0" + filename.encode("utf-8")
+    ).hexdigest()
+
+
+def _grade_audit_snapshot_sha256(
+    record_key: str,
+    artifacts: list[GradeArtifactIdentity],
+) -> str:
+    """Bind pagination to the complete ordered evidence set for one hand."""
+
+    digest = sha256(
+        b"player-retained-grade-audit-snapshot/v1\0"
+        + record_key.encode("utf-8")
+        + b"\0"
+    )
+    for *_, filename in artifacts:
+        digest.update(filename.encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _grade_audit_cursor(snapshot_sha256: str, filename: str) -> str:
+    """Return an opaque position bound to one immutable listing snapshot."""
+
+    return sha256(
+        b"player-retained-grade-audit-cursor/v2\0"
+        + snapshot_sha256.encode("ascii")
+        + b"\0"
+        + filename.encode("utf-8")
     ).hexdigest()
 
 

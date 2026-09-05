@@ -1526,6 +1526,7 @@ class PlayerWorkspace:
                         .list_reference_activated_grade_artifacts(record_key)
                     )
                     selected, next_cursor = select_grade_audit_page(
+                        record_key,
                         identities,
                         limit=limit,
                         cursor=cursor,

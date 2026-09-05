@@ -29,9 +29,12 @@ validated against its storage identity, hand identity, named canonical
 revision, deletion generation, decision index, and re-derived decision.
 
 Pages retain storage order but expose only SHA-256-derived opaque audit IDs and
-cursors, never artifact filenames or paths. An unknown cursor fails closed. A
-missing, malformed, or mismatched artifact fails the requested page with one
-redacted error rather than returning a partial or apparently complete history.
+snapshot-bound cursors, never artifact filenames or paths. Any change to the
+ordered artifact set invalidates an outstanding cursor so a client restarts the
+walk instead of silently skipping newly retained evidence. An unknown or stale
+cursor fails closed. A missing, malformed, or mismatched artifact fails the
+requested page with one redacted error rather than returning a partial or
+apparently complete history.
 
 Return a purpose-built immutable projection. It includes the decision binding,
 classification, policy candidates and match, EV cost/unit, reference and policy

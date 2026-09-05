@@ -10,7 +10,10 @@ from pydantic import ValidationError
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
 from app.application.reference_activation import bind_grade_to_active_reference
 from app.domain.imported_hands import DeletionReceipt, extract_hero_decision_points
-from app.player_grade_audit import PlayerGradeAuditCursorError
+from app.player_grade_audit import (
+    PlayerGradeAuditCursorError,
+    select_grade_audit_page,
+)
 from app.player_hands import PlayerHandApprovalRequest, PlayerHandCloseRequest
 from app.storage.imported_hand_store import GRADES_DIRNAME
 from test_current_learning_revalidation import configured_workspace
@@ -61,7 +64,7 @@ def test_workspace_projects_retained_grade_as_redacted_historical_evidence(
     assert principle.content not in serialized
 
 
-def test_workspace_grade_audit_pages_use_opaque_stable_cursors(
+def test_workspace_grade_audit_pages_use_opaque_snapshot_cursors(
     tmp_path: Path,
 ) -> None:
     workspace, record_key, first_grade, first_catalog = configured_workspace(tmp_path)
@@ -97,7 +100,7 @@ def test_workspace_grade_audit_pages_use_opaque_stable_cursors(
         cursor=first_page.next_cursor,
     )
 
-    assert first_page.next_cursor == first_page.items[0].audit_id
+    assert first_page.next_cursor != first_page.items[0].audit_id
     assert second_page.next_cursor is None
     assert second_page.items[0].audit_id != first_page.items[0].audit_id
     filenames = {
@@ -116,6 +119,32 @@ def test_workspace_grade_audit_pages_use_opaque_stable_cursors(
             record_key,
             limit=1,
             cursor=unknown_cursor,
+        )
+
+
+def test_grade_audit_cursor_rejects_a_changed_snapshot_before_its_position() -> None:
+    original = [
+        (1, 0, 0, f"r1-g0-d0-{'b' * 64}.json"),
+        (1, 0, 0, f"r1-g0-d0-{'c' * 64}.json"),
+    ]
+    _, cursor = select_grade_audit_page(
+        "1" * 64,
+        original,
+        limit=1,
+        cursor=None,
+    )
+    assert cursor is not None
+
+    changed = [
+        (1, 0, 0, f"r1-g0-d0-{'a' * 64}.json"),
+        *original,
+    ]
+    with pytest.raises(PlayerGradeAuditCursorError):
+        select_grade_audit_page(
+            "1" * 64,
+            changed,
+            limit=1,
+            cursor=cursor,
         )
 
 

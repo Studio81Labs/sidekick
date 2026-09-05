@@ -696,7 +696,9 @@ only as bounded historical audit pages. The workspace holds the hand's shared
 thread/process stripes and shared data-volume lock while storage validates each
 artifact against its opaque identity, retained canonical revision, deletion
 generation, decision index, and re-derived decision. The response replaces
-storage filenames with digest-derived audit IDs and cursors, labels every item
+storage filenames with digest-derived audit IDs and snapshot-bound cursors,
+invalidating a cursor when the ordered artifact set changes so traversal cannot
+silently skip newly retained evidence. It labels every item
 `historical_only`, and preserves
 `requires_current_catalog_hand_and_content`. Its purpose-built projection keeps
 the classification, policy, EV unit, economics, qualification, content,
