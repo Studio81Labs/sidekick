@@ -341,4 +341,7 @@ and there is no production solved-reference publication, HTTP/PWA grading
 workflow, mastery, drill, or learning-proof store. The hosted Worker and V1
 FastAPI deployment deny the player namespace, and the direct-network checkpoint
 verifies that denial without proxying a request body. Do not use the runtime or
-its test command as evidence that the Phase 1 gate or issue #432 is complete.
+its test command alone as evidence that the shared Phase 1 gate is complete.
+Issue #432's repository delivery scope is complete; the import, grading-source,
+and final-decision gates remain open under #409, #412, and #414, as summarized
+by the [Phase 0 gate-readiness ledger](../reference/v2-phase-0-gate-readiness.md).
