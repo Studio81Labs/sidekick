@@ -342,6 +342,29 @@ reconciliation is clean, failed, or indeterminate. Authenticated
 `POST /api/player/imports` invokes the adapter for bounded UTF-8 `.txt` uploads
 and returns sanitized per-file and per-hand outcomes without exposing raw text.
 
+The offline `app/pokerstars_corpus_assessment.py` command supplies the separate
+#409 measurement boundary defined by
+[ADR 0075](../decisions/0075-assess-pokerstars-corpus-offline.md). A strict
+manifest provides independently authored, complete hand-ordinal expectations
+for source identity and chronology, economics, positions, actions, origin
+semantics and evidence, results, plus expected rejection codes and
+corpus-composition tags. The runner rejects missing labels and unsafe input,
+isolates file failures, and emits a closed
+report containing exact denominators, category counts, adapter/format revisions,
+a deterministic corpus fingerprint, and ordinal-only mismatch codes. It emits
+no paths, filenames, hand IDs, names, cards, excerpts, raw text, or parser
+messages, and never opens or mutates the player workspace. The instrument does
+not itself provide a representative corpus or prove the 99% Phase 0 gate.
+Labeled composition remains visible, while tag gates count only matching parsed
+cases so an expected rejection cannot stand in for verified parser coverage.
+The separate labeled-only gate is limited to independently reviewed incomplete
+hands, whose correct safe outcome may be rejection.
+The documented runnable gate covers only the adapter's current matching-parse
+surface. Tournament parsing and player-selected or client-automatic origins,
+including timeout and disconnect, are still unsupported and remain explicit
+Phase 0 blockers. Their verified parsed gates must be added once the adapter can
+emit them; a current-surface exit status of zero is not full Phase 0 acceptance.
+
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit
 detail, while raw hand-history text stays inside the store.

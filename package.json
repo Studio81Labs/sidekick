@@ -22,6 +22,7 @@
     "player:test:e2e": "pnpm -C apps/pwa test:e2e:player-boundary",
     "backend:mcp": "cd apps/backend && .venv/bin/python -m app.mcp_gateway",
     "backend:benchmark": "export POKER_BENCHMARK_BASE_DIR=\"$PWD\" && cd apps/backend && .venv/bin/python -m app.dataset_benchmark",
+    "backend:pokerstars-corpus": "export POKER_CORPUS_BASE_DIR=\"$PWD\" && cd apps/backend && .venv/bin/python -m app.pokerstars_corpus_assessment",
     "backend:recommendation-benchmark": "export POKER_BENCHMARK_BASE_DIR=\"$PWD\" && cd apps/backend && PATH=\"$(pwd)/../../solver-plugins/postflop/target/release:$PATH\" .venv/bin/python -m app.recommendation_benchmark",
     "backend:backup": "cd apps/backend && .venv/bin/python -m app.backup_cli",
     "backend:test": "cd apps/backend && .venv/bin/python -m pytest",

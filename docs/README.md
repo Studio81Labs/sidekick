@@ -17,6 +17,7 @@ The proposed Studio81 Labs repository, CI, and PWA convergence is tracked in
 the [portfolio alignment plan](./specs/studio81-portfolio-alignment-plan.md).
 
 Reference material includes the
-[recommendation benchmark corpus](./reference/recommendation-benchmark.md) and
+[recommendation benchmark corpus](./reference/recommendation-benchmark.md), the
+[PokerStars corpus assessment](./process/pokerstars-corpus-assessment.md), and
 the open Phase 0
 [V2 grading reference source assessment](./reference/v2-grading-reference-assessment.md).
