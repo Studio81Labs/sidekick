@@ -326,6 +326,12 @@ their current-catalog/hand/content revalidation requirement. They do not grant
 mastery or drill eligibility merely by existing on disk or in a restored
 archive.
 
+Authenticated local clients can page that retained history at
+`GET /api/player/hands/{record_key}/grade-audits`. The response is a redacted
+`historical_only` audit projection: it does not expose storage names, canonical
+decision snapshots, evidence pointers, or principle text, and it does not
+revalidate or authorize current mastery or drill use.
+
 A host-platform release archive now embeds the runtime and verified PWA and is
 exercised without a repository checkout, but it remains unsigned and does not
 choose or implement an operating-system installer, application update channel,

@@ -56,6 +56,12 @@ from app.player_hands import (
     PlayerHandReimportRequest,
     PlayerRequestId,
 )
+from app.player_grade_audit import (
+    DEFAULT_PLAYER_GRADE_AUDIT_PAGE_SIZE,
+    MAX_PLAYER_GRADE_AUDIT_PAGE_SIZE,
+    PlayerGradeAuditCursorError,
+    PlayerGradeAuditError,
+)
 from app.player_imports import (
     MAX_PLAYER_IMPORT_BATCH_BYTES,
     MAX_PLAYER_IMPORT_FILE_BYTES,
@@ -90,6 +96,7 @@ from app.storage.cascade_journal import PendingCascadeError
 from app.storage.imported_hand_store import (
     DecisionArtifactIntegrityError,
     ImportedHandNotFoundError,
+    ImportedHandSnapshotError,
 )
 from app.storage.remote_reference_consent_store import (
     RemoteReferenceConsentStorageError,
@@ -1194,6 +1201,49 @@ def create_player_runtime(
                 return _json_denial(
                     500,
                     "Stored active decision evaluation could not be read safely",
+                )
+        return JSONResponse(payload.model_dump(mode="json", by_alias=True))
+
+    @app.get(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/grade-audits")
+    async def player_hand_grade_audits(
+        request: Request,
+        record_key: str,
+        limit: int = Query(
+            default=DEFAULT_PLAYER_GRADE_AUDIT_PAGE_SIZE,
+            ge=1,
+            le=MAX_PLAYER_GRADE_AUDIT_PAGE_SIZE,
+        ),
+        cursor: str | None = Query(default=None, pattern=r"^[0-9a-f]{64}$"),
+    ) -> JSONResponse:
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.list_retained_grade_audits,
+                    record_key,
+                    limit=limit,
+                    cursor=cursor,
+                    lock_timeout_seconds=status_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except PlayerGradeAuditCursorError as exc:
+                return _json_denial(400, str(exc))
+            except PlayerHandRecoveryRequired as exc:
+                return _json_denial(503, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (
+                DataLockError,
+                ImportedHandSnapshotError,
+                OSError,
+                PlayerGradeAuditError,
+                ValidationError,
+            ):
+                return _json_denial(
+                    500,
+                    "Retained grade audit evidence could not be read safely",
                 )
         return JSONResponse(payload.model_dump(mode="json", by_alias=True))
 

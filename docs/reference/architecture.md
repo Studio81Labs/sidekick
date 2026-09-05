@@ -690,6 +690,23 @@ historical through lifecycle status or revision identity, while permanent purge 
 reimport delete them atomically with the other hand-derived artifacts. ADR 0074
 records this boundary.
 
+The authenticated local player route
+`GET /api/player/hands/{record_key}/grade-audits` exposes those retained grades
+only as bounded historical audit pages. The workspace holds the hand's shared
+thread/process stripes and shared data-volume lock while storage validates each
+artifact against its opaque identity, retained canonical revision, deletion
+generation, decision index, and re-derived decision. The response replaces
+storage filenames with digest-derived audit IDs and snapshot-bound cursors,
+invalidating a cursor when the ordered artifact set changes so traversal cannot
+silently skip newly retained evidence. It labels every item
+`historical_only`, and preserves
+`requires_current_catalog_hand_and_content`. Its purpose-built projection keeps
+the classification, policy, EV unit, economics, qualification, content,
+coverage, activation, catalog, and mastery-series provenance while omitting raw
+history, canonical decision bytes, evidence pointers, principle text,
+credentials, and storage paths. It does not run current-authority revalidation
+or produce a consumable eligibility result. ADR 0076 records the read boundary.
+
 The catalog's deterministic digest chain detects inconsistent or accidentally
 rewritten snapshots; it is not a signature. The local player workspace now owns
 the trusted current catalog revision and digest in a bounded, owner-only,
