@@ -57,6 +57,7 @@ poker-hero/
 | `pnpm backend:dev`                                     | Start FastAPI with reload on port 8000                           |
 | `pnpm backend:mcp`                                     | Start the environment-fixed local MCP gateway over stdio         |
 | `pnpm backend:benchmark <dataset.zip>`                 | Benchmark a parser against an exported labeled dataset           |
+| `pnpm backend:pokerstars-corpus <manifest.json>`       | Assess PokerStars imports against private ground truth           |
 | `pnpm backend:recommendation-benchmark <dataset.json>` | Benchmark a recommendation provider against trusted references   |
 | `pnpm backend:backup <command>`                        | Initialize, export, verify, or restore-drill application backups |
 | `pnpm backend:test`                                    | Run the backend pytest suite                                     |

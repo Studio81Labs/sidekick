@@ -342,6 +342,20 @@ reconciliation is clean, failed, or indeterminate. Authenticated
 `POST /api/player/imports` invokes the adapter for bounded UTF-8 `.txt` uploads
 and returns sanitized per-file and per-hand outcomes without exposing raw text.
 
+The offline `app/pokerstars_corpus_assessment.py` command supplies the separate
+#409 measurement boundary defined by
+[ADR 0075](../decisions/0075-assess-pokerstars-corpus-offline.md). A strict
+manifest provides independently authored, complete hand-ordinal expectations
+for source identity and chronology, economics, positions, actions, origin
+semantics and evidence, results, plus expected rejection codes and
+corpus-composition tags. The runner rejects missing labels and unsafe input,
+isolates file failures, and emits a closed
+report containing exact denominators, category counts, adapter/format revisions,
+a deterministic corpus fingerprint, and ordinal-only mismatch codes. It emits
+no paths, filenames, hand IDs, names, cards, excerpts, raw text, or parser
+messages, and never opens or mutates the player workspace. The instrument does
+not itself provide a representative corpus or prove the 99% Phase 0 gate.
+
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit
 detail, while raw hand-history text stays inside the store.
