@@ -70,6 +70,7 @@ from app.player_workspace import (
 from app.storage.cascade_journal import CascadeJournal
 from app.storage.imported_hand_store import (
     FileImportedHandStore,
+    GRADES_DIRNAME,
     imported_hand_record_key,
 )
 from app.storage.learning_content_catalog_store import (
@@ -95,6 +96,7 @@ from test_imported_hand_store import (
     withdrawn_record,
 )
 from test_imported_hand_ingestion import parsed_candidate
+from test_current_learning_revalidation import configured_workspace
 from test_remote_references import provider_policy
 
 
@@ -2127,6 +2129,122 @@ def test_player_active_decision_evaluations_are_local_ungraded_and_read_only(
         for file in records_dir.rglob("*")
         if file.is_file()
     } == stored_before
+
+
+def test_player_grade_audits_are_authenticated_redacted_and_read_only(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    workspace, record_key, retained, _ = configured_workspace(tmp_path)
+    workspace.persist_current_reference_activated_grade(record_key, retained)
+    path = f"/api/player/hands/{record_key}/grade-audits"
+
+    assert client.get(path).status_code == 401
+    session = exchange_session(client, runtime)
+    headers = {"Authorization": f"Bearer {session['session_token']}"}
+    assert client.get(
+        f"/api/player/hands/{'0' * 64}/grade-audits",
+        headers=headers,
+    ).status_code == 404
+    assert (
+        client.get(path, params={"limit": 101}, headers=headers).status_code
+        == 422
+    )
+    assert client.get(
+        path,
+        headers={**headers, "Host": "attacker.invalid"},
+    ).status_code == 400
+    records_dir = runtime.workspace.imported_hands.records_dir
+    stored_before = {
+        str(file.relative_to(records_dir)): file.read_bytes()
+        for file in records_dir.rglob("*")
+        if file.is_file()
+    }
+
+    response = client.get(
+        path,
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == "no-store"
+    payload = response.json()
+    assert payload["schema"] == "player-retained-grade-audits/v1"
+    assert payload["record_key"] == record_key
+    assert payload["next_cursor"] is None
+    assert len(payload["items"]) == 1
+    audit = payload["items"][0]
+    assert audit["audit_status"] == "historical_only"
+    assert audit["grade_source"] == "solved"
+    assert audit["policy_grade_eligibility"] == "gradeable"
+    assert audit["learning_eligibility"] == (
+        "requires_current_catalog_hand_and_content"
+    )
+    assert audit["reference"]["binding"]["ev_unit"] == audit["ev_unit"]
+    assert audit["activation"]["activation_id"] == retained.activation_id
+    assert audit["activation"]["mastery_series_id"] == retained.mastery_series_id
+    assert "canonical_json" not in response.text
+    assert "pointer" not in response.text
+    assert retained.readiness.approved_principles[0].principle.content not in (
+        response.text
+    )
+    assert (
+        client.get(
+            path,
+            headers={
+                "Authorization": f"Bearer {session['session_token']}",
+                "Origin": "https://attacker.invalid",
+            },
+        ).status_code
+        == 403
+    )
+    assert {
+        str(file.relative_to(records_dir)): file.read_bytes()
+        for file in records_dir.rglob("*")
+        if file.is_file()
+    } == stored_before
+
+
+def test_player_grade_audit_rejects_unknown_cursor_and_corrupt_evidence(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    workspace, record_key, retained, _ = configured_workspace(tmp_path)
+    workspace.persist_current_reference_activated_grade(record_key, retained)
+    session = exchange_session(client, runtime)
+    headers = {"Authorization": f"Bearer {session['session_token']}"}
+    path = f"/api/player/hands/{record_key}/grade-audits"
+
+    unknown_cursor = client.get(
+        path,
+        params={"cursor": "f" * 64},
+        headers=headers,
+    )
+
+    assert unknown_cursor.status_code == 400
+    assert unknown_cursor.json() == {
+        "detail": "Grade audit cursor does not match retained evidence"
+    }
+    *_, filename = (
+        workspace.imported_hands.list_reference_activated_grade_artifacts(
+            record_key
+        )[0]
+    )
+    artifact = (
+        workspace.imported_hands.records_dir
+        / record_key
+        / GRADES_DIRNAME
+        / filename
+    )
+    artifact.write_text("{}")
+
+    corrupt = client.get(path, headers=headers)
+
+    assert corrupt.status_code == 500
+    assert corrupt.json() == {
+        "detail": "Retained grade audit evidence could not be read safely"
+    }
+    assert filename not in corrupt.text
 
 
 @pytest.mark.parametrize(

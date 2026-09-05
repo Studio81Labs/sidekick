@@ -64,6 +64,12 @@ from app.player_decision_evaluations import (
     PlayerActiveHandDecisionEvaluations,
     evaluate_player_active_hand_decisions,
 )
+from app.player_grade_audit import (
+    PlayerGradeAuditError,
+    PlayerRetainedGradeAuditPage,
+    project_player_grade_audit_page,
+    select_grade_audit_page,
+)
 from app.player_hands import (
     PlayerActiveHandDecisions,
     PlayerHandApprovalRequest,
@@ -1490,6 +1496,58 @@ class PlayerWorkspace:
                         record,
                         extraction,
                         at=at,
+                    )
+
+    def list_retained_grade_audits(
+        self,
+        record_key: str,
+        *,
+        limit: int,
+        cursor: str | None,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
+    ) -> PlayerRetainedGradeAuditPage:
+        """Read retained grades as historical evidence under one stable scope."""
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=False,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self.require_current_layout()
+                    self._require_final_hand_record(record_key)
+                    record = self.imported_hands.get(record_key)
+                    identities = (
+                        self.imported_hands
+                        .list_reference_activated_grade_artifacts(record_key)
+                    )
+                    selected, next_cursor = select_grade_audit_page(
+                        identities,
+                        limit=limit,
+                        cursor=cursor,
+                    )
+                    retained = []
+                    for *_, filename in selected:
+                        grade = (
+                            self.imported_hands.get_reference_activated_grade(
+                                record_key,
+                                filename,
+                            )
+                        )
+                        if grade is None:
+                            raise PlayerGradeAuditError(
+                                "Retained grade evidence changed while it was read"
+                            )
+                        retained.append((filename, grade))
+                    return project_player_grade_audit_page(
+                        record_key,
+                        record,
+                        retained,
+                        next_cursor=next_cursor,
                     )
 
     def _load_active_hand_decisions(
