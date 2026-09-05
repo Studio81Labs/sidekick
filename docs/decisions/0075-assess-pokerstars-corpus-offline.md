@@ -41,13 +41,16 @@ discarding results from other files.
 
 The report is a separate sanitized, closed contract. It contains adapter and
 format revisions, a deterministic digest over source bytes and labels, exact
-aggregate denominators and composition counts, and one ordinal-only result with
-failure codes per case. It never contains manifest case IDs or source paths,
-parser messages, actual or expected field values, raw provenance identifiers,
-cards, or source excerpts. The command can gate minimum case count, clean parse
-rate, coverage-tag counts, and an expected corpus fingerprint. The clean rate
-uses every labeled hand as its denominator, including expected rejections, so
-unsupported cases cannot be relabeled out of the Phase 0 gate.
+aggregate denominators, labeled composition counts, verified parsed coverage
+counts, and one ordinal-only result with failure codes per case. It never
+contains manifest case IDs or source paths, parser messages, actual or expected
+field values, raw provenance identifiers, cards, or source excerpts. The
+command can gate minimum case count, verified parsed coverage-tag counts, clean
+parse rate, and an expected corpus fingerprint. The clean rate uses every
+labeled hand as its denominator, including expected rejections, so unsupported
+cases cannot be relabeled out of the Phase 0 gate. Coverage gates count only
+ground-truth-matching parsed cases, so expected rejections cannot prove parsed
+format or scenario coverage.
 
 The command never opens `PlayerWorkspace`, imports a hand, writes player data,
 approves parser output, or exposes an HTTP route. It is evidence tooling only.

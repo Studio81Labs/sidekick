@@ -572,7 +572,8 @@ class PokerStarsCorpusAssessmentReport(_AssessmentModel):
     failed_cases: NonNegativeInteger
     reconciliation_counts: dict[str, NonNegativeInteger]
     diagnostic_counts: dict[str, NonNegativeInteger]
-    tag_counts: dict[str, PositiveInteger]
+    labeled_tag_counts: dict[str, PositiveInteger]
+    verified_parse_tag_counts: dict[str, PositiveInteger]
     economics_counts: dict[str, PositiveInteger]
     table_size_counts: dict[str, PositiveInteger]
     cases: list[PokerStarsCorpusCaseResult]
@@ -601,6 +602,13 @@ class PokerStarsCorpusAssessmentReport(_AssessmentModel):
         actual_passed = sum(case.passed for case in self.cases)
         if actual_passed != self.passed_cases:
             raise ValueError("assessment case results must match passed_cases")
+        if any(
+            count > self.labeled_tag_counts.get(tag, 0)
+            for tag, count in self.verified_parse_tag_counts.items()
+        ):
+            raise ValueError(
+                "verified parsed tag counts cannot exceed labeled tag counts"
+            )
         return self
 
 
@@ -760,7 +768,15 @@ def assess_pokerstars_corpus(
         result.passed and case.expected.outcome == "rejected"
         for case, result in zip(manifest.cases, case_results, strict=True)
     )
-    tag_counts = Counter(tag for case in manifest.cases for tag in case.tags)
+    labeled_tag_counts = Counter(
+        tag for case in manifest.cases for tag in case.tags
+    )
+    verified_parse_tag_counts = Counter(
+        tag
+        for case, result in zip(manifest.cases, case_results, strict=True)
+        if case.expected.outcome == "parsed" and result.passed
+        for tag in case.tags
+    )
     economics_counts = Counter(
         case.expected.game.economics.kind
         for case in manifest.cases
@@ -786,7 +802,8 @@ def assess_pokerstars_corpus(
         failed_cases=len(manifest.cases) - passed_cases,
         reconciliation_counts=_sorted_counts(reconciliation_counts),
         diagnostic_counts=_sorted_counts(diagnostic_counts),
-        tag_counts=_sorted_counts(tag_counts),
+        labeled_tag_counts=_sorted_counts(labeled_tag_counts),
+        verified_parse_tag_counts=_sorted_counts(verified_parse_tag_counts),
         economics_counts=_sorted_counts(economics_counts),
         table_size_counts=_sorted_counts(table_size_counts),
         cases=case_results,
@@ -1103,10 +1120,16 @@ def format_pokerstars_corpus_report(
             "Expected rejections:"
             f" {report.correctly_rejected_cases}/{report.expected_rejection_cases}"
         ),
-        "Composition tags:",
+        "Labeled composition tags:",
     ]
     lines.extend(
-        f"  {tag}: {count}" for tag, count in report.tag_counts.items()
+        f"  {tag}: {count}"
+        for tag, count in report.labeled_tag_counts.items()
+    )
+    lines.append("Verified parsed coverage tags:")
+    lines.extend(
+        f"  {tag}: {count}"
+        for tag, count in report.verified_parse_tag_counts.items()
     )
     if report.diagnostic_counts:
         lines.append("Parser diagnostics:")
@@ -1245,10 +1268,11 @@ def _threshold_failures(
             f" {minimum_clean_parse_rate:.1%}"
         )
     for tag, minimum in minimum_tag_counts.items():
-        count = report.tag_counts.get(tag, 0)
+        count = report.verified_parse_tag_counts.get(tag, 0)
         if count < minimum:
             failures.append(
-                f"Corpus tag {tag} has {count} case(s), below the minimum {minimum}"
+                f"Verified parsed corpus tag {tag} has {count} case(s),"
+                f" below the minimum {minimum}"
             )
     if (
         expected_corpus_fingerprint is not None

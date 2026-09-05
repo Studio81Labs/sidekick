@@ -355,6 +355,8 @@ a deterministic corpus fingerprint, and ordinal-only mismatch codes. It emits
 no paths, filenames, hand IDs, names, cards, excerpts, raw text, or parser
 messages, and never opens or mutates the player workspace. The instrument does
 not itself provide a representative corpus or prove the 99% Phase 0 gate.
+Labeled composition remains visible, while tag gates count only matching parsed
+cases so an expected rejection cannot stand in for verified parser coverage.
 
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit

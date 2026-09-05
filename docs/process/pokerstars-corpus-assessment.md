@@ -79,10 +79,13 @@ passed. Status `1` means a ground-truth, count, rate, tag, or fingerprint gate
 failed. Status `2` means the manifest or corpus could not be assessed safely.
 The clean-parse rate always divides clean matching parses by every labeled hand,
 including expected rejections; unsupported cases cannot be removed from the 99%
-denominator by changing their expected outcome.
+denominator by changing their expected outcome. A `--minimum-tag-count` gate
+uses only ground-truth-matching parsed cases. Labeled rejected cases remain in
+the report's composition counts but cannot satisfy a parsed-coverage gate.
 
 The report intentionally contains only aggregate counts, adapter/format
-revisions, the corpus fingerprint, and ordinal-only failure categories. Use the
+revisions, the corpus fingerprint, and ordinal-only failure categories. It
+separates labeled composition tags from verified parsed coverage tags. Use the
 private manifest to map a failing ordinal back to source material. Do not weaken
 redaction to make a report self-contained.
 

@@ -253,11 +253,16 @@ def test_assessment_matches_complete_labels_and_redacts_report(
     assert report.failed_cases == 0
     assert report.reconciliation_counts == {"pass": 1}
     assert report.diagnostic_counts == {"unsupported_header": 1}
-    assert report.tag_counts == {
+    assert report.labeled_tag_counts == {
         "cash": 1,
         "full_ring": 1,
         "heads_up": 1,
         "tournament": 1,
+        "uncalled_bet": 1,
+    }
+    assert report.verified_parse_tag_counts == {
+        "cash": 1,
+        "heads_up": 1,
         "uncalled_bet": 1,
     }
     assert report.economics_counts == {"cash": 1}
@@ -528,10 +533,9 @@ def test_cli_emits_redacted_json_and_enforces_all_gates(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    manifest_path = _write_manifest(
-        tmp_path / "manifest.json",
-        _manifest_payload(),
-    )
+    payload = _manifest_payload()
+    payload["cases"][1]["tags"] = ["full_ring", "side_pot", "tournament"]
+    manifest_path = _write_manifest(tmp_path / "manifest.json", payload)
 
     exit_code = main(
         [
@@ -554,10 +558,15 @@ def test_cli_emits_redacted_json_and_enforces_all_gates(
     assert exit_code == 1
     report = json.loads(captured.out)
     assert report["total_cases"] == 2
+    assert report["labeled_tag_counts"]["side_pot"] == 1
+    assert "side_pot" not in report["verified_parse_tag_counts"]
     assert "synthetic-mixed.txt" not in captured.out
     assert "900000000003" not in captured.out
     assert "Corpus has 2 case(s), below the minimum 3" in captured.err
-    assert "Corpus tag side_pot has 0 case(s), below the minimum 1" in captured.err
+    assert (
+        "Verified parsed corpus tag side_pot has 0 case(s), below the minimum 1"
+        in captured.err
+    )
     assert "Corpus fingerprint does not match" in captured.err
 
 
