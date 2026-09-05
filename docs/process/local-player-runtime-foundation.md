@@ -198,15 +198,21 @@ intent or some files may already be durable. The PWA hides the pre-restore
 status and requires a local runtime restart so startup recovery finishes before
 export or another restore attempt.
 
-Export includes each record and every retained decision artifact, including
-inactive audit history. Restore validates the complete archive before writing,
-skips stale record and deletion generations, and rejects conflicts, an attempt
-to reactivate a tombstone, or an unbound tombstone targeting a live record. An
-active record must carry the exact decision artifact re-derived from its
-canonical state. Accepted changes are published through one recoverable
-multi-record cascade; a tombstone bound to the same deletion-pending generation
-removes retained decision artifacts in that unit. The format deliberately
-excludes V1 screenshot jobs, parser benchmarks, and any hosted data.
+Export includes each record, every retained decision artifact, and every
+retained reference-activated grade artifact, including inactive audit history.
+Current exports use player-backup schema version 2; restore also accepts legacy
+schema version 1 archives that predate grade persistence. Restore validates the
+complete archive before writing, skips stale record and deletion generations,
+and rejects conflicts, an attempt to reactivate a tombstone, or an unbound
+tombstone targeting a live record. An active record must carry the exact
+decision artifact re-derived from its canonical state, and a restored grade
+must bind the named retained canonical revision and its exact decision. Accepted
+changes are published through one recoverable multi-record cascade; a tombstone
+bound to the same deletion-pending generation removes retained decision and
+grade artifacts in that unit. Restored grades remain historical audit evidence
+and never replace the install-local current reference or learning-content
+catalogs. The format deliberately excludes those catalogs, remote-reference
+consent, V1 screenshot jobs, parser benchmarks, and any hosted data.
 
 ## Export and remove local player data
 
@@ -253,14 +259,17 @@ directory until its contents and the archive have been inspected. A later run
 detects a path retained by an interruption after rename and reports it even
 when the active source is already absent.
 
-The player backup contains portable V2 imported-hand records and their retained
-decision artifacts. The installation credential, in-workspace data and record
-locks, workspace manifest, and recovered journal machinery are installation
-metadata and are removed with the workspace rather than copied into the
-archive. The empty sibling runtime-lease file contains no player data and may
-remain for future coordination. This command does not remove the
-repository/application binary or the browser's PWA installation; those remain
-operating-system and browser lifecycle steps.
+The player backup uses schema version 2 and contains portable V2 imported-hand
+records with their retained decision and historical grade audit artifacts. Its
+decoder still accepts schema version 1 archives without grades. The installation
+credential, in-workspace data and record locks, workspace manifest, consent,
+current reference and learning-content catalogs, and recovered journal machinery
+are installation metadata or product/reference authority and are removed with
+the workspace rather than copied into the archive. The empty sibling
+runtime-lease file contains no player data and may remain for future
+coordination. This command does not remove the repository/application binary or
+the browser's PWA installation; those remain operating-system and browser
+lifecycle steps.
 
 There is intentionally no player-runtime host or port flag. A non-loopback
 operator development service would be a different runtime and would require
@@ -307,17 +316,23 @@ persists only that outstanding UUID plus ordered filename/content hashes, so a
 restart can safely reuse it after the exact files are reselected without
 placing filenames or hand-history text in browser storage. A confirmed terminal
 outcome erases the retry metadata. This is not the representative corpus or 99%
-clean-parse evidence required by #409. The workspace now has a version 1
-compatibility marker, safe manifestless-store adoption, and a verified
-export-before-remove command for player data. A host-platform release archive
-now embeds the runtime and verified PWA and is exercised without a repository
-checkout, but it remains unsigned and does not choose or implement an
-operating-system installer, application update channel, application-file
-update, or browser installation/removal lifecycle.
-Future learning-store migrations, remote lookup, and the complete player
-workflow also remain absent.
-Future grade, mastery, drill, and proof stores do not yet exist, so they are not
-part of the version 1 archive. The hosted Worker and V1 FastAPI deployment deny
-the namespace, and the direct-network checkpoint verifies that denial without
-proxying a request body. Do not use the runtime or its test command as evidence
-that the Phase 1 gate or issue #432 is complete.
+clean-parse evidence required by #409. The workspace now has a version 4 marker,
+safe manifestless-store adoption, migrations from layouts 1–3, and a verified
+export-before-remove command for player data. Its durable reference-activation
+and learning-content catalogs are install-local product/reference authority;
+the packaged catalogs remain empty and no API publishes them. Persisted
+reference-activated grades are immutable historical audit evidence and retain
+their current-catalog/hand/content revalidation requirement. They do not grant
+mastery or drill eligibility merely by existing on disk or in a restored
+archive.
+
+A host-platform release archive now embeds the runtime and verified PWA and is
+exercised without a repository checkout, but it remains unsigned and does not
+choose or implement an operating-system installer, application update channel,
+application-file update, or browser installation/removal lifecycle. No
+configured remote provider or transport consumes the retained consent state,
+and there is no production solved-reference publication, HTTP/PWA grading
+workflow, mastery, drill, or learning-proof store. The hosted Worker and V1
+FastAPI deployment deny the player namespace, and the direct-network checkpoint
+verifies that denial without proxying a request body. Do not use the runtime or
+its test command as evidence that the Phase 1 gate or issue #432 is complete.
