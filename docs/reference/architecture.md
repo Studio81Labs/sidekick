@@ -342,7 +342,14 @@ guessing. Exact source lines remain attached to detected fields and actions;
 ordinary table actions remain origin-`unknown`, while explicit blind, ante,
 straddle, and uncalled-return markers are forced/system evidence. Source times
 are preserved with their source zone, and ambiguous/nonexistent ET wall times
-are rejected. Synthetic development fixtures verify the contract and isolation
+are rejected. [ADR 0078](../decisions/0078-preserve-unresolved-historical-source-time.md)
+defines the pending P1a tournament extension: the historical dual-zone specimen
+retains both printed timestamps as evidence with null normalized chronology,
+and preserves ancillary finish places without inferring field or payout data.
+The [HAND2 source-label sheet](../process/pokerstars-hand2-source-labels.md)
+provides its bounded implementation expectations; this does not change the
+current cash parser or claim that tournament support has shipped.
+Synthetic development fixtures verify the contract and isolation
 behavior but are not the representative corpus or 99% clean-parse evidence
 required to close #409. Every successful parse separately reports whether pot
 reconciliation is clean, failed, or indeterminate. Authenticated

@@ -262,8 +262,13 @@ shape includes at minimum:
   a positive ante, remains explicitly unknown and is not ready for decision
   extraction. A confirmed zero ante needs no poster scheme, so retained poster
   labels do not distinguish otherwise identical detections during re-import.
-  Missing source time remains explicitly unknown; ingestion time must not stand
-  in for play time in recency, session, or proof-of-learning calculations.
+  Missing source time or an unproved source-zone interpretation remains
+  explicitly unknown; preserve supplied timestamp text in raw/source evidence
+  with uncertainty warnings rather than inventing a normalized instant.
+  [ADR 0078](../decisions/0078-preserve-unresolved-historical-source-time.md)
+  applies this rule to the historical dual-zone tournament specimen. Ingestion
+  time must not stand in for play time in recency, session, or proof-of-learning
+  calculations.
 - Economic context when supplied: for cash games, currency and the applicable
   rake/drop schedule and cap; for tournaments, tournament identity/type and
   stage, separately reported entry buy-in/fee and source blind-level label,
