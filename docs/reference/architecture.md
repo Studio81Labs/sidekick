@@ -332,6 +332,13 @@ parsed-candidate transaction lands before the #409 PokerStars adapter and
 player upload route. Sanitized player audit detail nests these later occurrences
 under their retained raw source, and its source count includes every occurrence.
 
+Imported-hand pot reconciliation exposes `amount_parse_validated_only=True`.
+It validates contribution-based eligibility and amount capacity, not best-five
+hand ranks or showdown winners. Source-reported awards remain reviewable facts;
+neither an amount pass nor approval is a derived winner certificate. ADR 0078
+applies this boundary to P1a: retain source consistency checks without adding
+the partial rank evaluator raised in #503 or coupling to provider/solver helpers.
+
 The first bounded PokerStars text adapter now lives in
 `app/infrastructure/hand_history/pokerstars.py`. It splits a file into
 independent hand blocks and emits either an unapproved

@@ -139,6 +139,9 @@ cumulative boards: flop `[3c,6s,9d]` (35), turn `[3c,6s,9d,8d]` (36), river
   cards and total collected 26310. Match the actual shown cards and collections,
   including zero awards for a stated loser. Hand-rank prose is retained source
   description, not a new canonical field or action-origin signal.
+  Repeated show/summary descriptions must agree; P1a does not derive their
+  category from cards or compare eligible players to certify a winner. The
+  source-award boundary is explicit in ADR 0078 / escalation #503.
 - Lines 44/45 state seat 2 finished 80th and seat 6 finished 81st. Retain them
   under ADR 0078's ancillary-source rule; no placement field is added. Validate
   declared actors, positive ordinals, full wording and no duplicate actor
@@ -159,6 +162,8 @@ contribute to the main pot; only seats 2/9 contribute to the side. No third pot
 is left after the 1255 return. These labels predict zero reconciliation
 discrepancy and the existing `clean` amount disposition; they do not claim an
 executed production parser pass or an extractable approved decision.
+Pot eligibility and amount agreement do not certify the best shown hand or the
+correct poker winner. Source awards remain independently labeled observations.
 
 For arithmetic auditing only, ending stacks are
 `[12835,0,6920,6890,10005,0,13100,2340,27565]`; both starting and ending chip
