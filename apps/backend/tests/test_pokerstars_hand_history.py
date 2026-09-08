@@ -1447,6 +1447,39 @@ def test_historical_tournament_summary_syntax_remains_header_bound() -> None:
     assert result.diagnostics[0].line_start == 39
 
 
+def test_cash_rejects_post_award_showdown_evidence() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        (
+            "PokerStars Hand #900000000010: Tournament #800000000, "
+            "$3.19+$0.31 USD Hold'em No Limit - Level XI (400/800) - "
+            "2013/10/04 23:22:20 CET [2013/10/04 17:22:20 ET]"
+        ),
+        (
+            "PokerStars Hand #900000000010: Hold'em No Limit (400/800 USD) - "
+            "2013/10/04 17:22:20 ET"
+        ),
+        1,
+    )
+    for rank_description in (
+        " (a pair of Kings)",
+        " (a pair of Jacks)",
+        " (a pair of Nines)",
+    ):
+        source = source.replace(rank_description, "")
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("cash-post-award-showdown.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "award_order"
+    assert result.diagnostics[0].line_start == 42
+
+
 def test_inter_hand_blank_lines_do_not_change_raw_identity_or_reimport(
     tmp_path: Path,
 ) -> None:

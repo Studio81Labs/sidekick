@@ -1313,6 +1313,12 @@ def _parse_body(
             )
             body = actor_line.group("body")
             evidence = _evidence(raw_source_id, line)
+            if award_seen and not allow_historical_tournament_results:
+                raise _HandParseError(
+                    "award_order",
+                    "Table actions and showdown evidence cannot follow a pot award.",
+                    line_start=line.number,
+                )
             showdown_entry = _showdown_entry(
                 player_id,
                 body,
