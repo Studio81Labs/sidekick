@@ -150,6 +150,7 @@ _HISTORICAL_TOURNAMENT_RESULT_EVENTS = (
     ("showdown", "seat-6", None),
     ("award", "seat-9", 0),
 )
+_HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS = tuple(range(1, 10))
 
 _UNRESOLVED_HISTORICAL_TIME_WARNING = (
     "Source time is unresolved: historical dual-zone timestamp semantics are "
@@ -927,6 +928,7 @@ def _parse_body(
     finish_player_ids: set[str] = set()
     finish_evidence: list[SourceEvidence] = []
     historical_tournament_result_event_index = 0
+    historical_tournament_summary_seat_index = 0
 
     for line in lines[1:]:
         text = line.text
@@ -1155,6 +1157,22 @@ def _parse_body(
                         "The reviewed historical tournament summary requires its seat rows after the board.",
                         line_start=line.number,
                     )
+                summary_seat = _SUMMARY_SEAT_RE.fullmatch(text)
+                if allow_historical_tournament_results and summary_seat is not None:
+                    expected_seat = (
+                        _HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS[
+                            historical_tournament_summary_seat_index
+                        ]
+                        if historical_tournament_summary_seat_index
+                        < len(_HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS)
+                        else None
+                    )
+                    if int(summary_seat.group("seat")) != expected_seat:
+                        raise _HandParseError(
+                            "tournament_summary_order",
+                            "The reviewed historical tournament summary requires its documented seat-row order.",
+                            line_start=line.number,
+                        )
                 _validate_summary_seat_line(
                     text,
                     line=line.number,
@@ -1174,6 +1192,8 @@ def _parse_body(
                     ),
                     summary_seat_numbers=summary_seat_numbers,
                 )
+                if allow_historical_tournament_results:
+                    historical_tournament_summary_seat_index += 1
                 continue
             raise _HandParseError(
                 "unsupported_summary_line",
@@ -1582,6 +1602,8 @@ def _parse_body(
     if allow_historical_tournament_results and (
         not summary_board_seen
         or summary_seat_numbers != expected_summary_seat_numbers
+        or historical_tournament_summary_seat_index
+        != len(_HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS)
         or len(finish_evidence) != 2
     ):
         raise _HandParseError(

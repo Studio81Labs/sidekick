@@ -1508,8 +1508,8 @@ def test_public_tournament_format_specimen_rejects_labelled_contradictions(
         ),
         (
             "Seat 1: Player01 folded before Flop (didn't bet)\n",
-            "missing_tournament_trailer",
-            1,
+            "tournament_summary_order",
+            49,
         ),
         (
             "Player02 finished the tournament in 80th place\n"
@@ -1594,6 +1594,28 @@ def test_public_tournament_summary_rejects_seat_rows_before_required_labels(
     assert len(result.diagnostics) == 1
     assert result.diagnostics[0].code == "tournament_summary_order"
     assert result.diagnostics[0].line_start == expected_line
+
+
+def test_public_tournament_summary_requires_reviewed_seat_row_order() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        "Seat 1: Player01 folded before Flop (didn't bet)\n"
+        "Seat 2: Player02 (button) showed [Jd Js] and lost with a pair of Jacks\n",
+        "Seat 2: Player02 (button) showed [Jd Js] and lost with a pair of Jacks\n"
+        "Seat 1: Player01 folded before Flop (didn't bet)\n",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-seat-row-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_summary_order"
+    assert result.diagnostics[0].line_start == 49
 
 
 @pytest.mark.parametrize(
