@@ -577,6 +577,9 @@ def _parse_hand(
     if not lines:
         raise _HandParseError("empty_hand", "Hand block is empty.")
     header = _parse_header(lines[0])
+    amount_currency = (
+        None if header.is_historical_tournament else header.currency
+    )
     occurrence_digest = sha256(
         f"{context.import_id}\0{block.ordinal}".encode("utf-8")
     ).hexdigest()
@@ -587,7 +590,7 @@ def _parse_hand(
     parsed_seats = _parse_seats(
         lines,
         raw_source_id=raw_source_id,
-        currency=header.currency,
+        currency=amount_currency,
     )
     positions = derive_structural_positions(
         parsed_seats.seats,
@@ -632,7 +635,7 @@ def _parse_hand(
     parsed_body = _parse_body(
         lines,
         raw_source_id=raw_source_id,
-        currency=header.currency,
+        currency=amount_currency,
         nominal_preflop_bring_in=header.big_blind,
         player_id_by_name=parsed_seats.player_id_by_name,
         sitting_out_player_ids={
@@ -751,7 +754,7 @@ def _parse_seats(
     lines: list[_SourceLine],
     *,
     raw_source_id: str,
-    currency: str,
+    currency: str | None,
 ) -> _ParsedSeats:
     table_line = next((line for line in lines[1:] if _TABLE_RE.fullmatch(line.text)), None)
     if table_line is None:
@@ -864,7 +867,7 @@ def _parse_body(
     lines: list[_SourceLine],
     *,
     raw_source_id: str,
-    currency: str,
+    currency: str | None,
     nominal_preflop_bring_in: Decimal,
     player_id_by_name: dict[str, str],
     sitting_out_player_ids: set[str],
@@ -1035,6 +1038,13 @@ def _parse_body(
                     currency,
                     line=line.number,
                 )
+                if tournament_total_pot_match is not None and rake != 0:
+                    raise _HandParseError(
+                        "invalid_total_pot",
+                        "The reviewed historical tournament form requires zero rake.",
+                        line_start=line.number,
+                        line_end=line.number,
+                    )
                 if rake > gross:
                     raise _HandParseError(
                         "invalid_total_pot",
@@ -1483,7 +1493,7 @@ def _validate_summary_seat_line(
     text: str,
     *,
     line: int,
-    currency: str,
+    currency: str | None,
     player_id_by_name: dict[str, str],
     sitting_out_player_ids: set[str],
     expected_position_tags_by_player: dict[str, frozenset[str]],
@@ -1695,7 +1705,7 @@ def _ordinal_suffix(value: int) -> Literal["st", "nd", "rd", "th"]:
 def _parse_action_line(
     body: str,
     *,
-    currency: str,
+    currency: str | None,
     line: int,
     sequence: int,
     actor_id: str,
@@ -1942,14 +1952,21 @@ def _parse_cards(value: str, *, line: int) -> list[Card]:
         ) from exc
 
 
-def _parse_money(value: str, currency: str, *, line: int) -> Decimal:
+def _parse_money(value: str, currency: str | None, *, line: int) -> Decimal:
     symbol = value[0] if value and value[0] in _CURRENCY_SYMBOLS else None
-    if symbol is not None and _CURRENCY_SYMBOLS[symbol] != currency:
-        raise _HandParseError(
-            "currency_mismatch",
-            "A money symbol does not match the header currency.",
-            line_start=line,
-        )
+    if symbol is not None:
+        if currency is None:
+            raise _HandParseError(
+                "currency_mismatch",
+                "Tournament chip amounts cannot carry a currency marker.",
+                line_start=line,
+            )
+        if _CURRENCY_SYMBOLS[symbol] != currency:
+            raise _HandParseError(
+                "currency_mismatch",
+                "A money symbol does not match the header currency.",
+                line_start=line,
+            )
     try:
         amount = Decimal(value.lstrip("$€£").replace(",", ""))
     except InvalidOperation as exc:
@@ -1969,7 +1986,7 @@ def _parse_money(value: str, currency: str, *, line: int) -> Decimal:
 
 def _parse_positive_money(
     value: str,
-    currency: str,
+    currency: str | None,
     *,
     line: int,
     code: str,

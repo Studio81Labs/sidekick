@@ -1340,6 +1340,30 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
             1,
         ),
         (
+            "Player01 (12910 in chips)",
+            "Player01 ($12910 in chips)",
+            "currency_mismatch",
+            3,
+        ),
+        (
+            "Player01: posts the ante 75",
+            "Player01: posts the ante $75",
+            "currency_mismatch",
+            12,
+        ),
+        (
+            "Player06: raises 155 to 955 and is all-in",
+            "Player06: raises $155 to 955 and is all-in",
+            "currency_mismatch",
+            26,
+        ),
+        (
+            "Player09 collected 21570 from side pot",
+            "Player09 collected $21570 from side pot",
+            "currency_mismatch",
+            41,
+        ),
+        (
             "Side pot 21570. | Rake 0",
             "Side pot 21569. | Rake 0",
             "invalid_total_pot",
@@ -1347,8 +1371,20 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
         ),
         (
             "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0",
+            "Total pot $26310 Main pot 4740. Side pot 21570. | Rake 0",
+            "currency_mismatch",
+            47,
+        ),
+        (
+            "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0",
             "Total pot 26310 | Rake 0",
             "unsupported_summary_line",
+            47,
+        ),
+        (
+            "Side pot 21570. | Rake 0",
+            "Side pot 21570. | Rake 1",
+            "invalid_total_pot",
             47,
         ),
         (
