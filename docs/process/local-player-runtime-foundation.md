@@ -37,7 +37,7 @@ browser storage, a URL, logs, or a hosted deployment.
 
 The player data root is identified by the owner-only
 `.poker-hero-player-workspace.json` manifest. The local storage panel reports
-its layout version next to the resolved data directory. Version 4 contains the
+its layout version next to the resolved data directory. Version 5 contains the
 private `imported-hands/` store and its existing recovery journal, the
 install-local remote-reference consent state, and the current
 reference-activation and learning-content catalog authorities. Backup ZIPs have
@@ -47,14 +47,15 @@ manifest, consent state, or either product/reference catalog.
 The first start after upgrading from a manifestless local runtime adopts the
 existing store automatically. Adoption takes the exclusive data-volume lock,
 validates the private imported-hand directory, creates empty consent and
-reference and learning-content catalog state, and publishes the version 4
+reference and learning-content catalog state, and publishes the version 5
 manifest. An existing
 version 1 workspace is upgraded under the same exclusive lock: consent and then
 the empty reference and learning-content catalogs become durable before the
-manifest is atomically replaced with version 4. An existing version 2 workspace
-preserves consent and adds the two empty catalogs. An existing version 3
+manifest is atomically replaced with version 5. An existing version 2 workspace
+preserves consent and adds the two empty catalogs before publishing version 5.
+An existing version 3
 workspace preserves consent and reference activation and adds only the empty
-learning-content catalog before publishing version 4. An existing version 4
+learning-content catalog before publishing version 5. An existing version 4
 workspace validates its imported-hand, consent, reference, and learning-content
 state before atomically publishing the version 5 marker. None of these paths
 rewrites hand records, canonical revisions, decision artifacts, grade artifacts,
@@ -319,7 +320,7 @@ persists only that outstanding UUID plus ordered filename/content hashes, so a
 restart can safely reuse it after the exact files are reselected without
 placing filenames or hand-history text in browser storage. A confirmed terminal
 outcome erases the retry metadata. This is not the representative corpus or 99%
-clean-parse evidence required by #409. The workspace now has a version 4 marker,
+clean-parse evidence required by #409. The workspace now has a version 5 marker,
 safe manifestless-store adoption, migrations from layouts 1–3, and a verified
 export-before-remove command for player data. Its durable reference-activation
 and learning-content catalogs are install-local product/reference authority;
