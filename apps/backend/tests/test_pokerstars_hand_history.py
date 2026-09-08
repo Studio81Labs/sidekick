@@ -1334,9 +1334,21 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
             1,
         ),
         (
+            "(400/800)",
+            "($400/$800)",
+            "unsupported_header",
+            1,
+        ),
+        (
             "Side pot 21570. | Rake 0",
             "Side pot 21569. | Rake 0",
             "invalid_total_pot",
+            47,
+        ),
+        (
+            "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0",
+            "Total pot 26310 | Rake 0",
+            "unsupported_summary_line",
             47,
         ),
         (

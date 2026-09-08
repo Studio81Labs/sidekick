@@ -49,6 +49,7 @@ POKERSTARS_FORMAT_REVISION = "pokerstars-text/v2"
 _MONEY = (
     r"[$€£]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
 )
+_CHIPS = r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
 _HEADER_START_RE = re.compile(r"^\ufeff?PokerStars Hand #(?P<hand_id>[^:]+):")
 _CASH_HEADER_RE = re.compile(
     rf"^\ufeff?PokerStars Hand #(?P<hand_id>[0-9]+): +"
@@ -63,7 +64,7 @@ _HISTORICAL_TOURNAMENT_HEADER_RE = re.compile(
     rf"(?P<entry_buy_in>{_MONEY})\+(?P<entry_fee>{_MONEY}) "
     r"(?P<currency>[A-Z]{3}) Hold'em No Limit - "
     r"Level (?P<blind_level>[A-Za-z0-9]+) "
-    rf"\((?P<small>{_MONEY})/(?P<big>{_MONEY})\) - "
+    rf"\((?P<small>{_CHIPS})/(?P<big>{_CHIPS})\) - "
     r"(?P<primary_time>[0-9]{4}/[0-9]{2}/[0-9]{2} "
     r"[0-9]{2}:[0-9]{2}:[0-9]{2}) CET "
     r"\[(?P<bracketed_time>[0-9]{4}/[0-9]{2}/[0-9]{2} "
@@ -1005,7 +1006,11 @@ def _parse_body(
             continue
 
         if in_summary:
-            total_pot_match = _TOTAL_POT_RE.fullmatch(text)
+            total_pot_match = (
+                None
+                if allow_historical_tournament_results
+                else _TOTAL_POT_RE.fullmatch(text)
+            )
             tournament_total_pot_match = (
                 _HISTORICAL_TOURNAMENT_TOTAL_POT_RE.fullmatch(text)
                 if allow_historical_tournament_results
