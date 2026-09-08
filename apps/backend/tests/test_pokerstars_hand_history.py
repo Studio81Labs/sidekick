@@ -1122,6 +1122,27 @@ def test_public_cash_origin_specimen_remains_a_structured_rejection() -> None:
     ]
 
 
+def test_public_legacy_timeout_specimen_remains_a_structured_rejection() -> None:
+    """P1b labels do not broaden the legacy cash header before review."""
+
+    source_bytes = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
+    ).read_bytes()
+    assert sha256(source_bytes).hexdigest() == (
+        "51b9add6944ebef6f6205076a29aad2f12c09aec536d7298ed93e55f607b338a"
+    )
+
+    result = parse_pokerstars_text(
+        source_bytes.decode("utf-8"),
+        context=import_context("wizardwerdna-pokerstats-timeout-fold.txt"),
+    )
+
+    assert result.hands == ()
+    assert [(diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
+        ("no_hand_headers", 1)
+    ]
+
+
 def test_public_tournament_format_specimen_matches_hand2_source_labels(
     tmp_path: Path,
 ) -> None:

@@ -52,3 +52,28 @@ the observed legacy `PokerStars Game #` header and has no dealt-to-hero line.
 Do not edit it into an accepted history or use it to introduce unrelated header
 or hero inference. The associated evidence packet is
 [`docs/process/pokerstars-p1b-action-origin-evidence.md`](../../../../../../docs/process/pokerstars-p1b-action-origin-evidence.md).
+
+## wizardwerdna/pokerstats legacy timeout-to-fold
+
+[`wizardwerdna-pokerstats-timeout-fold.txt`](./wizardwerdna-pokerstats-timeout-fold.txt)
+is a sanitized derivative of lines 194–246 of
+[`spec/file_many_hands.txt`](https://github.com/wizardwerdna/pokerstats/blob/315a4db29630c586fb080d084fa17dcad9494a84/spec/file_many_hands.txt#L194-L246)
+from `wizardwerdna/pokerstats` at commit
+`315a4db29630c586fb080d084fa17dcad9494a84`. Its upstream MIT license is
+retained in
+[`LICENSE.wizardwerdna-pokerstats-MIT.txt`](./LICENSE.wizardwerdna-pokerstats-MIT.txt).
+
+The fixture maps each original player name to `Player01` through `Player09`,
+replaces the hand/table identifiers, and normalizes trailing whitespace only.
+It retains the legacy header, timestamp/dollar text, stacks, cards, amounts,
+action/summary order, immediate timeout-to-fold pair, and following sit-out
+notification. No original player, hand, table, account identifier, or local
+path remains.
+
+This public format sample is P1b source-label input, not a representative
+corpus case or current-client proof. Its current parser expectation remains
+`no_hand_headers`, because it retains `PokerStars Game #`. The labels preserve
+`currency=None` because dollar notation supplies no ISO code; unmarked actions
+remain unknown. Do not rewrite it to a modern header or broaden parser support
+without required source review. See the
+[legacy timeout labels](../../../../../../docs/process/pokerstars-p1b-game-timeout-source-labels.md).

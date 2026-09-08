@@ -68,6 +68,29 @@ a complete action-origin rule. The bounded candidate labels, combined-cause
 encoding, evidence lines, scope/reset conditions, and explicit negative cases
 are recorded separately; missing markers continue to mean `unknown`.
 
+## PokerStars cash legacy timeout-to-fold specimen
+
+| Field                     | Recorded value                                                                                                                                                                                                                                                         |
+| ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Evidence level            | `public format sample`                                                                                                                                                                                                                                                 |
+| Source                    | [`wizardwerdna/pokerstats` `spec/file_many_hands.txt` lines 194–246](https://github.com/wizardwerdna/pokerstats/blob/315a4db29630c586fb080d084fa17dcad9494a84/spec/file_many_hands.txt#L194-L246), pinned to `315a4db29630c586fb080d084fa17dcad9494a84`                |
+| Retrieved                 | 2026-09-09                                                                                                                                                                                                                                                             |
+| Source SHA-256            | Full file: `d242a58da28908a409c795afd8c1634a958541eb953cf4b0808d3eb46a37e36c` (17,391 bytes); selected hand: `84324369fc66a424f7aa105b7661995bf7ceac0c4161e84c164cdfa00eca0329` (1,708 bytes)                                                                          |
+| License evidence          | [Upstream MIT license](https://github.com/wizardwerdna/pokerstats/blob/315a4db29630c586fb080d084fa17dcad9494a84/LICENSE), SHA-256 `e1b18163db18a3b5f81c427d4013da49c744a0bacd5f06e859cf650b261bf84b`                                                                   |
+| Repository material       | Sanitized derivative at [`apps/backend/tests/fixtures/pokerstars/public-format/wizardwerdna-pokerstats-timeout-fold.txt`](../../apps/backend/tests/fixtures/pokerstars/public-format/wizardwerdna-pokerstats-timeout-fold.txt), attribution/license retained beside it |
+| Sanitized fixture SHA-256 | `51b9add6944ebef6f6205076a29aad2f12c09aec536d7298ed93e55f607b338a` (1,653 bytes)                                                                                                                                                                                       |
+| Sanitation                | Replaced player, hand, and table identifiers and normalized trailing whitespace; retained header family, timestamp/dollar notation, stacks, cards, amounts, action/summary order, timeout and sit-out text                                                             |
+| Independent labels        | [Complete source-authored labels](pokerstars-p1b-game-timeout-source-labels.md), pending required separate source review before parser implementation                                                                                                                  |
+
+The hand contains `has timed out` immediately followed by the same actor's fold,
+a dealt-to hero, and complete cash action/result text. It also uses a legacy
+`PokerStars Game #` header and dollar symbols without an ISO currency code. The
+current adapter rejects it at line 1. Labels preserve `currency=None`, a
+one-action same-actor timeout-to-fold candidate, and unknown origins for every
+unmarked ordinary action. They do not establish current-client behavior,
+absence/manual-action semantics, disconnect/reconnect semantics, a source-event
+persistence contract, or representative-corpus qualification.
+
 ## HRC viewer example
 
 | Field                    | Recorded value                                                                                                                                                           |
