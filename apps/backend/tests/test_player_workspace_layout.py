@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -58,7 +59,7 @@ def _stored_payloads(records_dir: Path) -> dict[str, bytes]:
     }
 
 
-def test_fresh_workspace_publishes_private_layout_v4_manifest(
+def test_fresh_workspace_publishes_private_layout_v5_manifest(
     tmp_path: Path,
 ) -> None:
     workspace = PlayerWorkspace.open(tmp_path)
@@ -147,7 +148,7 @@ def test_concurrent_workspace_adoption_publishes_one_valid_manifest(
     "payload",
     [
         b"not-json",
-        b'{"layout_version":5,"schema":"poker-hero-player-workspace"}\n',
+        b'{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
         b'{"layout_version":true,"schema":"poker-hero-player-workspace"}\n',
         b'{"extra":1,"layout_version":1,"schema":"poker-hero-player-workspace"}\n',
     ],
@@ -187,7 +188,7 @@ def test_workspace_rejects_symlinked_or_shared_manifest(tmp_path: Path) -> None:
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v1_migrates_to_v4_without_touching_imported_hands(
+def test_layout_v1_migrates_to_v5_without_touching_imported_hands(
     tmp_path: Path,
 ) -> None:
     legacy_store, record_key = _legacy_store(tmp_path)
@@ -277,7 +278,7 @@ def test_layout_v1_manifest_upgrade_failure_is_retryable(
     assert workspace.learning_content_catalog.load().catalog.catalog_revision == 0
 
 
-def test_layout_v2_migrates_to_v4_without_touching_existing_state(
+def test_layout_v2_migrates_to_v5_without_touching_existing_state(
     tmp_path: Path,
 ) -> None:
     legacy_store, record_key = _legacy_store(tmp_path)
@@ -331,7 +332,7 @@ def test_layout_v2_catalog_initialization_failure_keeps_v2_manifest(
     ] == 2
 
 
-def test_layout_v3_migrates_to_v4_without_touching_existing_state(
+def test_layout_v3_migrates_to_v5_without_touching_existing_state(
     tmp_path: Path,
 ) -> None:
     legacy_store, record_key = _legacy_store(tmp_path)
@@ -383,6 +384,78 @@ def test_layout_v3_content_initialization_failure_keeps_v3_manifest(
     assert json.loads(manifest_path.read_text(encoding="utf-8"))[
         "layout_version"
     ] == 3
+
+
+def test_layout_v4_migrates_to_v5_without_touching_retained_payloads(
+    tmp_path: Path,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    record = pending_review_record()
+    record_key = imported_hand_record_key(record.identity)
+    workspace.imported_hands.save(record_key, record)
+    retained_before = _stored_payloads(workspace.imported_hands.records_dir)
+    private_state_before = {
+        filename: (tmp_path / filename).read_bytes()
+        for filename in (
+            REMOTE_REFERENCE_CONSENT_FILENAME,
+            REFERENCE_ACTIVATION_CATALOG_FILENAME,
+            LEARNING_CONTENT_CATALOG_FILENAME,
+        )
+    }
+    manifest_path = _manifest_path(tmp_path)
+    manifest_path.write_bytes(
+        player_workspace_module._player_workspace_manifest_payload(4)
+    )
+    manifest_path.chmod(0o600)
+
+    upgraded = PlayerWorkspace.open(tmp_path)
+
+    assert upgraded.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
+    assert upgraded.imported_hands.get(record_key) == record
+    assert _stored_payloads(upgraded.imported_hands.records_dir) == retained_before
+    assert {
+        filename: (tmp_path / filename).read_bytes()
+        for filename in private_state_before
+    } == private_state_before
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["layout_version"] == (
+        PLAYER_WORKSPACE_LAYOUT_VERSION
+    )
+
+
+def test_layout_v4_manifest_upgrade_failure_is_retryable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    manifest_path = _manifest_path(tmp_path)
+    manifest_path.write_bytes(
+        player_workspace_module._player_workspace_manifest_payload(4)
+    )
+    manifest_path.chmod(0o600)
+    retained_before = _stored_payloads(workspace.imported_hands.records_dir)
+    real_replace = player_workspace_module._replace_player_workspace_manifest
+
+    def fail_upgrade(_data_dir: Path) -> None:
+        raise PlayerDataDirectoryError("injected v4 manifest upgrade failure")
+
+    monkeypatch.setattr(
+        player_workspace_module,
+        "_replace_player_workspace_manifest",
+        fail_upgrade,
+    )
+    with pytest.raises(PlayerDataDirectoryError, match="injected v4 manifest"):
+        PlayerWorkspace.open(tmp_path)
+    assert json.loads(manifest_path.read_text(encoding="utf-8"))["layout_version"] == 4
+    assert _stored_payloads(workspace.imported_hands.records_dir) == retained_before
+
+    monkeypatch.setattr(
+        player_workspace_module,
+        "_replace_player_workspace_manifest",
+        real_replace,
+    )
+    assert PlayerWorkspace.open(tmp_path).layout_version == (
+        PLAYER_WORKSPACE_LAYOUT_VERSION
+    )
 
 
 def test_layout_v4_requires_valid_private_consent_state(tmp_path: Path) -> None:
@@ -573,7 +646,7 @@ def test_versioned_workspace_is_reread_beneath_the_startup_lock(
         read_count += 1
         if read_count == 2:
             _manifest_path(data_dir).write_text(
-                '{"layout_version":5,"schema":"poker-hero-player-workspace"}\n',
+                '{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
                 encoding="utf-8",
             )
             _manifest_path(data_dir).chmod(0o600)
@@ -625,7 +698,7 @@ def test_open_runtime_rejects_a_layout_changed_between_operations(
 ) -> None:
     workspace = PlayerWorkspace.open(tmp_path)
     _manifest_path(tmp_path).write_text(
-        '{"layout_version":5,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
@@ -634,6 +707,27 @@ def test_open_runtime_rejects_a_layout_changed_between_operations(
         match="layout changed while this runtime was open",
     ):
         workspace.list_hand_records(limit=10, cursor=None)
+
+
+def test_open_v4_runtime_rejects_operations_after_a_v5_upgrade(
+    tmp_path: Path,
+) -> None:
+    workspace = PlayerWorkspace.open(tmp_path)
+    manifest_path = _manifest_path(tmp_path)
+    manifest_path.write_bytes(
+        player_workspace_module._player_workspace_manifest_payload(4)
+    )
+    manifest_path.chmod(0o600)
+    legacy_runtime = replace(workspace, layout_version=4)
+
+    upgraded = PlayerWorkspace.open(tmp_path)
+
+    assert upgraded.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
+    with pytest.raises(
+        PlayerDataDirectoryError,
+        match="layout changed while this runtime was open",
+    ):
+        legacy_runtime.list_hand_records(limit=10, cursor=None)
 
 
 def test_legacy_adoption_publishes_manifest_before_recovery(

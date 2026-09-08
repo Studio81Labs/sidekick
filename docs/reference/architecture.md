@@ -309,13 +309,11 @@ as learning evidence. Conflict resolutions are retained audit events, so a
 deletion request must be ordered after them before deletion can proceed.
 
 [ADR 0077](../decisions/0077-retain-tournament-entry-and-level-source-facts.md)
-records the accepted, not-yet-implemented #498 extension for separate tournament
-entry buy-in, fee and blind-level source facts under #409. Its P1a0 precursor
-preserves absent-field serialization and retained hashes, then introduces
-workspace layout v5 and portable backup v3 reader boundaries before tournament
-parser work. The current implemented versions below remain v4/v2 until that
-precursor ships; the decision does not establish source-time semantics or clear
-the Phase 0 evidence gates.
+records the implemented P1a0 compatibility extension for separate tournament
+entry buy-in, fee and blind-level source facts under #409. It preserves
+absent-field serialization and retained hashes, and advances workspace layout
+to v5 and portable backup output to v3 before tournament parser work. It does
+not establish source-time semantics or clear the Phase 0 evidence gates.
 
 Parsed hand-history candidates enter this aggregate through
 `app/application/imported_hand_ingestion.py`, composed under the local
@@ -494,9 +492,9 @@ The local runtime's imported-hand backup contract is a separate V2-only
 `poker-hero-player-backup` ZIP, not the hosted application's V1 job/benchmark
 archive. Export holds the data volume exclusively while validating and
 checksumming exact record, retained decision-artifact, and historical
-reference-activated-grade bytes. Backup schema v2 adds grade manifests while
-the decoder still accepts schema v1 archives that predate grade persistence.
-Restore verifies
+reference-activated-grade bytes. Backup schema v2 added grade manifests and
+schema v3 advances the reader boundary for retained optional tournament source
+facts; the decoder accepts v1, v2, and v3 archives. Restore verifies
 the whole archive before taking that exclusive hold, then classifies every
 candidate against live deletion generation and lifecycle state. Active
 artifacts are re-derived from their canonical record, not trusted from checksum
@@ -734,11 +732,12 @@ complete taxonomy and mapping lineages together with immutable principle
 revisions and their full reviewer-lifecycle histories. The last taxonomy and
 mapping are current and compatible; publication uses an exact predecessor
 digest and revision compare-and-swap under the exclusive volume lock and can
-only append revisions or lifecycle events. Workspace layout v4 adds an empty,
+only append revisions or lifecycle events. Workspace layout v4 added an empty,
 owner-only, bounded, atomic catalog while preserving v1-v3 hand, consent, and
-reference-catalog state. The catalog is product/reference authority and is
-excluded from portable player backup and restore. ADR 0072 records this
-boundary.
+reference-catalog state. Layout v5 retains that authority and fences readers
+before optional tournament source facts can be persisted. The catalog is
+product/reference authority and is excluded from portable player backup and
+restore. ADR 0072 records this boundary.
 
 The packaged reference and learning-content catalogs remain empty and no API
 publishes either one. Production composition still does not authorize a solved
@@ -890,9 +889,8 @@ owner-only state file. The file contains no credentials, outbound request,
 route binding, response, or player record. Consent is deliberately excluded
 from player backup and restore so an archive cannot resurrect authorization
 after revocation. Workspace layout v2 and ADR 0066 record the v1-to-v2 consent
-migration; current layout v4 retains that state and the reference-activation
-catalog authority from ADR 0071, and adds the learning-content authority from
-ADR 0072. The runtime remains
+migration; current layout v5 retains that state, the reference-activation
+catalog authority from ADR 0071, and the learning-content authority from ADR 0072. The runtime remains
 local-only because no configured transport consumes the consent. The
 transport-neutral application guard can consume only an injected atomic
 authority snapshot and is not wired into the packaged composition.

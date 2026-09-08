@@ -441,6 +441,18 @@ class TournamentEconomics(ImportedHandModel):
     tournament_id: Identifier | None = None
     tournament_type: NonEmptyText | None = None
     stage: NonEmptyText | None = None
+    entry_buy_in: NonNegativeDecimal | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    entry_fee: NonNegativeDecimal | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
+    blind_level: NonEmptyText | None = Field(
+        default=None,
+        exclude_if=lambda value: value is None,
+    )
     currency: str | None = Field(
         default=None,
         min_length=3,

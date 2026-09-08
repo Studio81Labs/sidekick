@@ -1164,7 +1164,7 @@ def test_player_api_reports_a_layout_change_as_restart_required(
     client, runtime = player_client(tmp_path)
     session = exchange_session(client, runtime)
     (tmp_path / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":5,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 

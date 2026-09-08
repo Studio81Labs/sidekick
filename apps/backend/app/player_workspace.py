@@ -151,7 +151,7 @@ DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
 PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
 PLAYER_WORKSPACE_MANIFEST_FILENAME = ".poker-hero-player-workspace.json"
 PLAYER_WORKSPACE_SCHEMA = "poker-hero-player-workspace"
-PLAYER_WORKSPACE_LAYOUT_VERSION = 4
+PLAYER_WORKSPACE_LAYOUT_VERSION = 5
 MAX_PLAYER_WORKSPACE_MANIFEST_BYTES = 4096
 
 
@@ -159,7 +159,7 @@ class _PlayerWorkspaceManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_name: Literal[PLAYER_WORKSPACE_SCHEMA] = Field(alias="schema")
-    layout_version: Literal[1, 2, 3, PLAYER_WORKSPACE_LAYOUT_VERSION]
+    layout_version: Literal[1, 2, 3, 4, PLAYER_WORKSPACE_LAYOUT_VERSION]
 
     @field_validator("layout_version", mode="before")
     @classmethod
@@ -1013,6 +1013,42 @@ class PlayerWorkspace:
                 )
                 try:
                     learning_content_catalog.initialize_empty()
+                except LearningContentCatalogStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
+                _replace_player_workspace_manifest(private_data_dir)
+                manifest = _read_player_workspace_manifest(private_data_dir)
+                if (
+                    manifest is None
+                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
+                ):
+                    raise PlayerDataDirectoryError(
+                        "The player workspace manifest is missing after upgrade"
+                    )
+            elif manifest.layout_version == 4:
+                _require_durable_player_workspace_manifest(private_data_dir)
+                _require_imported_hands_dir(
+                    private_data_dir,
+                    create_if_missing=False,
+                )
+                remote_reference_consent = FileRemoteReferenceConsentStore(
+                    private_data_dir
+                )
+                try:
+                    remote_reference_consent.load()
+                except RemoteReferenceConsentStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
+                reference_activation_catalog = (
+                    FileReferenceActivationCatalogStore(private_data_dir)
+                )
+                try:
+                    reference_activation_catalog.load()
+                except ReferenceActivationCatalogStorageError as exc:
+                    raise PlayerDataDirectoryError(str(exc)) from exc
+                learning_content_catalog = FileLearningContentCatalogStore(
+                    private_data_dir
+                )
+                try:
+                    learning_content_catalog.load()
                 except LearningContentCatalogStorageError as exc:
                     raise PlayerDataDirectoryError(str(exc)) from exc
                 _replace_player_workspace_manifest(private_data_dir)
