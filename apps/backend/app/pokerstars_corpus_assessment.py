@@ -406,7 +406,9 @@ class PokerStarsExpectedParsedHand(_AssessmentModel):
                 "entry_fee",
                 "blind_level",
             }
-        if self.game.economics.model_fields_set != required_economics_fields:
+        if not required_economics_fields.issubset(
+            self.game.economics.model_fields_set
+        ):
             raise ValueError("expected economics must label every field")
         return self
 

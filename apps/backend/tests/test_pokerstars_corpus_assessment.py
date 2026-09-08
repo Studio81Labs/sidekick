@@ -582,6 +582,38 @@ def test_v1_manifest_accepts_legacy_tournament_economics_without_source_facts(
     }.isdisjoint(economics.model_fields_set)
 
 
+def test_v1_manifest_accepts_known_tournament_entry_source_facts(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest_payload(include_rejection=False)
+    case = payload["cases"][0]
+    case["tags"] = [
+        "forced_system_action",
+        "heads_up",
+        "tournament",
+        "uncalled_bet",
+        "unknown_action",
+    ]
+    expected = _legacy_tournament_expectation()
+    expected["game"]["economics"].update(
+        {
+            "entry_buy_in": "3.19",
+            "entry_fee": "0.31",
+            "blind_level": "XI",
+        }
+    )
+    case["expected"] = expected
+
+    manifest = load_pokerstars_corpus_manifest(
+        _write_manifest(tmp_path / "manifest.json", payload)
+    )
+
+    economics = manifest.cases[0].expected.game.economics
+    assert economics.model_dump(mode="json")["entry_buy_in"] == "3.19"
+    assert economics.model_dump(mode="json")["entry_fee"] == "0.31"
+    assert economics.model_dump(mode="json")["blind_level"] == "XI"
+
+
 def test_v1_manifest_still_requires_each_legacy_tournament_economics_field(
     tmp_path: Path,
 ) -> None:
