@@ -1,0 +1,45 @@
+PokerStars Game #900000000020:  Hold'em No Limit ($0.05/$0.10 USD) - 2014/01/06 3:56:02 ET
+Table 'Public Evidence Table' 9-max Seat #5 is the button
+Seat 2: Player02 ($7.85 in chips)
+Seat 4: Player04 ($8 in chips)
+Seat 5: Player05 ($6.04 in chips)
+Player02: posts small blind $0.05
+Player04: posts big blind $0.10
+*** HOLE CARDS ***
+Player05: calls $0.10
+Player02: calls $0.05
+Observer01 is disconnected
+Joiner07 joins the table at seat #7
+Joiner03 joins the table at seat #3
+Player04 has timed out
+Player04: checks
+*** FLOP *** [2c 4c 8d]
+Player02: checks
+Joiner08 joins the table at seat #8
+Joiner09 joins the table at seat #9
+Player04 has timed out
+Player04: checks
+Player05: checks
+*** TURN *** [2c 4c 8d] [7d]
+Player02 is disconnected
+Player02 has timed out while disconnected
+Player02: checks
+Player04 has timed out
+Player04: checks
+Player05: bets $0.30
+Player02 has timed out while disconnected
+Player02: folds
+Player04: calls $0.30
+*** RIVER *** [2c 4c 8d 7d] [8h]
+Player04: checks
+Player05: checks
+*** SHOW DOWN ***
+Player04: shows [3s 3c] (two pair, Eights and Threes)
+Player05: mucks hand
+Player04 collected $0.86 from pot
+*** SUMMARY ***
+Total pot $0.90 | Rake $0.04
+Board [2c 4c 8d 7d 8h]
+Seat 2: Player02 (small blind) folded on the Turn
+Seat 4: Player04 (big blind) showed [3s 3c] and won ($0.86) with two pair, Eights and Threes
+Seat 5: Player05 (button) mucked

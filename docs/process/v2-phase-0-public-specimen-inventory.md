@@ -46,6 +46,28 @@ source timestamp is canonical, full tournament-economic/ICM inputs, current
 client-version behavior, automatic/timeout/disconnect semantics, or a 1,000-hand
 representative distribution.
 
+## PokerStars cash action-origin specimen
+
+| Field                     | Recorded value                                                                                                                                                                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Evidence level            | `public format sample`                                                                                                                                                                                                                                                                            |
+| Source                    | [`HHSmithy/PokerHandHistoryParser` `Limit1.txt`](https://github.com/HHSmithy/PokerHandHistoryParser/blob/91600818d95e23f154073735c1258e92c4f55f97/HandHistories.Parser.UnitTests/SampleHandHistories/PokerStars/CashGame/Limits/Limit1.txt), pinned to `91600818d95e23f154073735c1258e92c4f55f97` |
+| Retrieved                 | 2026-09-08                                                                                                                                                                                                                                                                                        |
+| Source SHA-256            | `9eb7e08c0bd57cd69ef5983102d813b56e138ad25d814d6881932fd4623e96cb` (1,410 bytes)                                                                                                                                                                                                                  |
+| License evidence          | [upstream README MIT license](https://github.com/HHSmithy/PokerHandHistoryParser/blob/91600818d95e23f154073735c1258e92c4f55f97/README.md#license), SHA-256 `c9421183ce179d09f85510fefac722c76a01b0f92edb208b34b8237fce2d5a9c`                                                                     |
+| Repository material       | Sanitized source-only derivative at [`apps/backend/tests/fixtures/pokerstars/public-format/hhsmithy-cash-limit1.txt`](../../apps/backend/tests/fixtures/pokerstars/public-format/hhsmithy-cash-limit1.txt), attribution/license retained beside it                                                |
+| Sanitized fixture SHA-256 | `481c9ac5af9e20bc0fa6f55adf606d52733387993ef8aec2696193cadfde2ae0` (1,378 bytes)                                                                                                                                                                                                                  |
+| Sanitation                | Replaced player, observer, joiner, hand and table identifiers; retained source syntax, cards, amounts, timestamps, event order and line positions.                                                                                                                                                |
+| Independent labels        | P1b evidence ledger and independently authored current rejection expectation in [the action-origin packet](pokerstars-p1b-action-origin-evidence.md); independent source review is required before parser implementation.                                                                         |
+
+This specimen records plain `has timed out`, `has timed out while disconnected`,
+and unrelated table/disconnect notifications. The current adapter rejects it at
+the legacy `PokerStars Game #` header, and it lacks a dealt-to-hero line. It is
+therefore not a supported parser input, a proof of current-client behavior, or
+a complete action-origin rule. The bounded candidate labels, combined-cause
+encoding, evidence lines, scope/reset conditions, and explicit negative cases
+are recorded separately; missing markers continue to mean `unknown`.
+
 ## HRC viewer example
 
 | Field                    | Recorded value                                                                                                                                                           |
