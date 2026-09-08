@@ -321,7 +321,7 @@ restart can safely reuse it after the exact files are reselected without
 placing filenames or hand-history text in browser storage. A confirmed terminal
 outcome erases the retry metadata. This is not the representative corpus or 99%
 clean-parse evidence required by #409. The workspace now has a version 5 marker,
-safe manifestless-store adoption, migrations from layouts 1–3, and a verified
+safe manifestless-store adoption, migrations from layouts 1–4, and a verified
 export-before-remove command for player data. Its durable reference-activation
 and learning-content catalogs are install-local product/reference authority;
 the packaged catalogs remain empty and no API publishes them. Persisted
