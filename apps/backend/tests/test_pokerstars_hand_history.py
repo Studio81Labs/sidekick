@@ -1619,6 +1619,35 @@ def test_public_tournament_summary_requires_reviewed_seat_row_order() -> None:
 
 
 @pytest.mark.parametrize(
+    ("row", "expected_line"),
+    [
+        ("Seat 1: Player01 folded before Flop (didn't bet)", 49),
+        ("Seat 5: Player05 folded before Flop (didn't bet)", 53),
+        ("Seat 7: Player07 folded before Flop (didn't bet)", 55),
+        ("Seat 8: Player08 folded before Flop (didn't bet)", 56),
+    ],
+)
+def test_public_tournament_summary_requires_reviewed_no_wager_qualifiers(
+    row: str,
+    expected_line: int,
+) -> None:
+    unqualified_row = row.removesuffix(" (didn't bet)")
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(f"{row}\n", f"{unqualified_row}\n", 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-no-wager.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "summary_fold_mismatch"
+    assert result.diagnostics[0].line_start == expected_line
+
+
+@pytest.mark.parametrize(
     ("original", "replacement", "expected_line"),
     [
         (

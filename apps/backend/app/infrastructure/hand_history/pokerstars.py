@@ -152,6 +152,7 @@ _HISTORICAL_TOURNAMENT_RESULT_EVENTS = (
 )
 _HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS = tuple(range(1, 10))
 _HISTORICAL_TOURNAMENT_FINISHES = (("seat-2", 80), ("seat-6", 81))
+_HISTORICAL_TOURNAMENT_NO_WAGER_SUMMARY_SEATS = frozenset({1, 5, 7, 8})
 
 _UNRESOLVED_HISTORICAL_TIME_WARNING = (
     "Source time is unresolved: historical dual-zone timestamp semantics are "
@@ -1753,6 +1754,16 @@ def _validate_summary_seat_line(
     )
     folded = folded_pattern.fullmatch(suffix)
     if folded is not None:
+        if (
+            allow_historical_tournament_results
+            and seat_number in _HISTORICAL_TOURNAMENT_NO_WAGER_SUMMARY_SEATS
+            and folded.group("did_not_bet") is None
+        ):
+            raise _HandParseError(
+                "summary_fold_mismatch",
+                "The reviewed historical tournament summary requires its didn't-bet annotation.",
+                line_start=line,
+            )
         expected_street = {
             "before Flop": "preflop",
             "on the Flop": "flop",
