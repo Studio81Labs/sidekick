@@ -1685,6 +1685,28 @@ def test_public_tournament_finish_statements_require_complete_results() -> None:
     assert result.diagnostics[0].line_start == 42
 
 
+def test_public_tournament_finish_statements_require_reviewed_order() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        "Player02 finished the tournament in 80th place\n"
+        "Player06 finished the tournament in 81st place\n",
+        "Player06 finished the tournament in 81st place\n"
+        "Player02 finished the tournament in 80th place\n",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-finish-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_finish_order"
+    assert result.diagnostics[0].line_start == 44
+
+
 def test_public_tournament_showdown_cannot_follow_finish_statements() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"

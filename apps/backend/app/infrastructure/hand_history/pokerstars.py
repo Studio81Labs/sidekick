@@ -151,6 +151,7 @@ _HISTORICAL_TOURNAMENT_RESULT_EVENTS = (
     ("award", "seat-9", 0),
 )
 _HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS = tuple(range(1, 10))
+_HISTORICAL_TOURNAMENT_FINISHES = (("seat-2", 80), ("seat-6", 81))
 
 _UNRESOLVED_HISTORICAL_TIME_WARNING = (
     "Source time is unresolved: historical dual-zone timestamp semantics are "
@@ -929,6 +930,7 @@ def _parse_body(
     finish_evidence: list[SourceEvidence] = []
     historical_tournament_result_event_index = 0
     historical_tournament_summary_seat_index = 0
+    historical_tournament_finish_index = 0
 
     for line in lines[1:]:
         text = line.text
@@ -1022,6 +1024,22 @@ def _parse_body(
                     line_start=line.number,
                     line_end=line.number,
                 )
+            if allow_historical_tournament_results:
+                expected_finish = (
+                    _HISTORICAL_TOURNAMENT_FINISHES[
+                        historical_tournament_finish_index
+                    ]
+                    if historical_tournament_finish_index
+                    < len(_HISTORICAL_TOURNAMENT_FINISHES)
+                    else None
+                )
+                if (player_id, int(finish.group("place"))) != expected_finish:
+                    raise _HandParseError(
+                        "tournament_finish_order",
+                        "The reviewed historical tournament form requires its documented finish sequence.",
+                        line_start=line.number,
+                    )
+                historical_tournament_finish_index += 1
             finish_player_ids.add(player_id)
             finish_evidence.append(_evidence(raw_source_id, line))
             continue
@@ -1604,6 +1622,7 @@ def _parse_body(
         or summary_seat_numbers != expected_summary_seat_numbers
         or historical_tournament_summary_seat_index
         != len(_HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS)
+        or historical_tournament_finish_index != len(_HISTORICAL_TOURNAMENT_FINISHES)
         or len(finish_evidence) != 2
     ):
         raise _HandParseError(
