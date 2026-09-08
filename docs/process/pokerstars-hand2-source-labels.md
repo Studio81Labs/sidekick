@@ -1,8 +1,8 @@
 # PokerStars HAND2 Source Labels
 
-Status: architecture-owned source mapping for P1a under #409; implementation
-pending. This is not a passing parser report, a representative-corpus case, or
-an external poker-expert certification.
+Status: architecture-owned source mapping for the P1a implementation under #409.
+This is not a passing parser report, a representative-corpus case, or an
+external poker-expert certification.
 
 Date: 2026-09-08. Baseline: `3682328da0a9a534b43a192d21739775904baf76`.
 Decision: [ADR 0078](../decisions/0078-preserve-unresolved-historical-source-time.md).

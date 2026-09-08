@@ -2035,7 +2035,8 @@ export default function PlayerApp() {
               <h2 id="import-heading">Import PokerStars text histories</h2>
               <p>
                 Select one or more UTF-8 .txt exports. The current adapter
-                supports a bounded English no-limit cash subset. Every parser
+                supports a bounded English no-limit cash subset plus one
+                reviewed historical tournament-header form. Every parser
                 proposal remains unapproved; new hand identities stay pending
                 review until you explicitly approve canonical state.
               </p>

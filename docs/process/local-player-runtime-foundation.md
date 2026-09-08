@@ -312,8 +312,9 @@ explicit imported-source conflict resolution, and permanent deletion under
 `/api/player`, with an installable player PWA and
 an explicit draft- and operation-safe browser-shell update handoff. Import
 accepts one or more UTF-8 `.txt` files from the bounded English no-limit cash
-adapter, isolates every file and hand, and retains successful parser proposals
-as unapproved audit; new hand identities remain pending review. Exact
+adapter plus the single reviewed historical tournament-header form, isolates
+every file and hand, and retains successful parser proposals as unapproved
+audit; new hand identities remain pending review. Exact
 response-loss retries reuse the same request UUID and ordered files; they keep
 the first server timestamps and do not add another source occurrence. The PWA
 persists only that outstanding UUID plus ordered filename/content hashes, so a

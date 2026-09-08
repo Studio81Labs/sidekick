@@ -73,7 +73,8 @@ the persisted retry identity, clear stale record detail, and refresh the stable
 storage count. Selection or active import is unsafe for service-worker
 activation.
 
-The UI labels this as the bounded English no-limit cash subset. Diagnostics and
+The UI labels this as the bounded English no-limit cash subset plus the single
+ADR 0078-reviewed historical tournament header form. Diagnostics and
 failed/indeterminate reconciliation remain visible. Parser proposals stay
 unapproved, and any canonical use still requires explicit player review and
 approval from an eligible retained detection.
