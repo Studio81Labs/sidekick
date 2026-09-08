@@ -6,10 +6,10 @@ issues [#409](https://github.com/Studio81Labs/sidekick/issues/409) and
 format investigation from representative-corpus, rights, and qualification
 evidence required by the Phase 0 gate.
 
-Status: P1a0 compatibility merged in #500; HAND2 source mapping is defined for
-P1a in [the label sheet](pokerstars-hand2-source-labels.md) and
-[ADR 0078](../decisions/0078-preserve-unresolved-historical-source-time.md).
-Tournament parser implementation is still pending; Phase 1 remains **NO-GO**.
+Status: P1a0 compatibility merged in #500; the P1a implementation maps the
+reviewed HAND2 form defined in [the label sheet](pokerstars-hand2-source-labels.md)
+and [ADR 0078](../decisions/0078-preserve-unresolved-historical-source-time.md).
+Phase 1 remains **NO-GO**.
 
 ## Evidence boundary
 
@@ -19,9 +19,10 @@ PokerStars corpus case or a qualified solved source solely because it is
 downloadable. Private exports, player histories, vendor correspondence, and
 license dossiers remain outside this repository.
 
-The current adapter accepts only its documented English no-limit cash subset.
-Observed tournament syntax and a viewer save are retained here so later work can
-be evidence-led, but neither changes that supported surface or parser provenance.
+The current adapter accepts its documented English no-limit cash subset and the
+single reviewed historical HAND2 tournament form. Other tournament syntax and a
+viewer save remain evidence-led investigation, not expanded support or corpus
+evidence.
 
 ## PokerStars tournament format specimen
 
@@ -36,7 +37,7 @@ be evidence-led, but neither changes that supported surface or parser provenance
 | Sanitized fixture SHA-256 | `844d23d2e5085e02082a85f873ba9cd5637ed300545846877c520a8b444a11e4`                                                                                                                                                                                            |
 | Sanitation                | Replaced all player names and hand/tournament/table identifiers; preserved observed textual syntax, poker amounts, cards, and action order; no local path is retained                                                                                         |
 | Permitted use             | Regression and source-format investigation under the retained MIT attribution; no claim about current PokerStars behavior beyond the observed text                                                                                                            |
-| Independent label review  | [Source mapping](pokerstars-hand2-source-labels.md) authored and checked independently of adapter output, with a separate agent source audit; no human/corpus certification claimed. The current P0 test still expects `unsupported_header` until P1a.        |
+| Independent label review  | [Source mapping](pokerstars-hand2-source-labels.md) authored and checked independently of adapter output, with a separate agent source audit; no human/corpus certification claimed. The P1a regression maps only the labelled HAND2 form.                    |
 
 The specimen demonstrates a tournament header with buy-in/fee, level and blind
 text, `CET` plus bracketed `ET` timestamps, antes, all-in actions, side-pot
@@ -80,8 +81,8 @@ blockers in place:
   now specify the complete bounded mapping, including unknown tournament type
   and normalized chronology. Both printed timestamps remain raw/source evidence
   under ADR 0078. An exact historical offset remains an evidence question, not a
-  prerequisite to implementing these explicitly uncertain labels. No parser
-  behavior has shipped yet.
+  prerequisite to implementing these explicitly uncertain labels. The adapter
+  maps only this reviewed form; other tournament headers remain unsupported.
 - Tournament economics: no payout, remaining-field, bounty, ICM, or rake
   schedule may be inferred from the specimen.
 - Summary variants: HAND2 main/side-pot totals, showdown/collection comparisons
@@ -99,11 +100,10 @@ blockers in place:
 
 ## Next evidence required
 
-P1a can now implement the linked HAND2 mapping and replace the fixture's
-rejection assertion with source-authored full-state expectations, including
-unknowns, warnings and retained evidence. It must not derive expected labels
-from its own parser output. P2 still needs a private authorized representative
-corpus and independent labels. R0 remains
+The P1a implementation uses the linked HAND2 mapping and source-authored
+full-state expectations, including unknowns, warnings and retained evidence.
+It does not derive expected labels from its own parser output. P2 still needs a
+private authorized representative corpus and independent labels. R0 remains
 blocked on an actual supported strategy export and rights evidence; no
 source-specific normalizer, lookup, certification, production catalog, or
 network transport is authorized by this inventory.

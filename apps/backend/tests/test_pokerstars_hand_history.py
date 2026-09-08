@@ -23,6 +23,11 @@ from app.storage.imported_hand_store import FileImportedHandStore
 FIXTURES = Path(__file__).parent / "fixtures" / "pokerstars"
 PUBLIC_FORMAT_FIXTURES = FIXTURES / "public-format"
 IMPORTED_AT = datetime(2026, 9, 2, 10, 0, tzinfo=timezone.utc)
+HAND2_INDEPENDENT_EXPECTED_SHOWDOWN = [
+    ("seat-9", ["Kd", "Ac"], "shown", 39),
+    ("seat-2", ["Jd", "Js"], "shown", 40),
+    ("seat-6", ["9c", "Qd"], "shown", 42),
+]
 
 
 def import_context(name: str = "synthetic-cash-sitout.txt") -> PokerStarsImportContext:
@@ -1098,8 +1103,10 @@ def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
     assert diagnostic.line_start == 17
 
 
-def test_public_tournament_format_specimen_remains_explicitly_unsupported() -> None:
-    """P0 captures observed syntax without claiming tournament support early."""
+def test_public_tournament_format_specimen_matches_hand2_source_labels(
+    tmp_path: Path,
+) -> None:
+    """P1a maps the reviewed historical form without inventing chronology."""
 
     source_bytes = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
@@ -1114,14 +1121,854 @@ def test_public_tournament_format_specimen_remains_explicitly_unsupported() -> N
         context=import_context("pokerregion-tournament-hand2.txt"),
     )
 
+    assert result.diagnostics == ()
+    assert len(result.hands) == 1
+    parsed = result.hands[0]
+    candidate = parsed.candidate
+    state = candidate.detection.state
+
+    assert candidate.raw.identity.source_hand_id == "900000000010"
+    assert candidate.raw.chronology.played_at is None
+    assert candidate.raw.chronology.source_timezone is None
+    assert "2013/10/04 23:22:20 CET" in candidate.raw.raw_text
+    assert "[2013/10/04 17:22:20 ET]" in candidate.raw.raw_text
+    assert state.chronology.played_at is None
+    assert state.chronology.source_timezone is None
+    assert state.game.economics.kind == "tournament"
+    economics = state.game.economics
+    assert economics.tournament_id == "800000000"
+    assert economics.entry_buy_in == Decimal("3.19")
+    assert economics.entry_fee == Decimal("0.31")
+    assert economics.blind_level == "XI"
+    assert economics.currency == "USD"
+    assert economics.tournament_type is None
+    assert economics.stage is None
+    assert economics.paid_places is None
+    assert economics.players_remaining is None
+    assert economics.bounty_format is None
+    assert economics.payouts == []
+    assert economics.bounties == []
+    assert economics.icm_inputs_complete is False
+    assert [
+        (stack.player_id, stack.stack) for stack in economics.remaining_stacks
+    ] == [
+        ("seat-1", Decimal("12910")),
+        ("seat-2", Decimal("11815")),
+        ("seat-3", Decimal("7395")),
+        ("seat-4", Decimal("7765")),
+        ("seat-5", Decimal("10080")),
+        ("seat-6", Decimal("1030")),
+        ("seat-7", Decimal("13175")),
+        ("seat-8", Decimal("2415")),
+        ("seat-9", Decimal("13070")),
+    ]
+    assert (
+        state.game.blinds.small_blind,
+        state.game.blinds.big_blind,
+        state.game.blinds.ante,
+        state.game.blinds.ante_mode,
+        state.game.blinds.straddle,
+    ) == (Decimal("400"), Decimal("800"), Decimal("75"), "per_player", None)
+    assert state.button_seat == 2
+    assert state.hero_player_id == "seat-2"
+    assert [card.code for card in state.hero_cards] == ["Jd", "Js"]
+    assert [
+        (
+            seat.seat_number,
+            seat.starting_stack,
+            seat.position.display_label if seat.position is not None else None,
+            seat.position.button_distance if seat.position is not None else None,
+            seat.position.action_index if seat.position is not None else None,
+        )
+        for seat in state.seats
+    ] == [
+        (1, Decimal("12910"), "CO", 8, 5),
+        (2, Decimal("11815"), "BTN", 0, 6),
+        (3, Decimal("7395"), "SB", 1, 7),
+        (4, Decimal("7765"), "BB", 2, 8),
+        (5, Decimal("10080"), "UTG", 3, 0),
+        (6, Decimal("1030"), "UTG+1", 4, 1),
+        (7, Decimal("13175"), "UTG+2", 5, 2),
+        (8, Decimal("2415"), "LJ", 6, 3),
+        (9, Decimal("13070"), "HJ", 7, 4),
+    ]
+    actions = state.streets[0].actions
+    assert len(actions) == 21
+    assert [
+        (
+            action.sequence,
+            action.actor_id,
+            action.action_type,
+            action.amount,
+            action.total_committed,
+            action.all_in,
+            action.origin.kind,
+            action.origin.basis,
+            action.origin.confidence,
+            action.evidence[0].line_start,
+        )
+        for action in actions
+    ] == [
+        *[
+            (
+                sequence,
+                f"seat-{sequence + 1}",
+                "post_ante",
+                Decimal("75"),
+                Decimal("75"),
+                False,
+                "forced_system",
+                "explicit_marker",
+                Decimal("1"),
+                sequence + 12,
+            )
+            for sequence in range(9)
+        ],
+        (9, "seat-3", "post_small_blind", Decimal("400"), Decimal("475"), False, "forced_system", "explicit_marker", Decimal("1"), 21),
+        (10, "seat-4", "post_big_blind", Decimal("800"), Decimal("875"), False, "forced_system", "explicit_marker", Decimal("1"), 22),
+        (11, "seat-5", "fold", None, Decimal("75"), False, "unknown", "unresolved", None, 25),
+        (12, "seat-6", "raise", Decimal("955"), Decimal("1030"), True, "unknown", "unresolved", None, 26),
+        (13, "seat-7", "fold", None, Decimal("75"), False, "unknown", "unresolved", None, 27),
+        (14, "seat-8", "fold", None, Decimal("75"), False, "unknown", "unresolved", None, 28),
+        (15, "seat-9", "raise", Decimal("12995"), Decimal("13070"), True, "unknown", "unresolved", None, 29),
+        (16, "seat-1", "fold", None, Decimal("75"), False, "unknown", "unresolved", None, 30),
+        (17, "seat-2", "call", Decimal("11740"), Decimal("11815"), True, "unknown", "unresolved", None, 31),
+        (18, "seat-3", "fold", None, Decimal("475"), False, "unknown", "unresolved", None, 32),
+        (19, "seat-4", "fold", None, Decimal("875"), False, "unknown", "unresolved", None, 33),
+        (20, "seat-9", "uncalled_return", Decimal("1255"), Decimal("11815"), False, "forced_system", "explicit_marker", Decimal("1"), 34),
+    ]
+    assert [
+        (street.street, [card.code for card in street.board_cards], street.actions)
+        for street in state.streets
+    ] == [
+        ("preflop", [], actions),
+        ("flop", ["3c", "6s", "9d"], []),
+        ("turn", ["3c", "6s", "9d", "8d"], []),
+        ("river", ["3c", "6s", "9d", "8d", "Ks"], []),
+    ]
+    assert state.results is not None
+    assert state.results.stated_pot.model_dump(mode="python") == {
+        "gross_total": Decimal("26310"),
+        "rake": Decimal("0"),
+        "net_total": Decimal("26310"),
+        "gross_pots": [Decimal("4740"), Decimal("21570")],
+    }
+    assert [
+        (entry.player_id, [card.code for card in entry.cards], entry.disposition, entry.evidence[0].line_start)
+        for entry in state.results.showdown
+    ] == HAND2_INDEPENDENT_EXPECTED_SHOWDOWN
+    assert [
+        (award.player_id, award.amount, award.pot_index, award.evidence[0].line_start)
+        for award in state.results.awards
+    ] == [
+        ("seat-9", Decimal("21570"), 1, 41),
+        ("seat-9", Decimal("4740"), 0, 43),
+    ]
+    assert state.results.players == []
+    assert parsed.disposition == "clean"
+    assert parsed.reconciliation.status == "pass"
+    assert parsed.reconciliation.discrepancy == Decimal("0")
+    assert candidate.detection.warnings == [
+        "Action origin is unresolved for 9 player decision(s); review is required.",
+        "Source time is unresolved: historical dual-zone timestamp semantics are unverified.",
+        "Tournament finish positions are retained as source evidence only; field size and payouts remain unknown.",
+    ]
+    for pointer in ("/chronology/played_at", "/chronology/source_timezone"):
+        chronology_evidence = candidate.detection.field_evidence[pointer]
+        assert chronology_evidence.confidence == Decimal("0")
+        assert [source.line_start for source in chronology_evidence.evidence] == [1]
+        assert chronology_evidence.warnings == [candidate.detection.warnings[1]]
+    assert [
+        candidate.detection.field_evidence[pointer].evidence[0].line_start
+        for pointer in (
+            "/game/economics/tournament_id",
+            "/game/economics/entry_buy_in",
+            "/game/economics/entry_fee",
+            "/game/economics/blind_level",
+        )
+    ] == [1, 1, 1, 1]
+    assert [
+        candidate.detection.field_evidence[
+            f"/game/economics/remaining_stacks/{index}"
+        ].evidence[0].line_start
+        for index in range(9)
+    ] == list(range(3, 12))
+    results_evidence = candidate.detection.field_evidence["/results"]
+    assert results_evidence.confidence is None
+    assert [source.line_start for source in results_evidence.evidence] == [44, 45]
+    assert results_evidence.warnings == [candidate.detection.warnings[2]]
+
+    service = ImportedHandIngestionService(store=FileImportedHandStore(tmp_path))
+    created = service.ingest(candidate)
+    assert created.disposition == "created_pending_review"
+    assert created.record.canonical_revisions == []
+    reimport_candidate = parse_pokerstars_text(
+        source,
+        context=PokerStarsImportContext(
+            import_id="test-import:pokerregion-tournament-hand2-reimport.txt",
+            imported_at=IMPORTED_AT,
+            source_filename="pokerregion-tournament-hand2-reimport.txt",
+        ),
+    ).hands[0].candidate
+    reimported = service.ingest(reimport_candidate)
+    assert reimported.disposition == "recorded_exact_reimport"
+    assert reimported.record.canonical_revisions == []
+    assert reimported.record.raw_sources[0].chronology.played_at is None
+    assert reimported.record.raw_sources[0].chronology.source_timezone is None
+    assert reimported.record.raw_sources[0].reimports[0].chronology.played_at is None
+    assert reimported.record.detections[1].state.chronology.played_at is None
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected_code", "expected_line"),
+    [
+        (
+            "2013/10/04 23:22:20 CET",
+            "2013/13/04 23:22:20 CET",
+            "invalid_source_time",
+            1,
+        ),
+        (
+            "[2013/10/04 17:22:20 ET]",
+            "(2013/10/04 17:22:20 ET)",
+            "unsupported_header",
+            1,
+        ),
+        (
+            "(400/800)",
+            "($400/$800)",
+            "unsupported_header",
+            1,
+        ),
+        (
+            "Player01 (12910 in chips)",
+            "Player01 ($12910 in chips)",
+            "currency_mismatch",
+            3,
+        ),
+        (
+            "Player01: posts the ante 75",
+            "Player01: posts the ante $75",
+            "currency_mismatch",
+            12,
+        ),
+        (
+            "Player06: raises 155 to 955 and is all-in",
+            "Player06: raises $155 to 955 and is all-in",
+            "currency_mismatch",
+            26,
+        ),
+        (
+            "Player09 collected 21570 from side pot",
+            "Player09 collected 21570 from pot",
+            "unsupported_tournament_award",
+            41,
+        ),
+        (
+            "Player09 collected 21570 from side pot",
+            "Player09 collected 21570 from main pot",
+            "tournament_results_order",
+            41,
+        ),
+        (
+            "Player09: shows [Kd Ac] (a pair of Kings)",
+            "Player09: shows [Kd Ac] (unknown annotation)",
+            "unsupported_showdown",
+            39,
+        ),
+        (
+            "Player09: shows [Kd Ac] (a pair of Kings)",
+            "Player09: shows [Kd Ac] (a pair of Aces)",
+            "unsupported_showdown",
+            39,
+        ),
+        (
+            "Player09 collected 21570 from side pot",
+            "Player09 collected $21570 from side pot",
+            "currency_mismatch",
+            41,
+        ),
+        (
+            "Side pot 21570. | Rake 0",
+            "Side pot 21569. | Rake 0",
+            "invalid_total_pot",
+            47,
+        ),
+        (
+            "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0",
+            "Total pot $26310 Main pot 4740. Side pot 21570. | Rake 0",
+            "currency_mismatch",
+            47,
+        ),
+        (
+            "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0",
+            "Total pot 26310 | Rake 0",
+            "unsupported_summary_line",
+            47,
+        ),
+        (
+            "Side pot 21570. | Rake 0",
+            "Side pot 21570. | Rake 1",
+            "invalid_total_pot",
+            47,
+        ),
+        (
+            "Player02 (button) showed [Jd Js]",
+            "Player02 (button) showed [Qd Qs]",
+            "summary_showdown_mismatch",
+            50,
+        ),
+        (
+            "Player02 (button) showed [Jd Js]",
+            "Player02 (big blind) showed [Jd Js]",
+            "summary_position_mismatch",
+            50,
+        ),
+        (
+            "Seat 3: Player03 (small blind) folded before Flop",
+            "Seat 3: Player03 (small blind) folded before Flop (didn't bet)",
+            "summary_fold_mismatch",
+            51,
+        ),
+        (
+            "Seat 9: Player09 showed [Kd Ac] and won (26310) with a pair of Kings",
+            "Seat 9: Player09 collected (26310)",
+            "unsupported_summary_result",
+            57,
+        ),
+        (
+            "won (26310) with a pair of Kings",
+            "won (26310) with a pair of Jacks",
+            "summary_showdown_mismatch",
+            57,
+        ),
+        (
+            "won (26310) with a pair of Kings",
+            "won (26310) with a pair of Aces",
+            "unsupported_summary_result",
+            57,
+        ),
+        (
+            "won (26310) with a pair of Kings",
+            "won (26310) with unknown annotation",
+            "unsupported_summary_result",
+            57,
+        ),
+        (
+            "won (26310) with a pair of Kings",
+            "won (26309) with a pair of Kings",
+            "summary_award_mismatch",
+            57,
+        ),
+        (
+            "Player06 finished the tournament in 81st place",
+            "Player02 finished the tournament in 81st place",
+            "duplicate_tournament_finish",
+            45,
+        ),
+        (
+            "Player02 finished the tournament in 80th place",
+            "Unknown Player finished the tournament in 80th place",
+            "unknown_player",
+            44,
+        ),
+    ],
+)
+def test_public_tournament_format_specimen_rejects_labelled_contradictions(
+    old: str,
+    new: str,
+    expected_code: str,
+    expected_line: int,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(old, new, 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-invalid.txt"),
+    )
+
     assert result.hands == ()
     assert len(result.diagnostics) == 1
     diagnostic = result.diagnostics[0]
+    assert diagnostic.code == expected_code
     assert diagnostic.hand_ordinal == 1
     assert diagnostic.source_hand_id == "900000000010"
-    assert diagnostic.code == "unsupported_header"
-    assert diagnostic.line_start == 1
-    assert diagnostic.line_end is None
+    assert diagnostic.line_start == expected_line
+
+
+@pytest.mark.parametrize(
+    ("removed", "expected_code", "expected_line"),
+    [
+        (
+            "Board [3c 6s 9d 8d Ks]\n",
+            "tournament_summary_order",
+            48,
+        ),
+        (
+            "Seat 1: Player01 folded before Flop (didn't bet)\n",
+            "tournament_summary_order",
+            49,
+        ),
+        (
+            "Player02 finished the tournament in 80th place\n"
+            "Player06 finished the tournament in 81st place\n",
+            "missing_tournament_trailer",
+            1,
+        ),
+    ],
+)
+def test_public_tournament_format_requires_complete_reviewed_trailer(
+    removed: str,
+    expected_code: str,
+    expected_line: int,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(removed, "", 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-incomplete.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == expected_code
+    assert result.diagnostics[0].line_start == expected_line
+
+
+def test_public_tournament_format_requires_reviewed_hero_cards() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace("Dealt to Player02 [Jd Js]\n", "", 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-missing-hero.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "missing_tournament_hero_cards"
+    assert result.diagnostics[0].line_start == 1
+
+
+def test_public_tournament_summary_requires_reviewed_trailer_order() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    total_pot = "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0\n"
+    source = source.replace(total_pot, "", 1).replace(
+        "Seat 9: Player09 showed [Kd Ac] and won (26310) with a pair of Kings\n",
+        (
+            "Seat 9: Player09 showed [Kd Ac] and won (26310) with a pair of Kings\n"
+            + total_pot
+        ),
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-summary-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_summary_order"
+    assert result.diagnostics[0].line_start == 47
+
+
+@pytest.mark.parametrize(
+    ("anchor", "expected_line"),
+    [
+        ("Board [3c 6s 9d 8d Ks]\n", 48),
+        ("Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0\n", 47),
+    ],
+)
+def test_public_tournament_summary_rejects_seat_rows_before_required_labels(
+    anchor: str,
+    expected_line: int,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    seat_row = "Seat 1: Player01 folded before Flop (didn't bet)\n"
+    source = source.replace(seat_row, "", 1).replace(
+        anchor,
+        seat_row + anchor,
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-seat-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_summary_order"
+    assert result.diagnostics[0].line_start == expected_line
+
+
+def test_public_tournament_summary_requires_reviewed_seat_row_order() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        "Seat 1: Player01 folded before Flop (didn't bet)\n"
+        "Seat 2: Player02 (button) showed [Jd Js] and lost with a pair of Jacks\n",
+        "Seat 2: Player02 (button) showed [Jd Js] and lost with a pair of Jacks\n"
+        "Seat 1: Player01 folded before Flop (didn't bet)\n",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-seat-row-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_summary_order"
+    assert result.diagnostics[0].line_start == 49
+
+
+@pytest.mark.parametrize(
+    ("row", "expected_line"),
+    [
+        ("Seat 1: Player01 folded before Flop (didn't bet)", 49),
+        ("Seat 5: Player05 folded before Flop (didn't bet)", 53),
+        ("Seat 7: Player07 folded before Flop (didn't bet)", 55),
+        ("Seat 8: Player08 folded before Flop (didn't bet)", 56),
+    ],
+)
+def test_public_tournament_summary_requires_reviewed_no_wager_qualifiers(
+    row: str,
+    expected_line: int,
+) -> None:
+    unqualified_row = row.removesuffix(" (didn't bet)")
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(f"{row}\n", f"{unqualified_row}\n", 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-no-wager.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "summary_fold_mismatch"
+    assert result.diagnostics[0].line_start == expected_line
+
+
+@pytest.mark.parametrize(
+    ("original", "replacement", "expected_line"),
+    [
+        (
+            "Player09 collected 21570 from side pot\n"
+            "Player06: shows [9c Qd] (a pair of Nines)\n"
+            "Player09 collected 4740 from main pot\n",
+            "Player09 collected 4740 from main pot\n"
+            "Player06: shows [9c Qd] (a pair of Nines)\n"
+            "Player09 collected 21570 from side pot\n",
+            41,
+        ),
+        (
+            "Player09 collected 21570 from side pot\n"
+            "Player06: shows [9c Qd] (a pair of Nines)\n"
+            "Player09 collected 4740 from main pot\n",
+            "Player09 collected 21570 from side pot\n"
+            "Player09 collected 4740 from main pot\n"
+            "Player06: shows [9c Qd] (a pair of Nines)\n",
+            42,
+        ),
+    ],
+)
+def test_public_tournament_results_require_reviewed_interleaving(
+    original: str,
+    replacement: str,
+    expected_line: int,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(original, replacement, 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-results-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_results_order"
+    assert result.diagnostics[0].line_start == expected_line
+
+
+def test_public_tournament_finish_statements_require_complete_results() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    finishes = (
+        "Player02 finished the tournament in 80th place\n"
+        "Player06 finished the tournament in 81st place\n"
+    )
+    source = source.replace(finishes, "").replace(
+        "Player09 collected 21570 from side pot\n",
+        "Player09 collected 21570 from side pot\n" + finishes,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-finish-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_finish_order"
+    assert result.diagnostics[0].line_start == 42
+
+
+def test_public_tournament_finish_statements_require_reviewed_order() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        "Player02 finished the tournament in 80th place\n"
+        "Player06 finished the tournament in 81st place\n",
+        "Player06 finished the tournament in 81st place\n"
+        "Player02 finished the tournament in 80th place\n",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-finish-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_finish_order"
+    assert result.diagnostics[0].line_start == 44
+
+
+def test_public_tournament_showdown_cannot_follow_finish_statements() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    repeated_showdown = "Player09: shows [Kd Ac] (a pair of Kings)\n"
+    finishes = (
+        "Player02 finished the tournament in 80th place\n"
+        "Player06 finished the tournament in 81st place\n"
+    )
+    source = source.replace(
+        finishes,
+        finishes + repeated_showdown,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-post-finish-showdown.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_finish_order"
+    assert result.diagnostics[0].line_start == 46
+
+
+def test_public_tournament_summary_rank_must_match_showdown_description() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        "won (26310) with a pair of Kings",
+        "won (26310) with a pair of Jacks",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-invalid-rank.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "summary_showdown_mismatch"
+    assert result.diagnostics[0].line_start == 57
+
+
+def test_public_tournament_rank_description_is_not_derived_from_cards() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace("3c 6s 9d", "3d 6d 9d")
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-flush-rank.txt"),
+    )
+
+    assert result.diagnostics == ()
+    assert len(result.hands) == 1
+    assert result.hands[0].disposition == "clean"
+
+
+def test_historical_tournament_winner_counterexample_is_amount_only_evidence(
+    tmp_path: Path,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    source = source.replace(
+        "Dealt to Player02 [Jd Js]",
+        "Dealt to Player02 [Kd Ac]",
+    ).replace(
+        "Player09: shows [Kd Ac] (a pair of Kings)",
+        "Player09: shows [Jc Jh] (a pair of Jacks)",
+    ).replace(
+        "Player02: shows [Jd Js] (a pair of Jacks)",
+        "Player02: shows [Kd Ac] (a pair of Kings)",
+    ).replace(
+        "Player02 (button) showed [Jd Js] and lost with a pair of Jacks",
+        "Player02 (button) showed [Kd Ac] and lost with a pair of Kings",
+    ).replace(
+        "Player09 showed [Kd Ac] and won (26310) with a pair of Kings",
+        "Player09 showed [Jc Jh] and won (26310) with a pair of Jacks",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-winner-counterexample.txt"),
+    )
+
+    assert result.diagnostics == ()
+    assert len(result.hands) == 1
+    parsed = result.hands[0]
+    state = parsed.candidate.detection.state
+    assert state.results is not None
+    assert [
+        (entry.player_id, [card.code for card in entry.cards], entry.disposition, entry.evidence[0].line_start)
+        for entry in state.results.showdown
+    ] != HAND2_INDEPENDENT_EXPECTED_SHOWDOWN
+    assert [
+        (award.player_id, award.amount, award.pot_index)
+        for award in state.results.awards
+    ] == [
+        ("seat-9", Decimal("21570"), 1),
+        ("seat-9", Decimal("4740"), 0),
+    ]
+    assert parsed.disposition == "clean"
+    assert parsed.reconciliation.status == "pass"
+    assert parsed.reconciliation.amount_parse_validated_only is True
+
+    created = ImportedHandIngestionService(
+        store=FileImportedHandStore(tmp_path)
+    ).ingest(parsed.candidate)
+    assert created.disposition == "created_pending_review"
+    assert created.record.canonical_revisions == []
+
+
+def test_historical_tournament_rejection_is_isolated_from_a_valid_sibling() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    malformed = source.replace(
+        "2013/10/04 23:22:20 CET",
+        "2013/13/04 23:22:20 CET",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        f"{source}\n\n{malformed}",
+        context=import_context("mixed-historical-tournament.txt"),
+    )
+
+    assert [hand.hand_ordinal for hand in result.hands] == [1]
+    assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000010"
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.hand_ordinal == 2
+    assert diagnostic.source_hand_id == "900000000010"
+    assert diagnostic.code == "invalid_source_time"
+    assert diagnostic.line_start == source.count("\n") + 3
+
+
+def test_historical_tournament_requires_the_labelled_total_pot_line() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0\n",
+        "",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("historical-tournament-without-total-pot.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_summary_order"
+    assert result.diagnostics[0].line_start == 47
+
+
+def test_historical_tournament_summary_syntax_remains_header_bound() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        (
+            "PokerStars Hand #900000000010: Tournament #800000000, "
+            "$3.19+$0.31 USD Hold'em No Limit - Level XI (400/800) - "
+            "2013/10/04 23:22:20 CET [2013/10/04 17:22:20 ET]"
+        ),
+        (
+            "PokerStars Hand #900000000010: Hold'em No Limit (400/800 USD) - "
+            "2013/10/04 17:22:20 ET"
+        ),
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("cash-header-with-historical-summary.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "unsupported_showdown"
+    assert result.diagnostics[0].line_start == 39
+
+
+def test_cash_rejects_post_award_showdown_evidence() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        (
+            "PokerStars Hand #900000000010: Tournament #800000000, "
+            "$3.19+$0.31 USD Hold'em No Limit - Level XI (400/800) - "
+            "2013/10/04 23:22:20 CET [2013/10/04 17:22:20 ET]"
+        ),
+        (
+            "PokerStars Hand #900000000010: Hold'em No Limit (400/800 USD) - "
+            "2013/10/04 17:22:20 ET"
+        ),
+        1,
+    )
+    for rank_description in (
+        " (a pair of Kings)",
+        " (a pair of Jacks)",
+        " (a pair of Nines)",
+    ):
+        source = source.replace(rank_description, "")
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("cash-post-award-showdown.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "award_order"
+    assert result.diagnostics[0].line_start == 42
 
 
 def test_inter_hand_blank_lines_do_not_change_raw_identity_or_reimport(

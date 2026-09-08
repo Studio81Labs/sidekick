@@ -33,6 +33,8 @@ from app.domain.imported_hands import (
     SourceEvidence,
     StableHandIdentity,
     StatedPotSummary,
+    TournamentEconomics,
+    TournamentStack,
     derive_structural_positions,
     imported_hand_state_sha256,
     reconcile_pot,
@@ -41,12 +43,13 @@ from app.domain.poker import Card
 
 
 POKERSTARS_ADAPTER_ID = "pokerstars"
-POKERSTARS_ADAPTER_VERSION = "0.1.0"
-POKERSTARS_FORMAT_REVISION = "pokerstars-text/v1"
+POKERSTARS_ADAPTER_VERSION = "0.2.0"
+POKERSTARS_FORMAT_REVISION = "pokerstars-text/v2"
 
 _MONEY = (
     r"[$€£]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
 )
+_CHIPS = r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
 _HEADER_START_RE = re.compile(r"^\ufeff?PokerStars Hand #(?P<hand_id>[^:]+):")
 _CASH_HEADER_RE = re.compile(
     rf"^\ufeff?PokerStars Hand #(?P<hand_id>[0-9]+): +"
@@ -54,6 +57,18 @@ _CASH_HEADER_RE = re.compile(
     r"(?P<currency>[A-Z]{3})\) - "
     r"(?P<played_at>[0-9]{4}/[0-9]{2}/[0-9]{2} "
     r"[0-9]{2}:[0-9]{2}:[0-9]{2}) (?P<timezone>ET|UTC|GMT)$"
+)
+_HISTORICAL_TOURNAMENT_HEADER_RE = re.compile(
+    rf"^\ufeff?PokerStars Hand #(?P<hand_id>[0-9]+): +"
+    rf"Tournament #(?P<tournament_id>[0-9]+), +"
+    rf"(?P<entry_buy_in>{_MONEY})\+(?P<entry_fee>{_MONEY}) "
+    r"(?P<currency>[A-Z]{3}) Hold'em No Limit - "
+    r"Level (?P<blind_level>[A-Za-z0-9]+) "
+    rf"\((?P<small>{_CHIPS})/(?P<big>{_CHIPS})\) - "
+    r"(?P<primary_time>[0-9]{4}/[0-9]{2}/[0-9]{2} "
+    r"[0-9]{2}:[0-9]{2}:[0-9]{2}) CET "
+    r"\[(?P<bracketed_time>[0-9]{4}/[0-9]{2}/[0-9]{2} "
+    r"[0-9]{2}:[0-9]{2}:[0-9]{2}) ET\]$"
 )
 _TABLE_RE = re.compile(
     r"^Table '(?P<table>.*)' (?P<table_size>[2-9]|10)-max "
@@ -72,6 +87,10 @@ _STREET_RE = re.compile(
 )
 _TOTAL_POT_RE = re.compile(
     rf"^Total pot (?P<gross>{_MONEY}) \| Rake (?P<rake>{_MONEY})$"
+)
+_HISTORICAL_TOURNAMENT_TOTAL_POT_RE = re.compile(
+    rf"^Total pot (?P<gross>{_MONEY}) Main pot (?P<main>{_MONEY})\. "
+    rf"Side pot (?P<side>{_MONEY})\. \| Rake (?P<rake>{_MONEY})$"
 )
 _UNCALLED_RE = re.compile(
     rf"^Uncalled bet \((?P<amount>{_MONEY})\) returned to (?P<name>.+)$"
@@ -96,16 +115,53 @@ _RAISE_RE = re.compile(
     r"(?P<all_in> and is all-in)?$"
 )
 _SHOW_RE = re.compile(r"^shows \[(?P<cards>[^\]]+)\]$")
+_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION = r"a pair of (?:Nines|Jacks|Kings)"
+_HISTORICAL_TOURNAMENT_SHOW_RE = re.compile(
+    r"^shows \[(?P<cards>[^\]]+)\](?: \("
+    rf"(?P<rank_description>{_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION})\))?$"
+)
 _SUMMARY_SEAT_RE = re.compile(
     r"^Seat (?P<seat>[1-9][0-9]*): (?P<rest>.+)$"
 )
 _SUMMARY_FOLD_RE = re.compile(
     r"^ folded (?P<where>before Flop|on the Flop|on the Turn|on the River)$"
 )
+_HISTORICAL_TOURNAMENT_SUMMARY_FOLD_RE = re.compile(
+    r"^ folded (?P<where>before Flop|on the Flop|on the Turn|on the River)"
+    r"(?P<did_not_bet> \(didn't bet\))?$"
+)
 _SUMMARY_COLLECTED_RE = re.compile(
     rf"^ collected \((?P<amount>{_MONEY})\)$"
 )
+_SUMMARY_SHOWDOWN_RESULT_RE = re.compile(
+    rf"^ showed \[(?P<cards>[^\]]+)\] and "
+    rf"(?:(?P<lost>lost)|won \((?P<amount>{_MONEY})\)) with "
+    rf"(?P<rank_description>{_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION})$"
+)
 _SUMMARY_BOARD_RE = re.compile(r"^Board \[(?P<cards>[^\]]+)\]$")
+_TOURNAMENT_FINISH_RE = re.compile(
+    r"^(?P<name>.+) finished the tournament in "
+    r"(?P<place>[1-9][0-9]*)(?P<ordinal>st|nd|rd|th) place$"
+)
+_HISTORICAL_TOURNAMENT_RESULT_EVENTS = (
+    ("showdown", "seat-9", None),
+    ("showdown", "seat-2", None),
+    ("award", "seat-9", 1),
+    ("showdown", "seat-6", None),
+    ("award", "seat-9", 0),
+)
+_HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS = tuple(range(1, 10))
+_HISTORICAL_TOURNAMENT_FINISHES = (("seat-2", 80), ("seat-6", 81))
+_HISTORICAL_TOURNAMENT_NO_WAGER_SUMMARY_SEATS = frozenset({1, 5, 7, 8})
+
+_UNRESOLVED_HISTORICAL_TIME_WARNING = (
+    "Source time is unresolved: historical dual-zone timestamp semantics are "
+    "unverified."
+)
+_UNMODELED_TOURNAMENT_FINISH_WARNING = (
+    "Tournament finish positions are retained as source evidence only; field size "
+    "and payouts remain unknown."
+)
 
 _STREET_NAME: dict[str, Literal["flop", "turn", "river"]] = {
     "FLOP": "flop",
@@ -217,6 +273,24 @@ class _ParsedSeats:
     button_seat: int
     table_evidence: SourceEvidence
     seat_evidence: list[SourceEvidence]
+
+
+@dataclass(frozen=True)
+class _ParsedHeader:
+    hand_id: str
+    currency: str
+    small_blind: Decimal
+    big_blind: Decimal
+    played_at: datetime | None
+    source_timezone: str | None
+    tournament_id: str | None = None
+    entry_buy_in: Decimal | None = None
+    entry_fee: Decimal | None = None
+    blind_level: str | None = None
+
+    @property
+    def is_historical_tournament(self) -> bool:
+        return self.tournament_id is not None
 
 
 def parse_pokerstars_text(
@@ -380,6 +454,130 @@ def _contract_validation_message(exc: ValidationError) -> str:
     )
 
 
+def _parse_header(line: _SourceLine) -> _ParsedHeader:
+    cash = _CASH_HEADER_RE.fullmatch(line.text)
+    if cash is not None:
+        currency = cash.group("currency")
+        return _ParsedHeader(
+            hand_id=cash.group("hand_id"),
+            currency=currency,
+            small_blind=_parse_positive_money(
+                cash.group("small"),
+                currency,
+                line=line.number,
+                code="invalid_blind_amount",
+            ),
+            big_blind=_parse_positive_money(
+                cash.group("big"),
+                currency,
+                line=line.number,
+                code="invalid_blind_amount",
+            ),
+            played_at=_parse_played_at(
+                cash.group("played_at"),
+                cash.group("timezone"),
+                line=line.number,
+            ),
+            source_timezone=cash.group("timezone"),
+        )
+
+    tournament = _HISTORICAL_TOURNAMENT_HEADER_RE.fullmatch(line.text)
+    if tournament is None:
+        raise _HandParseError(
+            "unsupported_header",
+            (
+                "Only English PokerStars no-limit cash headers and the reviewed "
+                "historical tournament header are supported."
+            ),
+            line_start=line.number,
+        )
+    for source_time in (
+        tournament.group("primary_time"),
+        tournament.group("bracketed_time"),
+    ):
+        try:
+            datetime.strptime(source_time, "%Y/%m/%d %H:%M:%S")
+        except ValueError as exc:
+            raise _HandParseError(
+                "invalid_source_time",
+                "A historical dual-zone source time is invalid.",
+                line_start=line.number,
+            ) from exc
+
+    currency = tournament.group("currency")
+    return _ParsedHeader(
+        hand_id=tournament.group("hand_id"),
+        currency=currency,
+        small_blind=_parse_positive_money(
+            tournament.group("small"),
+            currency,
+            line=line.number,
+            code="invalid_blind_amount",
+        ),
+        big_blind=_parse_positive_money(
+            tournament.group("big"),
+            currency,
+            line=line.number,
+            code="invalid_blind_amount",
+        ),
+        played_at=None,
+        source_timezone=None,
+        tournament_id=tournament.group("tournament_id"),
+        entry_buy_in=_parse_money(
+            tournament.group("entry_buy_in"),
+            currency,
+            line=line.number,
+        ),
+        entry_fee=_parse_money(
+            tournament.group("entry_fee"),
+            currency,
+            line=line.number,
+        ),
+        blind_level=tournament.group("blind_level"),
+    )
+
+
+def _game_context(
+    *,
+    header: _ParsedHeader,
+    parsed_seats: _ParsedSeats,
+    ante: Decimal | None,
+    ante_mode: str,
+    straddle: Decimal | None,
+) -> GameContext:
+    economics: CashEconomics | TournamentEconomics
+    if header.is_historical_tournament:
+        assert header.tournament_id is not None
+        assert header.entry_buy_in is not None
+        assert header.entry_fee is not None
+        assert header.blind_level is not None
+        economics = TournamentEconomics(
+            tournament_id=header.tournament_id,
+            entry_buy_in=header.entry_buy_in,
+            entry_fee=header.entry_fee,
+            blind_level=header.blind_level,
+            currency=header.currency,
+            remaining_stacks=[
+                TournamentStack(player_id=seat.player_id, stack=seat.starting_stack)
+                for seat in parsed_seats.seats
+            ],
+        )
+    else:
+        economics = CashEconomics(currency=header.currency)
+    return GameContext(
+        betting_limit="no_limit",
+        table_size=parsed_seats.table_size,
+        blinds=BlindStructure(
+            small_blind=header.small_blind,
+            big_blind=header.big_blind,
+            ante=ante,
+            ante_mode=ante_mode,
+            straddle=straddle,
+        ),
+        economics=economics,
+    )
+
+
 def _parse_hand(
     block: _HandBlock,
     *,
@@ -391,31 +589,9 @@ def _parse_hand(
     ]
     if not lines:
         raise _HandParseError("empty_hand", "Hand block is empty.")
-    header = _CASH_HEADER_RE.fullmatch(lines[0].text)
-    if header is None:
-        raise _HandParseError(
-            "unsupported_header",
-            "Only English PokerStars no-limit cash headers are supported.",
-            line_start=1,
-        )
-
-    currency = header.group("currency")
-    small_blind = _parse_positive_money(
-        header.group("small"),
-        currency,
-        line=1,
-        code="invalid_blind_amount",
-    )
-    big_blind = _parse_positive_money(
-        header.group("big"),
-        currency,
-        line=1,
-        code="invalid_blind_amount",
-    )
-    played_at = _parse_played_at(
-        header.group("played_at"),
-        header.group("timezone"),
-        line=1,
+    header = _parse_header(lines[0])
+    amount_currency = (
+        None if header.is_historical_tournament else header.currency
     )
     occurrence_digest = sha256(
         f"{context.import_id}\0{block.ordinal}".encode("utf-8")
@@ -427,7 +603,7 @@ def _parse_hand(
     parsed_seats = _parse_seats(
         lines,
         raw_source_id=raw_source_id,
-        currency=currency,
+        currency=amount_currency,
     )
     positions = derive_structural_positions(
         parsed_seats.seats,
@@ -444,14 +620,14 @@ def _parse_hand(
     ]
 
     chronology = SourceChronology(
-        played_at=played_at,
-        source_timezone=header.group("timezone"),
+        played_at=header.played_at,
+        source_timezone=header.source_timezone,
         source_file_id=raw_source_id,
         hand_ordinal=block.ordinal,
     )
     identity = StableHandIdentity(
         site="pokerstars",
-        source_hand_id=header.group("hand_id"),
+        source_hand_id=header.hand_id,
     )
     raw = RawHandHistory(
         raw_source_id=raw_source_id,
@@ -472,8 +648,8 @@ def _parse_hand(
     parsed_body = _parse_body(
         lines,
         raw_source_id=raw_source_id,
-        currency=currency,
-        nominal_preflop_bring_in=big_blind,
+        currency=amount_currency,
+        nominal_preflop_bring_in=header.big_blind,
         player_id_by_name=parsed_seats.player_id_by_name,
         sitting_out_player_ids={
             seat.player_id
@@ -484,27 +660,23 @@ def _parse_hand(
             seat.player_id: _summary_position_tags(seat)
             for seat in seats
         },
+        allow_historical_tournament_results=header.is_historical_tournament,
     )
     _validate_structural_blind_posts(
         parsed_body,
         seats,
-        small_blind=small_blind,
-        big_blind=big_blind,
+        small_blind=header.small_blind,
+        big_blind=header.big_blind,
     )
     _validate_known_cards(parsed_body)
     ante, ante_mode = _ante_structure(parsed_body.streets, seats)
     straddle = _straddle_amount(parsed_body.streets)
-    game = GameContext(
-        betting_limit="no_limit",
-        table_size=parsed_seats.table_size,
-        blinds=BlindStructure(
-            small_blind=small_blind,
-            big_blind=big_blind,
-            ante=ante,
-            ante_mode=ante_mode,
-            straddle=straddle,
-        ),
-        economics=CashEconomics(currency=currency),
+    game = _game_context(
+        header=header,
+        parsed_seats=parsed_seats,
+        ante=ante,
+        ante_mode=ante_mode,
+        straddle=straddle,
     )
     try:
         state = ImportedHandState(
@@ -539,6 +711,10 @@ def _parse_hand(
         ) from exc
     reconciliation = reconcile_pot(state)
     warnings = list(parsed_body.warnings)
+    if header.is_historical_tournament:
+        warnings.append(_UNRESOLVED_HISTORICAL_TIME_WARNING)
+    if parsed_body.finish_evidence:
+        warnings.append(_UNMODELED_TOURNAMENT_FINISH_WARNING)
     if reconciliation.status == "fail":
         warnings.append(
             "Pot reconciliation failed; review action amounts and source totals."
@@ -550,6 +726,7 @@ def _parse_hand(
 
     field_evidence = _field_evidence(
         header=_evidence(raw_source_id, lines[0]),
+        parsed_header=header,
         parsed_seats=parsed_seats,
         parsed_body=parsed_body,
     )
@@ -583,13 +760,14 @@ class _ParsedBody:
     board_evidence: list[SourceEvidence | None]
     action_evidence: list[list[SourceEvidence]]
     results_evidence: SourceEvidence | None
+    finish_evidence: list[SourceEvidence]
 
 
 def _parse_seats(
     lines: list[_SourceLine],
     *,
     raw_source_id: str,
-    currency: str,
+    currency: str | None,
 ) -> _ParsedSeats:
     table_line = next((line for line in lines[1:] if _TABLE_RE.fullmatch(line.text)), None)
     if table_line is None:
@@ -702,11 +880,12 @@ def _parse_body(
     lines: list[_SourceLine],
     *,
     raw_source_id: str,
-    currency: str,
+    currency: str | None,
     nominal_preflop_bring_in: Decimal,
     player_id_by_name: dict[str, str],
     sitting_out_player_ids: set[str],
     expected_position_tags_by_player: dict[str, frozenset[str]],
+    allow_historical_tournament_results: bool,
 ) -> _ParsedBody:
     street_names: list[Literal["preflop", "flop", "turn", "river"]] = ["preflop"]
     boards: list[list[Card]] = [[]]
@@ -731,6 +910,9 @@ def _parse_body(
     results_evidence: SourceEvidence | None = None
     summary_board_seen = False
     summary_seat_numbers: set[int] = set()
+    historical_tournament_summary_phase: Literal["total_pot", "board", "seats"] = (
+        "total_pot"
+    )
     table_seen = False
     seat_declaration_count = 0
     forced_post_seen = False
@@ -744,6 +926,12 @@ def _parse_body(
     uncalled_return_seen = False
     folded_player_ids: set[str] = set()
     showdown_player_ids: set[str] = set()
+    showdown_rank_descriptions: dict[str, str] = {}
+    finish_player_ids: set[str] = set()
+    finish_evidence: list[SourceEvidence] = []
+    historical_tournament_result_event_index = 0
+    historical_tournament_summary_seat_index = 0
+    historical_tournament_finish_index = 0
 
     for line in lines[1:]:
         text = line.text
@@ -804,25 +992,105 @@ def _parse_body(
             in_summary = True
             continue
 
+        finish = _TOURNAMENT_FINISH_RE.fullmatch(text)
+        if finish is not None:
+            if (
+                not allow_historical_tournament_results
+                or not hole_seen
+                or not award_seen
+                or in_summary
+                or len(awards) != 2
+            ):
+                raise _HandParseError(
+                    "tournament_finish_order",
+                    "A tournament finish statement must follow the reviewed awards and precede the summary.",
+                    line_start=line.number,
+                )
+            player_id = _player_id(
+                finish.group("name"),
+                player_id_by_name,
+                line=line.number,
+            )
+            if finish.group("ordinal") != _ordinal_suffix(int(finish.group("place"))):
+                raise _HandParseError(
+                    "invalid_tournament_finish",
+                    "A tournament finish statement has an invalid ordinal suffix.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
+            if player_id in finish_player_ids:
+                raise _HandParseError(
+                    "duplicate_tournament_finish",
+                    "A tournament finish statement cannot repeat a player.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
+            if allow_historical_tournament_results:
+                expected_finish = (
+                    _HISTORICAL_TOURNAMENT_FINISHES[
+                        historical_tournament_finish_index
+                    ]
+                    if historical_tournament_finish_index
+                    < len(_HISTORICAL_TOURNAMENT_FINISHES)
+                    else None
+                )
+                if (player_id, int(finish.group("place"))) != expected_finish:
+                    raise _HandParseError(
+                        "tournament_finish_order",
+                        "The reviewed historical tournament form requires its documented finish sequence.",
+                        line_start=line.number,
+                    )
+                historical_tournament_finish_index += 1
+            finish_player_ids.add(player_id)
+            finish_evidence.append(_evidence(raw_source_id, line))
+            continue
+
         if in_summary:
-            total_pot_match = _TOTAL_POT_RE.fullmatch(text)
-            if total_pot_match is not None:
+            total_pot_match = (
+                None
+                if allow_historical_tournament_results
+                else _TOTAL_POT_RE.fullmatch(text)
+            )
+            tournament_total_pot_match = (
+                _HISTORICAL_TOURNAMENT_TOTAL_POT_RE.fullmatch(text)
+                if allow_historical_tournament_results
+                else None
+            )
+            if total_pot_match is not None or tournament_total_pot_match is not None:
+                if (
+                    allow_historical_tournament_results
+                    and historical_tournament_summary_phase != "total_pot"
+                ):
+                    raise _HandParseError(
+                        "tournament_summary_order",
+                        "The reviewed historical tournament summary must begin with its total-pot line.",
+                        line_start=line.number,
+                    )
                 if stated_pot is not None:
                     raise _HandParseError(
                         "duplicate_total_pot",
                         "A hand cannot contain more than one total-pot line.",
                         line_start=line.number,
                     )
+                pot_match = tournament_total_pot_match or total_pot_match
+                assert pot_match is not None
                 gross = _parse_money(
-                    total_pot_match.group("gross"),
+                    pot_match.group("gross"),
                     currency,
                     line=line.number,
                 )
                 rake = _parse_money(
-                    total_pot_match.group("rake"),
+                    pot_match.group("rake"),
                     currency,
                     line=line.number,
                 )
+                if tournament_total_pot_match is not None and rake != 0:
+                    raise _HandParseError(
+                        "invalid_total_pot",
+                        "The reviewed historical tournament form requires zero rake.",
+                        line_start=line.number,
+                        line_end=line.number,
+                    )
                 if rake > gross:
                     raise _HandParseError(
                         "invalid_total_pot",
@@ -830,14 +1098,46 @@ def _parse_body(
                         line_start=line.number,
                         line_end=line.number,
                     )
+                gross_pots: list[Decimal] = []
+                if tournament_total_pot_match is not None:
+                    main_pot = _parse_money(
+                        tournament_total_pot_match.group("main"),
+                        currency,
+                        line=line.number,
+                    )
+                    side_pot = _parse_money(
+                        tournament_total_pot_match.group("side"),
+                        currency,
+                        line=line.number,
+                    )
+                    if main_pot + side_pot != gross:
+                        raise _HandParseError(
+                            "invalid_total_pot",
+                            "Tournament pot components must equal the total pot.",
+                            line_start=line.number,
+                            line_end=line.number,
+                        )
+                    gross_pots = [main_pot, side_pot]
                 stated_pot = StatedPotSummary(
                     gross_total=gross,
                     rake=rake,
                     net_total=gross - rake,
+                    gross_pots=gross_pots,
                 )
                 results_evidence = _evidence(raw_source_id, line)
+                if allow_historical_tournament_results:
+                    historical_tournament_summary_phase = "board"
                 continue
             if text.startswith("Board ["):
+                if (
+                    allow_historical_tournament_results
+                    and historical_tournament_summary_phase != "board"
+                ):
+                    raise _HandParseError(
+                        "tournament_summary_order",
+                        "The reviewed historical tournament summary requires its board after the total-pot line.",
+                        line_start=line.number,
+                    )
                 summary_board = _SUMMARY_BOARD_RE.fullmatch(text)
                 if summary_board is None:
                     raise _HandParseError(
@@ -863,8 +1163,35 @@ def _parse_body(
                         line_start=line.number,
                     )
                 summary_board_seen = True
+                if allow_historical_tournament_results:
+                    historical_tournament_summary_phase = "seats"
                 continue
             if text.startswith("Seat "):
+                if (
+                    allow_historical_tournament_results
+                    and historical_tournament_summary_phase != "seats"
+                ):
+                    raise _HandParseError(
+                        "tournament_summary_order",
+                        "The reviewed historical tournament summary requires its seat rows after the board.",
+                        line_start=line.number,
+                    )
+                summary_seat = _SUMMARY_SEAT_RE.fullmatch(text)
+                if allow_historical_tournament_results and summary_seat is not None:
+                    expected_seat = (
+                        _HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS[
+                            historical_tournament_summary_seat_index
+                        ]
+                        if historical_tournament_summary_seat_index
+                        < len(_HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS)
+                        else None
+                    )
+                    if int(summary_seat.group("seat")) != expected_seat:
+                        raise _HandParseError(
+                            "tournament_summary_order",
+                            "The reviewed historical tournament summary requires its documented seat-row order.",
+                            line_start=line.number,
+                        )
                 _validate_summary_seat_line(
                     text,
                     line=line.number,
@@ -876,9 +1203,16 @@ def _parse_body(
                     ),
                     street_names=street_names,
                     actions=actions,
+                    showdown=showdown,
+                    showdown_rank_descriptions=showdown_rank_descriptions,
                     awards=awards,
+                    allow_historical_tournament_results=(
+                        allow_historical_tournament_results
+                    ),
                     summary_seat_numbers=summary_seat_numbers,
                 )
+                if allow_historical_tournament_results:
+                    historical_tournament_summary_seat_index += 1
                 continue
             raise _HandParseError(
                 "unsupported_summary_line",
@@ -1026,6 +1360,12 @@ def _parse_body(
 
         collected = _COLLECTED_RE.fullmatch(text)
         if collected is not None:
+            if allow_historical_tournament_results and finish_evidence:
+                raise _HandParseError(
+                    "tournament_finish_order",
+                    "A tournament pot award cannot follow a finish statement.",
+                    line_start=line.number,
+                )
             if not hole_seen:
                 raise _HandParseError(
                     "award_order",
@@ -1047,6 +1387,15 @@ def _parse_body(
                 )
             evidence = _evidence(raw_source_id, line)
             pot_label = collected.group("pot")
+            if allow_historical_tournament_results and pot_label not in {
+                "main pot",
+                "side pot",
+            }:
+                raise _HandParseError(
+                    "unsupported_tournament_award",
+                    "The reviewed historical tournament form requires main or side pot awards.",
+                    line_start=line.number,
+                )
             if pot_label == "pot":
                 pot_index = None
             elif pot_label == "main pot":
@@ -1055,6 +1404,16 @@ def _parse_body(
                 pot_index = 1
             else:
                 pot_index = int(pot_label.rsplit("-", 1)[1])
+            if allow_historical_tournament_results:
+                historical_tournament_result_event_index = (
+                    _next_historical_tournament_result_event(
+                        historical_tournament_result_event_index,
+                        event_type="award",
+                        player_id=player_id,
+                        pot_index=pot_index,
+                        line=line.number,
+                    )
+                )
             awards.append(
                 PotAward(
                     player_id=player_id,
@@ -1073,10 +1432,10 @@ def _parse_body(
 
         actor_line = _ACTOR_LINE_RE.fullmatch(text)
         if actor_line is not None:
-            if award_seen:
+            if allow_historical_tournament_results and finish_evidence:
                 raise _HandParseError(
-                    "award_order",
-                    "Table actions and showdown evidence cannot follow a pot award.",
+                    "tournament_finish_order",
+                    "Tournament showdown or action evidence cannot follow a finish statement.",
                     line_start=line.number,
                 )
             player_id = _dealt_in_player_id(
@@ -1087,7 +1446,19 @@ def _parse_body(
             )
             body = actor_line.group("body")
             evidence = _evidence(raw_source_id, line)
-            showdown_entry = _showdown_entry(player_id, body, evidence, line=line.number)
+            if award_seen and not allow_historical_tournament_results:
+                raise _HandParseError(
+                    "award_order",
+                    "Table actions and showdown evidence cannot follow a pot award.",
+                    line_start=line.number,
+                )
+            showdown_entry = _showdown_entry(
+                player_id,
+                body,
+                evidence,
+                allow_rank_description=allow_historical_tournament_results,
+                line=line.number,
+            )
             if showdown_entry is not None:
                 if not showdown_seen:
                     raise _HandParseError(
@@ -1109,9 +1480,31 @@ def _parse_body(
                         line_start=line.number,
                         line_end=line.number,
                     )
+                if allow_historical_tournament_results:
+                    historical_tournament_result_event_index = (
+                        _next_historical_tournament_result_event(
+                            historical_tournament_result_event_index,
+                            event_type="showdown",
+                            player_id=player_id,
+                            pot_index=None,
+                            line=line.number,
+                        )
+                    )
                 showdown_player_ids.add(player_id)
+                if allow_historical_tournament_results:
+                    rank_description = _historical_tournament_rank_description(
+                        body
+                    )
+                    if rank_description is not None:
+                        showdown_rank_descriptions[player_id] = rank_description
                 showdown.append(showdown_entry)
                 continue
+            if award_seen:
+                raise _HandParseError(
+                    "award_order",
+                    "Table actions cannot follow a pot award.",
+                    line_start=line.number,
+                )
             parsed_action = _parse_action_line(
                 body,
                 currency=currency,
@@ -1194,6 +1587,54 @@ def _parse_body(
             "A supported hand requires an explicit hole-card section marker.",
         )
     assert hole_evidence is not None
+    if allow_historical_tournament_results and hero_evidence is None:
+        raise _HandParseError(
+            "missing_tournament_hero_cards",
+            "The reviewed historical tournament form requires its dealt-to-hero line.",
+        )
+    if allow_historical_tournament_results and stated_pot is None:
+        raise _HandParseError(
+            "missing_tournament_total_pot",
+            "The reviewed historical tournament form requires its total-pot line.",
+        )
+    if allow_historical_tournament_results:
+        assert stated_pot is not None
+        if historical_tournament_result_event_index != len(
+            _HISTORICAL_TOURNAMENT_RESULT_EVENTS
+        ):
+            raise _HandParseError(
+                "tournament_results_order",
+                "The reviewed historical tournament form requires its complete showdown and award sequence.",
+            )
+        if (
+            len(awards) != 2
+            or {award.pot_index for award in awards} != {0, 1}
+            or any(
+                award.amount != stated_pot.gross_pots[award.pot_index]
+                for award in awards
+                if award.pot_index is not None
+            )
+        ):
+            raise _HandParseError(
+                "tournament_award_mismatch",
+                "Tournament awards must match the reviewed main and side pot components.",
+            )
+    expected_summary_seat_numbers = {
+        int(player_id.removeprefix("seat-"))
+        for player_id in player_id_by_name.values()
+    }
+    if allow_historical_tournament_results and (
+        not summary_board_seen
+        or summary_seat_numbers != expected_summary_seat_numbers
+        or historical_tournament_summary_seat_index
+        != len(_HISTORICAL_TOURNAMENT_SUMMARY_SEAT_NUMBERS)
+        or historical_tournament_finish_index != len(_HISTORICAL_TOURNAMENT_FINISHES)
+        or len(finish_evidence) != 2
+    ):
+        raise _HandParseError(
+            "missing_tournament_trailer",
+            "The reviewed historical tournament form requires its complete summary and finish evidence.",
+        )
 
     streets = [
         ImportedStreet(street=name, board_cards=board, actions=street_actions)
@@ -1226,6 +1667,7 @@ def _parse_body(
         board_evidence=board_evidence,
         action_evidence=action_evidence,
         results_evidence=results_evidence,
+        finish_evidence=finish_evidence,
     )
 
 
@@ -1233,13 +1675,16 @@ def _validate_summary_seat_line(
     text: str,
     *,
     line: int,
-    currency: str,
+    currency: str | None,
     player_id_by_name: dict[str, str],
     sitting_out_player_ids: set[str],
     expected_position_tags_by_player: dict[str, frozenset[str]],
     street_names: list[Literal["preflop", "flop", "turn", "river"]],
     actions: list[list[ImportedAction]],
+    showdown: list[ShowdownEntry],
+    showdown_rank_descriptions: dict[str, str],
     awards: list[PotAward],
+    allow_historical_tournament_results: bool,
     summary_seat_numbers: set[int],
 ) -> None:
     summary = _SUMMARY_SEAT_RE.fullmatch(text)
@@ -1307,8 +1752,23 @@ def _validate_summary_seat_line(
             )
         return
 
-    folded = _SUMMARY_FOLD_RE.fullmatch(suffix)
+    folded_pattern = (
+        _HISTORICAL_TOURNAMENT_SUMMARY_FOLD_RE
+        if allow_historical_tournament_results
+        else _SUMMARY_FOLD_RE
+    )
+    folded = folded_pattern.fullmatch(suffix)
     if folded is not None:
+        if (
+            allow_historical_tournament_results
+            and seat_number in _HISTORICAL_TOURNAMENT_NO_WAGER_SUMMARY_SEATS
+            and folded.group("did_not_bet") is None
+        ):
+            raise _HandParseError(
+                "summary_fold_mismatch",
+                "The reviewed historical tournament summary requires its didn't-bet annotation.",
+                line_start=line,
+            )
         expected_street = {
             "before Flop": "preflop",
             "on the Flop": "flop",
@@ -1333,9 +1793,28 @@ def _validate_summary_seat_line(
                 "The summary fold does not match the parsed action stream.",
                 line_start=line,
             )
+        if (
+            allow_historical_tournament_results
+            and folded.group("did_not_bet") is not None
+            and any(
+                action.actor_id == player_id
+                and action.action_type not in {"post_ante", "fold"}
+                for street_actions in actions
+                for action in street_actions
+            )
+        ):
+            raise _HandParseError(
+                "summary_fold_mismatch",
+                "A summary didn't-bet annotation contradicts parsed contributions.",
+                line_start=line,
+            )
         return
 
-    collected = _SUMMARY_COLLECTED_RE.fullmatch(suffix)
+    collected = (
+        None
+        if allow_historical_tournament_results
+        else _SUMMARY_COLLECTED_RE.fullmatch(suffix)
+    )
     if collected is not None:
         amount = _parse_positive_money(
             collected.group("amount"),
@@ -1359,6 +1838,65 @@ def _validate_summary_seat_line(
             )
         return
 
+    showdown_result = (
+        _SUMMARY_SHOWDOWN_RESULT_RE.fullmatch(suffix)
+        if allow_historical_tournament_results
+        else None
+    )
+    if showdown_result is not None:
+        cards = _parse_cards(showdown_result.group("cards"), line=line)
+        matching_showdown = next(
+            (entry for entry in showdown if entry.player_id == player_id),
+            None,
+        )
+        if (
+            matching_showdown is None
+            or matching_showdown.disposition != "shown"
+            or matching_showdown.cards != cards
+        ):
+            raise _HandParseError(
+                "summary_showdown_mismatch",
+                "The summary shown cards do not match the parsed showdown.",
+                line_start=line,
+            )
+        if showdown_rank_descriptions.get(player_id) != showdown_result.group(
+            "rank_description"
+        ):
+            raise _HandParseError(
+                "summary_showdown_mismatch",
+                "The summary hand rank does not match the parsed showdown.",
+                line_start=line,
+            )
+        awarded = sum(
+            (
+                award.amount
+                for award in awards
+                if award.player_id == player_id and award.amount is not None
+            ),
+            Decimal(0),
+        )
+        if showdown_result.group("lost") is not None:
+            if awarded != 0:
+                raise _HandParseError(
+                    "summary_award_mismatch",
+                    "A summary loser cannot have collected a pot award.",
+                    line_start=line,
+                )
+        else:
+            amount = _parse_positive_money(
+                showdown_result.group("amount"),
+                currency,
+                line=line,
+                code="invalid_award_amount",
+            )
+            if amount != awarded:
+                raise _HandParseError(
+                    "summary_award_mismatch",
+                    "The summary collection does not match parsed pot awards.",
+                    line_start=line,
+                )
+        return
+
     raise _HandParseError(
         "unsupported_summary_result",
         "This seat summary carries result or action-origin syntax not supported"
@@ -1378,10 +1916,16 @@ def _summary_position_tags(seat: ImportedSeat) -> frozenset[str]:
     }.get(seat.position.display_label, frozenset())
 
 
+def _ordinal_suffix(value: int) -> Literal["st", "nd", "rd", "th"]:
+    if 10 < value % 100 < 14:
+        return "th"
+    return {1: "st", 2: "nd", 3: "rd"}.get(value % 10, "th")
+
+
 def _parse_action_line(
     body: str,
     *,
-    currency: str,
+    currency: str | None,
     line: int,
     sequence: int,
     actor_id: str,
@@ -1553,9 +2097,14 @@ def _showdown_entry(
     body: str,
     evidence: SourceEvidence,
     *,
+    allow_rank_description: bool,
     line: int,
 ) -> ShowdownEntry | None:
-    show = _SHOW_RE.fullmatch(body)
+    show = (
+        _HISTORICAL_TOURNAMENT_SHOW_RE.fullmatch(body)
+        if allow_rank_description
+        else _SHOW_RE.fullmatch(body)
+    )
     if show is not None:
         cards = _parse_cards(show.group("cards"), line=line)
         if len(cards) != 2:
@@ -1591,6 +2140,35 @@ def _showdown_entry(
     return None
 
 
+def _historical_tournament_rank_description(body: str) -> str | None:
+    match = _HISTORICAL_TOURNAMENT_SHOW_RE.fullmatch(body)
+    if match is None:
+        return None
+    return match.group("rank_description")
+
+
+def _next_historical_tournament_result_event(
+    event_index: int,
+    *,
+    event_type: Literal["award", "showdown"],
+    player_id: str,
+    pot_index: int | None,
+    line: int,
+) -> int:
+    expected = (
+        _HISTORICAL_TOURNAMENT_RESULT_EVENTS[event_index]
+        if event_index < len(_HISTORICAL_TOURNAMENT_RESULT_EVENTS)
+        else None
+    )
+    if expected != (event_type, player_id, pot_index):
+        raise _HandParseError(
+            "tournament_results_order",
+            "The reviewed historical tournament form requires its documented showdown and award sequence.",
+            line_start=line,
+        )
+    return event_index + 1
+
+
 def _parse_board(value: str, *, expected_count: int, line: int) -> list[Card]:
     groups = re.findall(r"\[([^\]]+)\]", value)
     compact_groups = "".join(
@@ -1623,14 +2201,21 @@ def _parse_cards(value: str, *, line: int) -> list[Card]:
         ) from exc
 
 
-def _parse_money(value: str, currency: str, *, line: int) -> Decimal:
+def _parse_money(value: str, currency: str | None, *, line: int) -> Decimal:
     symbol = value[0] if value and value[0] in _CURRENCY_SYMBOLS else None
-    if symbol is not None and _CURRENCY_SYMBOLS[symbol] != currency:
-        raise _HandParseError(
-            "currency_mismatch",
-            "A money symbol does not match the header currency.",
-            line_start=line,
-        )
+    if symbol is not None:
+        if currency is None:
+            raise _HandParseError(
+                "currency_mismatch",
+                "Tournament chip amounts cannot carry a currency marker.",
+                line_start=line,
+            )
+        if _CURRENCY_SYMBOLS[symbol] != currency:
+            raise _HandParseError(
+                "currency_mismatch",
+                "A money symbol does not match the header currency.",
+                line_start=line,
+            )
     try:
         amount = Decimal(value.lstrip("$€£").replace(",", ""))
     except InvalidOperation as exc:
@@ -1650,7 +2235,7 @@ def _parse_money(value: str, currency: str, *, line: int) -> Decimal:
 
 def _parse_positive_money(
     value: str,
-    currency: str,
+    currency: str | None,
     *,
     line: int,
     code: str,
@@ -2308,14 +2893,13 @@ def _straddle_amount(streets: list[ImportedStreet]) -> Decimal | None:
 def _field_evidence(
     *,
     header: SourceEvidence,
+    parsed_header: _ParsedHeader,
     parsed_seats: _ParsedSeats,
     parsed_body: _ParsedBody,
 ) -> dict[str, DetectedFieldEvidence]:
     evidence: dict[str, DetectedFieldEvidence] = {
         "/identity/site": _exact_field(header),
         "/identity/source_hand_id": _exact_field(header),
-        "/chronology/played_at": _exact_field(header),
-        "/chronology/source_timezone": _exact_field(header),
         "/game/variant": _exact_field(header),
         "/game/blinds/small_blind": _exact_field(header),
         "/game/blinds/big_blind": _exact_field(header),
@@ -2325,6 +2909,28 @@ def _field_evidence(
         "/game/table_size": _exact_field(parsed_seats.table_evidence),
         "/button_seat": _exact_field(parsed_seats.table_evidence),
     }
+    if parsed_header.is_historical_tournament:
+        unresolved_time = DetectedFieldEvidence(
+            confidence=Decimal(0),
+            evidence=[header],
+            warnings=[_UNRESOLVED_HISTORICAL_TIME_WARNING],
+        )
+        evidence["/chronology/played_at"] = unresolved_time
+        evidence["/chronology/source_timezone"] = unresolved_time
+        for pointer in (
+            "/game/economics/tournament_id",
+            "/game/economics/entry_buy_in",
+            "/game/economics/entry_fee",
+            "/game/economics/blind_level",
+        ):
+            evidence[pointer] = _exact_field(header)
+        for index, seat_evidence in enumerate(parsed_seats.seat_evidence):
+            evidence[f"/game/economics/remaining_stacks/{index}"] = _exact_field(
+                seat_evidence
+            )
+    else:
+        evidence["/chronology/played_at"] = _exact_field(header)
+        evidence["/chronology/source_timezone"] = _exact_field(header)
     position_sources = [
         parsed_seats.table_evidence,
         *parsed_seats.seat_evidence,
@@ -2385,6 +2991,11 @@ def _field_evidence(
     if parsed_body.results_evidence is not None:
         evidence["/results/stated_pot"] = _exact_field(
             parsed_body.results_evidence
+        )
+    if parsed_body.finish_evidence:
+        evidence["/results"] = DetectedFieldEvidence(
+            evidence=parsed_body.finish_evidence,
+            warnings=[_UNMODELED_TOURNAMENT_FINISH_WARNING],
         )
     return evidence
 

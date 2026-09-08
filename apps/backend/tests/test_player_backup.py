@@ -13,6 +13,7 @@ import pytest
 
 import app.player_backup as player_backup_module
 from app.application.imported_hand_lifecycle import ImportedHandLifecycleService
+from app.application.imported_hand_ingestion import ImportedHandIngestionService
 from app.application.reference_activation import (
     ReferenceActivationCatalog,
     bind_grade_to_active_reference,
@@ -38,6 +39,10 @@ from app.player_workspace import (
     PLAYER_WORKSPACE_MANIFEST_FILENAME,
     PlayerDataDirectoryError,
     PlayerWorkspace,
+)
+from app.infrastructure.hand_history.pokerstars import (
+    PokerStarsImportContext,
+    parse_pokerstars_text,
 )
 from app.storage.cascade_journal import CascadeJournal
 from app.storage.imported_hand_store import (
@@ -76,6 +81,11 @@ from test_reference_activation import (
     solved_readiness,
 )
 from test_remote_references import provider_policy
+
+
+POKERSTARS_PUBLIC_FORMAT_FIXTURES_DIR = (
+    Path(__file__).parent / "fixtures" / "pokerstars" / "public-format"
+)
 
 
 def workspace_at(path: Path) -> PlayerWorkspace:
@@ -242,6 +252,47 @@ def test_player_backup_preserves_records_and_retained_decisions(
     assert second.reused_records == 1
     assert second.reused_decision_artifacts == 1
     assert target.imported_hands.backup_snapshot() == expected_snapshot
+
+
+def test_player_backup_round_trips_historical_tournament_unknown_chronology(
+    tmp_path: Path,
+) -> None:
+    source = workspace_at(tmp_path / "source")
+    hand_text = (
+        POKERSTARS_PUBLIC_FORMAT_FIXTURES_DIR
+        / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    candidate = parse_pokerstars_text(
+        hand_text,
+        context=PokerStarsImportContext(
+            import_id="backup-historical-tournament",
+            imported_at=datetime(2026, 9, 8, 14, 0, tzinfo=timezone.utc),
+            source_filename="pokerregion-tournament-hand2.txt",
+        ),
+    ).hands[0].candidate
+    ingested = ImportedHandIngestionService(store=source.imported_hands).ingest(
+        candidate
+    )
+
+    payload = archive_bytes(source)
+    target = workspace_at(tmp_path / "target")
+    restored = restore(target, payload)
+    record = target.imported_hands.get(ingested.record_key)
+    detection = record.detections[0]
+
+    assert restored.imported_records == 1
+    assert record.canonical_revisions == []
+    assert record.raw_sources[0].chronology.played_at is None
+    assert record.raw_sources[0].chronology.source_timezone is None
+    assert detection.state.chronology.played_at is None
+    assert detection.state.chronology.source_timezone is None
+    assert detection.field_evidence["/chronology/played_at"].confidence == Decimal(
+        "0"
+    )
+    assert detection.warnings[1] == (
+        "Source time is unresolved: historical dual-zone timestamp semantics are "
+        "unverified."
+    )
 
 
 def test_player_backup_preserves_historical_grade_artifacts(

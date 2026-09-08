@@ -23,9 +23,8 @@ or local source path. The sanitized fixture is 2,121 bytes with SHA-256
 
 ## Current expectation
 
-The P0 regression deliberately expects the current cash-only adapter to reject
-this specimen with `unsupported_header` at line 1. That expectation was written
-from the fixture and the documented cash-only contract, not copied from a
-successful parser result. P1a may replace it only with independently reviewed
-full-state labels when the tournament-header and summary semantics are
-implemented.
+The P1a regression maps this specimen only against the independently reviewed
+[HAND2 source labels](../../../../../docs/process/pokerstars-hand2-source-labels.md).
+It preserves unresolved normalized chronology, retains the printed timestamps
+as source evidence, and keeps finish places ancillary. This does not establish
+general tournament support, current PokerStars semantics, or corpus evidence.
