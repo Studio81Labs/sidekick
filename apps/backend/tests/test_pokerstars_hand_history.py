@@ -1364,6 +1364,12 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
             39,
         ),
         (
+            "Player09: shows [Kd Ac] (a pair of Kings)",
+            "Player09: shows [Kd Ac] (a pair of Aces)",
+            "unsupported_showdown",
+            39,
+        ),
+        (
             "Player09 collected 21570 from side pot",
             "Player09 collected $21570 from side pot",
             "currency_mismatch",

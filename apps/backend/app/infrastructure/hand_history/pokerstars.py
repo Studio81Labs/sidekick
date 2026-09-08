@@ -117,8 +117,7 @@ _RAISE_RE = re.compile(
 _SHOW_RE = re.compile(r"^shows \[(?P<cards>[^\]]+)\]$")
 _HISTORICAL_TOURNAMENT_SHOW_RE = re.compile(
     r"^shows \[(?P<cards>[^\]]+)\](?: \(a pair of "
-    r"(?:Twos|Threes|Fours|Fives|Sixes|Sevens|Eights|Nines|Tens|Jacks|"
-    r"Queens|Kings|Aces)\))?$"
+    r"(?:Nines|Jacks|Kings)\))?$"
 )
 _SUMMARY_SEAT_RE = re.compile(
     r"^Seat (?P<seat>[1-9][0-9]*): (?P<rest>.+)$"
