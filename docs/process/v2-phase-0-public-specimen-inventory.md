@@ -6,7 +6,10 @@ issues [#409](https://github.com/Studio81Labs/sidekick/issues/409) and
 format investigation from representative-corpus, rights, and qualification
 evidence required by the Phase 0 gate.
 
-Status: preparation only; Phase 1 remains **NO-GO**.
+Status: P1a0 compatibility merged in #500; HAND2 source mapping is defined for
+P1a in [the label sheet](pokerstars-hand2-source-labels.md) and
+[ADR 0078](../decisions/0078-preserve-unresolved-historical-source-time.md).
+Tournament parser implementation is still pending; Phase 1 remains **NO-GO**.
 
 ## Evidence boundary
 
@@ -33,7 +36,7 @@ be evidence-led, but neither changes that supported surface or parser provenance
 | Sanitized fixture SHA-256 | `844d23d2e5085e02082a85f873ba9cd5637ed300545846877c520a8b444a11e4`                                                                                                                                                                                            |
 | Sanitation                | Replaced all player names and hand/tournament/table identifiers; preserved observed textual syntax, poker amounts, cards, and action order; no local path is retained                                                                                         |
 | Permitted use             | Regression and source-format investigation under the retained MIT attribution; no claim about current PokerStars behavior beyond the observed text                                                                                                            |
-| Independent label review  | Full parsed-state label review is pending P1a; the P0 test independently expects only the documented current `unsupported_header` outcome                                                                                                                     |
+| Independent label review  | [Source mapping](pokerstars-hand2-source-labels.md) authored and checked independently of adapter output, with a separate agent source audit; no human/corpus certification claimed. The current P0 test still expects `unsupported_header` until P1a.        |
 
 The specimen demonstrates a tournament header with buy-in/fee, level and blind
 text, `CET` plus bracketed `ET` timestamps, antes, all-in actions, side-pot
@@ -70,32 +73,37 @@ blockers in place:
 
 - Tournament header mapping: #498's model gap is resolved by
   [ADR 0077](../decisions/0077-retain-tournament-entry-and-level-source-facts.md).
-  Its P1a0 model/serialization and workspace v5/backup v3 compatibility work must
-  merge before P1a parser changes. The entry pair maps to optional
+  Its P1a0 model/serialization and workspace v5/backup v3 compatibility work
+  merged in #500. The entry pair maps to optional
   `entry_buy_in`/`entry_fee` in explicit currency and `blind_level="XI"`;
-  `stage` remains unknown. Full source labels for tournament identity/type,
-  absolute-chip stacks, summaries and source-time/zone interpretation are still
-  required; this decision does not make the fixture parseable.
+  `stage` remains unknown. The [HAND2 labels](pokerstars-hand2-source-labels.md)
+  now specify the complete bounded mapping, including unknown tournament type
+  and normalized chronology. Both printed timestamps remain raw/source evidence
+  under ADR 0078. An exact historical offset remains an evidence question, not a
+  prerequisite to implementing these explicitly uncertain labels. No parser
+  behavior has shipped yet.
 - Tournament economics: no payout, remaining-field, bounty, ICM, or rake
   schedule may be inferred from the specimen.
-- Summary variants: main/side-pot totals, placements, and showdown wording need
-  field-by-field labels before they become detected state.
+- Summary variants: HAND2 main/side-pot totals, showdown/collection comparisons
+  and source-only finish places are mapped in the label sheet. Additional
+  unreviewed variants still require their own labels before acceptance.
 - Action origin: an all-in marker is not evidence that a choice was voluntary,
   automatic, timeout-driven, or disconnect-driven. Missing markers remain
   `unknown` unless versioned source semantics prove otherwise.
-- Corpus evidence: this single sample is not a representative case, has no
-  independent full-state label review, and contributes nothing to the ≥99%
-  parser gate or its composition thresholds.
+- Corpus evidence: this single sample's agent-reviewed development mapping is
+  not representative-corpus or external poker-review qualification. It
+  contributes nothing to the ≥99% parser gate or its composition thresholds.
 - Solved-reference evidence: no supported HRC strategy export, selected-delivery
   rights, route/economics matrix, unit/utility mapping, convergence artifact,
   poker review, benchmark, coverage result, or budget is available.
 
 ## Next evidence required
 
-After P1a0 compatibility work, P1a can replace the fixture's rejection assertion
-with complete independently reviewed labels only for syntax established by a
-pinned source. P2 still needs a
-private authorized representative corpus and independent labels. R0 remains
+P1a can now implement the linked HAND2 mapping and replace the fixture's
+rejection assertion with source-authored full-state expectations, including
+unknowns, warnings and retained evidence. It must not derive expected labels
+from its own parser output. P2 still needs a private authorized representative
+corpus and independent labels. R0 remains
 blocked on an actual supported strategy export and rights evidence; no
 source-specific normalizer, lookup, certification, production catalog, or
 network transport is authorized by this inventory.
