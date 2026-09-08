@@ -19,7 +19,8 @@ the [portfolio alignment plan](./specs/studio81-portfolio-alignment-plan.md).
 Reference material includes the
 [recommendation benchmark corpus](./reference/recommendation-benchmark.md), the
 [PokerStars corpus assessment](./process/pokerstars-corpus-assessment.md), and
-the open Phase 0
+the [Phase 0 public specimen inventory](./process/v2-phase-0-public-specimen-inventory.md),
+and the open Phase 0
 [V2 grading reference source assessment](./reference/v2-grading-reference-assessment.md).
 The current shared-gate status and explicit Phase 1 no-go are recorded in the
 [V2 Phase 0 gate-readiness ledger](./reference/v2-phase-0-gate-readiness.md).

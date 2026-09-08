@@ -350,9 +350,13 @@ audited consistently.
     economics. Unsupported decisions remain visible but ungraded.
 12. `cost-and-update-plan.md`: license, hardware, operator/reviewer time, artifact
     size, update cadence, vendor/version drift triggers, and an approved budget.
-13. `migration-plan.md`: staged activation, compatibility test, rollback, and
-    atomic regrade/rebuild or separate-series behavior for grades, mastery,
-    drills, principles, and proof metrics.
+13. `migration-plan.md`: staged activation rehearsal in an explicitly labelled
+    disposable local test authority, compatibility test, rollback, and atomic
+    regrade/rebuild or separate-series behavior for grades, mastery, drills,
+    principles, and proof metrics. It records the test authority identity and
+    artifact/catalog/content digests. It is not production publication or
+    activation: production catalogs remain empty until #414 records the final
+    decision, after which #416 is the only production-activation path.
 14. `phase-0-grading-gate.md`: signed `go`, `reshape`, or `stop` recommendation
     linking every artifact and listing residual risk.
 
@@ -429,9 +433,14 @@ policy mass, fall back, or approximate an in-matrix node.
 
 Recommend `go` for preflop-first Phase 1 only when all required artifacts exist,
 the actual delivery mode has explicit written rights, every benchmark and
-coverage threshold passes, cost is approved, update/migration is rehearsed, and
-the policy is activated as one immutable revision. Postflop may still remain
-deferred under a preflop `go`.
+coverage threshold passes, and cost is approved. Before that decision,
+update/migration and immutable-revision compatibility are rehearsed only in an
+explicitly labelled disposable local test authority, with exact authority and
+artifact/catalog/content digests plus rollback results retained as evidence.
+That rehearsal is not production publication or activation: production
+reference/content catalogs remain empty until #414 records the final decision,
+and #416 is the only production-activation path after a supported decision.
+Postflop may still remain deferred under a preflop `go`.
 
 ### Reshape
 
