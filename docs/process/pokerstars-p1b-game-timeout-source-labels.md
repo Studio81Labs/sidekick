@@ -1,9 +1,9 @@
 # PokerStars P1b Legacy Game Timeout Source Labels
 
 Status: source-authored P1b development labels under #409. This is not a
-parser implementation, passing assessment case, representative-corpus evidence,
-current-client assertion, or external poker-expert certification. It requires a
-separate source-review pass before a parser PR can implement any mapping here.
+passing assessment case, representative-corpus evidence, current-client
+assertion, or external poker-expert certification. The separate independent
+development-fixture review completed on PR #510 before this bounded parser work.
 
 Date: 2026-09-09. Baseline: `094bda29054c2309d16b8c7445daeffb727921ac`.
 
@@ -33,8 +33,10 @@ stacks, cards, amounts, action/summary order, and timeout/sit-out text remain.
 Export channel, PokerStars client/build, locale provenance, and current-client
 applicability are unknown. The labels below were authored from the pinned
 source, source syntax, and auditable cash arithmetic before this branch changes
-the adapter. They are not copied from changed-parser output. No external or
-human source review is claimed; the separately required review remains a gate.
+parser code. They are not copied from changed-parser output. The independent
+Codex PR review on #510 completed with no findings or review threads at
+`a5eb3a2f2107fbb19d98c8b1fc3d1f54fd85f8fd`. No external or human source
+review is claimed.
 
 PokerStars' [cash time-bank help](https://www.pokerstars.com/help/articles/ring-time-ma/220419/)
 states that time-bank expiration folds a hand and distinguishes reconnect time
@@ -45,13 +47,11 @@ reconnect ordering, or current-client grammar.
 
 ## Current parser boundary
 
-The fixture currently produces no candidates and one `no_hand_headers`
-diagnostic at line 1. It retains the observed legacy `PokerStars Game #`
-header, while the bounded adapter accepts `PokerStars Hand #`. The regression
-prevents this evidence PR from expanding parser support. The labels below are
-the target for a later separate parser PR only after source review. That PR must
-not rewrite the fixture, infer a hero, turn `$` into `USD`, or generalize this
-legacy family without evidence.
+The reviewed parser maps this one legacy `PokerStars Game #` source family. It
+must not rewrite the fixture, infer a hero, turn `$` into `USD`, or generalize
+the family beyond the labels below. The earlier HHSmithy fixture remains a
+`no_hand_headers` rejection because its one-digit-hour/explicit-ISO header does
+not match this reviewed legacy grammar.
 
 ## Expected detected state
 
@@ -169,12 +169,11 @@ Expected warning, in exact order:
 
 1. `Action origin is unresolved for 18 player decision(s); review is required.`
 
-Before implementation, a separate review must compare these labels with pinned
-original bytes and cited vendor material. The later parser PR may implement
-only this legacy header, currency-null dollar notation, immediate same-actor
-timeout-to-fold binding, and inert source-event handling. It must additionally
-prove that unmarked actions remain unknown; timeout does not cross actor,
-street, hand, or file; a bare sit-out is not a marker; and that this packet does
-not establish disconnect, reconnect, combined-cause, preselection, or
-player-selected semantics. Any wider scope, ISO inference, source-event model,
-origin-contract change, or absence semantics requires the Epic escalation path.
+The completed review supports only this legacy header, currency-null dollar
+notation, immediate same-actor timeout-to-fold binding, and inert source-event
+handling. Regressions prove that unmarked actions remain unknown, timeout does
+not cross actor, street, hand, or file, and a bare sit-out is not a marker. This
+packet still does not establish disconnect, reconnect, combined-cause,
+preselection, or player-selected semantics. Any wider scope, ISO inference,
+source-event model, origin-contract change, or absence semantics requires the
+Epic escalation path.

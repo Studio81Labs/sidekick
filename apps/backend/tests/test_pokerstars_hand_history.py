@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
@@ -1122,8 +1122,8 @@ def test_public_cash_origin_specimen_remains_a_structured_rejection() -> None:
     ]
 
 
-def test_public_legacy_timeout_specimen_remains_a_structured_rejection() -> None:
-    """P1b labels do not broaden the legacy cash header before review."""
+def test_public_legacy_timeout_specimen_matches_source_labels() -> None:
+    """P1b maps only the reviewed legacy timeout-to-fold source family."""
 
     source_bytes = (
         PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
@@ -1137,9 +1137,189 @@ def test_public_legacy_timeout_specimen_remains_a_structured_rejection() -> None
         context=import_context("wizardwerdna-pokerstats-timeout-fold.txt"),
     )
 
+    assert result.diagnostics == ()
+    assert len(result.hands) == 1
+    parsed = result.hands[0]
+    candidate = parsed.candidate
+    state = candidate.detection.state
+
+    assert candidate.raw.identity.source_hand_id == "900000000021"
+    assert candidate.raw.chronology.played_at == datetime(
+        2008, 10, 31, 17, 17, 57, tzinfo=timezone(timedelta(hours=-4))
+    )
+    assert candidate.raw.chronology.source_timezone == "ET"
+    assert candidate.raw.provenance.adapter_version == POKERSTARS_ADAPTER_VERSION
+    assert candidate.raw.provenance.format_revision == "pokerstars-text/v3"
+    assert state.game.economics.kind == "cash"
+    assert state.game.economics.currency is None
+    assert state.game.blinds.small_blind == Decimal("0.25")
+    assert state.game.blinds.big_blind == Decimal("0.50")
+    assert state.hero_player_id == "seat-8"
+    assert [card.code for card in state.hero_cards] == ["7d", "Jd"]
+    assert [
+        (
+            seat.seat_number,
+            seat.display_name,
+            seat.participation,
+            seat.position.display_label if seat.position is not None else None,
+            seat.position.button_distance if seat.position is not None else None,
+            seat.position.action_index if seat.position is not None else None,
+        )
+        for seat in state.seats
+    ] == [
+        (1, "Player01", "dealt_in", "UTG+1", 4, 1),
+        (2, "Player02", "dealt_in", "UTG+2", 5, 2),
+        (3, "Player03", "dealt_in", "LJ", 6, 3),
+        (4, "Player04", "dealt_in", "HJ", 7, 4),
+        (5, "Player05", "dealt_in", "CO", 8, 5),
+        (6, "Player06", "dealt_in", "BTN", 0, 6),
+        (7, "Player07", "dealt_in", "SB", 1, 7),
+        (8, "Player08", "dealt_in", "BB", 2, 8),
+        (9, "Player09", "dealt_in", "UTG", 3, 0),
+    ]
+    assert [
+        (street.street, [card.code for card in street.board_cards])
+        for street in state.streets
+    ] == [
+        ("preflop", []),
+        ("flop", ["Td", "3h", "7c"]),
+        ("turn", ["Td", "3h", "7c", "6c"]),
+        ("river", ["Td", "3h", "7c", "6c", "7s"]),
+    ]
+    assert [
+        (
+            street.street,
+            action.sequence,
+            action.actor_id,
+            action.action_type,
+            action.amount,
+            action.total_committed,
+            action.origin.kind,
+        )
+        for street in state.streets
+        for action in street.actions
+    ] == [
+        ("preflop", 0, "seat-7", "post_small_blind", Decimal("0.25"), Decimal("0.25"), "forced_system"),
+        ("preflop", 1, "seat-8", "post_big_blind", Decimal("0.50"), Decimal("0.50"), "forced_system"),
+        ("preflop", 2, "seat-9", "fold", None, Decimal(0), "unknown"),
+        ("preflop", 3, "seat-1", "fold", None, Decimal(0), "unknown"),
+        ("preflop", 4, "seat-2", "fold", None, Decimal(0), "client_automatic"),
+        ("preflop", 5, "seat-3", "call", Decimal("0.50"), Decimal("0.50"), "unknown"),
+        ("preflop", 6, "seat-4", "fold", None, Decimal(0), "unknown"),
+        ("preflop", 7, "seat-5", "fold", None, Decimal(0), "unknown"),
+        ("preflop", 8, "seat-6", "fold", None, Decimal(0), "unknown"),
+        ("preflop", 9, "seat-7", "raise", Decimal("0.75"), Decimal(1), "unknown"),
+        ("preflop", 10, "seat-8", "call", Decimal("0.50"), Decimal(1), "unknown"),
+        ("preflop", 11, "seat-3", "call", Decimal("0.50"), Decimal(1), "unknown"),
+        ("flop", 0, "seat-7", "bet", Decimal(1), Decimal(1), "unknown"),
+        ("flop", 1, "seat-8", "raise", Decimal(3), Decimal(3), "unknown"),
+        ("flop", 2, "seat-3", "fold", None, Decimal(0), "unknown"),
+        ("flop", 3, "seat-7", "call", Decimal(2), Decimal(3), "unknown"),
+        ("turn", 0, "seat-7", "check", None, Decimal(0), "unknown"),
+        ("turn", 1, "seat-8", "check", None, Decimal(0), "unknown"),
+        ("river", 0, "seat-7", "bet", Decimal("4.50"), Decimal("4.50"), "unknown"),
+        ("river", 1, "seat-8", "raise", Decimal("16.50"), Decimal("16.50"), "unknown"),
+        ("river", 2, "seat-7", "fold", None, Decimal("4.50"), "unknown"),
+        ("river", 3, "seat-8", "uncalled_return", Decimal(12), Decimal("4.50"), "forced_system"),
+    ]
+    timeout_fold = state.streets[0].actions[4]
+    assert timeout_fold.origin.basis == "explicit_marker"
+    assert timeout_fold.origin.confidence == Decimal(1)
+    assert timeout_fold.origin.semantics_revision == "pokerstars-cash-2008-timeout-v1"
+    assert timeout_fold.origin.automatic_reason == "timeout"
+    assert [evidence.line_start for evidence in timeout_fold.origin.evidence] == [18, 19]
+    assert all(
+        action.origin.kind == "unknown"
+        and action.origin.basis == "unresolved"
+        and action.origin.semantics_revision is None
+        and action.origin.automatic_reason is None
+        for street in state.streets
+        for action in street.actions
+        if action.action_type not in {"post_small_blind", "post_big_blind", "uncalled_return"}
+        and action is not timeout_fold
+    )
+    assert state.results is not None
+    assert state.results.stated_pot.gross_total == Decimal(18)
+    assert state.results.stated_pot.rake == Decimal("0.85")
+    assert state.results.stated_pot.net_total == Decimal("17.15")
+    assert [(award.player_id, award.amount, award.pot_index) for award in state.results.awards] == [
+        ("seat-8", Decimal("17.15"), None)
+    ]
+    assert candidate.detection.warnings == [
+        "Action origin is unresolved for 18 player decision(s); review is required."
+    ]
+    assert parsed.reconciliation.status == "pass"
+    assert parsed.reconciliation.discrepancy == Decimal(0)
+    assert parsed.reconciliation.contributions == {
+        "seat-1": Decimal(0),
+        "seat-2": Decimal(0),
+        "seat-3": Decimal(1),
+        "seat-4": Decimal(0),
+        "seat-5": Decimal(0),
+        "seat-6": Decimal(0),
+        "seat-7": Decimal("8.50"),
+        "seat-8": Decimal("8.50"),
+        "seat-9": Decimal(0),
+    }
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected_code", "expected_line"),
+    [
+        ("Player02: folds", "Player03: folds", "unbound_timeout_marker", 18),
+        ("Player02: folds", "Player02: checks", "unbound_timeout_marker", 18),
+        (
+            "Player02: folds\nPlayer02 is sitting out\nPlayer03: calls $0.50",
+            "*** FLOP *** [Td 3h 7c]",
+            "unbound_timeout_marker",
+            18,
+        ),
+        (
+            "Player02: folds",
+            "Player02 has timed out\nPlayer02: folds",
+            "unbound_timeout_marker",
+            18,
+        ),
+        ("Player02 has timed out\n", "", "unsupported_sit_out_event", 19),
+        ("$34.90", "€34.90", "currency_mismatch", 3),
+    ],
+)
+def test_public_legacy_timeout_specimen_rejects_unlabelled_extensions(
+    old: str,
+    new: str,
+    expected_code: str,
+    expected_line: int,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
+    ).read_text().replace(old, new, 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("legacy-timeout-negative.txt"),
+    )
+
     assert result.hands == ()
     assert [(diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
-        ("no_hand_headers", 1)
+        (expected_code, expected_line)
+    ]
+
+
+def test_legacy_timeout_rejection_is_isolated_from_a_valid_sibling() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
+    ).read_text()
+    malformed = source.replace("Player02: folds", "Player03: folds", 1)
+
+    result = parse_pokerstars_text(
+        f"{source}\n{malformed}",
+        context=import_context("legacy-timeout-isolation.txt"),
+    )
+
+    assert len(result.hands) == 1
+    assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000021"
+    assert [(diagnostic.hand_ordinal, diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
+        (2, "unbound_timeout_marker", 72)
     ]
 
 
