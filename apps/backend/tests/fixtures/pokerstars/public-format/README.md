@@ -22,7 +22,7 @@ or local source path. The sanitized fixture is 2,121 bytes with SHA-256
 ## HAND2 current expectation
 
 The P1a regression maps this specimen only against the independently reviewed
-[HAND2 source labels](../../../../../docs/process/pokerstars-hand2-source-labels.md).
+[HAND2 source labels](../../../../../../docs/process/pokerstars-hand2-source-labels.md).
 It preserves unresolved normalized chronology, retains the printed timestamps
 as source evidence, and keeps finish places ancillary. This does not establish
 general tournament support, current PokerStars semantics, or corpus evidence.
@@ -51,4 +51,4 @@ parser expectation is the structured `no_hand_headers` rejection: it retains
 the observed legacy `PokerStars Game #` header and has no dealt-to-hero line.
 Do not edit it into an accepted history or use it to introduce unrelated header
 or hero inference. The associated evidence packet is
-[`docs/process/pokerstars-p1b-action-origin-evidence.md`](../../../../../docs/process/pokerstars-p1b-action-origin-evidence.md).
+[`docs/process/pokerstars-p1b-action-origin-evidence.md`](../../../../../../docs/process/pokerstars-p1b-action-origin-evidence.md).
