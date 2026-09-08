@@ -1425,6 +1425,12 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
             50,
         ),
         (
+            "Seat 3: Player03 (small blind) folded before Flop",
+            "Seat 3: Player03 (small blind) folded before Flop (didn't bet)",
+            "summary_fold_mismatch",
+            51,
+        ),
+        (
             "Seat 9: Player09 showed [Kd Ac] and won (26310) with a pair of Kings",
             "Seat 9: Player09 collected (26310)",
             "unsupported_summary_result",

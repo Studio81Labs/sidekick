@@ -128,7 +128,7 @@ _SUMMARY_FOLD_RE = re.compile(
 )
 _HISTORICAL_TOURNAMENT_SUMMARY_FOLD_RE = re.compile(
     r"^ folded (?P<where>before Flop|on the Flop|on the Turn|on the River)"
-    r"(?: \(didn't bet\))?$"
+    r"(?P<did_not_bet> \(didn't bet\))?$"
 )
 _SUMMARY_COLLECTED_RE = re.compile(
     rf"^ collected \((?P<amount>{_MONEY})\)$"
@@ -1665,6 +1665,21 @@ def _validate_summary_seat_line(
             raise _HandParseError(
                 "summary_fold_mismatch",
                 "The summary fold does not match the parsed action stream.",
+                line_start=line,
+            )
+        if (
+            allow_historical_tournament_results
+            and folded.group("did_not_bet") is not None
+            and any(
+                action.actor_id == player_id
+                and action.action_type not in {"post_ante", "fold"}
+                for street_actions in actions
+                for action in street_actions
+            )
+        ):
+            raise _HandParseError(
+                "summary_fold_mismatch",
+                "A summary didn't-bet annotation contradicts parsed contributions.",
                 line_start=line,
             )
         return
