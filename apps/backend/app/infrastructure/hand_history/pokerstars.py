@@ -1736,6 +1736,13 @@ def _parse_body(
             line_start=line.number,
         )
 
+    if pending_timeout_marker is not None:
+        raise _HandParseError(
+            "unbound_timeout_marker",
+            "A timeout marker must bind the same actor's immediately following fold.",
+            line_start=pending_timeout_marker.evidence.line_start,
+            line_end=pending_timeout_marker.evidence.line_end,
+        )
     if not hole_seen:
         raise _HandParseError(
             "missing_hole_cards",
@@ -1955,7 +1962,7 @@ def _validate_summary_seat_line(
                 line_start=line,
             )
         if (
-            allow_historical_tournament_results
+            (allow_historical_tournament_results or allow_timeout_to_fold_origin)
             and folded.group("did_not_bet") is not None
             and any(
                 action.actor_id == player_id
@@ -2433,7 +2440,14 @@ def _parse_positive_money(
 
 
 def _parse_played_at(value: str, source_timezone: str, *, line: int) -> datetime:
-    naive = datetime.strptime(value, "%Y/%m/%d %H:%M:%S")
+    try:
+        naive = datetime.strptime(value, "%Y/%m/%d %H:%M:%S")
+    except ValueError as exc:
+        raise _HandParseError(
+            "invalid_source_time",
+            "The source timestamp is invalid.",
+            line_start=line,
+        ) from exc
     if source_timezone in {"UTC", "GMT"}:
         return naive.replace(tzinfo=timezone.utc)
     if naive.year < 2007:

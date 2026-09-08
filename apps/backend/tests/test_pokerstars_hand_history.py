@@ -1280,6 +1280,12 @@ def test_public_legacy_timeout_specimen_matches_source_labels() -> None:
             "unbound_timeout_marker",
             18,
         ),
+        (
+            "Seat 3: Player03 folded on the Flop",
+            "Seat 3: Player03 folded on the Flop (didn't bet)",
+            "summary_fold_mismatch",
+            47,
+        ),
         ("Player02 has timed out\n", "", "unsupported_sit_out_event", 19),
         ("$34.90", "€34.90", "currency_mismatch", 3),
     ],
@@ -1320,6 +1326,46 @@ def test_legacy_timeout_rejection_is_isolated_from_a_valid_sibling() -> None:
     assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000021"
     assert [(diagnostic.hand_ordinal, diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
         (2, "unbound_timeout_marker", 72)
+    ]
+
+
+@pytest.mark.parametrize("with_valid_sibling", [False, True])
+def test_legacy_timeout_marker_at_eof_or_a_hand_boundary_is_rejected(
+    with_valid_sibling: bool,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
+    ).read_text()
+    truncated = source.split("Player02: folds", 1)[0]
+    input_text = f"{truncated}\n{source}" if with_valid_sibling else truncated
+
+    result = parse_pokerstars_text(
+        input_text,
+        context=import_context("legacy-timeout-boundary.txt"),
+    )
+
+    assert [hand.hand_ordinal for hand in result.hands] == (
+        [2] if with_valid_sibling else []
+    )
+    assert [(diagnostic.hand_ordinal, diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
+        (1, "unbound_timeout_marker", 18)
+    ]
+
+
+def test_legacy_timeout_invalid_timestamp_is_isolated_from_a_valid_sibling() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
+    ).read_text()
+    malformed = source.replace("2008/10/31", "2008/02/31", 1)
+
+    result = parse_pokerstars_text(
+        f"{source}\n{malformed}",
+        context=import_context("legacy-timeout-invalid-time.txt"),
+    )
+
+    assert [hand.hand_ordinal for hand in result.hands] == [1]
+    assert [(diagnostic.hand_ordinal, diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
+        (2, "invalid_source_time", source.count("\n") + 2)
     ]
 
 
