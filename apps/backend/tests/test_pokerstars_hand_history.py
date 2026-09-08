@@ -1367,8 +1367,8 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
         (
             "Player09 collected 21570 from side pot",
             "Player09 collected 21570 from main pot",
-            "tournament_award_mismatch",
-            1,
+            "tournament_results_order",
+            41,
         ),
         (
             "Player09: shows [Kd Ac] (a pair of Kings)",
@@ -1552,6 +1552,49 @@ def test_public_tournament_summary_requires_reviewed_trailer_order() -> None:
     assert result.diagnostics[0].line_start == 57
 
 
+@pytest.mark.parametrize(
+    ("original", "replacement", "expected_line"),
+    [
+        (
+            "Player09 collected 21570 from side pot\n"
+            "Player06: shows [9c Qd] (a pair of Nines)\n"
+            "Player09 collected 4740 from main pot\n",
+            "Player09 collected 4740 from main pot\n"
+            "Player06: shows [9c Qd] (a pair of Nines)\n"
+            "Player09 collected 21570 from side pot\n",
+            41,
+        ),
+        (
+            "Player09 collected 21570 from side pot\n"
+            "Player06: shows [9c Qd] (a pair of Nines)\n"
+            "Player09 collected 4740 from main pot\n",
+            "Player09 collected 21570 from side pot\n"
+            "Player09 collected 4740 from main pot\n"
+            "Player06: shows [9c Qd] (a pair of Nines)\n",
+            42,
+        ),
+    ],
+)
+def test_public_tournament_results_require_reviewed_interleaving(
+    original: str,
+    replacement: str,
+    expected_line: int,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(original, replacement, 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-results-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_results_order"
+    assert result.diagnostics[0].line_start == expected_line
+
+
 def test_public_tournament_finish_statements_require_complete_results() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
@@ -1580,14 +1623,14 @@ def test_public_tournament_showdown_cannot_follow_finish_statements() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
     ).read_text()
-    player_six_showdown = "Player06: shows [9c Qd] (a pair of Nines)\n"
+    repeated_showdown = "Player09: shows [Kd Ac] (a pair of Kings)\n"
     finishes = (
         "Player02 finished the tournament in 80th place\n"
         "Player06 finished the tournament in 81st place\n"
     )
-    source = source.replace(player_six_showdown, "").replace(
+    source = source.replace(
         finishes,
-        finishes + player_six_showdown,
+        finishes + repeated_showdown,
     )
 
     result = parse_pokerstars_text(
@@ -1598,7 +1641,7 @@ def test_public_tournament_showdown_cannot_follow_finish_statements() -> None:
     assert result.hands == ()
     assert len(result.diagnostics) == 1
     assert result.diagnostics[0].code == "tournament_finish_order"
-    assert result.diagnostics[0].line_start == 45
+    assert result.diagnostics[0].line_start == 46
 
 
 def test_public_tournament_summary_rank_must_match_showdown_description() -> None:

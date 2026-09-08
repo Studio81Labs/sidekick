@@ -143,6 +143,13 @@ _TOURNAMENT_FINISH_RE = re.compile(
     r"^(?P<name>.+) finished the tournament in "
     r"(?P<place>[1-9][0-9]*)(?P<ordinal>st|nd|rd|th) place$"
 )
+_HISTORICAL_TOURNAMENT_RESULT_EVENTS = (
+    ("showdown", "seat-9", None),
+    ("showdown", "seat-2", None),
+    ("award", "seat-9", 1),
+    ("showdown", "seat-6", None),
+    ("award", "seat-9", 0),
+)
 
 _UNRESOLVED_HISTORICAL_TIME_WARNING = (
     "Source time is unresolved: historical dual-zone timestamp semantics are "
@@ -919,6 +926,7 @@ def _parse_body(
     showdown_rank_descriptions: dict[str, str] = {}
     finish_player_ids: set[str] = set()
     finish_evidence: list[SourceEvidence] = []
+    historical_tournament_result_event_index = 0
 
     for line in lines[1:]:
         text = line.text
@@ -1348,6 +1356,16 @@ def _parse_body(
                 pot_index = 1
             else:
                 pot_index = int(pot_label.rsplit("-", 1)[1])
+            if allow_historical_tournament_results:
+                historical_tournament_result_event_index = (
+                    _next_historical_tournament_result_event(
+                        historical_tournament_result_event_index,
+                        event_type="award",
+                        player_id=player_id,
+                        pot_index=pot_index,
+                        line=line.number,
+                    )
+                )
             awards.append(
                 PotAward(
                     player_id=player_id,
@@ -1413,6 +1431,16 @@ def _parse_body(
                         "A player may appear at showdown at most once.",
                         line_start=line.number,
                         line_end=line.number,
+                    )
+                if allow_historical_tournament_results:
+                    historical_tournament_result_event_index = (
+                        _next_historical_tournament_result_event(
+                            historical_tournament_result_event_index,
+                            event_type="showdown",
+                            player_id=player_id,
+                            pot_index=None,
+                            line=line.number,
+                        )
                     )
                 showdown_player_ids.add(player_id)
                 if allow_historical_tournament_results:
@@ -1518,6 +1546,13 @@ def _parse_body(
         )
     if allow_historical_tournament_results:
         assert stated_pot is not None
+        if historical_tournament_result_event_index != len(
+            _HISTORICAL_TOURNAMENT_RESULT_EVENTS
+        ):
+            raise _HandParseError(
+                "tournament_results_order",
+                "The reviewed historical tournament form requires its complete showdown and award sequence.",
+            )
         if (
             len(awards) != 2
             or {award.pot_index for award in awards} != {0, 1}
@@ -2044,6 +2079,28 @@ def _historical_tournament_rank_description(body: str) -> str | None:
     if match is None:
         return None
     return match.group("rank_description")
+
+
+def _next_historical_tournament_result_event(
+    event_index: int,
+    *,
+    event_type: Literal["award", "showdown"],
+    player_id: str,
+    pot_index: int | None,
+    line: int,
+) -> int:
+    expected = (
+        _HISTORICAL_TOURNAMENT_RESULT_EVENTS[event_index]
+        if event_index < len(_HISTORICAL_TOURNAMENT_RESULT_EVENTS)
+        else None
+    )
+    if expected != (event_type, player_id, pot_index):
+        raise _HandParseError(
+            "tournament_results_order",
+            "The reviewed historical tournament form requires its documented showdown and award sequence.",
+            line_start=line,
+        )
+    return event_index + 1
 
 
 def _parse_board(value: str, *, expected_count: int, line: int) -> list[Card]:
