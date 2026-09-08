@@ -266,8 +266,14 @@ shape includes at minimum:
   in for play time in recency, session, or proof-of-learning calculations.
 - Economic context when supplied: for cash games, currency and the applicable
   rake/drop schedule and cap; for tournaments, tournament identity/type and
-  stage, payout/paid-place structure, players remaining, relevant remaining
-  stacks, bounty format/values, and any other ICM inputs. Missing economic fields
+  stage, separately reported entry buy-in/fee and source blind-level label,
+  payout/paid-place structure, players remaining, relevant remaining stacks,
+  bounty format/values, and any other ICM inputs. Entry costs use their explicitly
+  supplied currency denomination, never tournament chips or hand rake. A
+  blind-level label does not establish tournament stage or ICM readiness.
+  [ADR 0077](../decisions/0077-retain-tournament-entry-and-level-source-facts.md)
+  defines this optional source-fact extension and its compatibility prerequisite;
+  implementation remains tracked in #409. Missing economic fields
   remain explicitly unknown rather than inferred. Tournament seat
   `remaining_stacks` entries used for current-hand extraction are the same
   hand-start stack snapshot as the seats' `starting_stack` values. Both use

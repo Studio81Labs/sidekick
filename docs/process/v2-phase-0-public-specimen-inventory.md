@@ -68,8 +68,14 @@ The next parser implementation may proceed only after a reviewed source label
 defines the corresponding meaning. This inventory leaves the following explicit
 blockers in place:
 
-- Tournament header mapping: tournament identity/type, buy-in/fee, level/blind,
-  absolute-chip stacks, and source-time/zone interpretation.
+- Tournament header mapping: #498's model gap is resolved by
+  [ADR 0077](../decisions/0077-retain-tournament-entry-and-level-source-facts.md).
+  Its P1a0 model/serialization and workspace v5/backup v3 compatibility work must
+  merge before P1a parser changes. The entry pair maps to optional
+  `entry_buy_in`/`entry_fee` in explicit currency and `blind_level="XI"`;
+  `stage` remains unknown. Full source labels for tournament identity/type,
+  absolute-chip stacks, summaries and source-time/zone interpretation are still
+  required; this decision does not make the fixture parseable.
 - Tournament economics: no payout, remaining-field, bounty, ICM, or rake
   schedule may be inferred from the specimen.
 - Summary variants: main/side-pot totals, placements, and showdown wording need
@@ -86,8 +92,9 @@ blockers in place:
 
 ## Next evidence required
 
-P1a can replace the fixture's rejection assertion with complete independently
-reviewed labels only for syntax established by a pinned source. P2 still needs a
+After P1a0 compatibility work, P1a can replace the fixture's rejection assertion
+with complete independently reviewed labels only for syntax established by a
+pinned source. P2 still needs a
 private authorized representative corpus and independent labels. R0 remains
 blocked on an actual supported strategy export and rights evidence; no
 source-specific normalizer, lookup, certification, production catalog, or
