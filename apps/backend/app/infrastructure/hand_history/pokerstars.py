@@ -1110,7 +1110,7 @@ def _parse_body(
             if text.startswith("Board ["):
                 if (
                     allow_historical_tournament_results
-                    and historical_tournament_summary_phase == "seats"
+                    and historical_tournament_summary_phase != "board"
                 ):
                     raise _HandParseError(
                         "tournament_summary_order",
@@ -1146,6 +1146,15 @@ def _parse_body(
                     historical_tournament_summary_phase = "seats"
                 continue
             if text.startswith("Seat "):
+                if (
+                    allow_historical_tournament_results
+                    and historical_tournament_summary_phase != "seats"
+                ):
+                    raise _HandParseError(
+                        "tournament_summary_order",
+                        "The reviewed historical tournament summary requires its seat rows after the board.",
+                        line_start=line.number,
+                    )
                 _validate_summary_seat_line(
                     text,
                     line=line.number,

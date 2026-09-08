@@ -1499,18 +1499,30 @@ def test_public_tournament_format_specimen_rejects_labelled_contradictions(
 
 
 @pytest.mark.parametrize(
-    "removed",
+    ("removed", "expected_code", "expected_line"),
     [
-        "Board [3c 6s 9d 8d Ks]\n",
-        "Seat 1: Player01 folded before Flop (didn't bet)\n",
+        (
+            "Board [3c 6s 9d 8d Ks]\n",
+            "tournament_summary_order",
+            48,
+        ),
+        (
+            "Seat 1: Player01 folded before Flop (didn't bet)\n",
+            "missing_tournament_trailer",
+            1,
+        ),
         (
             "Player02 finished the tournament in 80th place\n"
-            "Player06 finished the tournament in 81st place\n"
+            "Player06 finished the tournament in 81st place\n",
+            "missing_tournament_trailer",
+            1,
         ),
     ],
 )
 def test_public_tournament_format_requires_complete_reviewed_trailer(
     removed: str,
+    expected_code: str,
+    expected_line: int,
 ) -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
@@ -1523,8 +1535,8 @@ def test_public_tournament_format_requires_complete_reviewed_trailer(
 
     assert result.hands == ()
     assert len(result.diagnostics) == 1
-    assert result.diagnostics[0].code == "missing_tournament_trailer"
-    assert result.diagnostics[0].line_start == 1
+    assert result.diagnostics[0].code == expected_code
+    assert result.diagnostics[0].line_start == expected_line
 
 
 def test_public_tournament_summary_requires_reviewed_trailer_order() -> None:
@@ -1549,7 +1561,39 @@ def test_public_tournament_summary_requires_reviewed_trailer_order() -> None:
     assert result.hands == ()
     assert len(result.diagnostics) == 1
     assert result.diagnostics[0].code == "tournament_summary_order"
-    assert result.diagnostics[0].line_start == 57
+    assert result.diagnostics[0].line_start == 47
+
+
+@pytest.mark.parametrize(
+    ("anchor", "expected_line"),
+    [
+        ("Board [3c 6s 9d 8d Ks]\n", 48),
+        ("Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0\n", 47),
+    ],
+)
+def test_public_tournament_summary_rejects_seat_rows_before_required_labels(
+    anchor: str,
+    expected_line: int,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    seat_row = "Seat 1: Player01 folded before Flop (didn't bet)\n"
+    source = source.replace(seat_row, "", 1).replace(
+        anchor,
+        seat_row + anchor,
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-seat-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_summary_order"
+    assert result.diagnostics[0].line_start == expected_line
 
 
 @pytest.mark.parametrize(
@@ -1774,8 +1818,8 @@ def test_historical_tournament_requires_the_labelled_total_pot_line() -> None:
 
     assert result.hands == ()
     assert len(result.diagnostics) == 1
-    assert result.diagnostics[0].code == "missing_tournament_total_pot"
-    assert result.diagnostics[0].line_start == 1
+    assert result.diagnostics[0].code == "tournament_summary_order"
+    assert result.diagnostics[0].line_start == 47
 
 
 def test_historical_tournament_summary_syntax_remains_header_bound() -> None:
