@@ -61,8 +61,9 @@ representative distribution.
 | Independent labels        | P1b evidence ledger and independently authored current rejection expectation in [the action-origin packet](pokerstars-p1b-action-origin-evidence.md); independent source review is required before parser implementation.                                                                         |
 
 This specimen records plain `has timed out`, `has timed out while disconnected`,
-and unrelated table/disconnect notifications. The current adapter rejects it at
-the legacy `PokerStars Game #` header, and it lacks a dealt-to-hero line. It is
+and unrelated table/disconnect notifications. The current adapter detects its
+legacy `PokerStars Game #` hand boundary, then rejects the unsupported
+one-digit-hour/explicit-ISO header; it also lacks a dealt-to-hero line. It is
 therefore not a supported parser input, a proof of current-client behavior, or
 a complete action-origin rule. The bounded candidate labels, combined-cause
 encoding, evidence lines, scope/reset conditions, and explicit negative cases
@@ -80,16 +81,17 @@ are recorded separately; missing markers continue to mean `unknown`.
 | Repository material       | Sanitized derivative at [`apps/backend/tests/fixtures/pokerstars/public-format/wizardwerdna-pokerstats-timeout-fold.txt`](../../apps/backend/tests/fixtures/pokerstars/public-format/wizardwerdna-pokerstats-timeout-fold.txt), attribution/license retained beside it |
 | Sanitized fixture SHA-256 | `51b9add6944ebef6f6205076a29aad2f12c09aec536d7298ed93e55f607b338a` (1,653 bytes)                                                                                                                                                                                       |
 | Sanitation                | Replaced player, hand, and table identifiers and normalized trailing whitespace; retained header family, timestamp/dollar notation, stacks, cards, amounts, action/summary order, timeout and sit-out text                                                             |
-| Independent labels        | [Complete source-authored labels](pokerstars-p1b-game-timeout-source-labels.md), pending required separate source review before parser implementation                                                                                                                  |
+| Independent labels        | [Complete source-authored labels](pokerstars-p1b-game-timeout-source-labels.md), independently reviewed on merged #510 before the bounded parser mapping                                                                                                               |
 
 The hand contains `has timed out` immediately followed by the same actor's fold,
 a dealt-to hero, and complete cash action/result text. It also uses a legacy
 `PokerStars Game #` header and dollar symbols without an ISO currency code. The
-current adapter rejects it at line 1. Labels preserve `currency=None`, a
-one-action same-actor timeout-to-fold candidate, and unknown origins for every
-unmarked ordinary action. They do not establish current-client behavior,
-absence/manual-action semantics, disconnect/reconnect semantics, a source-event
-persistence contract, or representative-corpus qualification.
+reviewed adapter maps only its bounded legacy grammar. Labels preserve
+`currency=None`, a one-action same-actor timeout-to-fold rule, and unknown
+origins for every unmarked ordinary action. They do not establish
+current-client behavior, absence/manual-action semantics, disconnect/reconnect
+semantics, a source-event persistence contract, or representative-corpus
+qualification.
 
 ## HRC viewer example
 

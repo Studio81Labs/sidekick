@@ -47,8 +47,9 @@ local source path remains.
 The file is a public format sample and P1b evidence-preparation input. It is
 not a representative-corpus case, proof of current-client behavior, or proof
 that a missing marker identifies a player-selected action. Its exact current
-parser expectation is the structured `no_hand_headers` rejection: it retains
-the observed legacy `PokerStars Game #` header and has no dealt-to-hero line.
+parser expectation is the structured `unsupported_header` rejection: the
+adapter detects the observed legacy `PokerStars Game #` hand boundary but does
+not accept its one-digit-hour/explicit-ISO header or infer a dealt-to hero.
 Do not edit it into an accepted history or use it to introduce unrelated header
 or hero inference. The associated evidence packet is
 [`docs/process/pokerstars-p1b-action-origin-evidence.md`](../../../../../../docs/process/pokerstars-p1b-action-origin-evidence.md).
@@ -71,9 +72,8 @@ notification. No original player, hand, table, account identifier, or local
 path remains.
 
 This public format sample is P1b source-label input, not a representative
-corpus case or current-client proof. Its current parser expectation remains
-`no_hand_headers`, because it retains `PokerStars Game #`. The labels preserve
-`currency=None` because dollar notation supplies no ISO code; unmarked actions
-remain unknown. Do not rewrite it to a modern header or broaden parser support
-without required source review. See the
+corpus case or current-client proof. The reviewed adapter maps only its exact
+legacy header/body grammar. The labels preserve `currency=None` because dollar
+notation supplies no ISO code; unmarked actions remain unknown. Do not rewrite
+it to a modern header or broaden the reviewed parser support. See the
 [legacy timeout labels](../../../../../../docs/process/pokerstars-p1b-game-timeout-source-labels.md).

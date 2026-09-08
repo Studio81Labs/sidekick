@@ -43,20 +43,29 @@ from app.domain.poker import Card
 
 
 POKERSTARS_ADAPTER_ID = "pokerstars"
-POKERSTARS_ADAPTER_VERSION = "0.2.0"
-POKERSTARS_FORMAT_REVISION = "pokerstars-text/v2"
+POKERSTARS_ADAPTER_VERSION = "0.3.0"
+POKERSTARS_FORMAT_REVISION = "pokerstars-text/v3"
 
 _MONEY = (
     r"[$€£]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
 )
 _CHIPS = r"(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
-_HEADER_START_RE = re.compile(r"^\ufeff?PokerStars Hand #(?P<hand_id>[^:]+):")
 _CASH_HEADER_RE = re.compile(
     rf"^\ufeff?PokerStars Hand #(?P<hand_id>[0-9]+): +"
     rf"Hold'em No Limit \((?P<small>{_MONEY})/(?P<big>{_MONEY}) "
     r"(?P<currency>[A-Z]{3})\) - "
     r"(?P<played_at>[0-9]{4}/[0-9]{2}/[0-9]{2} "
     r"[0-9]{2}:[0-9]{2}:[0-9]{2}) (?P<timezone>ET|UTC|GMT)$"
+)
+_LEGACY_TIMEOUT_CASH_HEADER_RE = re.compile(
+    rf"^\ufeff?PokerStars Game #(?P<hand_id>[0-9]+): +"
+    rf"Hold'em No Limit \(\$(?P<small>{_CHIPS})/\$(?P<big>{_CHIPS})\) - "
+    r"(?P<played_at>[0-9]{4}/[0-9]{2}/[0-9]{2} "
+    r"[0-9]{2}:[0-9]{2}:[0-9]{2}) ET$"
+)
+_HEADER_START_RE = re.compile(
+    r"^\ufeff?PokerStars Hand #(?P<hand_id>[^:]+):"
+    r"|^\ufeff?PokerStars Game #(?P<legacy_hand_id>[^:]+):"
 )
 _HISTORICAL_TOURNAMENT_HEADER_RE = re.compile(
     rf"^\ufeff?PokerStars Hand #(?P<hand_id>[0-9]+): +"
@@ -100,6 +109,8 @@ _COLLECTED_RE = re.compile(
     r"(?P<pot>pot|main pot|side pot(?:-[1-9][0-9]*)?)$"
 )
 _ACTOR_LINE_RE = re.compile(r"^(?P<name>.+): (?P<body>.+)$")
+_TIMEOUT_MARKER_RE = re.compile(r"^(?P<name>.+) has timed out$")
+_SITTING_OUT_EVENT_RE = re.compile(r"^(?P<name>.+) is sitting out$")
 _POST_RE = re.compile(
     rf"^posts (?P<post>small blind|big blind|the ante|straddle) "
     rf"(?P<amount>{_MONEY})(?P<all_in> and is all-in)?$"
@@ -125,6 +136,10 @@ _SUMMARY_SEAT_RE = re.compile(
 )
 _SUMMARY_FOLD_RE = re.compile(
     r"^ folded (?P<where>before Flop|on the Flop|on the Turn|on the River)$"
+)
+_LEGACY_TIMEOUT_SUMMARY_FOLD_RE = re.compile(
+    r"^ folded (?P<where>before Flop|on the Flop|on the Turn|on the River)"
+    r"(?P<did_not_bet> \(didn't bet\))?$"
 )
 _HISTORICAL_TOURNAMENT_SUMMARY_FOLD_RE = re.compile(
     r"^ folded (?P<where>before Flop|on the Flop|on the Turn|on the River)"
@@ -278,7 +293,7 @@ class _ParsedSeats:
 @dataclass(frozen=True)
 class _ParsedHeader:
     hand_id: str
-    currency: str
+    currency: str | None
     small_blind: Decimal
     big_blind: Decimal
     played_at: datetime | None
@@ -287,10 +302,19 @@ class _ParsedHeader:
     entry_buy_in: Decimal | None = None
     entry_fee: Decimal | None = None
     blind_level: str | None = None
+    allow_unqualified_dollar_amounts: bool = False
+    allow_timeout_to_fold_origin: bool = False
 
     @property
     def is_historical_tournament(self) -> bool:
         return self.tournament_id is not None
+
+
+@dataclass(frozen=True)
+class _PendingTimeoutMarker:
+    actor_id: str
+    actor_name: str
+    evidence: SourceEvidence
 
 
 def parse_pokerstars_text(
@@ -316,7 +340,11 @@ def parse_pokerstars_text(
         header_match = _HEADER_START_RE.match(
             block.raw_text.splitlines()[0] if block.raw_text.splitlines() else ""
         )
-        source_hand_id = header_match.group("hand_id") if header_match else None
+        source_hand_id = (
+            (header_match.group("hand_id") or header_match.group("legacy_hand_id"))
+            if header_match
+            else None
+        )
         try:
             parsed.append(_parse_hand(block, context=context))
         except _HandParseError as exc:
@@ -481,6 +509,35 @@ def _parse_header(line: _SourceLine) -> _ParsedHeader:
             source_timezone=cash.group("timezone"),
         )
 
+    legacy_cash = _LEGACY_TIMEOUT_CASH_HEADER_RE.fullmatch(line.text)
+    if legacy_cash is not None:
+        return _ParsedHeader(
+            hand_id=legacy_cash.group("hand_id"),
+            currency=None,
+            small_blind=_parse_positive_money(
+                legacy_cash.group("small"),
+                None,
+                line=line.number,
+                code="invalid_blind_amount",
+                allow_unqualified_dollar_amounts=True,
+            ),
+            big_blind=_parse_positive_money(
+                legacy_cash.group("big"),
+                None,
+                line=line.number,
+                code="invalid_blind_amount",
+                allow_unqualified_dollar_amounts=True,
+            ),
+            played_at=_parse_played_at(
+                legacy_cash.group("played_at"),
+                "ET",
+                line=line.number,
+            ),
+            source_timezone="ET",
+            allow_unqualified_dollar_amounts=True,
+            allow_timeout_to_fold_origin=True,
+        )
+
     tournament = _HISTORICAL_TOURNAMENT_HEADER_RE.fullmatch(line.text)
     if tournament is None:
         raise _HandParseError(
@@ -604,6 +661,7 @@ def _parse_hand(
         lines,
         raw_source_id=raw_source_id,
         currency=amount_currency,
+        allow_unqualified_dollar_amounts=header.allow_unqualified_dollar_amounts,
     )
     positions = derive_structural_positions(
         parsed_seats.seats,
@@ -649,6 +707,7 @@ def _parse_hand(
         lines,
         raw_source_id=raw_source_id,
         currency=amount_currency,
+        allow_unqualified_dollar_amounts=header.allow_unqualified_dollar_amounts,
         nominal_preflop_bring_in=header.big_blind,
         player_id_by_name=parsed_seats.player_id_by_name,
         sitting_out_player_ids={
@@ -661,6 +720,7 @@ def _parse_hand(
             for seat in seats
         },
         allow_historical_tournament_results=header.is_historical_tournament,
+        allow_timeout_to_fold_origin=header.allow_timeout_to_fold_origin,
     )
     _validate_structural_blind_posts(
         parsed_body,
@@ -768,6 +828,7 @@ def _parse_seats(
     *,
     raw_source_id: str,
     currency: str | None,
+    allow_unqualified_dollar_amounts: bool,
 ) -> _ParsedSeats:
     table_line = next((line for line in lines[1:] if _TABLE_RE.fullmatch(line.text)), None)
     if table_line is None:
@@ -818,6 +879,7 @@ def _parse_seats(
             match.group("stack"),
             currency,
             line=line.number,
+            allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
         )
         if stack <= 0 and not match.group("sitting_out"):
             raise _HandParseError(
@@ -881,11 +943,13 @@ def _parse_body(
     *,
     raw_source_id: str,
     currency: str | None,
+    allow_unqualified_dollar_amounts: bool,
     nominal_preflop_bring_in: Decimal,
     player_id_by_name: dict[str, str],
     sitting_out_player_ids: set[str],
     expected_position_tags_by_player: dict[str, frozenset[str]],
     allow_historical_tournament_results: bool,
+    allow_timeout_to_fold_origin: bool,
 ) -> _ParsedBody:
     street_names: list[Literal["preflop", "flop", "turn", "river"]] = ["preflop"]
     boards: list[list[Card]] = [[]]
@@ -932,10 +996,61 @@ def _parse_body(
     historical_tournament_result_event_index = 0
     historical_tournament_summary_seat_index = 0
     historical_tournament_finish_index = 0
+    pending_timeout_marker: _PendingTimeoutMarker | None = None
+    last_timeout_fold_player_id: str | None = None
 
     for line in lines[1:]:
         text = line.text
         if not text:
+            continue
+        if (
+            pending_timeout_marker is not None
+            and text != f"{pending_timeout_marker.actor_name}: folds"
+        ):
+            raise _HandParseError(
+                "unbound_timeout_marker",
+                "A timeout marker must bind the same actor's immediately following fold.",
+                line_start=pending_timeout_marker.evidence.line_start,
+                line_end=pending_timeout_marker.evidence.line_end,
+            )
+        sitting_out_event = _SITTING_OUT_EVENT_RE.fullmatch(text)
+        if sitting_out_event is not None and allow_timeout_to_fold_origin:
+            player_id = _dealt_in_player_id(
+                sitting_out_event.group("name"),
+                player_id_by_name,
+                sitting_out_player_ids=sitting_out_player_ids,
+                line=line.number,
+            )
+            if last_timeout_fold_player_id != player_id:
+                raise _HandParseError(
+                    "unsupported_sit_out_event",
+                    "A legacy sit-out event must immediately follow the bound timeout fold.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
+            last_timeout_fold_player_id = None
+            continue
+        last_timeout_fold_player_id = None
+        timeout_marker = _TIMEOUT_MARKER_RE.fullmatch(text)
+        if timeout_marker is not None and allow_timeout_to_fold_origin:
+            if not hole_seen or showdown_seen or award_seen or in_summary:
+                raise _HandParseError(
+                    "timeout_marker_order",
+                    "A timeout marker must occur during table action after hole cards.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
+            actor_name = timeout_marker.group("name")
+            pending_timeout_marker = _PendingTimeoutMarker(
+                actor_id=_dealt_in_player_id(
+                    actor_name,
+                    player_id_by_name,
+                    sitting_out_player_ids=sitting_out_player_ids,
+                    line=line.number,
+                ),
+                actor_name=actor_name,
+                evidence=_evidence(raw_source_id, line),
+            )
             continue
         if _TABLE_RE.fullmatch(text):
             if table_seen or seat_declaration_count or forced_post_seen or hole_seen:
@@ -1078,11 +1193,13 @@ def _parse_body(
                     pot_match.group("gross"),
                     currency,
                     line=line.number,
+                    allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
                 )
                 rake = _parse_money(
                     pot_match.group("rake"),
                     currency,
                     line=line.number,
+                    allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
                 )
                 if tournament_total_pot_match is not None and rake != 0:
                     raise _HandParseError(
@@ -1104,11 +1221,13 @@ def _parse_body(
                         tournament_total_pot_match.group("main"),
                         currency,
                         line=line.number,
+                        allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
                     )
                     side_pot = _parse_money(
                         tournament_total_pot_match.group("side"),
                         currency,
                         line=line.number,
+                        allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
                     )
                     if main_pot + side_pot != gross:
                         raise _HandParseError(
@@ -1196,6 +1315,7 @@ def _parse_body(
                     text,
                     line=line.number,
                     currency=currency,
+                    allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
                     player_id_by_name=player_id_by_name,
                     sitting_out_player_ids=sitting_out_player_ids,
                     expected_position_tags_by_player=(
@@ -1209,6 +1329,7 @@ def _parse_body(
                     allow_historical_tournament_results=(
                         allow_historical_tournament_results
                     ),
+                    allow_timeout_to_fold_origin=allow_timeout_to_fold_origin,
                     summary_seat_numbers=summary_seat_numbers,
                 )
                 if allow_historical_tournament_results:
@@ -1329,6 +1450,7 @@ def _parse_body(
                 currency,
                 line=line.number,
                 code="invalid_action_amount",
+                allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
             )
             prior = commitments[player_id]
             prior_live = live_commitments[player_id]
@@ -1422,6 +1544,9 @@ def _parse_body(
                         currency,
                         line=line.number,
                         code="invalid_award_amount",
+                        allow_unqualified_dollar_amounts=(
+                            allow_unqualified_dollar_amounts
+                        ),
                     ),
                     pot_index=pot_index,
                     evidence=[evidence],
@@ -1508,6 +1633,7 @@ def _parse_body(
             parsed_action = _parse_action_line(
                 body,
                 currency=currency,
+                allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
                 line=line.number,
                 sequence=len(actions[-1]),
                 actor_id=player_id,
@@ -1530,6 +1656,30 @@ def _parse_body(
                     line_end=line.number,
                 )
             action, total_committed, live_committed = parsed_action
+            if pending_timeout_marker is not None:
+                if (
+                    player_id != pending_timeout_marker.actor_id
+                    or action.action_type != "fold"
+                ):
+                    raise _HandParseError(
+                        "unbound_timeout_marker",
+                        "A timeout marker must bind the same actor's immediately following fold.",
+                        line_start=pending_timeout_marker.evidence.line_start,
+                        line_end=pending_timeout_marker.evidence.line_end,
+                    )
+                action = action.model_copy(
+                    update={
+                        "origin": ActionOrigin(
+                            kind="client_automatic",
+                            basis="explicit_marker",
+                            confidence=Decimal("1"),
+                            evidence=[pending_timeout_marker.evidence, evidence],
+                            semantics_revision="pokerstars-cash-2008-timeout-v1",
+                            automatic_reason="timeout",
+                        )
+                    },
+                )
+                pending_timeout_marker = None
             is_forced_post = action.action_type.startswith("post_")
             if showdown_seen or (is_forced_post and hole_seen) or (
                 not is_forced_post and not hole_seen
@@ -1567,6 +1717,9 @@ def _parse_body(
                 current_wager = max(current_wager, live_committed)
             actions[-1].append(action)
             action_evidence[-1].append(evidence)
+            last_timeout_fold_player_id = (
+                player_id if action.origin.kind == "client_automatic" else None
+            )
             if not is_forced_post:
                 non_forced_action_seen = True
             if action.action_type == "fold":
@@ -1581,6 +1734,13 @@ def _parse_body(
             line_start=line.number,
         )
 
+    if pending_timeout_marker is not None:
+        raise _HandParseError(
+            "unbound_timeout_marker",
+            "A timeout marker must bind the same actor's immediately following fold.",
+            line_start=pending_timeout_marker.evidence.line_start,
+            line_end=pending_timeout_marker.evidence.line_end,
+        )
     if not hole_seen:
         raise _HandParseError(
             "missing_hole_cards",
@@ -1676,6 +1836,7 @@ def _validate_summary_seat_line(
     *,
     line: int,
     currency: str | None,
+    allow_unqualified_dollar_amounts: bool,
     player_id_by_name: dict[str, str],
     sitting_out_player_ids: set[str],
     expected_position_tags_by_player: dict[str, frozenset[str]],
@@ -1685,6 +1846,7 @@ def _validate_summary_seat_line(
     showdown_rank_descriptions: dict[str, str],
     awards: list[PotAward],
     allow_historical_tournament_results: bool,
+    allow_timeout_to_fold_origin: bool,
     summary_seat_numbers: set[int],
 ) -> None:
     summary = _SUMMARY_SEAT_RE.fullmatch(text)
@@ -1755,7 +1917,11 @@ def _validate_summary_seat_line(
     folded_pattern = (
         _HISTORICAL_TOURNAMENT_SUMMARY_FOLD_RE
         if allow_historical_tournament_results
-        else _SUMMARY_FOLD_RE
+        else (
+            _LEGACY_TIMEOUT_SUMMARY_FOLD_RE
+            if allow_timeout_to_fold_origin
+            else _SUMMARY_FOLD_RE
+        )
     )
     folded = folded_pattern.fullmatch(suffix)
     if folded is not None:
@@ -1794,7 +1960,7 @@ def _validate_summary_seat_line(
                 line_start=line,
             )
         if (
-            allow_historical_tournament_results
+            (allow_historical_tournament_results or allow_timeout_to_fold_origin)
             and folded.group("did_not_bet") is not None
             and any(
                 action.actor_id == player_id
@@ -1821,6 +1987,7 @@ def _validate_summary_seat_line(
             currency,
             line=line,
             code="invalid_award_amount",
+            allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
         )
         awarded = sum(
             (
@@ -1888,6 +2055,7 @@ def _validate_summary_seat_line(
                 currency,
                 line=line,
                 code="invalid_award_amount",
+                allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
             )
             if amount != awarded:
                 raise _HandParseError(
@@ -1926,6 +2094,7 @@ def _parse_action_line(
     body: str,
     *,
     currency: str | None,
+    allow_unqualified_dollar_amounts: bool,
     line: int,
     sequence: int,
     actor_id: str,
@@ -1941,6 +2110,7 @@ def _parse_action_line(
             currency,
             line=line,
             code="invalid_action_amount",
+            allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
         )
         total = prior_total + amount
         live_total = (
@@ -1985,6 +2155,7 @@ def _parse_action_line(
             currency,
             line=line,
             code="invalid_action_amount",
+            allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
         )
         total = prior_total + amount
         live_total = prior_live + amount
@@ -2009,6 +2180,7 @@ def _parse_action_line(
             currency,
             line=line,
             code="invalid_action_amount",
+            allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
         )
         total = prior_total + amount
         live_total = prior_live + amount
@@ -2033,12 +2205,14 @@ def _parse_action_line(
             currency,
             line=line,
             code="invalid_action_amount",
+            allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
         )
         target = _parse_positive_money(
             raise_match.group("target"),
             currency,
             line=line,
             code="invalid_action_amount",
+            allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
         )
         if target <= prior_live or target - current_wager != raise_by:
             raise _HandParseError(
@@ -2201,16 +2375,23 @@ def _parse_cards(value: str, *, line: int) -> list[Card]:
         ) from exc
 
 
-def _parse_money(value: str, currency: str | None, *, line: int) -> Decimal:
+def _parse_money(
+    value: str,
+    currency: str | None,
+    *,
+    line: int,
+    allow_unqualified_dollar_amounts: bool = False,
+) -> Decimal:
     symbol = value[0] if value and value[0] in _CURRENCY_SYMBOLS else None
     if symbol is not None:
         if currency is None:
-            raise _HandParseError(
-                "currency_mismatch",
-                "Tournament chip amounts cannot carry a currency marker.",
-                line_start=line,
-            )
-        if _CURRENCY_SYMBOLS[symbol] != currency:
+            if not (allow_unqualified_dollar_amounts and symbol == "$"):
+                raise _HandParseError(
+                    "currency_mismatch",
+                    "Chip amounts without an ISO currency cannot carry this marker.",
+                    line_start=line,
+                )
+        elif _CURRENCY_SYMBOLS[symbol] != currency:
             raise _HandParseError(
                 "currency_mismatch",
                 "A money symbol does not match the header currency.",
@@ -2239,8 +2420,14 @@ def _parse_positive_money(
     *,
     line: int,
     code: str,
+    allow_unqualified_dollar_amounts: bool = False,
 ) -> Decimal:
-    amount = _parse_money(value, currency, line=line)
+    amount = _parse_money(
+        value,
+        currency,
+        line=line,
+        allow_unqualified_dollar_amounts=allow_unqualified_dollar_amounts,
+    )
     if amount <= 0:
         raise _HandParseError(
             code,
@@ -2251,7 +2438,14 @@ def _parse_positive_money(
 
 
 def _parse_played_at(value: str, source_timezone: str, *, line: int) -> datetime:
-    naive = datetime.strptime(value, "%Y/%m/%d %H:%M:%S")
+    try:
+        naive = datetime.strptime(value, "%Y/%m/%d %H:%M:%S")
+    except ValueError as exc:
+        raise _HandParseError(
+            "invalid_source_time",
+            "The source timestamp is invalid.",
+            line_start=line,
+        ) from exc
     if source_timezone in {"UTC", "GMT"}:
         return naive.replace(tzinfo=timezone.utc)
     if naive.year < 2007:

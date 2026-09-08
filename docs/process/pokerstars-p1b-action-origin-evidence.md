@@ -29,9 +29,9 @@ automatic behavior.
 The sanitized source has 45 lines. It is an explicitly labelled negative
 integration fixture for the current adapter:
 
-| Input                 | Expected result                                                  | Evidence                                                                                              |
-| --------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Exact sanitized bytes | No parsed candidates; one `no_hand_headers` diagnostic at line 1 | The source begins `PokerStars Game #`, while the bounded adapter accepts `PokerStars Hand #` headers. |
+| Input                 | Expected result                                                     | Evidence                                                                                                                                   |
+| --------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Exact sanitized bytes | No parsed candidates; one `unsupported_header` diagnostic at line 1 | The adapter detects a `PokerStars Game #` hand boundary, then rejects this one-digit-hour/explicit-ISO header outside the bounded grammar. |
 
 The fixture has no `Dealt to` line. It cannot be transformed into a positive
 parser case by adding a hero, changing its header, or treating a known actor as
