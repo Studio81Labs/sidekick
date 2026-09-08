@@ -37,7 +37,7 @@ browser storage, a URL, logs, or a hosted deployment.
 
 The player data root is identified by the owner-only
 `.poker-hero-player-workspace.json` manifest. The local storage panel reports
-its layout version next to the resolved data directory. Version 4 contains the
+its layout version next to the resolved data directory. Version 5 contains the
 private `imported-hands/` store and its existing recovery journal, the
 install-local remote-reference consent state, and the current
 reference-activation and learning-content catalog authorities. Backup ZIPs have
@@ -47,18 +47,21 @@ manifest, consent state, or either product/reference catalog.
 The first start after upgrading from a manifestless local runtime adopts the
 existing store automatically. Adoption takes the exclusive data-volume lock,
 validates the private imported-hand directory, creates empty consent and
-reference and learning-content catalog state, and publishes the version 4
+reference and learning-content catalog state, and publishes the version 5
 manifest. An existing
 version 1 workspace is upgraded under the same exclusive lock: consent and then
 the empty reference and learning-content catalogs become durable before the
-manifest is atomically replaced with version 4. An existing version 2 workspace
-preserves consent and adds the two empty catalogs. An existing version 3
+manifest is atomically replaced with version 5. An existing version 2 workspace
+preserves consent and adds the two empty catalogs before publishing version 5.
+An existing version 3
 workspace preserves consent and reference activation and adds only the empty
-learning-content catalog before publishing version 4. None of these
-paths rewrites hand records, canonical revisions, decision artifacts, or cascade
-evidence. A crash before publication can retry the same adoption or upgrade. If
-the marker was published before a later startup failure, the next start
-validates and uses it.
+learning-content catalog before publishing version 5. An existing version 4
+workspace validates its imported-hand, consent, reference, and learning-content
+state before atomically publishing the version 5 marker. None of these paths
+rewrites hand records, canonical revisions, decision artifacts, grade artifacts,
+or cascade evidence. A crash before publication can retry the same adoption or
+upgrade. If the marker was published before a later startup failure, the next
+start validates and uses it.
 
 Do not edit or replace the manifest manually. A symlink, shared permissions,
 malformed JSON, an unsupported future version, or a versioned workspace whose
@@ -68,7 +71,7 @@ rejects a manifest, preserve the complete data directory and repair or migrate
 it with tooling for that exact source version; do not delete the marker to
 force legacy adoption. A missing, symlinked, shared-permission, malformed, or
 unsupported consent, reference-catalog, or learning-content-catalog state file
-under layout version 4 also fails startup.
+under layout version 5 also fails startup.
 
 Remote-reference consent is local-only by default. The packaged runtime does
 not supply a provider policy, so consent cannot be accepted and no remote
@@ -200,8 +203,9 @@ export or another restore attempt.
 
 Export includes each record, every retained decision artifact, and every
 retained reference-activated grade artifact, including inactive audit history.
-Current exports use player-backup schema version 2; restore also accepts legacy
-schema version 1 archives that predate grade persistence. Restore validates the
+Current exports use player-backup schema version 3; restore also accepts schema
+version 1 archives that predate grade persistence and schema version 2 archives
+that first retained grade artifacts. Restore validates the
 complete archive before writing, skips stale record and deletion generations,
 and rejects conflicts, an attempt to reactivate a tombstone, or an unbound
 tombstone targeting a live record. An active record must carry the exact
@@ -259,17 +263,17 @@ directory until its contents and the archive have been inspected. A later run
 detects a path retained by an interruption after rename and reports it even
 when the active source is already absent.
 
-The player backup uses schema version 2 and contains portable V2 imported-hand
+The player backup uses schema version 3 and contains portable V2 imported-hand
 records with their retained decision and historical grade audit artifacts. Its
-decoder still accepts schema version 1 archives without grades. The installation
-credential, in-workspace data and record locks, workspace manifest, consent,
-current reference and learning-content catalogs, and recovered journal machinery
-are installation metadata or product/reference authority and are removed with
-the workspace rather than copied into the archive. The empty sibling
-runtime-lease file contains no player data and may remain for future
-coordination. This command does not remove the repository/application binary or
-the browser's PWA installation; those remain operating-system and browser
-lifecycle steps.
+decoder accepts schema version 1 archives without grades and schema version 2
+archives with explicit grade lists. The installation credential, in-workspace
+data and record locks, workspace manifest, consent, current reference and
+learning-content catalogs, and recovered journal machinery are installation
+metadata or product/reference authority and are removed with the workspace
+rather than copied into the archive. The empty sibling runtime-lease file
+contains no player data and may remain for future coordination. This command
+does not remove the repository/application binary or the browser's PWA
+installation; those remain operating-system and browser lifecycle steps.
 
 There is intentionally no player-runtime host or port flag. A non-loopback
 operator development service would be a different runtime and would require
@@ -316,8 +320,8 @@ persists only that outstanding UUID plus ordered filename/content hashes, so a
 restart can safely reuse it after the exact files are reselected without
 placing filenames or hand-history text in browser storage. A confirmed terminal
 outcome erases the retry metadata. This is not the representative corpus or 99%
-clean-parse evidence required by #409. The workspace now has a version 4 marker,
-safe manifestless-store adoption, migrations from layouts 1–3, and a verified
+clean-parse evidence required by #409. The workspace now has a version 5 marker,
+safe manifestless-store adoption, migrations from layouts 1–4, and a verified
 export-before-remove command for player data. Its durable reference-activation
 and learning-content catalogs are install-local product/reference authority;
 the packaged catalogs remain empty and no API publishes them. Persisted

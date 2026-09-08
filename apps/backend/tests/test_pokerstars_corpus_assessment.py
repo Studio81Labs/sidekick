@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 import app.pokerstars_corpus_assessment as corpus_assessment
 from app.pokerstars_corpus_assessment import (
@@ -191,6 +192,25 @@ def _parsed_expectation() -> dict:
             "Action origin is unresolved for 1 player decision(s); review is required."
         ],
     }
+
+
+def _legacy_tournament_expectation() -> dict:
+    expected = _parsed_expectation()
+    expected["game"]["economics"] = {
+        "kind": "tournament",
+        "tournament_id": "tournament-1",
+        "tournament_type": "freezeout",
+        "stage": None,
+        "currency": "USD",
+        "paid_places": None,
+        "players_remaining": None,
+        "payouts": [],
+        "remaining_stacks": [],
+        "bounty_format": None,
+        "bounties": [],
+        "icm_inputs_complete": False,
+    }
+    return expected
 
 
 def _manifest_payload(
@@ -533,6 +553,85 @@ def test_manifest_requires_schema_version(tmp_path: Path) -> None:
 
     with pytest.raises(CorpusAssessmentError, match="manifest is invalid"):
         load_pokerstars_corpus_manifest(manifest_path)
+
+
+def test_v1_manifest_accepts_legacy_tournament_economics_without_source_facts(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest_payload(include_rejection=False)
+    case = payload["cases"][0]
+    case["tags"] = [
+        "forced_system_action",
+        "heads_up",
+        "tournament",
+        "uncalled_bet",
+        "unknown_action",
+    ]
+    case["expected"] = _legacy_tournament_expectation()
+
+    manifest = load_pokerstars_corpus_manifest(
+        _write_manifest(tmp_path / "manifest.json", payload)
+    )
+
+    economics = manifest.cases[0].expected.game.economics
+    assert economics.kind == "tournament"
+    assert {
+        "entry_buy_in",
+        "entry_fee",
+        "blind_level",
+    }.isdisjoint(economics.model_fields_set)
+
+
+def test_v1_manifest_accepts_known_tournament_entry_source_facts(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest_payload(include_rejection=False)
+    case = payload["cases"][0]
+    case["tags"] = [
+        "forced_system_action",
+        "heads_up",
+        "tournament",
+        "uncalled_bet",
+        "unknown_action",
+    ]
+    expected = _legacy_tournament_expectation()
+    expected["game"]["economics"].update(
+        {
+            "entry_buy_in": "3.19",
+            "entry_fee": "0.31",
+            "blind_level": "XI",
+        }
+    )
+    case["expected"] = expected
+
+    manifest = load_pokerstars_corpus_manifest(
+        _write_manifest(tmp_path / "manifest.json", payload)
+    )
+
+    economics = manifest.cases[0].expected.game.economics
+    assert economics.model_dump(mode="json")["entry_buy_in"] == "3.19"
+    assert economics.model_dump(mode="json")["entry_fee"] == "0.31"
+    assert economics.model_dump(mode="json")["blind_level"] == "XI"
+
+
+def test_v1_manifest_still_requires_each_legacy_tournament_economics_field(
+    tmp_path: Path,
+) -> None:
+    payload = _manifest_payload(include_rejection=False)
+    case = payload["cases"][0]
+    case["tags"] = [
+        "forced_system_action",
+        "heads_up",
+        "tournament",
+        "uncalled_bet",
+        "unknown_action",
+    ]
+    expected = _legacy_tournament_expectation()
+    del expected["game"]["economics"]["stage"]
+    case["expected"] = expected
+
+    with pytest.raises(ValidationError, match="expected economics"):
+        PokerStarsCorpusManifest.model_validate_json(json.dumps(payload))
 
 
 def test_corpus_fingerprint_changes_with_source_or_labels(tmp_path: Path) -> None:

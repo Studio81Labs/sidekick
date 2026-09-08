@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import zlib
 from datetime import datetime, timezone
+from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -16,7 +17,11 @@ from app.application.reference_activation import (
     ReferenceActivationCatalog,
     bind_grade_to_active_reference,
 )
-from app.domain.imported_hands import ImportedHandRecord, extract_hero_decision_points
+from app.domain.imported_hands import (
+    ImportedHandRecord,
+    ImportedHandState,
+    extract_hero_decision_points,
+)
 from app.player_backup import (
     PlayerBackupConflictError,
     PlayerBackupError,
@@ -51,6 +56,10 @@ from app.storage.reference_activation_catalog_store import (
 )
 from test_current_learning_revalidation import configured_workspace
 from test_imported_hand_decisions import hero_fold_decision_record
+from test_imported_hand_models import (
+    extraction_record_for_state,
+    three_way_tournament_extraction_payload,
+)
 from test_imported_hand_store import (
     approved_record,
     extraction_for,
@@ -60,7 +69,12 @@ from test_imported_hand_store import (
 )
 from test_learning_content_catalog_store import initial_catalog
 from test_player_runtime import exchange_session, player_client
-from test_reference_activation import activate, solved_readiness
+from test_reference_activation import (
+    activate,
+    coverage_band,
+    current_learning_content,
+    solved_readiness,
+)
 from test_remote_references import provider_policy
 
 
@@ -107,7 +121,7 @@ def restore(
 
 def write_future_workspace_manifest(workspace: PlayerWorkspace) -> None:
     (workspace.data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":5,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
@@ -240,7 +254,7 @@ def test_player_backup_preserves_historical_grade_artifacts(
     payload = archive_bytes(source)
     with ZipFile(BytesIO(payload)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["schema_version"] == 2
+        assert manifest["schema_version"] == 3
         assert len(manifest["records"][0]["grade_artifacts"]) == 1
 
     target = workspace_at(tmp_path / "target")
@@ -250,6 +264,94 @@ def test_player_backup_preserves_historical_grade_artifacts(
     assert first.imported_grade_artifacts == 1
     assert second.reused_grade_artifacts == 1
     assert target.imported_hands.backup_snapshot() == expected_snapshot
+
+
+def test_player_backup_v3_round_trips_tournament_entry_source_facts_through_audit_artifacts(
+    tmp_path: Path,
+) -> None:
+    source = workspace_at(tmp_path / "source")
+    state_payload = three_way_tournament_extraction_payload()
+    state_payload["game"]["economics"].update(
+        {
+            "entry_buy_in": Decimal("3.19"),
+            "entry_fee": Decimal("0.31"),
+            "blind_level": "XI",
+        }
+    )
+    record = extraction_record_for_state(
+        ImportedHandState.model_validate(state_payload)
+    )
+    record_key = imported_hand_record_key(record.identity)
+    save_record(source, record_key, record)
+    extraction = source.imported_hands.get_decisions(
+        record_key,
+        revision=1,
+        generation=0,
+    )
+    assert extraction is not None
+
+    content_evidence = solved_readiness(extraction.decision_points[0])
+    content_state = source.current_learning_content_catalog()
+    source.publish_learning_content_catalog(
+        current_learning_content(
+            content_evidence,
+            catalog_id=content_state.catalog.catalog_id,
+        ),
+        expected_catalog_revision=content_state.catalog.catalog_revision,
+        expected_catalog_sha256=content_state.catalog_sha256,
+    )
+    reference_state = source.current_reference_activation_catalog()
+    band = coverage_band(
+        content_evidence,
+        coverage_band_id="tournament.preflop.three-handed",
+    )
+    catalog = activate(reference_state.catalog, content_evidence, band=band)
+    source.publish_reference_activation_catalog(
+        catalog,
+        expected_catalog_revision=reference_state.catalog.catalog_revision,
+        expected_catalog_sha256=reference_state.catalog_sha256,
+    )
+    retained_grade = bind_grade_to_active_reference(
+        catalog,
+        content_evidence,
+        coverage_band_id=band.coverage_band_id,
+    )
+    source.persist_current_reference_activated_grade(record_key, retained_grade)
+    expected_snapshot = source.imported_hands.backup_snapshot()
+
+    payload = archive_bytes(source)
+    target = workspace_at(tmp_path / "target")
+    result = restore(target, payload)
+
+    assert result.imported_records == 1
+    assert result.imported_decision_artifacts == 1
+    assert result.imported_grade_artifacts == 1
+    assert target.imported_hands.backup_snapshot() == expected_snapshot
+    restored = target.imported_hands.get(record_key)
+    economics = restored.canonical_revisions[0].state.game.economics
+    economics_payload = economics.model_dump(mode="json")
+    assert economics_payload["entry_buy_in"] == "3.19"
+    assert economics_payload["entry_fee"] == "0.31"
+    assert economics_payload["blind_level"] == "XI"
+    restored_decisions = target.imported_hands.get_decisions(
+        record_key,
+        revision=1,
+        generation=0,
+    )
+    assert restored_decisions is not None
+    assert restored_decisions.decision_points[0].state.economics == economics
+    filename = target.imported_hands.list_reference_activated_grade_artifacts(
+        record_key
+    )[0][-1]
+    restored_grade = target.imported_hands.get_reference_activated_grade(
+        record_key,
+        filename,
+    )
+    assert restored_grade == retained_grade
+    assert (
+        restored_grade.readiness.decision_snapshot.restore().state.economics
+        == economics
+    )
 
 
 def test_player_backup_rejects_grade_from_different_canonical_decision(
@@ -336,6 +438,70 @@ def test_player_backup_decodes_legacy_schema_without_grades(
     assert result.imported_records == 1
     assert result.imported_decision_artifacts == 1
     assert result.imported_grade_artifacts == 0
+
+
+def test_player_backup_decodes_schema_v2_with_explicit_grades(
+    tmp_path: Path,
+) -> None:
+    source = workspace_at(tmp_path / "source")
+    identity = sample_identity(hand_ordinal=32)
+    record_key = imported_hand_record_key(identity)
+    save_record(source, record_key, approved_record(identity))
+    payload = archive_bytes(source)
+    legacy_payload = BytesIO()
+
+    with ZipFile(BytesIO(payload)) as original:
+        manifest = json.loads(original.read("manifest.json"))
+        manifest["schema_version"] = 2
+        with ZipFile(legacy_payload, mode="w", compression=ZIP_DEFLATED) as changed:
+            for info in original.infolist():
+                if info.filename == "manifest.json":
+                    continue
+                changed.writestr(info.filename, original.read(info))
+            changed.writestr(
+                "manifest.json",
+                (json.dumps(manifest, indent=2) + "\n").encode(),
+            )
+
+    target = workspace_at(tmp_path / "target")
+    result = restore(target, legacy_payload.getvalue())
+
+    assert result.imported_records == 1
+    assert result.imported_decision_artifacts == 1
+    assert result.imported_grade_artifacts == 0
+
+
+def test_player_backup_schema_v3_requires_explicit_grade_artifacts(
+    tmp_path: Path,
+) -> None:
+    source = workspace_at(tmp_path / "source")
+    identity = sample_identity(hand_ordinal=33)
+    record_key = imported_hand_record_key(identity)
+    save_record(source, record_key, approved_record(identity))
+    payload = archive_bytes(source)
+    changed_payload = BytesIO()
+
+    with ZipFile(BytesIO(payload)) as original:
+        manifest = json.loads(original.read("manifest.json"))
+        manifest["records"][0].pop("grade_artifacts")
+        with ZipFile(changed_payload, mode="w", compression=ZIP_DEFLATED) as changed:
+            for info in original.infolist():
+                if info.filename == "manifest.json":
+                    continue
+                changed.writestr(info.filename, original.read(info))
+            changed.writestr(
+                "manifest.json",
+                (json.dumps(manifest, indent=2) + "\n").encode(),
+            )
+
+    with pytest.raises(
+        PlayerBackupError,
+        match="schema versions 2 and 3 records must declare grade artifacts",
+    ):
+        parse_player_backup_archive(
+            changed_payload.getvalue(),
+            max_archive_bytes=10 * 1024 * 1024,
+        )
 
 
 def test_player_backup_bounds_record_before_building_archive(

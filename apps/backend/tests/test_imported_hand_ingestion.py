@@ -675,6 +675,60 @@ def test_changed_detection_of_same_bytes_is_retained_without_copying_raw_text(
     )
 
 
+def test_tournament_entry_source_facts_create_a_reviewable_semantic_conflict(
+    tmp_path,
+) -> None:
+    store = FileImportedHandStore(tmp_path)
+    service = ImportedHandIngestionService(
+        store=store,
+        conflict_id_factory=lambda: "conflict-tournament-entry-source-facts",
+    )
+    first = parsed_candidate(1)
+    second = parsed_candidate(2)
+    first_state_payload = first.detection.state.model_dump(mode="python")
+    first_state_payload["game"]["economics"] = {
+        "kind": "tournament",
+        "currency": "USD",
+    }
+    first_state = type(first.detection.state).model_validate(first_state_payload)
+    first_detection = DetectedImportedHand.model_validate(
+        {
+            **first.detection.model_dump(mode="python"),
+            "state": first_state,
+            "content_sha256": imported_hand_state_sha256(first_state),
+        }
+    )
+    second_state_payload = second.detection.state.model_dump(mode="python")
+    second_state_payload["game"]["economics"] = {
+        "kind": "tournament",
+        "currency": "USD",
+        "entry_buy_in": Decimal("3.19"),
+        "entry_fee": Decimal("0.31"),
+        "blind_level": "XI",
+    }
+    second_state = type(second.detection.state).model_validate(second_state_payload)
+    second_detection = DetectedImportedHand.model_validate(
+        {
+            **second.detection.model_dump(mode="python"),
+            "state": second_state,
+            "content_sha256": imported_hand_state_sha256(second_state),
+        }
+    )
+
+    service.ingest(ParsedImportedHandCandidate(raw=first.raw, detection=first_detection))
+    result = service.ingest(
+        ParsedImportedHandCandidate(raw=second.raw, detection=second_detection)
+    )
+
+    assert result.disposition == "recorded_identity_conflict"
+    assert result.record.lifecycle.status == "pending_review"
+    assert result.record.canonical_revisions == []
+    assert result.record.conflicts[0].status == "unresolved"
+    assert result.record.detections[-1].state.game.economics.model_dump(
+        mode="json"
+    )["entry_buy_in"] == "3.19"
+
+
 @pytest.mark.parametrize("raw_text", [RAW_TEXT, f"{RAW_TEXT}Total pot 2\n"])
 def test_new_occurrence_cannot_precede_the_aggregate_import_history(
     tmp_path,

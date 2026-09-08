@@ -33,11 +33,14 @@ from app.domain.imported_hands import (
     canonical_revision_from_review,
     classify_reimport,
     classify_restore,
+    detected_imported_hand_semantic_sha256,
     derive_structural_positions,
+    extract_hero_decision_points,
     imported_hand_state_sha256,
     reconcile_pot,
     structural_position_labels,
 )
+from app.player_hands import _without_evidence_excerpts
 
 
 NOW = datetime(2026, 8, 27, 12, 0, tzinfo=timezone.utc)
@@ -618,6 +621,136 @@ def test_paid_places_are_independent_from_the_remaining_field() -> None:
     economics = TournamentEconomics.model_validate(complete)
     assert economics.icm_inputs_complete is True
     assert economics.paid_places > economics.players_remaining
+
+
+def test_tournament_entry_source_facts_omit_unknowns_and_round_trip_known_values() -> None:
+    unknown = TournamentEconomics.model_validate(
+        {
+            "kind": "tournament",
+            "currency": "USD",
+            "entry_buy_in": None,
+            "entry_fee": None,
+            "blind_level": None,
+        }
+    )
+
+    assert {"entry_buy_in", "entry_fee", "blind_level"}.isdisjoint(
+        unknown.model_dump(mode="python")
+    )
+    assert {"entry_buy_in", "entry_fee", "blind_level"}.isdisjoint(
+        unknown.model_dump(mode="json")
+    )
+
+    known = TournamentEconomics(
+        currency="USD",
+        entry_buy_in=Decimal("3.19"),
+        entry_fee=Decimal("0.31"),
+        blind_level="XI",
+    )
+    payload = known.model_dump(mode="json")
+
+    assert payload["entry_buy_in"] == "3.19"
+    assert payload["entry_fee"] == "0.31"
+    assert payload["blind_level"] == "XI"
+    assert known.stage is None
+    assert TournamentEconomics.model_validate_json(known.model_dump_json()) == known
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"entry_buy_in": Decimal("-0.01")},
+        {"entry_fee": Decimal("NaN")},
+        {"blind_level": ""},
+        {"blind_level": "   "},
+    ],
+)
+def test_tournament_entry_source_facts_reject_invalid_values(
+    values: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        TournamentEconomics.model_validate({"kind": "tournament", **values})
+
+
+def test_tournament_entry_source_facts_preserve_legacy_state_and_decision_bytes() -> None:
+    state = ImportedHandState.model_validate(three_way_tournament_extraction_payload())
+    record = extraction_record_for_state(state)
+    extraction = extract_hero_decision_points(record)
+
+    assert imported_hand_state_sha256(state) == (
+        "f94cb6c0b4802326e06a539c69a58d9dd4658327369ac09b5ff58bba63f9bd44"
+    )
+    assert detected_imported_hand_semantic_sha256(state) == (
+        "dde925413dd57fa432e839119f4a9d8f26fa636b19e77c08c7cef0a18f5cc597"
+    )
+    assert sha256(record.model_dump_json().encode()).hexdigest() == (
+        "46efa12739db4237a7c112ec3f2d49540803fa9593fbd5ef4f37797cd205b220"
+    )
+    assert sha256(extraction.model_dump_json().encode()).hexdigest() == (
+        "ef544f0c0cc018664fe6a0981f2794a75011c0268c28732af29f011f3def84f9"
+    )
+
+
+def test_tournament_entry_source_facts_bind_known_values_without_changing_readiness() -> None:
+    baseline = ImportedHandState.model_validate(three_way_tournament_extraction_payload())
+    payload = baseline.model_dump(mode="python")
+    payload["game"]["economics"].update(
+        {
+            "entry_buy_in": Decimal("3.19"),
+            "entry_fee": Decimal("0.31"),
+            "blind_level": "XI",
+        }
+    )
+    known = ImportedHandState.model_validate(payload)
+    known_record = extraction_record_for_state(known)
+    economics = known.game.economics
+
+    assert isinstance(economics, TournamentEconomics)
+    assert economics.entry_buy_in == Decimal("3.19")
+    assert economics.entry_fee == Decimal("0.31")
+    assert economics.blind_level == "XI"
+    assert economics.stage == baseline.game.economics.stage
+    assert imported_hand_state_sha256(known) != imported_hand_state_sha256(baseline)
+    assert detected_imported_hand_semantic_sha256(known) != (
+        detected_imported_hand_semantic_sha256(baseline)
+    )
+    assert [
+        action.actor_id for action in known_record.active_hero_actions_for_extraction
+    ] == ["hero"]
+
+
+def test_tournament_entry_source_facts_are_removable_review_corrections() -> None:
+    payload = ImportedHandState.model_validate(
+        three_way_tournament_extraction_payload()
+    ).model_dump(mode="python")
+    payload["game"]["economics"].update(
+        {
+            "entry_buy_in": Decimal("3.19"),
+            "entry_fee": Decimal("0.31"),
+            "blind_level": "XI",
+        }
+    )
+    detected_state = ImportedHandState.model_validate(payload)
+    approved_state = _without_evidence_excerpts(
+        detected_state.model_dump(mode="json")
+    )
+    assert isinstance(approved_state, dict)
+    for field in ("entry_buy_in", "entry_fee", "blind_level"):
+        approved_state["game"]["economics"].pop(field)
+
+    revision = canonical_revision_from_review(
+        detected(detected_state),
+        approval_id="approval-tournament-source-fact-removal",
+        revision=1,
+        approved_at=NOW,
+        approved_state=approved_state,
+        correction_reason="The source entry values are not confirmed for this hand.",
+    )
+
+    assert {"entry_buy_in", "entry_fee", "blind_level"}.isdisjoint(
+        revision.state.game.economics.model_dump(mode="json")
+    )
+    assert revision.corrections[0].field_pointer == "/game/economics"
 
 
 def test_stated_net_pot_cannot_exceed_gross_when_rake_is_unknown() -> None:

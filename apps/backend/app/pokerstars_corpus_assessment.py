@@ -28,6 +28,7 @@ from app.domain.imported_hands import (
     GameContext,
     StatedPotSummary,
     StructuralPosition,
+    TournamentEconomics,
 )
 from app.domain.imported_hands.models import (
     ActionType,
@@ -398,8 +399,15 @@ class PokerStarsExpectedParsedHand(_AssessmentModel):
             type(self.game.blinds).model_fields
         ):
             raise ValueError("expected blind structure must label every field")
-        if self.game.economics.model_fields_set != set(
-            type(self.game.economics).model_fields
+        required_economics_fields = set(type(self.game.economics).model_fields)
+        if isinstance(self.game.economics, TournamentEconomics):
+            required_economics_fields -= {
+                "entry_buy_in",
+                "entry_fee",
+                "blind_level",
+            }
+        if not required_economics_fields.issubset(
+            self.game.economics.model_fields_set
         ):
             raise ValueError("expected economics must label every field")
         return self

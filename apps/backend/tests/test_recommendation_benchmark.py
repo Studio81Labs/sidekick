@@ -3795,6 +3795,38 @@ def test_economic_model_digest_normalizes_equivalent_decimal_representations() -
     ) == recommendation_economic_configuration_sha256(baseline)
 
 
+def test_tournament_entry_source_facts_bind_the_economic_configuration_hash() -> None:
+    baseline = tournament_economic_configuration()
+    enriched_values = baseline.model_dump(mode="python")
+    enriched_values.update(
+        {
+            "entry_buy_in": Decimal("3.19"),
+            "entry_fee": Decimal("0.31"),
+            "blind_level": "XI",
+        }
+    )
+    equivalent_values = baseline.model_dump(mode="python")
+    equivalent_values.update(
+        {
+            "entry_buy_in": Decimal("3.190"),
+            "entry_fee": Decimal("0.310"),
+            "blind_level": "XI",
+        }
+    )
+    enriched = TournamentEconomics.model_validate(enriched_values)
+    equivalent = TournamentEconomics.model_validate(equivalent_values)
+
+    assert {"entry_buy_in", "entry_fee", "blind_level"}.isdisjoint(
+        baseline.model_dump(mode="json")
+    )
+    assert recommendation_economic_configuration_sha256(enriched) == (
+        recommendation_economic_configuration_sha256(equivalent)
+    )
+    assert recommendation_economic_configuration_sha256(enriched) != (
+        recommendation_economic_configuration_sha256(baseline)
+    )
+
+
 def test_economic_model_rejects_incomplete_route_critical_configuration() -> None:
     missing_cash_value = cash_economic_configuration()
     assert missing_cash_value.rake is not None
