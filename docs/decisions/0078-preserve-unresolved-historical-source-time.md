@@ -1,13 +1,16 @@
 # ADR 0078: Preserve Unresolved Historical Source Time
 
-Status: accepted; parser implementation pending under issue #409
+Status: accepted; P1a implementation and review corrections under issue #409
 
 Date: 2026-09-08
 
 Resolves the source-label checkpoint in
 [#409 comment 5585636988](https://github.com/Studio81Labs/sidekick/issues/409#issuecomment-5585636988).
+Also resolves the source-award validation boundary raised in
+[#503](https://github.com/Studio81Labs/sidekick/issues/503).
 ADR 0077's compatibility prerequisite is implemented in PR #500. This decision
-adds no model fields, migrations, production code or implementation PR.
+adds no model fields, migrations or compatibility PR; the bounded parser
+implementation remains under #409.
 
 ## Context
 
@@ -110,6 +113,50 @@ reject; this is not permission to ignore arbitrary tournament text. If a newly
 observed line affects a pot, payout, bounty, stack or origin, stop the dependent
 extension and determine its meaning before accepting it.
 
+### Preserve source awards without deriving showdown winners
+
+P1a records source-reported shown cards, rank descriptions and collections. It
+does not evaluate best-five hands, compare players' ranks or certify which
+eligible player should win a pot. Rank prose remains a retained description,
+not a computed category. The accepted description syntax remains bounded to the
+reviewed specimen; repeated show/summary descriptions must agree when present.
+Do not derive the description from cards, rewrite source awards, hard-code this
+specimen's winning cards or import a recommendation-provider evaluator into
+the adapter/domain.
+
+The #503 counterexample consistently swaps the hero's shown cards to `[Kd Ac]`
+and seat 9's to `[Jc Jh]`, updates their repeated rank descriptions, and leaves
+both collections with seat 9. This is poker-inconsistent but can pass the
+existing amount-only oracle. The parser does not certify that source outcome as
+correct. The partial one-pair evaluator introduced during PR #502 review does
+not close this gap and is outside this decision; remove it and its category-only
+rejection expectations while retaining source-text consistency checks.
+
+Pot eligibility is already modeled: reconstructed layers exclude folded
+players and limit awards to eligible contributors with sufficient capacity.
+Preserve those checks, valid pot indexes, exact zero-rake component totals,
+independent stated-pot evidence, return accounting, known/non-folded recipient
+validation, card uniqueness and hero/show/summary agreement. This decision
+waives none of them. Eligibility to receive a pot is distinct from having the
+best shown hand in that pot.
+
+`PotReconciliationResult.amount_parse_validated_only=True` and an import's
+`clean` reconciliation disposition retain their existing limited meaning.
+Neither parsing nor explicit user approval adds a winner certificate. Detected
+source facts stay pending review until the existing explicit approval step;
+corrections win and all downstream origin/economics/readiness gates remain.
+Independent corpus labels must still match the complete state: a consistently
+changed card or award does not become a correct label merely because amounts
+reconcile. Do not change the exact HAND2 warnings or confidence values to imply
+an evaluator has run; no new warning or validation-status field is required.
+
+A future automatic showdown adjudicator would need a separate evidenced domain
+contract for complete/partial/mucked cards and boards, eligible contenders,
+ties/chops/odd chips, pot distribution and unsupported cases, and for reporting
+a contradiction without overwriting source evidence. It is not an implicit
+P1b/P1c dependency or newly required Epic deliverable. Existing provider/solver
+hand-score helpers are implementation evidence, not that imported-hand contract.
+
 ### Execution and validation
 
 Maintain SERIAL execution, one implementation writer/merge-bound PR. After this
@@ -127,6 +174,15 @@ mixed-file isolation, review/reimport/backup round-trip and existing cash/DST
 regressions. Do not remove uncertain fields from corpus comparison or reclassify
 public examples as empirical evidence. Run the relevant repository parser,
 corpus, imported-hand and local import/hand suites; PWA tests/build if UI changes.
+
+For #503, add a synthetic counterexample regression that retains the source
+awards and passes only amount reconciliation; assert the amount-only flag and
+unchanged approval boundary. Keep the original independently authored HAND2
+golden and source-contradiction regressions. Verify that changed cards still
+fail comparison against the original corpus expectation. Consistently repeated
+supported rank prose is not rejected solely because a derived category would
+differ. Unsupported syntax and disagreement between repeated descriptions still
+reject. The synthetic mutation is not representative corpus evidence.
 
 The implementation orchestrator may author tests and supported syntax from this
 mapping and resolve ordinary implementation details. Escalate any requirement

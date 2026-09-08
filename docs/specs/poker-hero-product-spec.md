@@ -342,6 +342,12 @@ the action/amount parse without manual eyeballing. It is necessary but not
 sufficient: a wrong button, hero identity, card, timestamp, or participation
 status can reconcile the pot and still corrupt grading.
 
+This oracle does not rank shown hands or certify showdown winners. Imported
+awards remain source-reported facts, subject to existing recipient eligibility,
+amount and repeated-source consistency checks. Explicit approval does not add
+an automatic winner certificate. ADR 0078 records this boundary for the bounded
+historical tournament parser; independent complete-state labels remain required.
+
 A complete action stream is not its own independent pot oracle. Missing results,
 an absent stated-pot summary, a net total without the rake needed to recover a
 like-for-like gross total, or awards without a stated comparable pot remain
