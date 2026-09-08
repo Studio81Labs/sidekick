@@ -1413,6 +1413,24 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
         ),
         (
             "won (26310) with a pair of Kings",
+            "won (26310) with a pair of Jacks",
+            "summary_showdown_mismatch",
+            57,
+        ),
+        (
+            "won (26310) with a pair of Kings",
+            "won (26310) with a pair of Aces",
+            "unsupported_summary_result",
+            57,
+        ),
+        (
+            "won (26310) with a pair of Kings",
+            "won (26310) with unknown annotation",
+            "unsupported_summary_result",
+            57,
+        ),
+        (
+            "won (26310) with a pair of Kings",
             "won (26309) with a pair of Kings",
             "summary_award_mismatch",
             57,

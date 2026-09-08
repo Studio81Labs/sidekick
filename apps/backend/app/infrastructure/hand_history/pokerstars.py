@@ -115,9 +115,10 @@ _RAISE_RE = re.compile(
     r"(?P<all_in> and is all-in)?$"
 )
 _SHOW_RE = re.compile(r"^shows \[(?P<cards>[^\]]+)\]$")
+_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION = r"a pair of (?:Nines|Jacks|Kings)"
 _HISTORICAL_TOURNAMENT_SHOW_RE = re.compile(
-    r"^shows \[(?P<cards>[^\]]+)\](?: \(a pair of "
-    r"(?:Nines|Jacks|Kings)\))?$"
+    r"^shows \[(?P<cards>[^\]]+)\](?: \("
+    rf"(?P<rank_description>{_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION})\))?$"
 )
 _SUMMARY_SEAT_RE = re.compile(
     r"^Seat (?P<seat>[1-9][0-9]*): (?P<rest>.+)$"
@@ -134,7 +135,8 @@ _SUMMARY_COLLECTED_RE = re.compile(
 )
 _SUMMARY_SHOWDOWN_RESULT_RE = re.compile(
     rf"^ showed \[(?P<cards>[^\]]+)\] and "
-    rf"(?:(?P<lost>lost)|won \((?P<amount>{_MONEY})\)) with .+$"
+    rf"(?:(?P<lost>lost)|won \((?P<amount>{_MONEY})\)) with "
+    rf"(?P<rank_description>{_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION})$"
 )
 _SUMMARY_BOARD_RE = re.compile(r"^Board \[(?P<cards>[^\]]+)\]$")
 _TOURNAMENT_FINISH_RE = re.compile(
@@ -911,6 +913,7 @@ def _parse_body(
     uncalled_return_seen = False
     folded_player_ids: set[str] = set()
     showdown_player_ids: set[str] = set()
+    showdown_rank_descriptions: dict[str, str] = {}
     finish_player_ids: set[str] = set()
     finish_evidence: list[SourceEvidence] = []
 
@@ -1121,6 +1124,7 @@ def _parse_body(
                     street_names=street_names,
                     actions=actions,
                     showdown=showdown,
+                    showdown_rank_descriptions=showdown_rank_descriptions,
                     awards=awards,
                     allow_historical_tournament_results=(
                         allow_historical_tournament_results
@@ -1364,6 +1368,12 @@ def _parse_body(
                         line_end=line.number,
                     )
                 showdown_player_ids.add(player_id)
+                if allow_historical_tournament_results:
+                    rank_description = _historical_tournament_rank_description(
+                        body
+                    )
+                    if rank_description is not None:
+                        showdown_rank_descriptions[player_id] = rank_description
                 showdown.append(showdown_entry)
                 continue
             if award_seen:
@@ -1506,6 +1516,7 @@ def _validate_summary_seat_line(
     street_names: list[Literal["preflop", "flop", "turn", "river"]],
     actions: list[list[ImportedAction]],
     showdown: list[ShowdownEntry],
+    showdown_rank_descriptions: dict[str, str],
     awards: list[PotAward],
     allow_historical_tournament_results: bool,
     summary_seat_numbers: set[int],
@@ -1651,6 +1662,14 @@ def _validate_summary_seat_line(
             raise _HandParseError(
                 "summary_showdown_mismatch",
                 "The summary shown cards do not match the parsed showdown.",
+                line_start=line,
+            )
+        if showdown_rank_descriptions.get(player_id) != showdown_result.group(
+            "rank_description"
+        ):
+            raise _HandParseError(
+                "summary_showdown_mismatch",
+                "The summary hand rank does not match the parsed showdown.",
                 line_start=line,
             )
         awarded = sum(
@@ -1924,6 +1943,13 @@ def _showdown_entry(
             evidence=[evidence],
         )
     return None
+
+
+def _historical_tournament_rank_description(body: str) -> str | None:
+    match = _HISTORICAL_TOURNAMENT_SHOW_RE.fullmatch(body)
+    if match is None:
+        return None
+    return match.group("rank_description")
 
 
 def _parse_board(value: str, *, expected_count: int, line: int) -> list[Card]:
