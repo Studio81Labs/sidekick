@@ -983,10 +983,11 @@ def _parse_body(
                 or not hole_seen
                 or not award_seen
                 or in_summary
+                or len(awards) != 2
             ):
                 raise _HandParseError(
                     "tournament_finish_order",
-                    "A tournament finish statement must follow awards and precede the summary.",
+                    "A tournament finish statement must follow the reviewed awards and precede the summary.",
                     line_start=line.number,
                 )
             player_id = _player_id(
@@ -1278,6 +1279,12 @@ def _parse_body(
 
         collected = _COLLECTED_RE.fullmatch(text)
         if collected is not None:
+            if allow_historical_tournament_results and finish_evidence:
+                raise _HandParseError(
+                    "tournament_finish_order",
+                    "A tournament pot award cannot follow a finish statement.",
+                    line_start=line.number,
+                )
             if not hole_seen:
                 raise _HandParseError(
                     "award_order",
@@ -1334,6 +1341,12 @@ def _parse_body(
 
         actor_line = _ACTOR_LINE_RE.fullmatch(text)
         if actor_line is not None:
+            if allow_historical_tournament_results and finish_evidence:
+                raise _HandParseError(
+                    "tournament_finish_order",
+                    "Tournament showdown or action evidence cannot follow a finish statement.",
+                    line_start=line.number,
+                )
             player_id = _dealt_in_player_id(
                 actor_line.group("name"),
                 player_id_by_name,

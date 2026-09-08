@@ -1521,6 +1521,55 @@ def test_public_tournament_format_requires_complete_reviewed_trailer(
     assert result.diagnostics[0].line_start == 1
 
 
+def test_public_tournament_finish_statements_require_complete_results() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    finishes = (
+        "Player02 finished the tournament in 80th place\n"
+        "Player06 finished the tournament in 81st place\n"
+    )
+    source = source.replace(finishes, "").replace(
+        "Player09 collected 21570 from side pot\n",
+        "Player09 collected 21570 from side pot\n" + finishes,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-finish-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_finish_order"
+    assert result.diagnostics[0].line_start == 42
+
+
+def test_public_tournament_showdown_cannot_follow_finish_statements() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    player_six_showdown = "Player06: shows [9c Qd] (a pair of Nines)\n"
+    finishes = (
+        "Player02 finished the tournament in 80th place\n"
+        "Player06 finished the tournament in 81st place\n"
+    )
+    source = source.replace(player_six_showdown, "").replace(
+        finishes,
+        finishes + player_six_showdown,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-post-finish-showdown.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_finish_order"
+    assert result.diagnostics[0].line_start == 45
+
+
 def test_public_tournament_summary_rank_must_match_showdown_description() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
