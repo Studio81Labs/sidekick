@@ -308,6 +308,15 @@ validates a complete snapshot; an invalid graph cannot be persisted or exposed
 as learning evidence. Conflict resolutions are retained audit events, so a
 deletion request must be ordered after them before deletion can proceed.
 
+[ADR 0077](../decisions/0077-retain-tournament-entry-and-level-source-facts.md)
+records the accepted, not-yet-implemented #498 extension for separate tournament
+entry buy-in, fee and blind-level source facts under #409. Its P1a0 precursor
+preserves absent-field serialization and retained hashes, then introduces
+workspace layout v5 and portable backup v3 reader boundaries before tournament
+parser work. The current implemented versions below remain v4/v2 until that
+precursor ships; the decision does not establish source-time semantics or clear
+the Phase 0 evidence gates.
+
 Parsed hand-history candidates enter this aggregate through
 `app/application/imported_hand_ingestion.py`, composed under the local
 workspace's stable thread/process record stripes and shared data-volume lock.
