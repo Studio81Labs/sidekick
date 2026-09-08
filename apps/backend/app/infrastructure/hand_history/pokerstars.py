@@ -121,6 +121,21 @@ _HISTORICAL_TOURNAMENT_RANK_BY_DESCRIPTION = {
     "a pair of Jacks": "J",
     "a pair of Kings": "K",
 }
+_RANK_VALUE = {
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "T": 10,
+    "J": 11,
+    "Q": 12,
+    "K": 13,
+    "A": 14,
+}
 _HISTORICAL_TOURNAMENT_SHOW_RE = re.compile(
     r"^shows \[(?P<cards>[^\]]+)\](?: \("
     rf"(?P<rank_description>{_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION})\))?$"
@@ -1305,6 +1320,15 @@ def _parse_body(
                 )
             evidence = _evidence(raw_source_id, line)
             pot_label = collected.group("pot")
+            if allow_historical_tournament_results and pot_label not in {
+                "main pot",
+                "side pot",
+            }:
+                raise _HandParseError(
+                    "unsupported_tournament_award",
+                    "The reviewed historical tournament form requires main or side pot awards.",
+                    line_start=line.number,
+                )
             if pot_label == "pot":
                 pot_index = None
             elif pot_label == "main pot":
@@ -1475,6 +1499,21 @@ def _parse_body(
             "missing_tournament_total_pot",
             "The reviewed historical tournament form requires its total-pot line.",
         )
+    if allow_historical_tournament_results:
+        assert stated_pot is not None
+        if (
+            len(awards) != 2
+            or {award.pot_index for award in awards} != {0, 1}
+            or any(
+                award.amount != stated_pot.gross_pots[award.pot_index]
+                for award in awards
+                if award.pot_index is not None
+            )
+        ):
+            raise _HandParseError(
+                "tournament_award_mismatch",
+                "Tournament awards must match the reviewed main and side pot components.",
+            )
     expected_summary_seat_numbers = {
         int(player_id.removeprefix("seat-"))
         for player_id in player_id_by_name.values()
@@ -1997,9 +2036,22 @@ def _historical_tournament_rank_matches_cards(
         rank: sum(card.rank == rank for card in all_cards)
         for rank in {card.rank for card in all_cards}
     }
+    rank_values = {_RANK_VALUE[rank] for rank in rank_counts}
+    if 14 in rank_values:
+        rank_values.add(1)
+    has_straight = any(
+        all(rank in rank_values for rank in range(high - 4, high + 1))
+        for high in range(5, 15)
+    )
+    has_flush = any(
+        sum(card.suit == suit for card in all_cards) >= 5
+        for suit in {card.suit for card in all_cards}
+    )
     return (
         len(board_cards) == 5
         and rank_counts.get(expected_rank) == 2
+        and not has_straight
+        and not has_flush
         and all(
             count == 1 or (rank == expected_rank and count == 2)
             for rank, count in rank_counts.items()

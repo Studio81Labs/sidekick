@@ -1358,6 +1358,18 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
             26,
         ),
         (
+            "Player09 collected 21570 from side pot",
+            "Player09 collected 21570 from pot",
+            "unsupported_tournament_award",
+            41,
+        ),
+        (
+            "Player09 collected 21570 from side pot",
+            "Player09 collected 21570 from main pot",
+            "tournament_award_mismatch",
+            1,
+        ),
+        (
             "Player09: shows [Kd Ac] (a pair of Kings)",
             "Player09: shows [Kd Ac] (unknown annotation)",
             "unsupported_showdown",
@@ -1522,6 +1534,22 @@ def test_public_tournament_summary_rank_must_match_shown_cards_and_board() -> No
     assert len(result.diagnostics) == 1
     assert result.diagnostics[0].code == "summary_showdown_mismatch"
     assert result.diagnostics[0].line_start == 57
+
+
+def test_public_tournament_summary_rank_rejects_a_flush_labeled_as_one_pair() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace("3c 6s 9d", "3d 6d 9d")
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-flush-rank.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "summary_showdown_mismatch"
+    assert result.diagnostics[0].line_start == 50
 
 
 def test_historical_tournament_rejection_is_isolated_from_a_valid_sibling() -> None:
