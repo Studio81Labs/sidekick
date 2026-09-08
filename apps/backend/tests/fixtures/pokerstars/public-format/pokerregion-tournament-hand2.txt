@@ -1,0 +1,57 @@
+PokerStars Hand #900000000010: Tournament #800000000, $3.19+$0.31 USD Hold'em No Limit - Level XI (400/800) - 2013/10/04 23:22:20 CET [2013/10/04 17:22:20 ET]
+Table '800000000 9' 9-max Seat #2 is the button
+Seat 1: Player01 (12910 in chips)
+Seat 2: Player02 (11815 in chips)
+Seat 3: Player03 (7395 in chips)
+Seat 4: Player04 (7765 in chips)
+Seat 5: Player05 (10080 in chips)
+Seat 6: Player06 (1030 in chips)
+Seat 7: Player07 (13175 in chips)
+Seat 8: Player08 (2415 in chips)
+Seat 9: Player09 (13070 in chips)
+Player01: posts the ante 75
+Player02: posts the ante 75
+Player03: posts the ante 75
+Player04: posts the ante 75
+Player05: posts the ante 75
+Player06: posts the ante 75
+Player07: posts the ante 75
+Player08: posts the ante 75
+Player09: posts the ante 75
+Player03: posts small blind 400
+Player04: posts big blind 800
+*** HOLE CARDS ***
+Dealt to Player02 [Jd Js]
+Player05: folds
+Player06: raises 155 to 955 and is all-in
+Player07: folds
+Player08: folds
+Player09: raises 12040 to 12995 and is all-in
+Player01: folds
+Player02: calls 11740 and is all-in
+Player03: folds
+Player04: folds
+Uncalled bet (1255) returned to Player09
+*** FLOP *** [3c 6s 9d]
+*** TURN *** [3c 6s 9d] [8d]
+*** RIVER *** [3c 6s 9d 8d] [Ks]
+*** SHOW DOWN ***
+Player09: shows [Kd Ac] (a pair of Kings)
+Player02: shows [Jd Js] (a pair of Jacks)
+Player09 collected 21570 from side pot
+Player06: shows [9c Qd] (a pair of Nines)
+Player09 collected 4740 from main pot
+Player02 finished the tournament in 80th place
+Player06 finished the tournament in 81st place
+*** SUMMARY ***
+Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0
+Board [3c 6s 9d 8d Ks]
+Seat 1: Player01 folded before Flop (didn't bet)
+Seat 2: Player02 (button) showed [Jd Js] and lost with a pair of Jacks
+Seat 3: Player03 (small blind) folded before Flop
+Seat 4: Player04 (big blind) folded before Flop
+Seat 5: Player05 folded before Flop (didn't bet)
+Seat 6: Player06 showed [9c Qd] and lost with a pair of Nines
+Seat 7: Player07 folded before Flop (didn't bet)
+Seat 8: Player08 folded before Flop (didn't bet)
+Seat 9: Player09 showed [Kd Ac] and won (26310) with a pair of Kings

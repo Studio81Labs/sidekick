@@ -21,6 +21,7 @@ from app.storage.imported_hand_store import FileImportedHandStore
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "pokerstars"
+PUBLIC_FORMAT_FIXTURES = FIXTURES / "public-format"
 IMPORTED_AT = datetime(2026, 9, 2, 10, 0, tzinfo=timezone.utc)
 
 
@@ -1095,6 +1096,32 @@ def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
     assert diagnostic.source_hand_id == "900000000004"
     assert diagnostic.code == "unsupported_header"
     assert diagnostic.line_start == 17
+
+
+def test_public_tournament_format_specimen_remains_explicitly_unsupported() -> None:
+    """P0 captures observed syntax without claiming tournament support early."""
+
+    source_bytes = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_bytes()
+    assert sha256(source_bytes).hexdigest() == (
+        "844d23d2e5085e02082a85f873ba9cd5637ed300545846877c520a8b444a11e4"
+    )
+    source = source_bytes.decode("utf-8")
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.hand_ordinal == 1
+    assert diagnostic.source_hand_id == "900000000010"
+    assert diagnostic.code == "unsupported_header"
+    assert diagnostic.line_start == 1
+    assert diagnostic.line_end is None
 
 
 def test_inter_hand_blank_lines_do_not_change_raw_identity_or_reimport(
