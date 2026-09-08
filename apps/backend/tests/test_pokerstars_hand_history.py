@@ -1412,6 +1412,12 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
             50,
         ),
         (
+            "Seat 9: Player09 showed [Kd Ac] and won (26310) with a pair of Kings",
+            "Seat 9: Player09 collected (26310)",
+            "unsupported_summary_result",
+            57,
+        ),
+        (
             "won (26310) with a pair of Kings",
             "won (26310) with a pair of Jacks",
             "summary_showdown_mismatch",
@@ -1471,6 +1477,51 @@ def test_public_tournament_format_specimen_rejects_labelled_contradictions(
     assert diagnostic.hand_ordinal == 1
     assert diagnostic.source_hand_id == "900000000010"
     assert diagnostic.line_start == expected_line
+
+
+@pytest.mark.parametrize(
+    "removed",
+    [
+        "Board [3c 6s 9d 8d Ks]\n",
+        "Seat 1: Player01 folded before Flop (didn't bet)\n",
+        (
+            "Player02 finished the tournament in 80th place\n"
+            "Player06 finished the tournament in 81st place\n"
+        ),
+    ],
+)
+def test_public_tournament_format_requires_complete_reviewed_trailer(
+    removed: str,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(removed, "", 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-incomplete.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "missing_tournament_trailer"
+    assert result.diagnostics[0].line_start == 1
+
+
+def test_public_tournament_summary_rank_must_match_shown_cards_and_board() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace("a pair of Kings", "a pair of Jacks")
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-invalid-rank.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "summary_showdown_mismatch"
+    assert result.diagnostics[0].line_start == 57
 
 
 def test_historical_tournament_rejection_is_isolated_from_a_valid_sibling() -> None:
