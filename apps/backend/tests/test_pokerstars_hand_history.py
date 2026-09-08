@@ -1527,6 +1527,31 @@ def test_public_tournament_format_requires_complete_reviewed_trailer(
     assert result.diagnostics[0].line_start == 1
 
 
+def test_public_tournament_summary_requires_reviewed_trailer_order() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    total_pot = "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0\n"
+    source = source.replace(total_pot, "", 1).replace(
+        "Seat 9: Player09 showed [Kd Ac] and won (26310) with a pair of Kings\n",
+        (
+            "Seat 9: Player09 showed [Kd Ac] and won (26310) with a pair of Kings\n"
+            + total_pot
+        ),
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-summary-order.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "tournament_summary_order"
+    assert result.diagnostics[0].line_start == 57
+
+
 def test_public_tournament_finish_statements_require_complete_results() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"

@@ -900,6 +900,9 @@ def _parse_body(
     results_evidence: SourceEvidence | None = None
     summary_board_seen = False
     summary_seat_numbers: set[int] = set()
+    historical_tournament_summary_phase: Literal["total_pot", "board", "seats"] = (
+        "total_pot"
+    )
     table_seen = False
     seat_declaration_count = 0
     forced_post_seen = False
@@ -1025,6 +1028,15 @@ def _parse_body(
                 else None
             )
             if total_pot_match is not None or tournament_total_pot_match is not None:
+                if (
+                    allow_historical_tournament_results
+                    and historical_tournament_summary_phase != "total_pot"
+                ):
+                    raise _HandParseError(
+                        "tournament_summary_order",
+                        "The reviewed historical tournament summary must begin with its total-pot line.",
+                        line_start=line.number,
+                    )
                 if stated_pot is not None:
                     raise _HandParseError(
                         "duplicate_total_pot",
@@ -1084,8 +1096,19 @@ def _parse_body(
                     gross_pots=gross_pots,
                 )
                 results_evidence = _evidence(raw_source_id, line)
+                if allow_historical_tournament_results:
+                    historical_tournament_summary_phase = "board"
                 continue
             if text.startswith("Board ["):
+                if (
+                    allow_historical_tournament_results
+                    and historical_tournament_summary_phase == "seats"
+                ):
+                    raise _HandParseError(
+                        "tournament_summary_order",
+                        "The reviewed historical tournament summary requires its board after the total-pot line.",
+                        line_start=line.number,
+                    )
                 summary_board = _SUMMARY_BOARD_RE.fullmatch(text)
                 if summary_board is None:
                     raise _HandParseError(
@@ -1111,6 +1134,8 @@ def _parse_body(
                         line_start=line.number,
                     )
                 summary_board_seen = True
+                if allow_historical_tournament_results:
+                    historical_tournament_summary_phase = "seats"
                 continue
             if text.startswith("Seat "):
                 _validate_summary_seat_line(
