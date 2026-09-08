@@ -380,10 +380,11 @@ cases so an expected rejection cannot stand in for verified parser coverage.
 The separate labeled-only gate is limited to independently reviewed incomplete
 hands, whose correct safe outcome may be rejection.
 The documented runnable gate covers only the adapter's current matching-parse
-surface. Tournament parsing and player-selected or client-automatic origins,
-including timeout and disconnect, are still unsupported and remain explicit
-Phase 0 blockers. Their verified parsed gates must be added once the adapter can
-emit them; a current-surface exit status of zero is not full Phase 0 acceptance.
+surface. Tournament variants beyond the reviewed historical HAND2 form, and
+player-selected or client-automatic origins, including timeout and disconnect,
+are still unsupported and remain explicit Phase 0 blockers. Their verified
+parsed gates must be added from independently reviewed examples; a
+current-surface exit status of zero is not full Phase 0 acceptance.
 
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit

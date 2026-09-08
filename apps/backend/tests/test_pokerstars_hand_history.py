@@ -1468,6 +1468,26 @@ def test_historical_tournament_rejection_is_isolated_from_a_valid_sibling() -> N
     assert diagnostic.line_start == source.count("\n") + 3
 
 
+def test_historical_tournament_requires_the_labelled_total_pot_line() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace(
+        "Total pot 26310 Main pot 4740. Side pot 21570. | Rake 0\n",
+        "",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("historical-tournament-without-total-pot.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "missing_tournament_total_pot"
+    assert result.diagnostics[0].line_start == 1
+
+
 def test_historical_tournament_summary_syntax_remains_header_bound() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"

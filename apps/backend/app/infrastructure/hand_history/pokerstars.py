@@ -1453,6 +1453,11 @@ def _parse_body(
             "A supported hand requires an explicit hole-card section marker.",
         )
     assert hole_evidence is not None
+    if allow_historical_tournament_results and stated_pot is None:
+        raise _HandParseError(
+            "missing_tournament_total_pot",
+            "The reviewed historical tournament form requires its total-pot line.",
+        )
 
     streets = [
         ImportedStreet(street=name, board_cards=board, actions=street_actions)
