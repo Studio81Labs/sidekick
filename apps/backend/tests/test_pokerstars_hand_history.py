@@ -1101,12 +1101,13 @@ def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
 def test_public_tournament_format_specimen_remains_explicitly_unsupported() -> None:
     """P0 captures observed syntax without claiming tournament support early."""
 
-    source = (
+    source_bytes = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
-    ).read_text()
-    assert sha256(source.encode("utf-8")).hexdigest() == (
+    ).read_bytes()
+    assert sha256(source_bytes).hexdigest() == (
         "844d23d2e5085e02082a85f873ba9cd5637ed300545846877c520a8b444a11e4"
     )
+    source = source_bytes.decode("utf-8")
 
     result = parse_pokerstars_text(
         source,
