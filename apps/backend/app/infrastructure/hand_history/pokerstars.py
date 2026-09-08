@@ -116,26 +116,6 @@ _RAISE_RE = re.compile(
 )
 _SHOW_RE = re.compile(r"^shows \[(?P<cards>[^\]]+)\]$")
 _HISTORICAL_TOURNAMENT_RANK_DESCRIPTION = r"a pair of (?:Nines|Jacks|Kings)"
-_HISTORICAL_TOURNAMENT_RANK_BY_DESCRIPTION = {
-    "a pair of Nines": "9",
-    "a pair of Jacks": "J",
-    "a pair of Kings": "K",
-}
-_RANK_VALUE = {
-    "2": 2,
-    "3": 3,
-    "4": 4,
-    "5": 5,
-    "6": 6,
-    "7": 7,
-    "8": 8,
-    "9": 9,
-    "T": 10,
-    "J": 11,
-    "Q": 12,
-    "K": 13,
-    "A": 14,
-}
 _HISTORICAL_TOURNAMENT_SHOW_RE = re.compile(
     r"^shows \[(?P<cards>[^\]]+)\](?: \("
     rf"(?P<rank_description>{_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION})\))?$"
@@ -1143,7 +1123,6 @@ def _parse_body(
                     ),
                     street_names=street_names,
                     actions=actions,
-                    board_cards=boards[-1],
                     showdown=showdown,
                     showdown_rank_descriptions=showdown_rank_descriptions,
                     awards=awards,
@@ -1573,7 +1552,6 @@ def _validate_summary_seat_line(
     expected_position_tags_by_player: dict[str, frozenset[str]],
     street_names: list[Literal["preflop", "flop", "turn", "river"]],
     actions: list[list[ImportedAction]],
-    board_cards: list[Card],
     showdown: list[ShowdownEntry],
     showdown_rank_descriptions: dict[str, str],
     awards: list[PotAward],
@@ -1733,16 +1711,6 @@ def _validate_summary_seat_line(
             raise _HandParseError(
                 "summary_showdown_mismatch",
                 "The summary hand rank does not match the parsed showdown.",
-                line_start=line,
-            )
-        if not _historical_tournament_rank_matches_cards(
-            showdown_result.group("rank_description"),
-            matching_showdown.cards,
-            board_cards,
-        ):
-            raise _HandParseError(
-                "summary_showdown_mismatch",
-                "The summary hand rank does not match the shown cards and board.",
                 line_start=line,
             )
         awarded = sum(
@@ -2023,40 +1991,6 @@ def _historical_tournament_rank_description(body: str) -> str | None:
     if match is None:
         return None
     return match.group("rank_description")
-
-
-def _historical_tournament_rank_matches_cards(
-    rank_description: str,
-    shown_cards: list[Card],
-    board_cards: list[Card],
-) -> bool:
-    expected_rank = _HISTORICAL_TOURNAMENT_RANK_BY_DESCRIPTION[rank_description]
-    all_cards = [*shown_cards, *board_cards]
-    rank_counts = {
-        rank: sum(card.rank == rank for card in all_cards)
-        for rank in {card.rank for card in all_cards}
-    }
-    rank_values = {_RANK_VALUE[rank] for rank in rank_counts}
-    if 14 in rank_values:
-        rank_values.add(1)
-    has_straight = any(
-        all(rank in rank_values for rank in range(high - 4, high + 1))
-        for high in range(5, 15)
-    )
-    has_flush = any(
-        sum(card.suit == suit for card in all_cards) >= 5
-        for suit in {card.suit for card in all_cards}
-    )
-    return (
-        len(board_cards) == 5
-        and rank_counts.get(expected_rank) == 2
-        and not has_straight
-        and not has_flush
-        and all(
-            count == 1 or (rank == expected_rank and count == 2)
-            for rank, count in rank_counts.items()
-        )
-    )
 
 
 def _parse_board(value: str, *, expected_count: int, line: int) -> list[Card]:

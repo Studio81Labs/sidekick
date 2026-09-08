@@ -23,6 +23,11 @@ from app.storage.imported_hand_store import FileImportedHandStore
 FIXTURES = Path(__file__).parent / "fixtures" / "pokerstars"
 PUBLIC_FORMAT_FIXTURES = FIXTURES / "public-format"
 IMPORTED_AT = datetime(2026, 9, 2, 10, 0, tzinfo=timezone.utc)
+HAND2_INDEPENDENT_EXPECTED_SHOWDOWN = [
+    ("seat-9", ["Kd", "Ac"], "shown", 39),
+    ("seat-2", ["Jd", "Js"], "shown", 40),
+    ("seat-6", ["9c", "Qd"], "shown", 42),
+]
 
 
 def import_context(name: str = "synthetic-cash-sitout.txt") -> PokerStarsImportContext:
@@ -1251,11 +1256,7 @@ def test_public_tournament_format_specimen_matches_hand2_source_labels(
     assert [
         (entry.player_id, [card.code for card in entry.cards], entry.disposition, entry.evidence[0].line_start)
         for entry in state.results.showdown
-    ] == [
-        ("seat-9", ["Kd", "Ac"], "shown", 39),
-        ("seat-2", ["Jd", "Js"], "shown", 40),
-        ("seat-6", ["9c", "Qd"], "shown", 42),
-    ]
+    ] == HAND2_INDEPENDENT_EXPECTED_SHOWDOWN
     assert [
         (award.player_id, award.amount, award.pot_index, award.evidence[0].line_start)
         for award in state.results.awards
@@ -1520,10 +1521,13 @@ def test_public_tournament_format_requires_complete_reviewed_trailer(
     assert result.diagnostics[0].line_start == 1
 
 
-def test_public_tournament_summary_rank_must_match_shown_cards_and_board() -> None:
+def test_public_tournament_summary_rank_must_match_showdown_description() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
-    ).read_text().replace("a pair of Kings", "a pair of Jacks")
+    ).read_text().replace(
+        "won (26310) with a pair of Kings",
+        "won (26310) with a pair of Jacks",
+    )
 
     result = parse_pokerstars_text(
         source,
@@ -1536,7 +1540,7 @@ def test_public_tournament_summary_rank_must_match_shown_cards_and_board() -> No
     assert result.diagnostics[0].line_start == 57
 
 
-def test_public_tournament_summary_rank_rejects_a_flush_labeled_as_one_pair() -> None:
+def test_public_tournament_rank_description_is_not_derived_from_cards() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
     ).read_text().replace("3c 6s 9d", "3d 6d 9d")
@@ -1546,10 +1550,64 @@ def test_public_tournament_summary_rank_rejects_a_flush_labeled_as_one_pair() ->
         context=import_context("pokerregion-tournament-hand2-flush-rank.txt"),
     )
 
-    assert result.hands == ()
-    assert len(result.diagnostics) == 1
-    assert result.diagnostics[0].code == "summary_showdown_mismatch"
-    assert result.diagnostics[0].line_start == 50
+    assert result.diagnostics == ()
+    assert len(result.hands) == 1
+    assert result.hands[0].disposition == "clean"
+
+
+def test_historical_tournament_winner_counterexample_is_amount_only_evidence(
+    tmp_path: Path,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text()
+    source = source.replace(
+        "Dealt to Player02 [Jd Js]",
+        "Dealt to Player02 [Kd Ac]",
+    ).replace(
+        "Player09: shows [Kd Ac] (a pair of Kings)",
+        "Player09: shows [Jc Jh] (a pair of Jacks)",
+    ).replace(
+        "Player02: shows [Jd Js] (a pair of Jacks)",
+        "Player02: shows [Kd Ac] (a pair of Kings)",
+    ).replace(
+        "Player02 (button) showed [Jd Js] and lost with a pair of Jacks",
+        "Player02 (button) showed [Kd Ac] and lost with a pair of Kings",
+    ).replace(
+        "Player09 showed [Kd Ac] and won (26310) with a pair of Kings",
+        "Player09 showed [Jc Jh] and won (26310) with a pair of Jacks",
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-winner-counterexample.txt"),
+    )
+
+    assert result.diagnostics == ()
+    assert len(result.hands) == 1
+    parsed = result.hands[0]
+    state = parsed.candidate.detection.state
+    assert state.results is not None
+    assert [
+        (entry.player_id, [card.code for card in entry.cards], entry.disposition, entry.evidence[0].line_start)
+        for entry in state.results.showdown
+    ] != HAND2_INDEPENDENT_EXPECTED_SHOWDOWN
+    assert [
+        (award.player_id, award.amount, award.pot_index)
+        for award in state.results.awards
+    ] == [
+        ("seat-9", Decimal("21570"), 1),
+        ("seat-9", Decimal("4740"), 0),
+    ]
+    assert parsed.disposition == "clean"
+    assert parsed.reconciliation.status == "pass"
+    assert parsed.reconciliation.amount_parse_validated_only is True
+
+    created = ImportedHandIngestionService(
+        store=FileImportedHandStore(tmp_path)
+    ).ingest(parsed.candidate)
+    assert created.disposition == "created_pending_review"
+    assert created.record.canonical_revisions == []
 
 
 def test_historical_tournament_rejection_is_isolated_from_a_valid_sibling() -> None:
