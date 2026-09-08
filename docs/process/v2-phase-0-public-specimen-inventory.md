@@ -61,8 +61,9 @@ representative distribution.
 | Independent labels        | P1b evidence ledger and independently authored current rejection expectation in [the action-origin packet](pokerstars-p1b-action-origin-evidence.md); independent source review is required before parser implementation.                                                                         |
 
 This specimen records plain `has timed out`, `has timed out while disconnected`,
-and unrelated table/disconnect notifications. The current adapter rejects it at
-the legacy `PokerStars Game #` header, and it lacks a dealt-to-hero line. It is
+and unrelated table/disconnect notifications. The current adapter detects its
+legacy `PokerStars Game #` hand boundary, then rejects the unsupported
+one-digit-hour/explicit-ISO header; it also lacks a dealt-to-hero line. It is
 therefore not a supported parser input, a proof of current-client behavior, or
 a complete action-origin rule. The bounded candidate labels, combined-cause
 encoding, evidence lines, scope/reset conditions, and explicit negative cases

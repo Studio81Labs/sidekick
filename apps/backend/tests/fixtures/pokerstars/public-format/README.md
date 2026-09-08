@@ -47,8 +47,9 @@ local source path remains.
 The file is a public format sample and P1b evidence-preparation input. It is
 not a representative-corpus case, proof of current-client behavior, or proof
 that a missing marker identifies a player-selected action. Its exact current
-parser expectation is the structured `no_hand_headers` rejection: it retains
-the observed legacy `PokerStars Game #` header and has no dealt-to-hero line.
+parser expectation is the structured `unsupported_header` rejection: the
+adapter detects the observed legacy `PokerStars Game #` hand boundary but does
+not accept its one-digit-hour/explicit-ISO header or infer a dealt-to hero.
 Do not edit it into an accepted history or use it to introduce unrelated header
 or hero inference. The associated evidence packet is
 [`docs/process/pokerstars-p1b-action-origin-evidence.md`](../../../../../../docs/process/pokerstars-p1b-action-origin-evidence.md).

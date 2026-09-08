@@ -65,9 +65,7 @@ _LEGACY_TIMEOUT_CASH_HEADER_RE = re.compile(
 )
 _HEADER_START_RE = re.compile(
     r"^\ufeff?PokerStars Hand #(?P<hand_id>[^:]+):"
-    rf"|^\ufeff?PokerStars Game #(?P<legacy_hand_id>[0-9]+): +"
-    rf"Hold'em No Limit \(\${_CHIPS}/\${_CHIPS}\) - "
-    r"[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2} ET$"
+    r"|^\ufeff?PokerStars Game #(?P<legacy_hand_id>[^:]+):"
 )
 _HISTORICAL_TOURNAMENT_HEADER_RE = re.compile(
     rf"^\ufeff?PokerStars Hand #(?P<hand_id>[0-9]+): +"

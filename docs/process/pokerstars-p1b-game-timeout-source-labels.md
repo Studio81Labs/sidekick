@@ -49,9 +49,9 @@ reconnect ordering, or current-client grammar.
 
 The reviewed parser maps this one legacy `PokerStars Game #` source family. It
 must not rewrite the fixture, infer a hero, turn `$` into `USD`, or generalize
-the family beyond the labels below. The earlier HHSmithy fixture remains a
-`no_hand_headers` rejection because its one-digit-hour/explicit-ISO header does
-not match this reviewed legacy grammar.
+the family beyond the labels below. The earlier HHSmithy fixture is retained as
+an `unsupported_header` rejection: the adapter detects its legacy hand boundary
+but its one-digit-hour/explicit-ISO header does not match this reviewed grammar.
 
 ## Expected detected state
 

@@ -1104,7 +1104,7 @@ def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
 
 
 def test_public_cash_origin_specimen_remains_a_structured_rejection() -> None:
-    """P1b evidence preparation does not broaden the legacy source format."""
+    """P1b detects a legacy boundary without broadening per-hand support."""
 
     source_bytes = (PUBLIC_FORMAT_FIXTURES / "hhsmithy-cash-limit1.txt").read_bytes()
     assert sha256(source_bytes).hexdigest() == (
@@ -1117,8 +1117,16 @@ def test_public_cash_origin_specimen_remains_a_structured_rejection() -> None:
     )
 
     assert result.hands == ()
-    assert [(diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
-        ("no_hand_headers", 1)
+    assert [
+        (
+            diagnostic.code,
+            diagnostic.hand_ordinal,
+            diagnostic.source_hand_id,
+            diagnostic.line_start,
+        )
+        for diagnostic in result.diagnostics
+    ] == [
+        ("unsupported_header", 1, "900000000020", 1)
     ]
 
 
@@ -1326,6 +1334,47 @@ def test_legacy_timeout_rejection_is_isolated_from_a_valid_sibling() -> None:
     assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000021"
     assert [(diagnostic.hand_ordinal, diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
         (2, "unbound_timeout_marker", 72)
+    ]
+
+
+@pytest.mark.parametrize("unsupported_first", [False, True])
+def test_unsupported_legacy_header_is_isolated_from_a_valid_sibling(
+    unsupported_first: bool,
+) -> None:
+    supported = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
+    ).read_text()
+    unsupported = (PUBLIC_FORMAT_FIXTURES / "hhsmithy-cash-limit1.txt").read_text()
+    source = (
+        f"{unsupported}\n{supported}"
+        if unsupported_first
+        else f"{supported}\n{unsupported}"
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("legacy-header-isolation.txt"),
+    )
+
+    assert [hand.hand_ordinal for hand in result.hands] == (
+        [2] if unsupported_first else [1]
+    )
+    assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000021"
+    assert [
+        (
+            diagnostic.hand_ordinal,
+            diagnostic.source_hand_id,
+            diagnostic.code,
+            diagnostic.line_start,
+        )
+        for diagnostic in result.diagnostics
+    ] == [
+        (
+            1 if unsupported_first else 2,
+            "900000000020",
+            "unsupported_header",
+            1 if unsupported_first else supported.count("\n") + 2,
+        )
     ]
 
 
