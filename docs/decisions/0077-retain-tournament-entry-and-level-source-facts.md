@@ -1,29 +1,30 @@
 # ADR 0077: Retain Tournament Entry and Blind-Level Source Facts
 
-Status: accepted; implementation pending under issue #409
+Status: accepted; P1a0 compatibility implementation in PR #500; P1a parser mapping pending under issue #409
 
 Date: 2026-09-08
 
-Resolves the architectural decision in issue #498 under Epic #405. This is an
-approved implementation contract, not a claim that tournament parsing or the
-compatibility changes below have shipped.
+Resolves the architectural decision in issue #498 under Epic #405. PR #500
+implements the P1a0 compatibility precursor below. Tournament parser mapping,
+source-label work, and the remaining P1a work are still pending under #409.
 
 ## Context
 
 PR #497 retained a sanitized, attributed PokerStars tournament specimen. Its
 header contains `Tournament #800000000, $3.19+$0.31 USD` and
 `Level XI (400/800)`. The Epic requires these supplied facts to remain distinct
-and reviewable. `TournamentEconomics` currently has no entry-cost fields, and
-its `stage` field is part of the route-critical tournament context. Raw header
-retention alone does not satisfy the distinct detected-field requirement.
+and reviewable. Before P1a0, `TournamentEconomics` had no entry-cost fields,
+and its `stage` field was part of the route-critical tournament context. Raw
+header retention alone did not satisfy the distinct detected-field requirement.
 
 The same economics model appears in detected and approved hands, extracted
 decisions, retained grade snapshots, and offline recommendation economic models.
 Its serialized values participate in content, semantic and economic hashes.
 Adding ordinary nullable defaults would insert new null keys into old payloads,
 potentially invalidating retained checksums, snapshot restoration and reimports.
-Current player workspace layout v4 and portable backup v2 also need an explicit
-compatibility boundary before older readers encounter populated new fields.
+The P1a0 compatibility precursor advances the player workspace from layout v4
+to v5 and portable backup output from v2 to v3 before new fields can be
+persisted. It intentionally does not add tournament parser behavior.
 
 ## Decision
 
@@ -155,21 +156,21 @@ unsupported strict-model validation remains explicit.
 
 ### Implementation boundary and validation
 
-Continue SERIAL execution under #496 with one writer/merge-bound implementation
-PR. Land this documentation decision first. Split the former P1a into:
+Serial execution under #496 landed this documentation decision first. PR #500
+implements the completed P1a0 precursor; P1a remains separate:
 
-1. **P1a0, #409:** domain fields and serialization; workspace v5/backup v3
+1. **P1a0, #409 (PR #500):** domain fields and serialization; workspace v5/backup v3
    compatibility; local audit/review contract coverage; upgrade, retained-hash
    and artifact regression tests. No tournament parser behavior yet.
 2. **P1a, #409:** evidenced tournament parser mapping, source labels, header and
-   summary tests, and adapter provenance, after P1a0 merges. Remaining source
-   semantics must still be established before corresponding parser behavior.
+   summary tests, and adapter provenance. Remaining source semantics must still
+   be established before corresponding parser behavior.
 
 Keep completed issues #410 and #432 closed; this is an evidenced extension under
 #409, not a reopening of their completed acceptance criteria. #498 tracks the
 architectural decision, not implementation completion.
 
-P1a0 must use retained fixtures made by the pre-change models, including a
+P1a0 uses retained fixtures made by the pre-change models, including a
 legacy tournament with an approved revision, extracted decision and grade audit.
 Check their original bytes/digests rather than regenerating all expectations
 with the new models. Required validation includes:
@@ -191,20 +192,20 @@ with the new models. Required validation includes:
   and absent keys; existing recommendation economics and reference qualification
   regressions because the model is shared.
 
-Run relevant repository backend suites and local player UI tests, and build the
-player UI if it changes. Update current architecture/operational version claims
-in P1a0 when the implementation actually ships. A failure to preserve retained
-hashes/artifacts, maintain reader fencing, or avoid changing route economics
-requires escalation before continuing; it is not permission for data repair or
-broader hash/normalization redesign.
+PR #500 runs the relevant repository backend suites and local player UI tests,
+and builds the player UI where it changes. It updates current
+architecture/operational version claims for P1a0. A failure to preserve retained
+hashes/artifacts, maintain reader fencing, or avoid changing route economics in
+future P1a work requires escalation before continuing; it is not permission for
+data repair or broader hash/normalization redesign.
 
 ## Consequences
 
-The orchestrator has an exact contract for the real source gap without needing a
-private solved export. Parser work can resume after the serial compatibility
-precursor and the remaining source-label checks. Legacy facts stay readable;
-new facts stay independently reviewable and cannot become invented ICM inputs.
-The cost is one focused compatibility PR and an explicit reader-version boundary.
+The P1a0 compatibility precursor gives the orchestrator an exact contract for
+the real source gap without needing a private solved export. Parser work can
+resume after the remaining source-label checks. Legacy facts stay readable; new
+facts stay independently reviewable and cannot become invented ICM inputs. The
+cost is one focused compatibility PR and an explicit reader-version boundary.
 
 The representative authorized corpus, supported solved-reference export and
 delivery rights, independent poker review, budget evidence and Phase 0 gate
