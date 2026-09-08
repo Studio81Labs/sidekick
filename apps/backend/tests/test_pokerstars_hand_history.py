@@ -1539,6 +1539,22 @@ def test_public_tournament_format_requires_complete_reviewed_trailer(
     assert result.diagnostics[0].line_start == expected_line
 
 
+def test_public_tournament_format_requires_reviewed_hero_cards() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"
+    ).read_text().replace("Dealt to Player02 [Jd Js]\n", "", 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("pokerregion-tournament-hand2-missing-hero.txt"),
+    )
+
+    assert result.hands == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].code == "missing_tournament_hero_cards"
+    assert result.diagnostics[0].line_start == 1
+
+
 def test_public_tournament_summary_requires_reviewed_trailer_order() -> None:
     source = (
         PUBLIC_FORMAT_FIXTURES / "pokerregion-tournament-hand2.txt"

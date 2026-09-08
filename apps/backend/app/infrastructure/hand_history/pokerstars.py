@@ -1587,6 +1587,11 @@ def _parse_body(
             "A supported hand requires an explicit hole-card section marker.",
         )
     assert hole_evidence is not None
+    if allow_historical_tournament_results and hero_evidence is None:
+        raise _HandParseError(
+            "missing_tournament_hero_cards",
+            "The reviewed historical tournament form requires its dealt-to-hero line.",
+        )
     if allow_historical_tournament_results and stated_pot is None:
         raise _HandParseError(
             "missing_tournament_total_pot",
