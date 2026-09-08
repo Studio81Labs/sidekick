@@ -1103,6 +1103,25 @@ def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
     assert diagnostic.line_start == 17
 
 
+def test_public_cash_origin_specimen_remains_a_structured_rejection() -> None:
+    """P1b evidence preparation does not broaden the legacy source format."""
+
+    source_bytes = (PUBLIC_FORMAT_FIXTURES / "hhsmithy-cash-limit1.txt").read_bytes()
+    assert sha256(source_bytes).hexdigest() == (
+        "481c9ac5af9e20bc0fa6f55adf606d52733387993ef8aec2696193cadfde2ae0"
+    )
+
+    result = parse_pokerstars_text(
+        source_bytes.decode("utf-8"),
+        context=import_context("hhsmithy-cash-limit1.txt"),
+    )
+
+    assert result.hands == ()
+    assert [(diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
+        ("no_hand_headers", 1)
+    ]
+
+
 def test_public_tournament_format_specimen_matches_hand2_source_labels(
     tmp_path: Path,
 ) -> None:
