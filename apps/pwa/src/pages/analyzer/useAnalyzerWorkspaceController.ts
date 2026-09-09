@@ -1706,6 +1706,9 @@ export function useAnalyzerWorkspaceController({
       })
       .catch((processingError) => {
         if (active) {
+          if (reportAdministrativeDenial(processingError)) {
+            return;
+          }
           setError(
             messageFromError(
               processingError,
@@ -2086,9 +2089,11 @@ export function useAnalyzerWorkspaceController({
       applyHistorySearchPage(page);
     } catch (historyError) {
       if (requestId === historySearchRequestRef.current) {
-        setError(
-          messageFromError(historyError, "Could not search saved history"),
-        );
+        if (!reportAdministrativeDenial(historyError)) {
+          setError(
+            messageFromError(historyError, "Could not search saved history"),
+          );
+        }
       }
     } finally {
       setHistoryLoading(false);
@@ -2113,9 +2118,11 @@ export function useAnalyzerWorkspaceController({
       }
     } catch (historyError) {
       if (requestId === historySearchRequestRef.current) {
-        setError(
-          messageFromError(historyError, "Could not refresh history search"),
-        );
+        if (!reportAdministrativeDenial(historyError)) {
+          setError(
+            messageFromError(historyError, "Could not refresh history search"),
+          );
+        }
       }
     }
   }
@@ -2190,7 +2197,11 @@ export function useAnalyzerWorkspaceController({
       }
       applyHistoryPage(page, true);
     } catch (historyError) {
-      setError(messageFromError(historyError, "Could not load older history"));
+      if (!reportAdministrativeDenial(historyError)) {
+        setError(
+          messageFromError(historyError, "Could not load older history"),
+        );
+      }
     } finally {
       setHistoryLoading(false);
     }
@@ -2232,6 +2243,7 @@ export function useAnalyzerWorkspaceController({
       }
       return true;
     } catch (historyError) {
+      const administrativeDenied = reportAdministrativeDenial(historyError);
       if (jobIds !== null) {
         if (mutationFailureMayHavePersistedSideEffect(historyError)) {
           scheduleMutationLeaseRevalidation();
@@ -2240,7 +2252,7 @@ export function useAnalyzerWorkspaceController({
           clearOwnedMutationLease("history");
         }
       }
-      if (reportErrors) {
+      if (reportErrors && !administrativeDenied) {
         setError(
           messageFromError(historyError, "Could not load saved history"),
         );

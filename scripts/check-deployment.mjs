@@ -222,6 +222,15 @@ async function checkOnce(baseUrl, headers, timeoutMs) {
     404,
   );
 
+  await expectStatus(
+    baseUrl,
+    "/api/admin/ocr/jobs?limit=1",
+    "Administrator OCR API boundary",
+    headers,
+    timeoutMs,
+    [401, 403],
+  );
+
   const mcpConfig = parseJson(
     await fetchText(
       baseUrl,

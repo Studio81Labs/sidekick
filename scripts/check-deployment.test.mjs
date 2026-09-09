@@ -52,6 +52,10 @@ test("checks the committed app shell, retired route, and MCP security boundaries
         response.writeHead(404).end();
         return;
       }
+      if (request.url === "/api/admin/ocr/jobs?limit=1") {
+        response.writeHead(401).end();
+        return;
+      }
       if (request.url === "/api/mcp/principals" || request.url === "/mcp") {
         response.writeHead(401, { "Content-Type": "application/json" });
         response.end(JSON.stringify({ detail: "Authentication required" }));
@@ -83,6 +87,7 @@ test("checks the committed app shell, retired route, and MCP security boundaries
     "/app",
     "/api/health",
     "/api/jobs?limit=1",
+    "/api/admin/ocr/jobs?limit=1",
     "/api/mcp/config",
     "/api/mcp/principals",
     "/mcp",
@@ -118,6 +123,10 @@ test("rejects a publicly exposed MCP administration route", async () => {
         response.writeHead(404).end();
         return;
       }
+      if (request.url === "/api/admin/ocr/jobs?limit=1") {
+        response.writeHead(401).end();
+        return;
+      }
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(
         request.url === "/api/health"
@@ -149,6 +158,10 @@ test("accepts an absent MCP endpoint when hosted access is disabled", async () =
       }
       if (request.url === "/api/jobs?limit=1") {
         response.writeHead(404).end();
+        return;
+      }
+      if (request.url === "/api/admin/ocr/jobs?limit=1") {
+        response.writeHead(403).end();
         return;
       }
       if (request.url === "/api/mcp/principals") {
@@ -189,6 +202,10 @@ test("rejects an absent admin binding when hosted MCP is enabled", async () => {
         response.writeHead(404).end();
         return;
       }
+      if (request.url === "/api/admin/ocr/jobs?limit=1") {
+        response.writeHead(401).end();
+        return;
+      }
       if (request.url === "/api/mcp/principals") {
         response.writeHead(503).end();
         return;
@@ -210,6 +227,49 @@ test("rejects an absent admin binding when hosted MCP is enabled", async () => {
           timeoutMs: 1_000,
         }),
         /MCP administration boundary returned HTTP 503; expected 401/,
+      );
+    },
+  );
+});
+
+test("rejects an absent administrator OCR API boundary", async () => {
+  await withServer(
+    (request, response) => {
+      if (request.url === "/") {
+        response.writeHead(200).end(VALID_PWA_DOCUMENT);
+        return;
+      }
+      if (request.url === "/api/jobs?limit=1") {
+        response.writeHead(404).end();
+        return;
+      }
+      if (request.url === "/api/admin/ocr/jobs?limit=1") {
+        response.writeHead(404).end();
+        return;
+      }
+      if (request.url === "/api/mcp/principals") {
+        response.writeHead(401).end();
+        return;
+      }
+      if (request.url === "/mcp") {
+        response.writeHead(401).end();
+        return;
+      }
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        request.url === "/api/health"
+          ? JSON.stringify({ status: "ok" })
+          : JSON.stringify({ enabled: true }),
+      );
+    },
+    async (baseUrl) => {
+      await assert.rejects(
+        checkDeployment(baseUrl, {
+          allowHttp: true,
+          attempts: 1,
+          timeoutMs: 1_000,
+        }),
+        /Administrator OCR API boundary returned HTTP 404; expected 401 or 403/,
       );
     },
   );
