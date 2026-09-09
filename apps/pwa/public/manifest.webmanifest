@@ -2,7 +2,7 @@
   "id": "/",
   "name": "Poker Hero Post-Hand Trainer",
   "short_name": "Poker Hero",
-  "description": "Review Texas Hold'em screenshots and learn from post-hand recommendations.",
+  "description": "Review administrator-verified Texas Hold'em screenshot records.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

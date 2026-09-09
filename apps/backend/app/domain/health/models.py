@@ -11,5 +11,3 @@ class HealthResponse(BaseModel):
     status: Literal["ok"]
     environment: DeploymentEnvironment
     parser_provider: str
-    recommendation_provider: str
-    recommendation_engine: str

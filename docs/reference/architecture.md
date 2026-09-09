@@ -6,7 +6,7 @@ release. [ADR 0079](../decisions/0079-adopt-an-unreleased-current-only-cutover.m
 supersedes compatibility/fallback requirements: the target is one current local
 player application and an explicit operator OCR surface. The #517 C1 cutover
 uses layout 6 and backup schema 4 as the only local persistence formats. The
-old analyzer/recommendation paths remain pending C2/C3 removal work.
+old analyzer remains pending C3 replacement work.
 
 The repository security, release, dependency-trust, and required-check baseline
 is defined by
@@ -117,14 +117,15 @@ defined by
 [ADR 0047](../decisions/0047-retire-v1-screenshot-learning-surface.md). Every
 stored screenshot job is now administrative OCR test data: upload/capture,
 parser review and approval, benchmarking, history/archive, and backups remain,
-while recommendation providers, local solvers, and the offline recommendation
-benchmark remain only as settings-driven infrastructure with no per-job route.
+while the V1 recommendation runner, providers, heuristics, and solver fallback
+have been removed under ADR 0079. Native V2 grading remains unavailable until
+the reference-source gate is qualified.
 
 ## System Shape
 
 Poker Hero is a two-app monorepo. The browser control panel never talks to OCR
-or recommendation engines directly; the FastAPI backend owns those integrations
-and normalizes all results into stable API models.
+engines directly; the FastAPI backend owns parser integration and normalizes its
+results into stable API models.
 
 ```text
 Browser
@@ -134,8 +135,6 @@ Browser
      -> parser registry -> OCR/CV or external vision service
      -> file-backed job store in POKER_DATA_DIR
      -> parser benchmark -> explicit approved-state corpus and persisted reports
-     -> provider registry -> local solver router, rule engine, or external service
-        -> preflop chart, postflop-solver plugin, or bundled range/EV fallback
 
 Post-hand agent
   -> environment-fixed MCP gateway (local stdio or authenticated hosted HTTP)
@@ -158,26 +157,20 @@ Each installed parser is represented by one immutable catalog descriptor that
 owns its factory, label, readiness check, and supported-layout policy. Runtime
 construction and pipeline capabilities consume the same descriptor, while the
 configuration allowlist remains a separately validated deployment boundary.
-Recommendation providers follow the same catalog contract for their factory,
-label, and readiness check. Local solver engines remain a nested selection of
-the `local_solver` provider, chosen by `POKER_LOCAL_SOLVER_ENGINE` alone. Each
-local engine descriptor owns its subprocess command factory, label, and
-execution mode. The custom command is a deployment-fixed engine descriptor
-rather than a selectable entry.
 Layout profile IDs are deployment-defined data. The capability response includes
 a parser/layout compatibility matrix: multi-layout external vision can accept
 custom profiles such as `pokerstars`, while fixed-region OCR is selectable only
 with profiles for which its coordinates and templates are calibrated.
+
 Installed local OCR profiles resolve through an immutable layout registry. Each
 layout supplies the reference dimensions and every card, pot, control, stack,
 stakes-header, and opponent-seat region used during parsing. The legacy
 `generic`, `fortuna`, `nations`, and `fortuna_nations` IDs intentionally alias
 the same calibrated engine; an unknown local profile fails closed instead of
-borrowing those coordinates.
-Per-job mutations use bounded lock stripes around short storage transitions.
-Screenshot parsing runs outside those stripes, then reloads and merges into the
-latest job record so slow OCR does not block unrelated jobs and deleted uploads
-cannot be recreated by parser completion.
+borrowing those coordinates. Per-job mutations use bounded lock stripes around
+short storage transitions. Screenshot parsing runs outside those stripes, then
+reloads and merges into the latest job record so slow OCR does not block
+unrelated jobs and deleted uploads cannot be recreated by parser completion.
 
 Screenshot upload is an administrative OCR test surface, not a player data
 path (ADR 0046). `POST /api/jobs` fails closed unless
@@ -275,8 +268,8 @@ Provider-neutral pipeline selection and capability contracts live under
 domain package directly.
 
 Poker card values, constrained numeric types, and validated preflop and
-postflop action histories live under `app/domain/poker`. Parsers and solvers
-import those primitives directly. The same domain owns
+postflop action histories live under `app/domain/poker`. Parsers import those
+primitives directly. The same domain owns
 detected parser state, parser evidence, and canonical user-approved state plus
 their cross-field wager and history validation.
 
@@ -953,6 +946,13 @@ points. The response retains the complete decision-state, table-action, origin,
 exclusion, chronology and provenance contract while recursively removing
 source excerpts. ADR 0065 records this application boundary; it does not
 connect grading or a remote provider.
+
+### Retired V1 recommendation implementation (historical)
+
+The following V1 design record is retained solely as historical context. ADR
+0079 removes the recommendation contracts, providers, local engines, screenshot
+benchmark, settings, assets, and CLI entry points it describes. It is not
+current runtime, deployment, integration, or product guidance.
 
 Provider-neutral recommendation actions, requests, and result evidence live
 under `app/domain/recommendations`. Providers, local engines, and benchmarks

@@ -25,15 +25,11 @@ triggers the exact Coolify application, follows its deployment ID until it
 finishes, and then verifies `/api/health`.
 
 Start from `infra/docker/backend.env.example`. At minimum, set the parser,
-layout, recommendation provider, data directory, upload limit, and allowed
-origins. Set `POKER_DEPLOYMENT_ENVIRONMENT` to the exact Coolify application
-environment (`staging` or `production`); environment-fixed MCP gateways reject
-a missing or mismatched identity. The backend image already contains
-`poker-postflop-solver`; keep
-`POKER_LOCAL_SOLVER_ENGINE=postflop_solver` to use it. The default 768 MB solver
-tree limit is separate from container overhead, so allocate at least 1.5 GB RAM
-or lower `POKER_POSTFLOP_SOLVER_MAX_MEMORY_MB`. Keep provider URLs and
-credentials in Coolify secrets.
+layout, data directory, upload limit, and allowed origins. Set
+`POKER_DEPLOYMENT_ENVIRONMENT` to the exact Coolify application environment
+(`staging` or `production`); environment-fixed MCP gateways reject a missing or
+mismatched identity. The deployed image contains no V1 solver or recommendation
+provider. Keep external parser URLs and credentials in Coolify secrets.
 To expose another poker client through `llm_vision`, add its normalized ID to
 `POKER_PARSER_ENABLED_LAYOUT_PROFILES` and enable `llm_vision` in
 `POKER_PARSER_ENABLED_PROVIDERS`. The API advertises parser/layout compatibility,
@@ -44,20 +40,9 @@ It tries local OCR for explicit registered client layouts, falls back to
 external vision when local OCR rejects a capture, and routes `generic` or other
 enabled layouts directly to the external endpoint. It never infers or changes
 the selected layout profile.
-`POKER_POSTFLOP_SOLVER_RANGE_MODE=contextual` uses a complete supported flop
-open-and-call, open/3-bet/call, or open/3-bet/4-bet/call history whose
-reconstructed root pot matches the recorded final commitments to select
-position-aware ranges. It applies a reconstructed starting-stack policy when
-the reviewed effective or visible stacks reconcile with current-street money;
-otherwise evidence identifies the 100 BB standard assumption. Turn, river,
-incomplete, and contradictory states retain the configured ranges. Set the mode
-to `configured` when the deployment's explicit OOP/IP range strings must always
-take precedence.
-
-External OCR, solver, and LLM endpoints can each use an independent bearer
-token. Configure the matching `POKER_*_BEARER_TOKEN` value as a Coolify secret
-and use an HTTPS endpoint URL. `POKER_EXTERNAL_REQUEST_TIMEOUT_SECONDS` controls
-all external HTTP parser and recommendation calls and defaults to 60 seconds.
+External OCR can use `POKER_EXTERNAL_PARSER_BEARER_TOKEN` with an HTTPS endpoint.
+`POKER_EXTERNAL_REQUEST_TIMEOUT_SECONDS` controls parser requests and defaults
+to 60 seconds.
 
 For a public Coolify origin, generate a private Worker credential:
 
@@ -81,17 +66,8 @@ every benchmark dataset import, and every backup restore. Enter the token
 only in the PWA **Administrator tools** dialog; it stays in browser memory
 until locked or reloaded. The PWA verifies the token with the backend
 through `GET /api/admin/ocr-test/session` before it unlocks any capture control.
-Rollback is `POKER_ADMIN_OCR_TEST_ENABLED=false`, which also disables dataset
-import and backup restore until the mode is enabled again; no setting restores
-player-accessible capture or automatic recommendations.
-
-This release removes the V1 recommendation and training routes and the
-`recommended` job status. Before the backend starts, the container entrypoint
-deletes job directories whose raw record has that retired status. It leaves
-current records and malformed or unknown records untouched, and it takes the
-exclusive data-volume lock before deleting anything. Current application
-models remain strict; pre-release backups containing a `recommended` job are
-still refused by `POST /api/backups/restore` with a 400.
+Disable the mode with `POKER_ADMIN_OCR_TEST_ENABLED=false`. No setting enables a
+player capture path or a retired V1 recommendation runtime.
 
 After deployment, verify:
 

@@ -77,7 +77,6 @@ def test_disabled_deployment_ignores_configured_token(tmp_path: Path) -> None:
         Settings(
             data_dir=tmp_path,
             parser_provider="mock",
-            recommendation_provider="mock",
             admin_ocr_test_enabled=False,
             admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
         )
@@ -154,7 +153,6 @@ def test_session_is_forbidden_when_administrative_mode_is_disabled(
             Settings(
                 data_dir=tmp_path / "configured",
                 parser_provider="mock",
-                recommendation_provider="mock",
                 admin_ocr_test_enabled=False,
                 admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
             )

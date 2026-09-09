@@ -59,7 +59,6 @@ def make_client(data_dir: Path, **overrides: object) -> TestClient:
     values = {
         "data_dir": data_dir,
         "parser_provider": "mock",
-        "recommendation_provider": "mock",
         "admin_ocr_test_enabled": True,
         "admin_ocr_test_token": ADMIN_OCR_TEST_TOKEN,
     }
@@ -228,7 +227,6 @@ def test_restore_does_not_block_unrelated_requests(
         Settings(
             data_dir=tmp_path / "destination",
             parser_provider="mock",
-            recommendation_provider="mock",
             admin_ocr_test_enabled=True,
             admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
         )
@@ -280,7 +278,6 @@ def test_upload_waiting_for_backup_does_not_block_unrelated_requests(
         Settings(
             data_dir=tmp_path,
             parser_provider="mock",
-            recommendation_provider="mock",
             admin_ocr_test_enabled=True,
             admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
         )
@@ -379,7 +376,6 @@ def test_slow_backup_download_does_not_block_mutations(
         Settings(
             data_dir=tmp_path,
             parser_provider="mock",
-            recommendation_provider="mock",
             admin_ocr_test_enabled=True,
             admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
         )

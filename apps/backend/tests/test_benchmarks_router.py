@@ -308,8 +308,6 @@ def test_benchmark_import_runs_application_work_outside_event_loop() -> None:
             status="ok",
             environment="local",
             parser_provider="ocr_cv",
-            recommendation_provider="local_solver",
-            recommendation_engine="local_solver",
         ),
         get_pipeline_capabilities=lambda: PipelineCapabilities(
             defaults=PipelineSelection(

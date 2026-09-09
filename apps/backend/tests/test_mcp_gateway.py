@@ -47,7 +47,6 @@ def make_gateway(
             data_dir=tmp_path / "data",
             deployment_environment=backend_environment,
             parser_provider="mock",
-            recommendation_provider="mock",
             api_rate_limit_enabled=False,
             admin_ocr_test_enabled=admin_ocr_test_enabled,
             admin_ocr_test_token=(
@@ -170,8 +169,6 @@ def test_api_client_rechecks_environment_before_every_operation() -> None:
                 "status": "ok",
                 "environment": backend_environment,
                 "parser_provider": "ocr_cv",
-                "recommendation_provider": "local_solver",
-                "recommendation_engine": "postflop_solver",
             },
         )
 
@@ -204,8 +201,6 @@ def test_api_client_withholds_api_credentials_until_identity_matches() -> None:
                     "status": "ok",
                     "environment": "staging",
                     "parser_provider": "ocr_cv",
-                    "recommendation_provider": "local_solver",
-                    "recommendation_engine": "postflop_solver",
                 },
             )
         assert request.url.path == "/api/jobs"
@@ -295,8 +290,6 @@ def test_api_error_preserves_retry_metadata() -> None:
                     "status": "ok",
                     "environment": "staging",
                     "parser_provider": "ocr_cv",
-                    "recommendation_provider": "local_solver",
-                    "recommendation_engine": "postflop_solver",
                 },
             )
         return httpx.Response(

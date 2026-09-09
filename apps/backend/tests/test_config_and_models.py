@@ -16,7 +16,6 @@ from app.domain.poker import (
     PreflopAction,
     PostflopAction,
 )
-from app.domain.recommendations import RecommendationAction, RecommendationResult
 
 
 def test_benchmark_overview_requires_consistent_layout_counts() -> None:
@@ -121,7 +120,7 @@ def test_benchmark_comparison_rejects_values_outside_field_schema(
         )
 
 
-def test_settings_defaults_use_local_training_backends(tmp_path: Path) -> None:
+def test_settings_defaults_use_current_parser_runtime(tmp_path: Path) -> None:
     settings = Settings(data_dir=tmp_path)
 
     assert settings.data_dir == tmp_path
@@ -130,16 +129,6 @@ def test_settings_defaults_use_local_training_backends(tmp_path: Path) -> None:
     assert settings.parser_provider == "mock"
     assert settings.parser_layout_profile == "generic"
     assert settings.parser_auto_approve_enabled is False
-    assert settings.recommendation_provider == "rule_based"
-    assert settings.local_solver_engine == "postflop_solver"
-    assert settings.local_solver_timeout_seconds == 120
-    assert settings.postflop_solver_fallback_enabled is True
-    assert settings.postflop_solver_max_iterations == 400
-    assert settings.postflop_solver_target_exploitability == 0.01
-    assert settings.postflop_solver_max_memory_mb == 768
-    assert settings.postflop_solver_bet_sizes == "70%"
-    assert settings.postflop_solver_raise_sizes == "2.5x"
-    assert settings.postflop_solver_range_mode == "contextual"
     assert settings.max_upload_bytes == 10 * 1024 * 1024
     assert settings.max_dataset_upload_bytes == 100 * 1024 * 1024
     assert settings.max_backup_upload_bytes == 100 * 1024 * 1024
@@ -154,8 +143,6 @@ def test_settings_defaults_use_local_training_backends(tmp_path: Path) -> None:
     assert settings.api_rate_limit_benchmarks_per_minute == 6
     assert settings.api_rate_limit_data_transfers_per_minute == 6
     assert settings.external_parser_bearer_token is None
-    assert settings.external_provider_bearer_token is None
-    assert settings.llm_advice_bearer_token is None
     assert settings.external_request_timeout_seconds == 60
 
 
@@ -180,22 +167,15 @@ def test_settings_rejects_invalid_sentry_dsn(dsn: str) -> None:
         Settings(sentry_dsn=dsn)
 
 
-def test_settings_reads_poker_prefixed_provider_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_settings_reads_poker_prefixed_parser_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("POKER_DEPLOYMENT_ENVIRONMENT", "staging")
     monkeypatch.setenv("POKER_PARSER_PROVIDER", "external")
-    monkeypatch.setenv("POKER_RECOMMENDATION_PROVIDER", "solver")
-    monkeypatch.setenv("POKER_LOCAL_SOLVER_ENGINE", "local_ev")
-    monkeypatch.setenv("POKER_EXTERNAL_PROVIDER_BEARER_TOKEN", "solver-token")
     monkeypatch.setenv("POKER_EXTERNAL_REQUEST_TIMEOUT_SECONDS", "12.5")
 
     settings = Settings()
 
     assert settings.deployment_environment == "staging"
     assert settings.parser_provider == "external"
-    assert settings.recommendation_provider == "solver"
-    assert settings.local_solver_engine == "local_ev"
-    assert settings.external_provider_bearer_token is not None
-    assert settings.external_provider_bearer_token.get_secret_value() == "solver-token"
     assert settings.external_request_timeout_seconds == 12.5
 
 
@@ -203,9 +183,7 @@ def test_application_settings_loader_reads_dotenv(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     (tmp_path / ".env").write_text(
-        "POKER_PARSER_PROVIDER=ocr_cv\n"
-        "POKER_POSTFLOP_SOLVER_MAX_ITERATIONS=17\n"
-        "POKER_POSTFLOP_SOLVER_BET_SIZES=50%,100%\n",
+        "POKER_PARSER_PROVIDER=ocr_cv\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
@@ -217,8 +195,6 @@ def test_application_settings_loader_reads_dotenv(
         get_settings.cache_clear()
 
     assert settings.parser_provider == "ocr_cv"
-    assert settings.postflop_solver_max_iterations == 17
-    assert settings.postflop_solver_bet_sizes == "50%,100%"
 
 
 def test_settings_parses_thresholds_from_json_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -240,24 +216,9 @@ def test_settings_rejects_invalid_auto_approve_threshold() -> None:
         Settings(parser_auto_approve_thresholds={"hero_cards": 1.5})
 
 
-def test_settings_rejects_non_positive_solver_timeout() -> None:
-    with pytest.raises(ValidationError):
-        Settings(local_solver_timeout_seconds=0)
+def test_settings_rejects_non_positive_external_request_timeout() -> None:
     with pytest.raises(ValidationError):
         Settings(external_request_timeout_seconds=0)
-
-
-def test_settings_rejects_invalid_postflop_solver_limits() -> None:
-    with pytest.raises(ValidationError):
-        Settings(postflop_solver_max_iterations=0)
-    with pytest.raises(ValidationError):
-        Settings(postflop_solver_target_exploitability=1.1)
-    with pytest.raises(ValidationError):
-        Settings(postflop_solver_max_memory_mb=0)
-    with pytest.raises(ValidationError):
-        Settings(postflop_solver_rake_rate=-0.01)
-    with pytest.raises(ValidationError):
-        Settings(postflop_solver_range_mode="automatic")
 
 
 def test_settings_rejects_non_positive_max_upload_bytes() -> None:
@@ -455,8 +416,6 @@ def test_settings_normalizes_and_masks_external_bearer_tokens() -> None:
     ("url_field", "token_field"),
     [
         ("external_parser_url", "external_parser_bearer_token"),
-        ("external_provider_url", "external_provider_bearer_token"),
-        ("llm_advice_url", "llm_advice_bearer_token"),
     ],
 )
 def test_settings_require_https_for_authenticated_external_services(
@@ -672,84 +631,6 @@ def test_preflop_action_accepts_canonical_raise_and_call_totals() -> None:
         {"actor": "cutoff", "action": "raise", "amount": 2.5},
         {"actor": "button", "action": "call", "amount": 2.5},
     ]
-
-
-@pytest.mark.parametrize("action", ["fold", "check", "call"])
-def test_recommendation_rejects_sizing_for_non_wager_action(
-    action: RecommendationAction,
-) -> None:
-    with pytest.raises(
-        ValidationError,
-        match="Sizing is only valid for bet or raise recommendations",
-    ):
-        RecommendationResult(
-            action=action,
-            sizing=2.5,
-            confidence=0.8,
-            explanation="Malformed recommendation",
-        )
-
-
-def test_action_line_rejects_nonfinite_sizing() -> None:
-    with pytest.raises(ValidationError, match="finite number"):
-        RecommendationResult(
-            action="raise",
-            sizing=float("inf"),
-            confidence=0.8,
-            explanation="Malformed recommendation",
-        )
-
-
-def test_action_line_rejects_zero_wager_sizing() -> None:
-    with pytest.raises(ValidationError, match="greater than 0"):
-        RecommendationResult(
-            action="raise",
-            sizing=0,
-            confidence=0.8,
-            explanation="Malformed recommendation",
-        )
-
-
-@pytest.mark.parametrize("sizing", [True, "7.5"])
-def test_action_line_rejects_coerced_wager_sizing(sizing: object) -> None:
-    with pytest.raises(ValidationError, match="valid number"):
-        RecommendationResult(
-            action="raise",
-            sizing=sizing,
-            confidence=0.8,
-            explanation="Malformed recommendation",
-        )
-
-
-def test_action_line_accepts_integer_wager_sizing() -> None:
-    result = RecommendationResult(
-        action="raise",
-        sizing=8,
-        confidence=0.8,
-        explanation="Valid recommendation",
-    )
-
-    assert result.sizing == 8.0
-
-
-@pytest.mark.parametrize("confidence", [True, "0.8"])
-def test_recommendation_rejects_coerced_confidence(confidence: object) -> None:
-    with pytest.raises(ValidationError, match="valid number"):
-        RecommendationResult(
-            action="check",
-            confidence=confidence,
-            explanation="Malformed recommendation",
-        )
-
-
-def test_recommendation_accepts_integer_confidence() -> None:
-    result = RecommendationResult(
-        action="check",
-        confidence=1,
-        explanation="Valid recommendation",
-    )
-
-    assert result.confidence == 1.0
 
 
 @pytest.mark.parametrize("confidence", [True, "0.99"])
@@ -1015,4 +896,3 @@ def test_canonical_state_does_not_share_cards_with_detected_state() -> None:
 
 def test_raw_metadata_types_are_string_keyed_any_dicts() -> None:
     assert get_type_hints(ParserResult)["raw"] == dict[str, Any]
-    assert get_type_hints(RecommendationResult)["raw"] == dict[str, Any]

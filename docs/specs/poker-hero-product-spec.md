@@ -170,13 +170,12 @@ personal leak, update mastery, or contribute to proof-of-learning metrics.
 
 **Keep these capabilities in the current implementation**
 
-- Config-driven parser and recommendation registries with a mock provider.
+- A config-driven parser registry with a mock parser.
 - The parser benchmark harness with an explicit ground-truth corpus and
   versioned export/import.
-- The recommendation benchmark against trusted references (this becomes the
-  instrument that validates grading quality — see §5).
-- Evidence transparency (exposing chart policy, tree/range assumptions, and
-  fallback context per decision).
+- Native V2 grading/reference contracts, kept unavailable until the independent
+  source and certification gate is satisfied (see §5).
+- Evidence transparency for parser output and retained grade audits.
 - Backup/restore with checksums and conflict-safe merge.
 - Failure isolation ("one item failing must not roll back unrelated items").
 
@@ -443,7 +442,8 @@ backup without an explicit user-authorized reimport.
 The learning system does not consume hands — it consumes **decision points**.
 From a user-approved canonical hand, extract each hero decision as:
 
-- The canonical decision state (everything the recommendation provider needs).
+- The canonical decision state (everything a qualified reference evaluation
+  needs).
 - The **actual player-selected action taken**, including its approved action
   origin and source evidence (from the history — this is the key gift of import
   when voluntariness is known).
@@ -564,29 +564,26 @@ ceiling on learning quality, so it is treated as first-class.
 ### 5.1 Coverage, stated honestly
 
 - **Preflop** — tractable and comparatively cheap to solve, but not yet backed by
-  a mastery-gradeable reference in the current implementation. The retained V1
-  chart uses conservative heuristic thresholds; it remains `heuristic` and can
-  never update mastery or generate drills. Phase 0 must source and benchmark an
-  independently solved position-aware policy (RFI, vs-RFI, vs-3bet, blind
-  defense, squeeze, cold-call, short-stack) with explicit table-size, structural
-  position, stack-depth, sizing, economic, and mixed-policy boundaries. V1's
-  routing/context extraction may be reused only where independently validated;
-  its threshold policy must not be relabeled `solved`. Structured history is
-  authoritative: any supplied opener position or size must match its first raise
-  exactly, while a nonempty call-only/limp-only history carries neither opener
-  field.
+  a mastery-gradeable reference in the current implementation. ADR 0079 removes
+  the V1 chart and fallback rather than retaining heuristic output. Phase 0 must
+  source and benchmark an independently solved position-aware policy (RFI,
+  vs-RFI, vs-3bet, blind defense, squeeze, cold-call, short-stack) with explicit
+  table-size, structural position, stack-depth, sizing, economic, and
+  mixed-policy boundaries. Structured history is authoritative: any supplied
+  opener position or size must match its first raise exactly, while a nonempty
+  call-only/limp-only history carries neither opener field.
 - **Heads-up postflop** — potentially mastery-gradeable only when the reviewed
   hand resolves an exact supported line against a benchmarked solved-tree
   revision **and** all required root inputs are verified: effective stack,
   players/relative position, pot and action history, board, and ranges derived
-  and conditioned from complete prior-street evidence. Schema-v5 grading
-  requires the full completed postflop prefix: turn includes flop, and river
-  includes flop plus turn. Any 100-BB stack
+  and conditioned from complete prior-street evidence. Future native
+  certification requires the full completed postflop prefix: turn includes flop,
+  and river includes flop plus turn. Any 100-BB stack
   assumption, configured/default range, ambiguous player mapping, incomplete
   prior street, or approximate/skipped conditioning makes the current result
   `heuristic`, even if the current-street line exists.
-- **Multiway postflop** — _not_ solved. Currently a range/EV heuristic. This is
-  the largest gap and covers a large share of real hands.
+- **Multiway postflop** — _not_ solved and no evaluation path is implemented.
+  This is the largest gap and covers a large share of real hands.
 
 Coverage also includes game economics. A solved route declares the cash rake
 model or tournament chip-EV/ICM/bounty context it assumes, the exact blind/ante
@@ -611,9 +608,8 @@ Every graded decision carries a `grade_source`:
 
 - `solved` — solved chart or solved tree. **Eligible to move mastery or generate
   drills only when the resolved policy evidence is complete.**
-- `heuristic` — range/EV fallback. **Shown to the player with an explicit
-  "estimate, not solved" marker. Never moves mastery, never generates a drill,
-  never labeled a mistake.**
+- `heuristic` — a future non-qualified result. **Never moves mastery, never
+  generates a drill, and is never labeled a mistake.**
 
 `grade_source: solved` is necessary but not sufficient for right/wrong grading.
 Each solved result also preserves the reference policy for the resolved spot:
@@ -638,16 +634,16 @@ retroactively labels an individual supported realization a mistake. Small or
 non-comparable samples remain diagnostic only.
 
 Solved eligibility also requires evidence that every route-critical canonical
-input matches the reference. A provider fallback or default for effective stack,
-range, position, action history, board conditioning, or economic context is an
+input matches the reference. A fallback or default for effective stack, range,
+position, action history, board conditioning, or economic context is an
 assumption, not verification, and forces the result to `heuristic`/ungraded.
-For benchmark schema v5, that evidence must be matched against an independently
-configured provider route catalog captured before the provider sees any case.
+For future native certification, that evidence must be matched against an
+independently configured route catalog captured before evaluation sees any case.
 Poker Hero canonicalizes and hashes the raw configured route context itself and
 retains the selected route, engine revision, configuration artifact, and adapter
 binding identities. A provider-computed echo of case input is not an attestation;
 missing, ambiguous, or changed bindings fail closed before grading.
-Every schema-v5 case also requires exactly two distinct hero hole cards and the
+Every native certification case also requires exactly two distinct hero hole cards and the
 exact board cardinality for its street; provider-declared required fields and an
 exact-shape route binding cannot substitute for this semantic completeness.
 The bound context includes every canonical decision-state field exposed to the
@@ -918,19 +914,15 @@ organizing principle.
 
 ## 7. Current infrastructure capabilities
 
-- **Config-driven parser & recommendation registries**, mock providers,
-  field-level confidence gating, immutable catalog descriptors.
+- **Config-driven parser registry**, mock parser, field-level confidence gating,
+  immutable catalog descriptors.
 - **Parser benchmark**: explicit ground-truth corpus, per-layout scoping,
   versioned dataset export/import, regression thresholds. Still the way OCR
   accuracy is validated through the administrator-only capture/upload test path.
-- **Recommendation benchmark**: evaluation against trusted strategy references.
-  In V2 this is elevated: it is the instrument that proves `solved` grading is
-  actually correct, and therefore that the mastery model is measuring something
-  real. Its implementation uses native V2 decisions and declared EV units; old
-  screenshot recommendation schemas/runners are removed under ADR 0079. It
-  requires a trusted reference corpus (which is the same sourcing
-  question as §5.3 — the benchmark measures grading quality but does not create
-  the references).
+- **Native reference certification**: a future evaluation against trusted
+  strategy references must use V2 decisions, declared EV units, and a qualified
+  source corpus. The retired screenshot recommendation runner cannot serve as a
+  bridge or fallback (ADR 0079).
 - **Evidence transparency**, **backup/restore with checksums**, **failure
   isolation**.
 
@@ -1057,8 +1049,8 @@ Poker Hero V2 is successful when:
   closing, or not yet measurable.
 - OCR can be validated by administrators through isolated screenshot upload and
   live capture without exposing those inputs as a player workflow.
-- The parser and recommendation benchmarks demonstrate that grading is accurate
-  enough to trust the mastery model.
+- The parser benchmark demonstrates OCR accuracy only. Mastery remains blocked
+  until native reference certification demonstrates grading accuracy.
 
 Not a success criterion: number of features, number of analytics breakdowns, or
 number of hands processed. Those are V1's metrics. V2's metric is **leaks

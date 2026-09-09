@@ -193,12 +193,8 @@ def test_training_aggregation_monolith_is_retired() -> None:
     assert not (APP_ROOT / "training.py").exists()
 
 
-def test_grading_domain_does_not_import_provider_or_benchmark_execution() -> None:
-    forbidden = {
-        "app.application",
-        "app.providers",
-        "app.recommendation_benchmark",
-    }
+def test_grading_domain_does_not_import_application_execution() -> None:
+    forbidden = {"app.application"}
     violations = [
         f"{path}: {module}"
         for path in sorted((APP_ROOT / "domain" / "grading").glob("*.py"))
@@ -207,6 +203,18 @@ def test_grading_domain_does_not_import_provider_or_benchmark_execution() -> Non
         or any(module.startswith(prefix + ".") for prefix in forbidden)
     ]
     assert violations == []
+
+
+def test_legacy_recommendation_execution_is_retired() -> None:
+    retired_source_paths = (
+        APP_ROOT / "recommendation_benchmark.py",
+        APP_ROOT / "deployment_cleanup.py",
+    )
+
+    assert all(not path.exists() for path in retired_source_paths)
+    assert not list((APP_ROOT / "domain" / "recommendations").glob("*.py"))
+    assert not list((APP_ROOT / "providers").glob("*.py"))
+    assert not list((APP_ROOT / "solvers").glob("*.py"))
 
 
 def test_remote_reference_domain_has_only_pure_dependencies() -> None:

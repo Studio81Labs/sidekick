@@ -50,7 +50,7 @@ This plan is based on the local default branches at these revisions:
 
 ```text
 apps/
-  backend/                 FastAPI API, MCP gateway, parsers, providers, storage
+  backend/                 FastAPI API, MCP gateway, parsers, storage
   pwa/                     React/Vite product app and Cloudflare Worker proxy
 packages/
   openapi/                 Deterministic backend OpenAPI artifact and tooling
@@ -58,8 +58,6 @@ packages/
 infra/
   docker/
     docker-compose.yml     Local stack, using repository-root build contexts
-solver-plugins/
-  postflop/                Rust postflop solver runtime extension
 docs/
   decisions/               ADRs
   process/                 Runbooks

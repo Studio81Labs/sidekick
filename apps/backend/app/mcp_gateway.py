@@ -127,8 +127,6 @@ class ApiHealth(BaseModel):
     status: Literal["ok"]
     environment: Literal["local", "staging", "production"]
     parser_provider: str
-    recommendation_provider: str
-    recommendation_engine: str
 
 
 class EnvironmentStatus(BaseModel):

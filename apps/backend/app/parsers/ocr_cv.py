@@ -696,7 +696,7 @@ class OcrCvParser:
             if hero_cards_visible:
                 warnings.append("Hero cards need manual review; one or more card ranks were not recognized")
             else:
-                warnings.append("Hero cards are not visible; this screenshot is not actionable for recommendation")
+                warnings.append("Hero cards are not visible; manual review cannot reconstruct this field")
 
         return ParserResult(
             state=DetectedState(

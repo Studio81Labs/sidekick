@@ -44,7 +44,6 @@ def make_client(tmp_path: Path, **settings_overrides: object) -> TestClient:
     settings_values = {
         "data_dir": tmp_path,
         "parser_provider": "mock",
-        "recommendation_provider": "mock",
         "admin_ocr_test_enabled": True,
         "admin_ocr_test_token": ADMIN_OCR_TEST_TOKEN,
     }

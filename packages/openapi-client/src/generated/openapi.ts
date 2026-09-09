@@ -844,10 +844,6 @@ export interface components {
       environment: "local" | "staging" | "production";
       /** Parser Provider */
       parser_provider: string;
-      /** Recommendation Engine */
-      recommendation_engine: string;
-      /** Recommendation Provider */
-      recommendation_provider: string;
       /**
        * Status
        * @constant

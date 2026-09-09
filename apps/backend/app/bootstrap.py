@@ -141,7 +141,6 @@ from app.parsers.base import ParserConfigurationError, ParserError
 from app.parsers.registry import build_parser
 from app.pipeline import (
     PipelineSelectionError,
-    configured_recommendation_engine,
     parser_options_for_layout,
     pipeline_capabilities,
     resolve_pipeline_selection,
@@ -870,17 +869,10 @@ def create_app(
         return response
 
     def get_health() -> HealthResponse:
-        configured_engine = configured_recommendation_engine(active_settings)
         return HealthResponse(
             status="ok",
             environment=active_settings.deployment_environment,
             parser_provider=active_settings.parser_provider,
-            recommendation_provider=active_settings.recommendation_provider,
-            recommendation_engine=(
-                active_settings.recommendation_provider
-                if configured_engine is None
-                else configured_engine
-            ),
         )
 
     def get_pipeline_capabilities() -> PipelineCapabilities:

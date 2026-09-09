@@ -142,7 +142,6 @@ def test_unhandled_error_response_keeps_request_id(
         Settings(
             data_dir=tmp_path,
             parser_provider="mock",
-            recommendation_provider="mock",
         )
     )
 
@@ -192,7 +191,6 @@ def test_stream_failure_is_logged_after_response_start(
         Settings(
             data_dir=tmp_path,
             parser_provider="mock",
-            recommendation_provider="mock",
         )
     )
 
@@ -458,7 +456,6 @@ def test_rejected_upload_monitors_receive_only_after_response_start(
         Settings(
             data_dir=tmp_path,
             parser_provider="mock",
-            recommendation_provider="mock",
             proxy_shared_secret="worker-to-backend-secret-value-123",
         )
     )
@@ -536,7 +533,6 @@ def test_disconnect_during_rejected_upload_response_is_logged_as_failed(
         Settings(
             data_dir=tmp_path,
             parser_provider="mock",
-            recommendation_provider="mock",
             proxy_shared_secret="worker-to-backend-secret-value-123",
         )
     )

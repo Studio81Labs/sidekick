@@ -10,10 +10,6 @@ pwa:
           - "apps/pwa/**"
           - "packages/openapi-client/**"
 
-solver:
-  - changed-files:
-      - any-glob-to-any-file: "solver-plugins/**"
-
 ci:
   - changed-files:
       - any-glob-to-any-file: ".github/workflows/**"

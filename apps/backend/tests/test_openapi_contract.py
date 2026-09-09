@@ -62,8 +62,6 @@ def test_health_response_schema_is_explicit(tmp_path: Path) -> None:
         "status",
         "environment",
         "parser_provider",
-        "recommendation_provider",
-        "recommendation_engine",
     ]
     assert health_schema["properties"]["status"] == {
         "const": "ok",

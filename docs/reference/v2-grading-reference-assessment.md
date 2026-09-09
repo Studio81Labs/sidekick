@@ -32,8 +32,9 @@ Poker Hero does not yet have:
 - a benchmark run or a real-hand coverage study; or
 - an agreed acquisition, compute, review, and update budget.
 
-Until those items exist, the retained V1 preflop chart and every current
-postflop route remain heuristic and mastery-ineligible. This preserves the
+Until those items exist, no native grading route is qualified or
+mastery-eligible. The V1 preflop chart and postflop routes were removed under
+ADR 0079. This preserves the
 [V2 trustworthiness gate](../specs/poker-hero-product-spec.md#52-the-trustworthiness-gate-non-negotiable)
 and [ADR 0046](../decisions/0046-adopt-import-first-learning-boundary.md).
 
@@ -54,35 +55,17 @@ risk and require qualified review where appropriate; they are not legal advice.
 
 ## Current repository baseline
 
-The existing components are useful instrumentation, not V2 solved references:
+The current components deliberately do not provide a V2 solved reference:
 
-- The preflop engine describes its result as a "transparent training chart, not
-  a solved preflop game tree" in
-  [`preflop_chart.py`](../../apps/backend/app/solvers/preflop_chart.py).
-- The bundled Rust adapter solves heads-up postflop trees with Discounted CFR,
-  but its player ranges and modeled tree remain assumptions. It explicitly
-  presents the result as training guidance in
-  [`main.rs`](../../solver-plugins/postflop/src/main.rs).
-- [ADR 0001](../decisions/0001-local-postflop-solver-plugin.md) limits that
-  route to heads-up postflop states and requires a fresh AGPL/distribution
-  review. [ADR 0035](../decisions/0035-benchmark-postflop-range-sources.md)
-  makes configured versus history-derived range evidence measurable; it does
-  not verify that either range is the correct solved root.
-- The generic HTTP provider serializes the recommendation request and is not a
-  V2 remote-feed consent or field-allowlist boundary. It must not be reused as
-  one without implementing the ADR 0046 privacy controls.
-- The current
-  [recommendation benchmark](./recommendation-benchmark.md) can measure action
-  and sizing agreement, mixed-policy distance, EV loss, range conditioning,
-  range source, and fallback use against an independent corpus. Schema v5,
-  introduced with this research, also carries immutable reference/policy/
-  tolerance revisions; source, configuration, and normalized-policy digests;
-  declared table/position/stack/street coverage; economic and utility model
-  provenance; an EV unit; delivery-specific rights evidence; and passing
-  convergence evidence. Each version-5 case now repeats the exact normalized
-  economic and utility identities/configurations. A provider may grade it only
-  after returning a matching configured binding for the exact structural,
-  economic, and utility context; current built-ins fail before execution because
+- ADR 0079 removes the V1 preflop chart, postflop solver, generic HTTP adapter,
+  and screenshot recommendation benchmark. They cannot be restored as a source
+  qualification shortcut.
+- The current remote-reference consent and dispatch contracts are fail-closed
+  infrastructure, not a configured reference feed or policy evaluator.
+- A future native certification implementation must carry immutable
+  reference/policy/tolerance revisions; source, configuration, and normalized
+  policy digests; declared coverage; economic and utility provenance; an EV
+  unit; delivery-specific rights evidence; and passing convergence evidence.
   they do not consume and attest that complete contract. The scorer still uses
   `ev_bb`, and declarations or evidence pointers do not themselves prove
   ownership, input completeness, delivery rights, or that a retained source
@@ -360,18 +343,17 @@ audited consistently.
 14. `phase-0-grading-gate.md`: signed `go`, `reshape`, or `stop` recommendation
     linking every artifact and listing residual risk.
 
-Recommendation benchmark schema v5 supplies the source-certification evidence
-envelope: immutable revisions and artifact digests, declared coverage, economic
-and utility provenance, EV unit, delivery-mode-specific rights grants with
-evidence pointers/digests, and passing convergence evidence. It intentionally
-does not claim that declarations make a source trustworthy.
+The retired screenshot benchmark's schema-v5 envelope is historical evidence
+only. A future native certification contract must independently retain immutable
+revisions and artifact digests, declared coverage, economic and utility
+provenance, an EV unit, delivery-specific rights evidence, and convergence
+evidence. Declarations alone do not make a source trustworthy.
 
-Further V2 benchmark work must match each case to the declared
-economics/position/stack/action route, add negative expected-unsupported cases,
-assert that the returned policy is complete rather than merely well formed, and
-connect eligibility to the production mastery gate. Generic non-BB EV scoring,
-remote consent/privacy enforcement, and real evidence/results also remain
-outside schema v5; an `ev_bb` label is rejected unless the declared unit is BB.
+Further V2 certification work must match native decisions to the declared
+economics, positions, stacks, action route, and complete policy; it must add
+negative expected-unsupported cases and connect eligibility to the production
+mastery gate. Remote consent/privacy enforcement and real evidence/results
+remain separate requirements.
 
 ## Proposed benchmark gates
 

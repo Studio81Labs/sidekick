@@ -80,8 +80,6 @@ def health_response() -> HealthResponse:
         status="ok",
         environment="local",
         parser_provider="ocr_cv",
-        recommendation_provider="local_solver",
-        recommendation_engine="local_solver",
     )
 
 

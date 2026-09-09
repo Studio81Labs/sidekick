@@ -8,7 +8,6 @@ on:
       - "apps/pwa/**"
       - "packages/openapi/**"
       - "packages/openapi-client/**"
-      - "solver-plugins/postflop/**"
       - "scripts/bootstrap.sh"
       - "scripts/build-player-runtime.py"
       - "scripts/capture-player-launch-url.sh"
@@ -28,7 +27,6 @@ on:
       - "apps/pwa/**"
       - "packages/openapi/**"
       - "packages/openapi-client/**"
-      - "solver-plugins/postflop/**"
       - "scripts/bootstrap.sh"
       - "scripts/build-player-runtime.py"
       - "scripts/capture-player-launch-url.sh"
@@ -55,7 +53,7 @@ jobs:
     uses: ./.github/workflows/_build-openapi.yml
 
   test:
-    name: "backend: tests and solver"
+    name: "backend: tests"
     needs: prepare-openapi
     runs-on: ubuntu-latest
     steps:
@@ -98,14 +96,6 @@ jobs:
       - name: Run backend tests
         working-directory: apps/backend
         run: python -m pytest
-
-      - name: Test postflop solver plugin
-        run: >-
-          docker run --rm
-          -v "$PWD/solver-plugins/postflop:/work"
-          -w /work
-          rust:1.85-slim-bookworm@sha256:9f841bbe9e7d8e37ceb96ed907265a3a0df7f44e3737d0b100e7907a679acb36
-          cargo test --locked
 
   player-bundle:
     name: "player: runtime bundle (${{ matrix.os }})"

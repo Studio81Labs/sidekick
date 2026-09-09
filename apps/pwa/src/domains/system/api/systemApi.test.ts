@@ -9,8 +9,6 @@ afterEach(resetApiMocks);
 const response = {
   environment: "local",
   parser_provider: "ocr_cv",
-  recommendation_engine: "postflop_solver",
-  recommendation_provider: "local_solver",
   status: "ok",
 } satisfies components["schemas"]["HealthResponse"];
 

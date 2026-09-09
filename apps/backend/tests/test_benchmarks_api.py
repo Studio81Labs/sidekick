@@ -203,11 +203,7 @@ def test_benchmark_dataset_import_round_trips_and_reuses_existing_cases(
     )
     archive = source_client.get("/api/benchmarks/export").content
     target_dir = tmp_path / "target"
-    target_client = make_client(
-        target_dir,
-        recommendation_provider="local_solver",
-        local_solver_engine="local_ev",
-    )
+    target_client = make_client(target_dir)
 
     imported = import_benchmark_dataset(target_client, archive)
     repeated = import_benchmark_dataset(target_client, archive)
@@ -327,11 +323,7 @@ def test_benchmark_dataset_import_persists_request_receipt_for_recovery(
     )
     archive = source_client.get("/api/benchmarks/export").content
     target_dir = tmp_path / "target"
-    target_client = make_client(
-        target_dir,
-        recommendation_provider="local_solver",
-        local_solver_engine="local_ev",
-    )
+    target_client = make_client(target_dir)
     request_id = "benchmark-import-request-123"
 
     imported = import_benchmark_dataset(target_client, archive, request_id=request_id)
