@@ -294,6 +294,30 @@ def test_settings_validate_hosted_mcp_configuration() -> None:
 
 
 @pytest.mark.parametrize(
+    "relative_path",
+    [
+        Path("apps/backend/.env.example"),
+        Path("infra/docker/backend.env.example"),
+    ],
+)
+def test_current_environment_examples_omit_retired_mcp_write_settings(
+    relative_path: Path,
+) -> None:
+    repository_root = Path(__file__).parents[3]
+    setting_names = {
+        line.partition("=")[0]
+        for line in (repository_root / relative_path).read_text().splitlines()
+        if "=" in line and not line.startswith("#")
+    }
+
+    assert "POKER_MCP_READ_CALLS_PER_MINUTE" in setting_names
+    assert not {
+        "POKER_MCP_ALLOW_WRITES",
+        "POKER_MCP_WRITE_CALLS_PER_MINUTE",
+    } & setting_names
+
+
+@pytest.mark.parametrize(
     "hostname",
     ["127.1", "0177.0.0.1", "2130706433", "0x7f.1"],
 )
