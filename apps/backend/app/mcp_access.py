@@ -29,7 +29,7 @@ class McpPrincipalRecord(BaseModel):
     environment: McpEnvironment
     token_prefix: str = Field(min_length=12, max_length=12)
     token_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    scopes: list[str] = Field(min_length=1)
+    scopes: list[Literal["read"]] = Field(min_length=1, max_length=1)
     created_at: datetime
     updated_at: datetime
     expires_at: datetime | None = None

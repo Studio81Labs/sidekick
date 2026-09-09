@@ -71,10 +71,16 @@ def test_principal_store_rejects_unsupported_persisted_scopes_without_mutation(
     principal_path.write_text(json.dumps(persisted), encoding="utf-8")
     unchanged = principal_path.read_text(encoding="utf-8")
 
-    assert store.authenticate(issued.token) is None
-    assert store.record_usage(issued.token) is False
-    with pytest.raises(ValueError, match="current read-only scope"):
-        store.rotate(issued.principal.id)
+    for operation in (
+        store.list,
+        lambda: store.authenticate(issued.token),
+        lambda: store.record_usage(issued.token),
+        lambda: store.create(name="Must not rewrite", expires_at=None),
+        lambda: store.rotate(issued.principal.id),
+        lambda: store.revoke(issued.principal.id),
+    ):
+        with pytest.raises(ValueError, match="scopes"):
+            operation()
     assert principal_path.read_text(encoding="utf-8") == unchanged
 
 
