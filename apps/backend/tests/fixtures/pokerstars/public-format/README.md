@@ -51,7 +51,9 @@ parser expectation is the structured `unsupported_header` rejection: the
 adapter detects the observed legacy `PokerStars Game #` hand boundary but does
 not accept its one-digit-hour/explicit-ISO header or infer a dealt-to hero.
 Do not edit it into an accepted history or use it to introduce unrelated header
-or hero inference. The associated evidence packet is
+or hero inference. The associated source labels and evidence packet are
+[`docs/process/pokerstars-p1b-hhsmithy-source-labels.md`](../../../../../../docs/process/pokerstars-p1b-hhsmithy-source-labels.md)
+and
 [`docs/process/pokerstars-p1b-action-origin-evidence.md`](../../../../../../docs/process/pokerstars-p1b-action-origin-evidence.md).
 
 ## wizardwerdna/pokerstats legacy timeout-to-fold
