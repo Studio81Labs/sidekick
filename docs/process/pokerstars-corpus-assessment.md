@@ -75,12 +75,14 @@ pnpm backend:pokerstars-corpus /absolute/private/manifest.json \
 ```
 
 This is a regression checkpoint for the adapter's current supported surface,
-not the complete Phase 0 acceptance gate. The current format revision rejects
-tournament headers, classifies non-forced actions as `unknown`, and rejects
-timeout markers. It therefore cannot yet produce matching parsed cases tagged
-`tournament`, `player_selected_action`, `automatic_action`, `timeout`, or
-`disconnect`. Do not add impossible verified-parse gates merely to make the
-command look complete.
+not the complete Phase 0 acceptance gate. The current format revision maps one
+reviewed tournament form and two reviewed, versioned automatic-action cash
+forms, while ordinary unmarked decisions remain `unknown`. It can therefore
+produce matching parsed cases tagged `tournament`, `automatic_action`,
+`timeout`, or `disconnect` only where a separately reviewed source label
+supports them. It cannot yet produce `player_selected_action`, reconnect, or
+absence-derived origin cases. Do not add impossible verified-parse gates merely
+to make the command look complete.
 
 Those categories remain Phase 0 blockers, not waived requirements. Before
 closing #409, implement their parser semantics, add each category to the command

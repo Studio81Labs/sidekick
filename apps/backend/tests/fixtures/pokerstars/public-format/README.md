@@ -44,14 +44,14 @@ syntax, line order, and timeout/disconnect/table-notification markers. No
 original player, hand identifier, table identifier, account identifier, or
 local source path remains.
 
-The file is a public format sample and P1b evidence-preparation input. It is
-not a representative-corpus case, proof of current-client behavior, or proof
-that a missing marker identifies a player-selected action. Its exact current
-parser expectation is the structured `unsupported_header` rejection: the
-adapter detects the observed legacy `PokerStars Game #` hand boundary but does
-not accept its one-digit-hour/explicit-ISO header or infer a dealt-to hero.
-Do not edit it into an accepted history or use it to introduce unrelated header
-or hero inference. The associated source labels and evidence packet are
+The file is a public format sample and bounded P1b regression input. It is not
+a representative-corpus case, proof of current-client behavior, or proof that
+a missing marker identifies a player-selected action. The adapter maps only its
+independently reviewed `pokerstars-text/v4` header/body form: explicit `USD`, a
+one-digit-hour legacy header, an unknown hero, the three initial dealt-in
+seats, source results, inert notifications, and the five qualified marker
+bindings. Do not use it to introduce unrelated header, hero, reconnect, or
+player-selected inference. The associated source labels and evidence packet are
 [`docs/process/pokerstars-p1b-hhsmithy-source-labels.md`](../../../../../../docs/process/pokerstars-p1b-hhsmithy-source-labels.md)
 and
 [`docs/process/pokerstars-p1b-action-origin-evidence.md`](../../../../../../docs/process/pokerstars-p1b-action-origin-evidence.md).

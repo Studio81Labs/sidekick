@@ -14,6 +14,7 @@ from app.application.imported_hand_ingestion import (
 from app.infrastructure.hand_history.pokerstars import (
     POKERSTARS_ADAPTER_ID,
     POKERSTARS_ADAPTER_VERSION,
+    POKERSTARS_FORMAT_REVISION,
     PokerStarsImportContext,
     parse_pokerstars_text,
 )
@@ -1103,8 +1104,8 @@ def test_unsupported_hand_is_isolated_from_valid_sibling() -> None:
     assert diagnostic.line_start == 17
 
 
-def test_public_cash_origin_specimen_remains_a_structured_rejection() -> None:
-    """P1b detects a legacy boundary without broadening per-hand support."""
+def test_public_hhsmithy_cash_specimen_matches_source_labels(tmp_path: Path) -> None:
+    """P1b maps only the reviewed unknown-hero HHSmithy source form."""
 
     source_bytes = (PUBLIC_FORMAT_FIXTURES / "hhsmithy-cash-limit1.txt").read_bytes()
     assert sha256(source_bytes).hexdigest() == (
@@ -1116,17 +1117,238 @@ def test_public_cash_origin_specimen_remains_a_structured_rejection() -> None:
         context=import_context("hhsmithy-cash-limit1.txt"),
     )
 
-    assert result.hands == ()
+    assert result.diagnostics == ()
+    assert len(result.hands) == 1
+    parsed = result.hands[0]
+    candidate = parsed.candidate
+    state = candidate.detection.state
+
+    assert candidate.raw.raw_text == source_bytes.decode("utf-8")
+    assert candidate.raw.identity.source_hand_id == "900000000020"
+    assert candidate.raw.chronology.played_at == datetime(
+        2014, 1, 6, 3, 56, 2, tzinfo=timezone(timedelta(hours=-5))
+    )
+    assert candidate.raw.chronology.source_timezone == "ET"
+    assert candidate.raw.provenance.adapter_id == POKERSTARS_ADAPTER_ID
+    assert candidate.raw.provenance.adapter_version == POKERSTARS_ADAPTER_VERSION
+    assert candidate.raw.provenance.format_revision == POKERSTARS_FORMAT_REVISION
+    assert state.game.economics.kind == "cash"
+    assert state.game.economics.currency == "USD"
+    assert (
+        state.game.blinds.small_blind,
+        state.game.blinds.big_blind,
+        state.game.blinds.ante,
+        state.game.blinds.ante_mode,
+        state.game.blinds.straddle,
+    ) == (Decimal("0.05"), Decimal("0.10"), Decimal(0), "unknown", None)
+    assert state.button_seat == 5
+    assert state.hero_player_id is None
+    assert state.hero_cards == []
+    assert "/hero_player_id" not in candidate.detection.field_evidence
+    assert "/hero_cards" not in candidate.detection.field_evidence
     assert [
         (
-            diagnostic.code,
-            diagnostic.hand_ordinal,
-            diagnostic.source_hand_id,
-            diagnostic.line_start,
+            seat.seat_number,
+            seat.player_id,
+            seat.display_name,
+            seat.starting_stack,
+            seat.participation,
+            seat.position.display_label if seat.position is not None else None,
+            seat.position.button_distance if seat.position is not None else None,
+            seat.position.action_index if seat.position is not None else None,
         )
-        for diagnostic in result.diagnostics
+        for seat in state.seats
     ] == [
-        ("unsupported_header", 1, "900000000020", 1)
+        (2, "seat-2", "Player02", Decimal("7.85"), "dealt_in", "SB", 1, 1),
+        (4, "seat-4", "Player04", Decimal(8), "dealt_in", "BB", 2, 2),
+        (5, "seat-5", "Player05", Decimal("6.04"), "dealt_in", "BTN", 0, 0),
+    ]
+    assert [
+        (street.street, [card.code for card in street.board_cards])
+        for street in state.streets
+    ] == [
+        ("preflop", []),
+        ("flop", ["2c", "4c", "8d"]),
+        ("turn", ["2c", "4c", "8d", "7d"]),
+        ("river", ["2c", "4c", "8d", "7d", "8h"]),
+    ]
+    assert [
+        (
+            street.street,
+            action.sequence,
+            action.actor_id,
+            action.action_type,
+            action.amount,
+            action.total_committed,
+            action.origin.kind,
+            action.origin.basis,
+            action.origin.confidence,
+            action.origin.semantics_revision,
+            action.origin.automatic_reason,
+            [source.line_start for source in action.origin.evidence],
+            [source.line_start for source in action.evidence],
+        )
+        for street in state.streets
+        for action in street.actions
+    ] == [
+        ("preflop", 0, "seat-2", "post_small_blind", Decimal("0.05"), Decimal("0.05"), "forced_system", "explicit_marker", Decimal(1), None, None, [6], [6]),
+        ("preflop", 1, "seat-4", "post_big_blind", Decimal("0.10"), Decimal("0.10"), "forced_system", "explicit_marker", Decimal(1), None, None, [7], [7]),
+        ("preflop", 2, "seat-5", "call", Decimal("0.10"), Decimal("0.10"), "unknown", "unresolved", None, None, None, [9], [9]),
+        ("preflop", 3, "seat-2", "call", Decimal("0.05"), Decimal("0.10"), "unknown", "unresolved", None, None, None, [10], [10]),
+        ("preflop", 4, "seat-4", "check", None, Decimal("0.10"), "client_automatic", "explicit_marker", Decimal(1), "pokerstars-cash-2014-timeout-disconnect-v1", "timeout", [14, 15], [15]),
+        ("flop", 0, "seat-2", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [17], [17]),
+        ("flop", 1, "seat-4", "check", None, Decimal(0), "client_automatic", "explicit_marker", Decimal(1), "pokerstars-cash-2014-timeout-disconnect-v1", "timeout", [20, 21], [21]),
+        ("flop", 2, "seat-5", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [22], [22]),
+        ("turn", 0, "seat-2", "check", None, Decimal(0), "client_automatic", "explicit_marker", Decimal(1), "pokerstars-cash-2014-timeout-disconnect-v1", "disconnect", [25, 26], [26]),
+        ("turn", 1, "seat-4", "check", None, Decimal(0), "client_automatic", "explicit_marker", Decimal(1), "pokerstars-cash-2014-timeout-disconnect-v1", "timeout", [27, 28], [28]),
+        ("turn", 2, "seat-5", "bet", Decimal("0.30"), Decimal("0.30"), "unknown", "unresolved", None, None, None, [29], [29]),
+        ("turn", 3, "seat-2", "fold", None, Decimal(0), "client_automatic", "explicit_marker", Decimal(1), "pokerstars-cash-2014-timeout-disconnect-v1", "disconnect", [30, 31], [31]),
+        ("turn", 4, "seat-4", "call", Decimal("0.30"), Decimal("0.30"), "unknown", "unresolved", None, None, None, [32], [32]),
+        ("river", 0, "seat-4", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [34], [34]),
+        ("river", 1, "seat-5", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [35], [35]),
+    ]
+    assert state.results is not None
+    assert state.results.stated_pot.model_dump(mode="python") == {
+        "gross_total": Decimal("0.90"),
+        "rake": Decimal("0.04"),
+        "net_total": Decimal("0.86"),
+        "gross_pots": [],
+    }
+    assert [
+        (entry.player_id, [card.code for card in entry.cards], entry.disposition)
+        for entry in state.results.showdown
+    ] == [
+        ("seat-4", ["3s", "3c"], "shown"),
+        ("seat-5", [], "mucked"),
+    ]
+    assert [
+        (award.player_id, award.amount, award.pot_index)
+        for award in state.results.awards
+    ] == [("seat-4", Decimal("0.86"), None)]
+    assert state.results.players == []
+    assert candidate.detection.warnings == [
+        "Action origin is unresolved for 8 player decision(s); review is required."
+    ]
+    assert parsed.disposition == "clean"
+    assert parsed.reconciliation.status == "pass"
+    assert parsed.reconciliation.discrepancy == Decimal(0)
+    assert parsed.reconciliation.contributions == {
+        "seat-2": Decimal("0.10"),
+        "seat-4": Decimal("0.40"),
+        "seat-5": Decimal("0.40"),
+    }
+    assert "Observer01 is disconnected" in candidate.raw.raw_text
+    assert "Joiner09 joins the table at seat #9" in candidate.raw.raw_text
+    service = ImportedHandIngestionService(store=FileImportedHandStore(tmp_path))
+    assert service.ingest(candidate).disposition == "created_pending_review"
+    reimport_candidate = parse_pokerstars_text(
+        source_bytes.decode("utf-8"),
+        context=PokerStarsImportContext(
+            import_id="test-import:hhsmithy-cash-limit1-reimport.txt",
+            imported_at=IMPORTED_AT,
+            source_filename="hhsmithy-cash-limit1-reimport.txt",
+        ),
+    ).hands[0].candidate
+    assert service.ingest(reimport_candidate).disposition == "recorded_exact_reimport"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected_code", "expected_line"),
+    [
+        (" 3:56:02 ET", " 03:56:02 ET", "unsupported_header", 1),
+        (" USD)", " EUR)", "unsupported_header", 1),
+        ("Player04: checks", "Player04: folds", "unbound_timeout_marker", 14),
+        ("Player04: checks", "Player05: checks", "unbound_timeout_marker", 14),
+        (
+            "Player04 has timed out\nPlayer04: checks",
+            "Player04 has timed out\n\nPlayer04: checks",
+            "unbound_timeout_marker",
+            14,
+        ),
+        (
+            "Player02 has timed out while disconnected\nPlayer02: checks",
+            "Player02 has timed out while disconnected\nPlayer04: checks",
+            "unbound_timeout_marker",
+            25,
+        ),
+        (
+            "Player04 has timed out\nPlayer04: checks",
+            "Player04 has timed out\nObserver02 is disconnected\nPlayer04: checks",
+            "unbound_timeout_marker",
+            14,
+        ),
+        ("Player02 is disconnected", "Player02 has reconnected", "unsupported_line", 24),
+        (
+            "Joiner07 joins the table at seat #7",
+            "Joiner07 joins the table at seat #0",
+            "unsupported_line",
+            12,
+        ),
+        (
+            "two pair, Eights and Threes",
+            "two pair, Eights and Kings",
+            "unsupported_showdown",
+            37,
+        ),
+        (
+            "Player04 (big blind) showed [3s 3c] and won",
+            "Player04 (big blind) showed [3s 3d] and won",
+            "summary_showdown_mismatch",
+            44,
+        ),
+        (
+            "Player05 (button) mucked",
+            "Player05 (button) doesn't show hand",
+            "unsupported_summary_result",
+            45,
+        ),
+    ],
+)
+def test_public_hhsmithy_cash_specimen_rejects_unlabelled_extensions(
+    old: str,
+    new: str,
+    expected_code: str,
+    expected_line: int,
+) -> None:
+    source = (PUBLIC_FORMAT_FIXTURES / "hhsmithy-cash-limit1.txt").read_text()
+    source = source.replace(old, new, 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("hhsmithy-cash-limit1-negative.txt"),
+    )
+
+    assert result.hands == ()
+    assert [(diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
+        (expected_code, expected_line)
+    ]
+
+
+def test_hhsmithy_bare_disconnect_does_not_classify_a_later_fold() -> None:
+    source = (PUBLIC_FORMAT_FIXTURES / "hhsmithy-cash-limit1.txt").read_text()
+    source = source.replace(
+        "Player05: bets $0.30\nPlayer02 has timed out while disconnected\n"
+        "Player02: folds\n",
+        "Player05: bets $0.30\nPlayer02: folds\n",
+        1,
+    )
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("hhsmithy-bare-disconnect.txt"),
+    )
+
+    assert result.diagnostics == ()
+    state = result.hands[0].candidate.detection.state
+    later_fold = state.streets[2].actions[3]
+    assert later_fold.actor_id == "seat-2"
+    assert later_fold.action_type == "fold"
+    assert later_fold.origin.kind == "unknown"
+    assert later_fold.origin.basis == "unresolved"
+    assert later_fold.origin.semantics_revision is None
+    assert later_fold.origin.automatic_reason is None
+    assert result.hands[0].candidate.detection.warnings == [
+        "Action origin is unresolved for 9 player decision(s); review is required."
     ]
 
 
@@ -1157,7 +1379,7 @@ def test_public_legacy_timeout_specimen_matches_source_labels() -> None:
     )
     assert candidate.raw.chronology.source_timezone == "ET"
     assert candidate.raw.provenance.adapter_version == POKERSTARS_ADAPTER_VERSION
-    assert candidate.raw.provenance.format_revision == "pokerstars-text/v3"
+    assert candidate.raw.provenance.format_revision == POKERSTARS_FORMAT_REVISION
     assert state.game.economics.kind == "cash"
     assert state.game.economics.currency is None
     assert state.game.blinds.small_blind == Decimal("0.25")
@@ -1337,18 +1559,20 @@ def test_legacy_timeout_rejection_is_isolated_from_a_valid_sibling() -> None:
     ]
 
 
-@pytest.mark.parametrize("unsupported_first", [False, True])
-def test_unsupported_legacy_header_is_isolated_from_a_valid_sibling(
-    unsupported_first: bool,
+@pytest.mark.parametrize("malformed_first", [False, True])
+def test_malformed_hhsmithy_header_is_isolated_from_a_valid_sibling(
+    malformed_first: bool,
 ) -> None:
     supported = (
         PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
     ).read_text()
-    unsupported = (PUBLIC_FORMAT_FIXTURES / "hhsmithy-cash-limit1.txt").read_text()
+    malformed = (
+        PUBLIC_FORMAT_FIXTURES / "hhsmithy-cash-limit1.txt"
+    ).read_text().replace(" USD)", " EUR)", 1)
     source = (
-        f"{unsupported}\n{supported}"
-        if unsupported_first
-        else f"{supported}\n{unsupported}"
+        f"{malformed}\n{supported}"
+        if malformed_first
+        else f"{supported}\n{malformed}"
     )
 
     result = parse_pokerstars_text(
@@ -1356,9 +1580,7 @@ def test_unsupported_legacy_header_is_isolated_from_a_valid_sibling(
         context=import_context("legacy-header-isolation.txt"),
     )
 
-    assert [hand.hand_ordinal for hand in result.hands] == (
-        [2] if unsupported_first else [1]
-    )
+    assert [hand.hand_ordinal for hand in result.hands] == [2 if malformed_first else 1]
     assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000021"
     assert [
         (
@@ -1370,10 +1592,10 @@ def test_unsupported_legacy_header_is_isolated_from_a_valid_sibling(
         for diagnostic in result.diagnostics
     ] == [
         (
-            1 if unsupported_first else 2,
+            1 if malformed_first else 2,
             "900000000020",
             "unsupported_header",
-            1 if unsupported_first else supported.count("\n") + 2,
+            1 if malformed_first else supported.count("\n") + 2,
         )
     ]
 

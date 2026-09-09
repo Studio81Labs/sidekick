@@ -348,9 +348,13 @@ English no-limit cash subset and the single ADR 0078-reviewed historical
 tournament form it can map without guessing. Exact source lines remain attached
 to detected fields and actions; ordinary table actions remain origin-`unknown`,
 while explicit blind, ante, straddle, and uncalled-return markers are
-forced/system evidence. The separately reviewed legacy 2008 cash family also
-maps an immediate same-actor timeout-to-fold pair to a versioned automatic
-origin; it does not establish disconnect or player-selected absence semantics.
+forced/system evidence. The separately reviewed legacy 2008 cash family maps
+an immediate same-actor timeout-to-fold pair to a versioned automatic origin.
+The separately reviewed 2014 HHSmithy cash form maps its explicit-USD,
+one-digit-hour header, unknown hero, initial dealt-in ring, inert
+join/disconnect notifications, and exact plain-timeout-to-check or combined
+timeout-while-disconnected-to-check/fold bindings. Neither form establishes
+reconnect, player-selected absence, or general disconnect semantics.
 Source times are preserved with their source zone, and
 ambiguous/nonexistent ET wall times are rejected. The historical dual-zone
 specimen retains both printed timestamps as evidence with null normalized
@@ -359,9 +363,9 @@ payout data. The [HAND2 source-label sheet](../process/pokerstars-hand2-source-l
 provides its bounded implementation expectations; this does not alter the
 current cash parser or claim broader tournament support. Ordinary cash detected
 states may retain an unknown hero; a complete source label is not a claim that
-the state is ready for decision extraction. The HHSmithy source packet documents
-the remaining bounded grammar/label work separately from that existing model
-boundary.
+the state is ready for decision extraction. The HHSmithy source packet
+documents that bounded implementation and its remaining evidence gaps
+separately from that existing model boundary.
 Synthetic development fixtures verify the contract and isolation
 behavior but are not the representative corpus or 99% clean-parse evidence
 required to close #409. Every successful parse separately reports whether pot
