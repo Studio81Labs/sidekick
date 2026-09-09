@@ -1,5 +1,4 @@
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -19,36 +18,19 @@ from app.storage.imported_hand_store import (
     imported_hand_record_key,
 )
 from app.storage.learning_content_catalog_store import (
-    FileLearningContentCatalogStore,
     LEARNING_CONTENT_CATALOG_FILENAME,
     LEARNING_CONTENT_CATALOG_ID,
-    LearningContentCatalogStorageError,
 )
-from app.storage.remote_reference_consent_store import (
-    FileRemoteReferenceConsentStore,
-    REMOTE_REFERENCE_CONSENT_FILENAME,
-    RemoteReferenceConsentStorageError,
-)
+from app.storage.remote_reference_consent_store import REMOTE_REFERENCE_CONSENT_FILENAME
 from app.storage.reference_activation_catalog_store import (
-    FileReferenceActivationCatalogStore,
     REFERENCE_ACTIVATION_CATALOG_FILENAME,
     REFERENCE_ACTIVATION_CATALOG_ID,
-    ReferenceActivationCatalogStorageError,
 )
 from test_imported_hand_store import pending_review_record, seed_interrupted_cascade
 
 
 def _manifest_path(data_dir: Path) -> Path:
     return data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME
-
-
-def _legacy_store(data_dir: Path) -> tuple[FileImportedHandStore, str]:
-    store = FileImportedHandStore(data_dir)
-    store.records_dir.chmod(0o700)
-    record = pending_review_record()
-    record_key = imported_hand_record_key(record.identity)
-    store.save(record_key, record)
-    return store, record_key
 
 
 def _stored_payloads(records_dir: Path) -> dict[str, bytes]:
@@ -59,7 +41,7 @@ def _stored_payloads(records_dir: Path) -> dict[str, bytes]:
     }
 
 
-def test_fresh_workspace_publishes_private_layout_v5_manifest(
+def test_fresh_workspace_publishes_private_layout_v6_manifest(
     tmp_path: Path,
 ) -> None:
     workspace = PlayerWorkspace.open(tmp_path)
@@ -101,20 +83,33 @@ def test_fresh_workspace_publishes_private_layout_v5_manifest(
     )
 
 
-def test_manifestless_store_adoption_preserves_every_retained_payload(
+def test_nonempty_manifestless_directory_is_rejected_without_mutation(
     tmp_path: Path,
 ) -> None:
-    legacy_store, record_key = _legacy_store(tmp_path)
-    before = _stored_payloads(legacy_store.records_dir)
+    retained_path = tmp_path / "retained-pre-current-data"
+    retained_payload = b"do not adopt or mutate"
+    retained_path.write_bytes(retained_payload)
+    entries_before = {entry.name for entry in tmp_path.iterdir()}
 
-    workspace = PlayerWorkspace.open(tmp_path)
+    with pytest.raises(
+        PlayerDataDirectoryError,
+        match="nonempty but has no supported current workspace manifest",
+    ):
+        PlayerWorkspace.open(tmp_path)
 
-    assert workspace.imported_hands.get(record_key) == legacy_store.get(record_key)
-    assert _stored_payloads(workspace.imported_hands.records_dir) == before
-    assert _manifest_path(tmp_path).is_file()
+    assert retained_path.read_bytes() == retained_payload
+    assert {entry.name for entry in tmp_path.iterdir()} == entries_before
 
 
-def test_workspace_manifest_is_not_rewritten_after_adoption(tmp_path: Path) -> None:
+def test_open_existing_rejects_an_empty_manifestless_directory(tmp_path: Path) -> None:
+    with pytest.raises(
+        PlayerDataDirectoryError,
+        match="missing its current workspace",
+    ):
+        PlayerWorkspace.open_existing(tmp_path)
+
+
+def test_current_workspace_manifest_is_not_rewritten(tmp_path: Path) -> None:
     first = PlayerWorkspace.open(tmp_path)
     manifest_path = _manifest_path(tmp_path)
     first_stat = manifest_path.stat()
@@ -129,7 +124,7 @@ def test_workspace_manifest_is_not_rewritten_after_adoption(tmp_path: Path) -> N
     assert manifest_path.read_bytes() == first_payload
 
 
-def test_concurrent_workspace_adoption_publishes_one_valid_manifest(
+def test_concurrent_empty_workspace_initialization_publishes_one_manifest(
     tmp_path: Path,
 ) -> None:
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -148,19 +143,29 @@ def test_concurrent_workspace_adoption_publishes_one_valid_manifest(
     "payload",
     [
         b"not-json",
-        b'{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
+        *(
+            player_workspace_module._player_workspace_manifest_payload(version)
+            for version in (1, 2, 3, 4, 5, 7)
+        ),
         b'{"layout_version":true,"schema":"poker-hero-player-workspace"}\n',
-        b'{"extra":1,"layout_version":1,"schema":"poker-hero-player-workspace"}\n',
+        b'{"extra":1,"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
     ],
 )
-def test_workspace_rejects_malformed_or_unsupported_manifest(
+def test_workspace_rejects_malformed_or_unsupported_manifest_before_mutation(
     tmp_path: Path,
     payload: bytes,
 ) -> None:
-    (tmp_path / "imported-hands").mkdir(mode=0o700)
+    retained_path = tmp_path / "retained-pre-current-data"
+    retained_payload = b"do not mutate incompatible workspace"
+    retained_path.write_bytes(retained_payload)
     manifest_path = _manifest_path(tmp_path)
     manifest_path.write_bytes(payload)
     manifest_path.chmod(0o600)
+    entries_before = {
+        entry.name: entry.read_bytes()
+        for entry in tmp_path.iterdir()
+        if entry.is_file() and not entry.is_symlink()
+    }
 
     with pytest.raises(
         PlayerDataDirectoryError,
@@ -168,9 +173,14 @@ def test_workspace_rejects_malformed_or_unsupported_manifest(
     ):
         PlayerWorkspace.open(tmp_path)
 
+    assert {
+        entry.name: entry.read_bytes()
+        for entry in tmp_path.iterdir()
+        if entry.is_file() and not entry.is_symlink()
+    } == entries_before
+
 
 def test_workspace_rejects_symlinked_or_shared_manifest(tmp_path: Path) -> None:
-    (tmp_path / "imported-hands").mkdir(mode=0o700)
     target = tmp_path / "outside-manifest"
     target.write_bytes(player_workspace_module._player_workspace_manifest_payload())
     target.chmod(0o600)
@@ -188,277 +198,7 @@ def test_workspace_rejects_symlinked_or_shared_manifest(tmp_path: Path) -> None:
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v1_migrates_to_v5_without_touching_imported_hands(
-    tmp_path: Path,
-) -> None:
-    legacy_store, record_key = _legacy_store(tmp_path)
-    retained_before = _stored_payloads(legacy_store.records_dir)
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(1)
-    )
-    manifest_path.chmod(0o600)
-
-    workspace = PlayerWorkspace.open(tmp_path)
-
-    assert workspace.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
-    assert workspace.imported_hands.get(record_key) == legacy_store.get(record_key)
-    assert _stored_payloads(workspace.imported_hands.records_dir) == retained_before
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
-        "layout_version"
-    ] == PLAYER_WORKSPACE_LAYOUT_VERSION
-    assert workspace.remote_reference_consent.load().consent is None
-    assert workspace.reference_activation_catalog.load().catalog.catalog_revision == 0
-    assert workspace.learning_content_catalog.load().catalog.catalog_revision == 0
-
-
-def test_layout_v1_consent_initialization_failure_keeps_v1_manifest(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (tmp_path / "imported-hands").mkdir(mode=0o700)
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(1)
-    )
-    manifest_path.chmod(0o600)
-
-    def fail_initialization(_store: FileRemoteReferenceConsentStore):
-        raise RemoteReferenceConsentStorageError("injected consent failure")
-
-    monkeypatch.setattr(
-        FileRemoteReferenceConsentStore,
-        "initialize_empty",
-        fail_initialization,
-    )
-
-    with pytest.raises(PlayerDataDirectoryError, match="injected consent failure"):
-        PlayerWorkspace.open(tmp_path)
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
-        "layout_version"
-    ] == 1
-
-
-def test_layout_v1_manifest_upgrade_failure_is_retryable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (tmp_path / "imported-hands").mkdir(mode=0o700)
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(1)
-    )
-    manifest_path.chmod(0o600)
-    real_replace = player_workspace_module._replace_player_workspace_manifest
-
-    def fail_upgrade(_data_dir: Path) -> None:
-        raise PlayerDataDirectoryError("injected manifest upgrade failure")
-
-    monkeypatch.setattr(
-        player_workspace_module,
-        "_replace_player_workspace_manifest",
-        fail_upgrade,
-    )
-    with pytest.raises(PlayerDataDirectoryError, match="injected manifest"):
-        PlayerWorkspace.open(tmp_path)
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
-        "layout_version"
-    ] == 1
-    assert (tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME).is_file()
-
-    monkeypatch.setattr(
-        player_workspace_module,
-        "_replace_player_workspace_manifest",
-        real_replace,
-    )
-    workspace = PlayerWorkspace.open(tmp_path)
-    assert workspace.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
-    assert workspace.remote_reference_consent.load().consent is None
-    assert workspace.reference_activation_catalog.load().catalog.catalog_revision == 0
-    assert workspace.learning_content_catalog.load().catalog.catalog_revision == 0
-
-
-def test_layout_v2_migrates_to_v5_without_touching_existing_state(
-    tmp_path: Path,
-) -> None:
-    legacy_store, record_key = _legacy_store(tmp_path)
-    retained_before = _stored_payloads(legacy_store.records_dir)
-    consent_store = FileRemoteReferenceConsentStore(tmp_path)
-    consent_store.initialize_empty()
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(2)
-    )
-    manifest_path.chmod(0o600)
-
-    workspace = PlayerWorkspace.open(tmp_path)
-
-    assert workspace.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
-    assert workspace.imported_hands.get(record_key) == legacy_store.get(record_key)
-    assert _stored_payloads(workspace.imported_hands.records_dir) == retained_before
-    assert workspace.remote_reference_consent.load() == consent_store.load()
-    assert workspace.reference_activation_catalog.load().catalog.catalog_revision == 0
-    assert workspace.learning_content_catalog.load().catalog.catalog_revision == 0
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
-        "layout_version"
-    ] == PLAYER_WORKSPACE_LAYOUT_VERSION
-
-
-def test_layout_v2_catalog_initialization_failure_keeps_v2_manifest(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (tmp_path / "imported-hands").mkdir(mode=0o700)
-    FileRemoteReferenceConsentStore(tmp_path).initialize_empty()
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(2)
-    )
-    manifest_path.chmod(0o600)
-
-    def fail_initialization(_store: FileReferenceActivationCatalogStore):
-        raise ReferenceActivationCatalogStorageError("injected catalog failure")
-
-    monkeypatch.setattr(
-        FileReferenceActivationCatalogStore,
-        "initialize_empty",
-        fail_initialization,
-    )
-
-    with pytest.raises(PlayerDataDirectoryError, match="injected catalog failure"):
-        PlayerWorkspace.open(tmp_path)
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
-        "layout_version"
-    ] == 2
-
-
-def test_layout_v3_migrates_to_v5_without_touching_existing_state(
-    tmp_path: Path,
-) -> None:
-    legacy_store, record_key = _legacy_store(tmp_path)
-    retained_before = _stored_payloads(legacy_store.records_dir)
-    consent_store = FileRemoteReferenceConsentStore(tmp_path)
-    consent_store.initialize_empty()
-    reference_store = FileReferenceActivationCatalogStore(tmp_path)
-    reference_store.initialize_empty()
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(3)
-    )
-    manifest_path.chmod(0o600)
-
-    workspace = PlayerWorkspace.open(tmp_path)
-
-    assert workspace.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
-    assert workspace.imported_hands.get(record_key) == legacy_store.get(record_key)
-    assert _stored_payloads(workspace.imported_hands.records_dir) == retained_before
-    assert workspace.remote_reference_consent.load() == consent_store.load()
-    assert workspace.reference_activation_catalog.load() == reference_store.load()
-    assert workspace.learning_content_catalog.load().catalog.catalog_revision == 0
-
-
-def test_layout_v3_content_initialization_failure_keeps_v3_manifest(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    (tmp_path / "imported-hands").mkdir(mode=0o700)
-    FileRemoteReferenceConsentStore(tmp_path).initialize_empty()
-    FileReferenceActivationCatalogStore(tmp_path).initialize_empty()
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(3)
-    )
-    manifest_path.chmod(0o600)
-
-    def fail_initialization(_store: FileLearningContentCatalogStore):
-        raise LearningContentCatalogStorageError("injected content failure")
-
-    monkeypatch.setattr(
-        FileLearningContentCatalogStore,
-        "initialize_empty",
-        fail_initialization,
-    )
-
-    with pytest.raises(PlayerDataDirectoryError, match="injected content failure"):
-        PlayerWorkspace.open(tmp_path)
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))[
-        "layout_version"
-    ] == 3
-
-
-def test_layout_v4_migrates_to_v5_without_touching_retained_payloads(
-    tmp_path: Path,
-) -> None:
-    workspace = PlayerWorkspace.open(tmp_path)
-    record = pending_review_record()
-    record_key = imported_hand_record_key(record.identity)
-    workspace.imported_hands.save(record_key, record)
-    retained_before = _stored_payloads(workspace.imported_hands.records_dir)
-    private_state_before = {
-        filename: (tmp_path / filename).read_bytes()
-        for filename in (
-            REMOTE_REFERENCE_CONSENT_FILENAME,
-            REFERENCE_ACTIVATION_CATALOG_FILENAME,
-            LEARNING_CONTENT_CATALOG_FILENAME,
-        )
-    }
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(4)
-    )
-    manifest_path.chmod(0o600)
-
-    upgraded = PlayerWorkspace.open(tmp_path)
-
-    assert upgraded.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
-    assert upgraded.imported_hands.get(record_key) == record
-    assert _stored_payloads(upgraded.imported_hands.records_dir) == retained_before
-    assert {
-        filename: (tmp_path / filename).read_bytes()
-        for filename in private_state_before
-    } == private_state_before
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))["layout_version"] == (
-        PLAYER_WORKSPACE_LAYOUT_VERSION
-    )
-
-
-def test_layout_v4_manifest_upgrade_failure_is_retryable(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = PlayerWorkspace.open(tmp_path)
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(4)
-    )
-    manifest_path.chmod(0o600)
-    retained_before = _stored_payloads(workspace.imported_hands.records_dir)
-    real_replace = player_workspace_module._replace_player_workspace_manifest
-
-    def fail_upgrade(_data_dir: Path) -> None:
-        raise PlayerDataDirectoryError("injected v4 manifest upgrade failure")
-
-    monkeypatch.setattr(
-        player_workspace_module,
-        "_replace_player_workspace_manifest",
-        fail_upgrade,
-    )
-    with pytest.raises(PlayerDataDirectoryError, match="injected v4 manifest"):
-        PlayerWorkspace.open(tmp_path)
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))["layout_version"] == 4
-    assert _stored_payloads(workspace.imported_hands.records_dir) == retained_before
-
-    monkeypatch.setattr(
-        player_workspace_module,
-        "_replace_player_workspace_manifest",
-        real_replace,
-    )
-    assert PlayerWorkspace.open(tmp_path).layout_version == (
-        PLAYER_WORKSPACE_LAYOUT_VERSION
-    )
-
-
-def test_layout_v4_requires_valid_private_consent_state(tmp_path: Path) -> None:
+def test_current_layout_requires_valid_private_consent_state(tmp_path: Path) -> None:
     PlayerWorkspace.open(tmp_path)
     consent_path = tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME
 
@@ -481,7 +221,7 @@ def test_layout_v4_requires_valid_private_consent_state(tmp_path: Path) -> None:
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v4_rejects_a_symlinked_consent_state(tmp_path: Path) -> None:
+def test_current_layout_rejects_a_symlinked_consent_state(tmp_path: Path) -> None:
     PlayerWorkspace.open(tmp_path)
     consent_path = tmp_path / REMOTE_REFERENCE_CONSENT_FILENAME
     target = tmp_path / "outside-consent"
@@ -494,7 +234,7 @@ def test_layout_v4_rejects_a_symlinked_consent_state(tmp_path: Path) -> None:
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v4_requires_valid_private_reference_catalog(tmp_path: Path) -> None:
+def test_current_layout_requires_valid_private_reference_catalog(tmp_path: Path) -> None:
     PlayerWorkspace.open(tmp_path)
     catalog_path = tmp_path / REFERENCE_ACTIVATION_CATALOG_FILENAME
     canonical_payload = catalog_path.read_bytes()
@@ -514,7 +254,7 @@ def test_layout_v4_requires_valid_private_reference_catalog(tmp_path: Path) -> N
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v4_rejects_a_symlinked_reference_catalog(tmp_path: Path) -> None:
+def test_current_layout_rejects_a_symlinked_reference_catalog(tmp_path: Path) -> None:
     PlayerWorkspace.open(tmp_path)
     catalog_path = tmp_path / REFERENCE_ACTIVATION_CATALOG_FILENAME
     target = tmp_path / "outside-reference-catalog"
@@ -527,7 +267,7 @@ def test_layout_v4_rejects_a_symlinked_reference_catalog(tmp_path: Path) -> None
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v4_requires_valid_private_learning_content_catalog(
+def test_current_layout_requires_valid_private_learning_content_catalog(
     tmp_path: Path,
 ) -> None:
     PlayerWorkspace.open(tmp_path)
@@ -549,7 +289,7 @@ def test_layout_v4_requires_valid_private_learning_content_catalog(
         PlayerWorkspace.open(tmp_path)
 
 
-def test_layout_v4_rejects_a_symlinked_learning_content_catalog(
+def test_current_layout_rejects_a_symlinked_learning_content_catalog(
     tmp_path: Path,
 ) -> None:
     PlayerWorkspace.open(tmp_path)
@@ -583,7 +323,7 @@ def test_versioned_workspace_does_not_recreate_a_missing_store(
         PlayerWorkspace.open(tmp_path)
 
 
-def test_failed_manifest_publication_can_be_retried(
+def test_failed_initialization_is_not_adopted_or_retried(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -598,14 +338,18 @@ def test_failed_manifest_publication_can_be_retried(
     with pytest.raises(PlayerDataDirectoryError, match="durably create"):
         PlayerWorkspace.open(tmp_path)
     assert not _manifest_path(tmp_path).exists()
+    entries_after_failure = {entry.name for entry in tmp_path.iterdir()}
 
     monkeypatch.setattr(player_workspace_module.os, "link", real_link)
-    assert PlayerWorkspace.open(tmp_path).layout_version == (
-        PLAYER_WORKSPACE_LAYOUT_VERSION
-    )
+    with pytest.raises(
+        PlayerDataDirectoryError,
+        match="nonempty but has no supported current workspace manifest",
+    ):
+        PlayerWorkspace.open(tmp_path)
+    assert {entry.name for entry in tmp_path.iterdir()} == entries_after_failure
 
 
-def test_manifest_published_before_directory_fsync_is_adopted_on_retry(
+def test_manifest_published_before_directory_fsync_opens_as_current_on_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -646,7 +390,7 @@ def test_versioned_workspace_is_reread_beneath_the_startup_lock(
         read_count += 1
         if read_count == 2:
             _manifest_path(data_dir).write_text(
-                '{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
+                '{"layout_version":7,"schema":"poker-hero-player-workspace"}\n',
                 encoding="utf-8",
             )
             _manifest_path(data_dir).chmod(0o600)
@@ -689,7 +433,10 @@ def test_current_workspace_rejects_a_downgrade_during_startup(
         replace_with_v1_manifest,
     )
 
-    with pytest.raises(PlayerDataDirectoryError, match="changed during startup"):
+    with pytest.raises(
+        PlayerDataDirectoryError,
+        match="malformed or uses an unsupported layout version",
+    ):
         PlayerWorkspace.open(tmp_path)
 
 
@@ -698,7 +445,7 @@ def test_open_runtime_rejects_a_layout_changed_between_operations(
 ) -> None:
     workspace = PlayerWorkspace.open(tmp_path)
     _manifest_path(tmp_path).write_text(
-        '{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":7,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
@@ -709,31 +456,11 @@ def test_open_runtime_rejects_a_layout_changed_between_operations(
         workspace.list_hand_records(limit=10, cursor=None)
 
 
-def test_open_v4_runtime_rejects_operations_after_a_v5_upgrade(
-    tmp_path: Path,
-) -> None:
-    workspace = PlayerWorkspace.open(tmp_path)
-    manifest_path = _manifest_path(tmp_path)
-    manifest_path.write_bytes(
-        player_workspace_module._player_workspace_manifest_payload(4)
-    )
-    manifest_path.chmod(0o600)
-    legacy_runtime = replace(workspace, layout_version=4)
-
-    upgraded = PlayerWorkspace.open(tmp_path)
-
-    assert upgraded.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
-    with pytest.raises(
-        PlayerDataDirectoryError,
-        match="layout changed while this runtime was open",
-    ):
-        legacy_runtime.list_hand_records(limit=10, cursor=None)
-
-
-def test_legacy_adoption_publishes_manifest_before_recovery(
+def test_current_workspace_recovers_interrupted_writes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    PlayerWorkspace.open(tmp_path)
     record = pending_review_record()
     record_key = imported_hand_record_key(record.identity)
     cascade_id = seed_interrupted_cascade(tmp_path, record)

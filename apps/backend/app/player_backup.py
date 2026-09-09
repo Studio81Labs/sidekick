@@ -56,7 +56,7 @@ from app.storage.imported_hand_store import (
 
 
 PLAYER_BACKUP_SCHEMA = "poker-hero-player-backup"
-PLAYER_BACKUP_SCHEMA_VERSION = 3
+PLAYER_BACKUP_SCHEMA_VERSION = 4
 DEFAULT_MAX_PLAYER_BACKUP_BYTES = 100 * 1024 * 1024
 PLAYER_BACKUP_MEMORY_LIMIT = 8 * 1024 * 1024
 PLAYER_BACKUP_STREAM_CHUNK_SIZE = 1024 * 1024
@@ -131,7 +131,7 @@ class _PlayerBackupManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_name: Literal[PLAYER_BACKUP_SCHEMA] = Field(alias="schema")
-    schema_version: Literal[1, 2, PLAYER_BACKUP_SCHEMA_VERSION]
+    schema_version: Literal[PLAYER_BACKUP_SCHEMA_VERSION]
     exported_at: AwareDatetime
     record_count: int = Field(ge=0, le=MAX_PLAYER_BACKUP_RECORDS)
     records: list[_RecordManifest] = Field(max_length=MAX_PLAYER_BACKUP_RECORDS)
@@ -154,16 +154,9 @@ class _PlayerBackupManifest(BaseModel):
             raise ValueError("records must be sorted by record key")
         for record in self.records:
             has_grade_field = "grade_artifacts" in record.model_fields_set
-            if self.schema_version == 1 and has_grade_field:
+            if not has_grade_field:
                 raise ValueError(
-                    "schema version 1 records cannot declare grade artifacts"
-                )
-            if (
-                self.schema_version in {2, PLAYER_BACKUP_SCHEMA_VERSION}
-                and not has_grade_field
-            ):
-                raise ValueError(
-                    "schema versions 2 and 3 records must declare grade artifacts"
+                    "schema version 4 records must declare grade artifacts"
                 )
         paths = [
             *(record.record_file for record in self.records),

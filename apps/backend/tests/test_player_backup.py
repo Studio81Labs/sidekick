@@ -131,7 +131,7 @@ def restore(
 
 def write_future_workspace_manifest(workspace: PlayerWorkspace) -> None:
     (workspace.data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":7,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
@@ -305,7 +305,7 @@ def test_player_backup_preserves_historical_grade_artifacts(
     payload = archive_bytes(source)
     with ZipFile(BytesIO(payload)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
-        assert manifest["schema_version"] == 3
+        assert manifest["schema_version"] == 4
         assert len(manifest["records"][0]["grade_artifacts"]) == 1
 
     target = workspace_at(tmp_path / "target")
@@ -317,7 +317,7 @@ def test_player_backup_preserves_historical_grade_artifacts(
     assert target.imported_hands.backup_snapshot() == expected_snapshot
 
 
-def test_player_backup_v3_round_trips_tournament_entry_source_facts_through_audit_artifacts(
+def test_player_backup_v4_round_trips_tournament_entry_source_facts_through_audit_artifacts(
     tmp_path: Path,
 ) -> None:
     source = workspace_at(tmp_path / "source")
@@ -458,22 +458,29 @@ def test_player_backup_rejects_grade_from_different_canonical_decision(
         )
 
 
-def test_player_backup_decodes_legacy_schema_without_grades(
+@pytest.mark.parametrize("schema_version", [1, 2, 3, 5])
+def test_player_backup_rejects_noncurrent_schema_before_target_mutation(
     tmp_path: Path,
+    schema_version: int,
 ) -> None:
     source = workspace_at(tmp_path / "source")
-    identity = sample_identity(hand_ordinal=31)
-    record_key = imported_hand_record_key(identity)
-    save_record(source, record_key, approved_record(identity))
+    source_identity = sample_identity(hand_ordinal=31)
+    save_record(
+        source,
+        imported_hand_record_key(source_identity),
+        approved_record(source_identity),
+    )
     payload = archive_bytes(source)
-    legacy_payload = BytesIO()
+    incompatible_payload = BytesIO()
 
     with ZipFile(BytesIO(payload)) as original:
         manifest = json.loads(original.read("manifest.json"))
-        manifest["schema_version"] = 1
-        for record in manifest["records"]:
-            record.pop("grade_artifacts")
-        with ZipFile(legacy_payload, mode="w", compression=ZIP_DEFLATED) as changed:
+        manifest["schema_version"] = schema_version
+        with ZipFile(
+            incompatible_payload,
+            mode="w",
+            compression=ZIP_DEFLATED,
+        ) as changed:
             for info in original.infolist():
                 if info.filename == "manifest.json":
                     continue
@@ -484,45 +491,24 @@ def test_player_backup_decodes_legacy_schema_without_grades(
             )
 
     target = workspace_at(tmp_path / "target")
-    result = restore(target, legacy_payload.getvalue())
+    retained_identity = sample_identity(hand_ordinal=32)
+    save_record(
+        target,
+        imported_hand_record_key(retained_identity),
+        approved_record(retained_identity),
+    )
+    retained_before = target.imported_hands.backup_snapshot()
 
-    assert result.imported_records == 1
-    assert result.imported_decision_artifacts == 1
-    assert result.imported_grade_artifacts == 0
+    with pytest.raises(
+        PlayerBackupError,
+        match="manifest is invalid at schema_version",
+    ):
+        restore(target, incompatible_payload.getvalue())
 
-
-def test_player_backup_decodes_schema_v2_with_explicit_grades(
-    tmp_path: Path,
-) -> None:
-    source = workspace_at(tmp_path / "source")
-    identity = sample_identity(hand_ordinal=32)
-    record_key = imported_hand_record_key(identity)
-    save_record(source, record_key, approved_record(identity))
-    payload = archive_bytes(source)
-    legacy_payload = BytesIO()
-
-    with ZipFile(BytesIO(payload)) as original:
-        manifest = json.loads(original.read("manifest.json"))
-        manifest["schema_version"] = 2
-        with ZipFile(legacy_payload, mode="w", compression=ZIP_DEFLATED) as changed:
-            for info in original.infolist():
-                if info.filename == "manifest.json":
-                    continue
-                changed.writestr(info.filename, original.read(info))
-            changed.writestr(
-                "manifest.json",
-                (json.dumps(manifest, indent=2) + "\n").encode(),
-            )
-
-    target = workspace_at(tmp_path / "target")
-    result = restore(target, legacy_payload.getvalue())
-
-    assert result.imported_records == 1
-    assert result.imported_decision_artifacts == 1
-    assert result.imported_grade_artifacts == 0
+    assert target.imported_hands.backup_snapshot() == retained_before
 
 
-def test_player_backup_schema_v3_requires_explicit_grade_artifacts(
+def test_player_backup_schema_v4_requires_explicit_grade_artifacts(
     tmp_path: Path,
 ) -> None:
     source = workspace_at(tmp_path / "source")
@@ -547,7 +533,7 @@ def test_player_backup_schema_v3_requires_explicit_grade_artifacts(
 
     with pytest.raises(
         PlayerBackupError,
-        match="schema versions 2 and 3 records must declare grade artifacts",
+        match="schema version 4 records must declare grade artifacts",
     ):
         parse_player_backup_archive(
             changed_payload.getvalue(),

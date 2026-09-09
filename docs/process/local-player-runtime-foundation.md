@@ -33,45 +33,33 @@ must satisfy the same ownership, mode, and macOS ACL checks. The runtime does
 not open the V1 screenshot-job or benchmark stores. Do not copy the key into
 browser storage, a URL, logs, or a hosted deployment.
 
-## Workspace layout and first upgrade adoption
+## Current-only workspace layout
 
 The player data root is identified by the owner-only
 `.poker-hero-player-workspace.json` manifest. The local storage panel reports
-its layout version next to the resolved data directory. Version 5 contains the
+its layout version next to the resolved data directory. Version 6 contains the
 private `imported-hands/` store and its existing recovery journal, the
 install-local remote-reference consent state, and the current
 reference-activation and learning-content catalog authorities. Backup ZIPs have
 their own independent schema version and contain none of the workspace
 manifest, consent state, or either product/reference catalog.
 
-The first start after upgrading from a manifestless local runtime adopts the
-existing store automatically. Adoption takes the exclusive data-volume lock,
-validates the private imported-hand directory, creates empty consent and
-reference and learning-content catalog state, and publishes the version 5
-manifest. An existing
-version 1 workspace is upgraded under the same exclusive lock: consent and then
-the empty reference and learning-content catalogs become durable before the
-manifest is atomically replaced with version 5. An existing version 2 workspace
-preserves consent and adds the two empty catalogs before publishing version 5.
-An existing version 3
-workspace preserves consent and reference activation and adds only the empty
-learning-content catalog before publishing version 5. An existing version 4
-workspace validates its imported-hand, consent, reference, and learning-content
-state before atomically publishing the version 5 marker. None of these paths
-rewrites hand records, canonical revisions, decision artifacts, grade artifacts,
-or cascade evidence. A crash before publication can retry the same adoption or
-upgrade. If the marker was published before a later startup failure, the next
-start validates and uses it.
+Only a new empty private data directory can initialize this layout. First start
+takes the exclusive data-volume lock, creates the complete imported-hand,
+consent, reference-activation, and learning-content state set, and publishes
+the version 6 manifest durably. A concurrent first start coordinates through
+the data-volume lock; an existing version 6 manifest is revalidated and used.
+Interrupted imported-hand writes retain their same-version recovery path.
 
 Do not edit or replace the manifest manually. A symlink, shared permissions,
-malformed JSON, an unsupported future version, or a versioned workspace whose
-`imported-hands/` directory is missing fails startup instead of guessing or
-downgrading. Export a player backup before an application upgrade. If startup
-rejects a manifest, preserve the complete data directory and repair or migrate
-it with tooling for that exact source version; do not delete the marker to
-force legacy adoption. A missing, symlinked, shared-permission, malformed, or
-unsupported consent, reference-catalog, or learning-content-catalog state file
-under layout version 5 also fails startup.
+malformed JSON, an older or future version, a nonempty manifestless directory,
+or a versioned workspace whose `imported-hands/` directory is missing fails
+startup before stores open or mutate data. Preserve a rejected directory outside
+the active `POKER_DATA_DIR`, start the current runtime with a new empty private
+directory, then reimport authorized source text as fresh unapproved detections.
+Do not delete or relabel a marker to force adoption. A missing, symlinked,
+shared-permission, malformed, or unsupported consent, reference-catalog, or
+learning-content-catalog state file under layout version 6 also fails startup.
 
 Remote-reference consent is local-only by default. The packaged runtime does
 not supply a provider policy, so consent cannot be accepted and no remote
@@ -203,10 +191,9 @@ export or another restore attempt.
 
 Export includes each record, every retained decision artifact, and every
 retained reference-activated grade artifact, including inactive audit history.
-Current exports use player-backup schema version 3; restore also accepts schema
-version 1 archives that predate grade persistence and schema version 2 archives
-that first retained grade artifacts. Restore validates the
-complete archive before writing, skips stale record and deletion generations,
+Current exports use player-backup schema version 4 and restore accepts only
+that current schema. Older, future, malformed, and unsafe archives fail the
+complete preflight before any restore mutation. Restore skips stale record and deletion generations,
 and rejects conflicts, an attempt to reactivate a tombstone, or an unbound
 tombstone targeting a live record. An active record must carry the exact
 decision artifact re-derived from its canonical state, and a restored grade
@@ -321,8 +308,8 @@ persists only that outstanding UUID plus ordered filename/content hashes, so a
 restart can safely reuse it after the exact files are reselected without
 placing filenames or hand-history text in browser storage. A confirmed terminal
 outcome erases the retry metadata. This is not the representative corpus or 99%
-clean-parse evidence required by #409. The workspace now has a version 5 marker,
-safe manifestless-store adoption, migrations from layouts 1–4, and a verified
+clean-parse evidence required by #409. The workspace now has a current-only
+version 6 marker, current-only schema 4 backup/restore, and a verified
 export-before-remove command for player data. Its durable reference-activation
 and learning-content catalogs are install-local product/reference authority;
 the packaged catalogs remain empty and no API publishes them. Persisted
