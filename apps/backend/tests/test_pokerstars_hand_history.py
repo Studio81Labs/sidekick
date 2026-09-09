@@ -1493,6 +1493,33 @@ def test_public_legacy_timeout_specimen_matches_source_labels() -> None:
     }
 
 
+def test_public_return_status_specimen_remains_a_structured_rejection() -> None:
+    """P1b preserves the source-authored return-status boundary."""
+
+    source_bytes = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-return-status.txt"
+    ).read_bytes()
+    assert sha256(source_bytes).hexdigest() == (
+        "b1e4f6ef89fbe9125b7a4efcdfb9363fd539a310379f87d6a571779e050523fa"
+    )
+
+    result = parse_pokerstars_text(
+        source_bytes.decode("utf-8"),
+        context=import_context("wizardwerdna-pokerstats-return-status.txt"),
+    )
+
+    assert result.hands == ()
+    assert [
+        (
+            diagnostic.code,
+            diagnostic.hand_ordinal,
+            diagnostic.source_hand_id,
+            diagnostic.line_start,
+        )
+        for diagnostic in result.diagnostics
+    ] == [("unsupported_line", 1, "900000000022", 22)]
+
+
 @pytest.mark.parametrize(
     ("old", "new", "expected_code", "expected_line"),
     [

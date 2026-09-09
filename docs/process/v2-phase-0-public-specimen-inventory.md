@@ -99,6 +99,33 @@ current-client behavior, absence/manual-action semantics, disconnect/reconnect
 semantics, a source-event persistence contract, or representative-corpus
 qualification.
 
+## PokerStars cash return-status lead
+
+| Field                     | Recorded value                                                                                                                                                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Evidence level            | `public format sample`                                                                                                                                                                                                                                                               |
+| Source                    | [`wizardwerdna/pokerstats` `spec/file_many_hands.txt` lines 302–351](https://github.com/wizardwerdna/pokerstats/blob/315a4db29630c586fb080d084fa17dcad9494a84/spec/file_many_hands.txt#L302-L351), pinned to `315a4db29630c586fb080d084fa17dcad9494a84`                              |
+| Retrieved                 | 2026-09-09                                                                                                                                                                                                                                                                           |
+| Source SHA-256            | Full file: `d242a58da28908a409c795afd8c1634a958541eb953cf4b0808d3eb46a37e36c` (17,391 bytes); selected hand: `8bda1b9b15c63b9b0f21eb2c318f55efe96c46b222392d451cef6d0b322e2511` (1,563 bytes)                                                                                        |
+| License evidence          | [Upstream MIT license](https://github.com/wizardwerdna/pokerstats/blob/315a4db29630c586fb080d084fa17dcad9494a84/LICENSE), SHA-256 `e1b18163db18a3b5f81c427d4013da49c744a0bacd5f06e859cf650b261bf84b`                                                                                 |
+| Repository material       | Sanitized source-only derivative at [`apps/backend/tests/fixtures/pokerstars/public-format/wizardwerdna-pokerstats-return-status.txt`](../../apps/backend/tests/fixtures/pokerstars/public-format/wizardwerdna-pokerstats-return-status.txt), attribution/license retained beside it |
+| Sanitized fixture SHA-256 | `b1e4f6ef89fbe9125b7a4efcdfb9363fd539a310379f87d6a571779e050523fa` (1,506 bytes)                                                                                                                                                                                                     |
+| Sanitation                | Replaced player, hand, and table identifiers and normalized trailing whitespace only; retained the observed header, eight-seat ring, hero/cards, action/result order, timeout/sit-out/return status, and summary syntax                                                              |
+| Independent labels        | Complete source-authored [return-status labels](pokerstars-p1b-return-status-source-labels.md); independent review remains required before a parser change                                                                                                                           |
+
+This source contains an immediate timeout-to-fold/sit-out sequence and then
+`has returned` for the same dealt-in player. The current adapter recognizes its
+legacy header and existing timeout-to-fold pair, but deliberately rejects the
+sanitized hand at the return-status line. The source does not prove a network
+reconnect, causal status scope, manual/preselected choice, a changed dealt-in
+ring, or current-client behavior. It is not a representative-corpus case.
+
+The original selected bytes have trailing spaces and currently fail earlier at
+seat parsing. The committed derivative applies only the explicit
+trailing-whitespace normalization documented above, which exposes the intended
+return-status rejection. Neither outcome is a passing parse or a positive
+grammar qualification.
+
 ## HRC viewer example
 
 | Field                    | Recorded value                                                                                                                                                           |

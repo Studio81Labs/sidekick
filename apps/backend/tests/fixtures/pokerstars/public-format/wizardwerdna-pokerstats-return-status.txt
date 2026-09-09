@@ -1,0 +1,50 @@
+PokerStars Game #900000000022:  Hold'em No Limit ($0.25/$0.50) - 2008/10/31 17:21:34 ET
+Table 'Public Return Evidence Table' 9-max Seat #8 is the button
+Seat 1: Player01 ($34.90 in chips)
+Seat 3: Player03 ($99.10 in chips)
+Seat 4: Player04 ($44 in chips)
+Seat 5: Player05 ($45.60 in chips)
+Seat 6: Player06 ($18.80 in chips)
+Seat 7: Player07 ($31.95 in chips)
+Seat 8: Player08 ($59.30 in chips)
+Seat 9: Player09 ($50.25 in chips)
+Player09: posts small blind $0.25
+Player01: posts big blind $0.50
+*** HOLE CARDS ***
+Dealt to Player08 [9h 6s]
+Player03: calls $0.50
+Player04: folds
+Player05: folds
+Player06: calls $0.50
+Player07 has timed out
+Player07: folds
+Player07 is sitting out
+Player07 has returned
+Player08: folds
+Player09: folds
+Player01: checks
+*** FLOP *** [Ac 2h Qd]
+Player01: checks
+Player03: checks
+Player06: checks
+*** TURN *** [Ac 2h Qd] [6h]
+Player01: checks
+Player03: checks
+Player06: checks
+*** RIVER *** [Ac 2h Qd 6h] [7c]
+Player01: bets $1
+Player03: folds
+Player06: folds
+Uncalled bet ($1) returned to Player01
+Player01 collected $1.70 from pot
+*** SUMMARY ***
+Total pot $1.75 | Rake $0.05
+Board [Ac 2h Qd 6h 7c]
+Seat 1: Player01 (big blind) collected ($1.70)
+Seat 3: Player03 folded on the River
+Seat 4: Player04 folded before Flop (didn't bet)
+Seat 5: Player05 folded before Flop (didn't bet)
+Seat 6: Player06 folded on the River
+Seat 7: Player07 folded before Flop (didn't bet)
+Seat 8: Player08 (button) folded before Flop (didn't bet)
+Seat 9: Player09 (small blind) folded before Flop
