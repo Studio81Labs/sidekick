@@ -2,10 +2,12 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+from threading import Event
 
 import pytest
 
 import app.player_workspace as player_workspace_module
+from app.data_lock import DATA_LOCK_FILENAME
 from app.player_workspace import (
     PLAYER_WORKSPACE_LAYOUT_VERSION,
     PLAYER_WORKSPACE_MANIFEST_FILENAME,
@@ -98,7 +100,11 @@ def test_nonempty_manifestless_directory_is_rejected_without_mutation(
         PlayerWorkspace.open(tmp_path)
 
     assert retained_path.read_bytes() == retained_payload
-    assert {entry.name for entry in tmp_path.iterdir()} == entries_before
+    assert {
+        entry.name
+        for entry in tmp_path.iterdir()
+        if entry.name != DATA_LOCK_FILENAME
+    } == entries_before
 
 
 def test_open_existing_rejects_an_empty_manifestless_directory(tmp_path: Path) -> None:
@@ -136,6 +142,55 @@ def test_concurrent_empty_workspace_initialization_publishes_one_manifest(
     assert json.loads(_manifest_path(tmp_path).read_text(encoding="utf-8")) == {
         "layout_version": PLAYER_WORKSPACE_LAYOUT_VERSION,
         "schema": PLAYER_WORKSPACE_SCHEMA,
+    }
+
+
+def test_concurrent_opener_waits_for_current_manifest_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    publish_started = Event()
+    partial_layout_seen = Event()
+    allow_publication = Event()
+    real_publish = player_workspace_module._publish_player_workspace_manifest
+    real_has_retained_entries = (
+        player_workspace_module._workspace_has_retained_entries
+    )
+
+    def pause_before_publication(data_dir: Path) -> None:
+        publish_started.set()
+        assert allow_publication.wait(timeout=5)
+        real_publish(data_dir)
+
+    def observe_partial_layout(data_dir: Path) -> bool:
+        has_retained_entries = real_has_retained_entries(data_dir)
+        if publish_started.is_set() and has_retained_entries:
+            partial_layout_seen.set()
+        return has_retained_entries
+
+    monkeypatch.setattr(
+        player_workspace_module,
+        "_publish_player_workspace_manifest",
+        pause_before_publication,
+    )
+    monkeypatch.setattr(
+        player_workspace_module,
+        "_workspace_has_retained_entries",
+        observe_partial_layout,
+    )
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        initializer = executor.submit(PlayerWorkspace.open, tmp_path)
+        assert publish_started.wait(timeout=5)
+        concurrent_opener = executor.submit(PlayerWorkspace.open, tmp_path)
+        assert partial_layout_seen.wait(timeout=5)
+        allow_publication.set()
+        workspaces = (
+            initializer.result(timeout=5),
+            concurrent_opener.result(timeout=5),
+        )
+
+    assert {workspace.layout_version for workspace in workspaces} == {
+        PLAYER_WORKSPACE_LAYOUT_VERSION
     }
 
 

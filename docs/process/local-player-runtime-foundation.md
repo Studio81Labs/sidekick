@@ -250,17 +250,18 @@ directory until its contents and the archive have been inspected. A later run
 detects a path retained by an interruption after rename and reports it even
 when the active source is already absent.
 
-The player backup uses schema version 3 and contains portable V2 imported-hand
+The player backup uses schema version 4 and contains portable V2 imported-hand
 records with their retained decision and historical grade audit artifacts. Its
-decoder accepts schema version 1 archives without grades and schema version 2
-archives with explicit grade lists. The installation credential, in-workspace
-data and record locks, workspace manifest, consent, current reference and
-learning-content catalogs, and recovered journal machinery are installation
-metadata or product/reference authority and are removed with the workspace
-rather than copied into the archive. The empty sibling runtime-lease file
-contains no player data and may remain for future coordination. This command
-does not remove the repository/application binary or the browser's PWA
-installation; those remain operating-system and browser lifecycle steps.
+decoder accepts only schema version 4; older, future, malformed, and unsafe
+archives are rejected during complete preflight before restore mutation. The
+installation credential, in-workspace data and record locks, workspace manifest,
+consent, current reference and learning-content catalogs, and recovered journal
+machinery are installation metadata or product/reference authority and are
+removed with the workspace rather than copied into the archive. The empty
+sibling runtime-lease file contains no player data and may remain for future
+coordination. This command does not remove the repository/application binary or
+the browser's PWA installation; those remain operating-system and browser
+lifecycle steps.
 
 There is intentionally no player-runtime host or port flag. A non-loopback
 operator development service would be a different runtime and would require
