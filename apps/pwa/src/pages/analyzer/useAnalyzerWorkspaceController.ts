@@ -645,6 +645,9 @@ export function useAnalyzerWorkspaceController({
             void requestHistoryRestore(null, true);
           })
           .catch((recoveryError) => {
+            if (reportAdministrativeDenial(recoveryError)) {
+              return;
+            }
             if (
               recoveryError instanceof ApiResponseError &&
               recoveryError.status === 429 &&
@@ -1287,7 +1290,10 @@ export function useAnalyzerWorkspaceController({
         }
         applyHistoryJobUpdates(incomingJobs);
       })
-      .catch(() => {
+      .catch((restoreError) => {
+        if (reportAdministrativeDenial(restoreError)) {
+          return;
+        }
         for (const jobId of requestedJobIds) {
           historyJobRestoreIdsRef.current.add(jobId);
         }
@@ -2480,7 +2486,9 @@ export function useAnalyzerWorkspaceController({
       }
     } catch (uploadError) {
       scheduleMutationLeaseRevalidation();
-      setError(messageFromError(uploadError, "Upload failed"));
+      if (!reportAdministrativeDenial(uploadError)) {
+        setError(messageFromError(uploadError, "Upload failed"));
+      }
     } finally {
       endProcessingMembershipMutation();
       setBusy(false);
@@ -2624,7 +2632,9 @@ export function useAnalyzerWorkspaceController({
         markPersistedJobMutationUncertain(mutationScope, job.id);
       }
       restoreAfterMutation = true;
-      setError(messageFromError(approveError, "Approval failed"));
+      if (!reportAdministrativeDenial(approveError)) {
+        setError(messageFromError(approveError, "Approval failed"));
+      }
     } finally {
       endPersistedJobMutation(mutationScope, restoreAfterMutation);
       setBusy(false);
@@ -2984,12 +2994,14 @@ export function useAnalyzerWorkspaceController({
         markPersistedJobMutationUncertain(mutationScope, job.id);
       }
       restoreAfterMutation = true;
-      setError(
-        messageFromError(
-          benchmarkError,
-          "Could not update benchmark ground truth",
-        ),
-      );
+      if (!reportAdministrativeDenial(benchmarkError)) {
+        setError(
+          messageFromError(
+            benchmarkError,
+            "Could not update benchmark ground truth",
+          ),
+        );
+      }
     } finally {
       endPersistedJobMutation(mutationScope, restoreAfterMutation);
       setBenchmarkUpdating(false);
@@ -3078,7 +3090,7 @@ export function useAnalyzerWorkspaceController({
       } else if (mutationFailureMayHavePersistedSideEffect(metadataError)) {
         markPersistedJobMutationUncertain(mutationScope, managedJob.id);
       }
-      if (!deletedRemotely) {
+      if (!deletedRemotely && !reportAdministrativeDenial(metadataError)) {
         setError(
           messageFromError(metadataError, "Could not save screenshot details"),
         );
@@ -3206,7 +3218,9 @@ export function useAnalyzerWorkspaceController({
       toast.success("Screenshot permanently deleted");
     } catch (deleteError) {
       restoreAfterMutation = true;
-      setError(messageFromError(deleteError, "Could not delete screenshot"));
+      if (!reportAdministrativeDenial(deleteError)) {
+        setError(messageFromError(deleteError, "Could not delete screenshot"));
+      }
     } finally {
       if (mutationScope === "processing") {
         endProcessingMembershipMutation(restoreAfterMutation);
@@ -3294,12 +3308,18 @@ export function useAnalyzerWorkspaceController({
         setError(null);
       }
     } catch (historyError) {
+      const administrativeDenied = reportAdministrativeDenial(historyError);
       const archiveErrorMessage = messageFromError(
         historyError,
         "Could not save reviewed hands to history",
       );
       endHistoryMutation();
       historyMutationActive = false;
+      if (administrativeDenied) {
+        clearOwnedMutationLease("processing");
+        clearOwnedMutationLease("history");
+        return;
+      }
       const historyReconciled = await syncHistory(null, false);
       if (historyReconciled && historySearchActive && historySearchQuery) {
         await revalidateHistorySearch(historySearchQuery);

@@ -200,7 +200,7 @@ describe("Analyzer administrative capture", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("disables both administrator lock controls during screenshot metadata saves", async () => {
+  it("disables both administrator lock controls during screenshot metadata saves and locks on denial", async () => {
     const currentJob = jobRecord({
       id: "a".repeat(32),
       original_filename: "metadata-lock.png",
@@ -235,13 +235,20 @@ describe("Analyzer administrative capture", () => {
     ).toBeDisabled();
 
     await act(async () => {
-      pendingMetadata.resolve(
-        jsonResponse({ ...currentJob, title: "Reviewed" }),
-      );
+      pendingMetadata.resolve(jsonResponse({ detail: "denied" }, 401));
     });
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("disables both administrator lock controls during benchmark inclusion", async () => {
+  it("disables both administrator lock controls during benchmark inclusion and locks on denial", async () => {
     const currentJob = approvedJob();
     currentJob.id = "b".repeat(32);
     currentJob.original_filename = "benchmark-lock.png";
@@ -279,8 +286,8 @@ describe("Analyzer administrative capture", () => {
       }
       throw new Error(`Unexpected request: ${String(url)}`);
     });
-    render(<App />);
-    const user = userEvent.setup();
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
 
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
     const benchmarkDialog = await screen.findByRole("dialog", {
@@ -306,10 +313,17 @@ describe("Analyzer administrative capture", () => {
     ).toBeDisabled();
 
     await act(async () => {
-      pendingInclusion.resolve(
-        jsonResponse({ ...currentJob, benchmark_included: true }),
-      );
+      pendingInclusion.resolve(jsonResponse({ detail: "denied" }, 401));
     });
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
   });
 
   it.each([
@@ -367,6 +381,29 @@ describe("Analyzer administrative capture", () => {
       ).not.toBeInTheDocument();
     },
   );
+
+  it("locks when approval loses administrator authorization", async () => {
+    const created = jobRecord();
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(processingQueueResponse([created]))
+      .mockResolvedValueOnce(jsonResponse({ detail: "denied" }, 401));
+    render(<UnverifiedAnalyzerTestApp />);
+
+    const user = await uploadScreenshot();
+    await user.click(
+      await screen.findByRole("button", { name: "Approve state" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
 
   it("sends the administrator credential with uploads", async () => {
     const created = jobRecord();
