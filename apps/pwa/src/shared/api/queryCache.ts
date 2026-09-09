@@ -141,6 +141,7 @@ export async function cacheLatestQueryResult<T>(
   queryKey: QueryKey,
   request: Promise<T>,
 ): Promise<T> {
+  const accessGeneration = captureQueryAccessGeneration(queryClient);
   let requestsByKey = latestRequests.get(queryClient);
   if (!requestsByKey) {
     requestsByKey = new Map();
@@ -152,6 +153,7 @@ export async function cacheLatestQueryResult<T>(
 
   try {
     const result = await request;
+    assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
     if (requestsByKey.get(queryHash)?.token === requestToken) {
       queryClient.setQueryData(queryKey, result);
     }

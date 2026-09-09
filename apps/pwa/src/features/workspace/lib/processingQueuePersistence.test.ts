@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "../../../app/providers/queryClient";
 import { getProcessingJobs } from "../../../domains/jobs/api/jobsApi";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
+import { supersedeQueryAccessGeneration } from "../../../shared/api/queryCache";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
   readCachedProcessingQueueTotal,
@@ -98,5 +99,39 @@ describe("processing queue persistence", () => {
       jobs: [persistedJob],
       snapshot_version: "stable",
     });
+  });
+
+  it("stops a paginated load after administrator access is superseded", async () => {
+    const queryClient = createQueryClient();
+    let resolveFirstPage!: (value: {
+      total: number;
+      jobs: (typeof persistedJob)[];
+      snapshot_version: string;
+    }) => void;
+    vi.mocked(getProcessingJobs).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstPage = resolve;
+        }),
+    );
+
+    const loading = getProcessingQueueExtent(
+      queryClient,
+      "administrator-token",
+    );
+    supersedeQueryAccessGeneration(queryClient);
+    resolveFirstPage({
+      total: 2,
+      jobs: [persistedJob],
+      snapshot_version: "current",
+    });
+
+    await expect(loading).rejects.toThrow(
+      "Administrator access changed before this operation completed",
+    );
+    expect(getProcessingJobs).toHaveBeenCalledOnce();
+    expect(
+      queryClient.getQueryData(jobQueryKeys.processingPage(0)),
+    ).toBeUndefined();
   });
 });

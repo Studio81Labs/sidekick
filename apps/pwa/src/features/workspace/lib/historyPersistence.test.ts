@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createQueryClient } from "../../../app/providers/queryClient";
 import { getHistory } from "../../../domains/history/api/historyApi";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
+import { supersedeQueryAccessGeneration } from "../../../shared/api/queryCache";
 import { jobRecord } from "../../../test/analyzerHarness";
 import {
   HISTORY_CACHE_LIMIT,
@@ -105,5 +106,45 @@ describe("history persistence", () => {
       jobs: [firstJob, secondJob],
       snapshot_version: "stable",
     });
+  });
+
+  it("stops history rebuilding after administrator access is superseded", async () => {
+    const queryClient = createQueryClient();
+    const firstJob = jobRecord({
+      id: "3".repeat(32),
+      archived_at: "2026-07-10T00:00:00Z",
+    });
+    let resolveFirstPage!: (value: {
+      total: number;
+      jobs: (typeof firstJob)[];
+      snapshot_version: string;
+    }) => void;
+    vi.mocked(getHistory).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirstPage = resolve;
+        }),
+    );
+
+    const loading = getHistorySearchExtent(
+      queryClient,
+      "administrator-token",
+      "river",
+      2,
+    );
+    supersedeQueryAccessGeneration(queryClient);
+    resolveFirstPage({
+      total: 2,
+      jobs: [firstJob],
+      snapshot_version: "current",
+    });
+
+    await expect(loading).rejects.toThrow(
+      "Administrator access changed before this operation completed",
+    );
+    expect(getHistory).toHaveBeenCalledOnce();
+    expect(
+      queryClient.getQueryData(historyQueryKeys.page(0, "river", 2)),
+    ).toBeUndefined();
   });
 });
