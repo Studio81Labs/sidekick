@@ -7,20 +7,31 @@ import type { JobRecord } from "../../../shared/types/jobs";
 interface UseScreenshotDetailsOptions {
   history: readonly HistoryItem[];
   historySearchResults: readonly HistoryItem[] | null;
+  initialDraft?: ScreenshotDetailsDraft | null;
   jobs: readonly JobRecord[];
   onError: (message: string | null) => void;
 }
 
+export type ScreenshotDetailsDraft = {
+  jobId: string;
+  notes: string;
+  tagInput: string;
+  title: string;
+};
+
 export function useScreenshotDetails({
   history,
   historySearchResults,
+  initialDraft = null,
   jobs,
   onError,
 }: UseScreenshotDetailsOptions) {
-  const [managedJobId, setManagedJobId] = useState<string | null>(null);
-  const [title, setTitle] = useState("");
-  const [notes, setNotes] = useState("");
-  const [tagInput, setTagInput] = useState("");
+  const [managedJobId, setManagedJobId] = useState<string | null>(
+    initialDraft?.jobId ?? null,
+  );
+  const [title, setTitle] = useState(initialDraft?.title ?? "");
+  const [notes, setNotes] = useState(initialDraft?.notes ?? "");
+  const [tagInput, setTagInput] = useState(initialDraft?.tagInput ?? "");
   const [metadataSaving, setMetadataSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteArmed, setDeleteArmed] = useState(false);

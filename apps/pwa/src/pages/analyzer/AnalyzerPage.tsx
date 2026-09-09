@@ -2,6 +2,7 @@ import "./AnalyzerPage.css";
 import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AnalyzerWorkspaceComposition } from "./AnalyzerWorkspaceComposition";
+import type { AnalyzerWorkspaceDraft } from "./analyzerWorkspaceDraft";
 import type {
   AnalyzerRouteNavigation,
   AnalyzerRouteState,
@@ -40,6 +41,8 @@ export default function AnalyzerPage({
   const mutationOwnerId = useAnalyzerWorkflowOwnerId();
   const queryClient = useQueryClient();
   const [accessError, setAccessError] = useState<string | null>(null);
+  const [workspaceDraft, setWorkspaceDraft] =
+    useState<AnalyzerWorkspaceDraft | null>(null);
   const administratorAccessGenerationRef = useRef(0);
   const [workspaceAccessGeneration, setWorkspaceAccessGeneration] = useState(0);
   const advanceAdministratorAccessGeneration = useCallback(() => {
@@ -82,6 +85,10 @@ export default function AnalyzerPage({
     },
     [administrativeAccess],
   );
+  const preserveWorkspaceDraft = useCallback(
+    (draft: AnalyzerWorkspaceDraft) => setWorkspaceDraft(draft),
+    [],
+  );
 
   if (administrativeAccess.token === null) {
     return (
@@ -99,14 +106,26 @@ export default function AnalyzerPage({
   }
 
   return (
-    <AnalyzerWorkflowProvider mutationOwnerId={mutationOwnerId}>
+    <AnalyzerWorkflowProvider
+      initialActiveJobId={workspaceDraft?.activeJobId}
+      mutationOwnerId={mutationOwnerId}
+    >
       <AnalyzerWorkspaceComposition
         administratorToken={administrativeAccess.token}
+        initialDraft={workspaceDraft}
         mutationOwnerId={mutationOwnerId}
         navigation={navigation}
         onLockAdministrator={(reason) =>
           lockAdministrator(reason, workspaceAccessGeneration)
         }
+        onPreserveDraft={(draft) => {
+          if (
+            workspaceAccessGeneration ===
+            administratorAccessGenerationRef.current
+          ) {
+            preserveWorkspaceDraft(draft);
+          }
+        }}
         route={route}
       />
     </AnalyzerWorkflowProvider>

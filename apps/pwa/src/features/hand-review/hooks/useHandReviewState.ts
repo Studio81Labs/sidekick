@@ -36,6 +36,7 @@ import type { JobRecord } from "../../../shared/types/jobs";
 interface UseHandReviewStateOptions {
   activeJobId: string | null;
   administratorToken: string;
+  initialDraft?: HandReviewDraft | null;
   jobs: JobRecord[];
   onActiveJobChange: (jobId: string | null) => void;
   onAdministrativeDenial: (failure: unknown) => boolean;
@@ -56,6 +57,12 @@ type ScreenshotState =
 
 type ScreenshotStatus = ScreenshotState["status"];
 
+export type HandReviewDraft = {
+  baseline: StateForm;
+  form: StateForm;
+  jobId: string;
+};
+
 function sameScreenshotSource(
   left: ScreenshotSource,
   right: ScreenshotSource,
@@ -70,17 +77,20 @@ function sameScreenshotSource(
 export function useHandReviewState({
   activeJobId,
   administratorToken,
+  initialDraft = null,
   jobs,
   onActiveJobChange,
   onAdministrativeDenial,
   onError,
 }: UseHandReviewStateOptions) {
-  const [form, setForm] = useState<StateForm>(() => stateToForm(EMPTY_STATE));
+  const [form, setForm] = useState<StateForm>(
+    () => initialDraft?.form ?? stateToForm(EMPTY_STATE),
+  );
   const [approvedStateKey, setApprovedStateKey] = useState<string | null>(null);
   const activeJobIdRef = useRef(activeJobId);
   activeJobIdRef.current = activeJobId;
-  const formBaselineRef = useRef(form);
-  const formDirtyRef = useRef(false);
+  const formBaselineRef = useRef(initialDraft?.baseline ?? form);
+  const formDirtyRef = useRef(initialDraft !== null);
   const onAdministrativeDenialRef = useRef(onAdministrativeDenial);
   onAdministrativeDenialRef.current = onAdministrativeDenial;
 

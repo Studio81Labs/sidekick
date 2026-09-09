@@ -17,11 +17,15 @@ import {
 } from "../lib/captureSource";
 
 interface UseCaptureSourceOptions {
+  initialFiles?: readonly File[];
   onError: (message: string | null) => void;
 }
 
-export function useCaptureSource({ onError }: UseCaptureSourceOptions) {
-  const [files, setFiles] = useState<File[]>([]);
+export function useCaptureSource({
+  initialFiles = [],
+  onError,
+}: UseCaptureSourceOptions) {
+  const [files, setFiles] = useState<File[]>(() => [...initialFiles]);
   const [inputMode, setInputMode] = useState<InputMode>("live");
   const [shareMode, setShareMode] = useState<ShareMode>("window");
   const [stream, setStream] = useState<MediaStream | null>(null);

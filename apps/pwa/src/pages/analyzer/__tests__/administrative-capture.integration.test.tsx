@@ -299,6 +299,61 @@ describe("Analyzer administrative capture", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("restores unsaved administrator drafts after a protected read relocks", async () => {
+    const currentJob = jobRecord({
+      id: "d".repeat(32),
+      original_filename: "retained-draft.png",
+    });
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockResolvedValueOnce(jsonResponse({ detail: "denied" }, 401));
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    const currentBet = screen.getByLabelText(/Current bet/);
+    await user.clear(currentBet);
+    await user.type(currentBet, "3");
+    await switchToUploadMode(user);
+    await user.upload(
+      screen.getByLabelText("Choose screenshots"),
+      new File(["draft"], "retained-upload.png", { type: "image/png" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Manage screenshot 1: retained-draft.png",
+      }),
+    );
+    const details = screen.getByRole("dialog", { name: "Screenshot details" });
+    await user.type(within(details).getByLabelText("Title"), "Keep this");
+    expect(within(details).getByLabelText("Title")).toHaveValue("Keep this");
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+    await switchToUploadMode(user);
+    expect(screen.getByText("retained-upload.png")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Upload and parse" }),
+    ).toBeEnabled();
+    expect(
+      within(
+        screen.getByRole("dialog", { name: "Screenshot details" }),
+      ).getByLabelText("Title"),
+    ).toHaveValue("Keep this");
+  });
+
   it("disables both administrator lock controls during screenshot metadata saves and locks on denial", async () => {
     const currentJob = jobRecord({
       id: "a".repeat(32),

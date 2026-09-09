@@ -6,6 +6,7 @@ import type {
   AnalyzerRouteNavigation,
   AnalyzerRouteState,
 } from "./analyzerRouteState";
+import type { AnalyzerWorkspaceDraft } from "./analyzerWorkspaceDraft";
 import { useAnalyzerRouteRestore } from "./useAnalyzerRouteRestore";
 import { selectedFilesLabel } from "../../features/capture/components/InputSourcePanel";
 import { shareModeLabel } from "../../features/capture/lib/captureSource";
@@ -123,17 +124,21 @@ const NO_JOB_ATTENTION: Readonly<Record<string, string | undefined>> = {};
 
 export type AnalyzerWorkspaceControllerProps = {
   administratorToken: string;
+  initialDraft?: AnalyzerWorkspaceDraft | null;
   mutationOwnerId: string;
   navigation: AnalyzerRouteNavigation;
   onLockAdministrator: (reason?: string) => void;
+  onPreserveDraft?: (draft: AnalyzerWorkspaceDraft) => void;
   route: AnalyzerRouteState;
 };
 
 export function useAnalyzerWorkspaceController({
   administratorToken,
+  initialDraft = null,
   mutationOwnerId,
   navigation,
   onLockAdministrator,
+  onPreserveDraft,
   route,
 }: AnalyzerWorkspaceControllerProps) {
   const queryClient = useQueryClient();
@@ -265,6 +270,10 @@ export function useAnalyzerWorkspaceController({
   } = useHandReviewState({
     activeJobId,
     administratorToken,
+    initialDraft:
+      initialDraft?.handReview?.jobId === activeJobId
+        ? initialDraft.handReview
+        : null,
     jobs,
     onActiveJobChange: selectActiveJob,
     onAdministrativeDenial: reportAdministrativeDenial,
@@ -299,14 +308,10 @@ export function useAnalyzerWorkspaceController({
     startShare: onStartScreenShare,
     stopShare: onStopScreenShare,
     videoRef,
-  } = useCaptureSource({ onError: setError });
-  const lockAdministrator = useCallback(
-    (reason?: string) => {
-      onStopScreenShare();
-      onLockAdministrator(reason);
-    },
-    [onLockAdministrator, onStopScreenShare],
-  );
+  } = useCaptureSource({
+    initialFiles: initialDraft?.files,
+    onError: setError,
+  });
   const {
     closeDialog: closeInfoDialog,
     dialogOpen: infoDialogOpen,
@@ -336,6 +341,7 @@ export function useAnalyzerWorkspaceController({
   } = useScreenshotDetails({
     history,
     historySearchResults,
+    initialDraft: initialDraft?.screenshotMetadata,
     jobs,
     onError: setError,
   });
@@ -430,6 +436,38 @@ export function useAnalyzerWorkspaceController({
       screenshotTagsDraftInvalid ||
       JSON.stringify(parsedScreenshotTags) !==
         JSON.stringify(screenshotTags(managedJob))),
+  );
+  const workspaceDraftRef = useRef<AnalyzerWorkspaceDraft | null>(null);
+  workspaceDraftRef.current = {
+    activeJobId,
+    files: [...files],
+    handReview:
+      formDirtyRef.current && job
+        ? {
+            baseline: formBaselineRef.current,
+            form,
+            jobId: job.id,
+          }
+        : null,
+    screenshotMetadata:
+      screenshotMetadataDraft && managedJob
+        ? {
+            jobId: managedJob.id,
+            notes: screenshotNotes,
+            tagInput: screenshotTagInput,
+            title: screenshotTitle,
+          }
+        : null,
+  };
+  const lockAdministrator = useCallback(
+    (reason?: string) => {
+      if (workspaceDraftRef.current) {
+        onPreserveDraft?.(workspaceDraftRef.current);
+      }
+      onStopScreenShare();
+      onLockAdministrator(reason);
+    },
+    [onLockAdministrator, onPreserveDraft, onStopScreenShare],
   );
   const administratorLockDisabled =
     busy ||
