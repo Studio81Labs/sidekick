@@ -55,6 +55,12 @@ cash family. Labels must preserve that supplied currency, the three initial
 dealt-in seats, all actions/boards/results, and every unproved field. Keep the
 original bytes and sanitation mapping unchanged.
 
+The complete source-authored state and target grammar now live in the
+[HHSmithy source-label sheet](pokerstars-p1b-hhsmithy-source-labels.md).
+This evidence ledger remains the action-origin/candidate-semantics record;
+neither document implements a parser rule until an independent review confirms
+the relevant bounded row.
+
 ## Evidence reviewed for marker candidates
 
 The raw source is the only evidence of this historical text grammar and event
