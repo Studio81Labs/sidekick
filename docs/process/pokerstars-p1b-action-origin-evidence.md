@@ -1,9 +1,9 @@
 # PokerStars P1b Action-Origin Evidence Preparation
 
-Status: P1b source-evidence preparation under #409. This packet is not a
-parser implementation, a passing corpus case, representative-corpus evidence,
-or an external poker-expert certification. It must receive an independent
-source-review pass before any rule below is implemented.
+Status: independently reviewed P1b source-evidence record under #409. The
+source-label review completed without findings on merged PR #513. This packet
+is not representative-corpus evidence or an external poker-expert
+certification.
 
 ## Scope, custody, and sanitation
 
@@ -26,19 +26,16 @@ automatic behavior.
 
 ## Current parser boundary and independently authored expectation
 
-The sanitized source has 45 lines. It is an explicitly labelled negative
-integration fixture for the current adapter:
+The sanitized source has 45 lines. The current adapter accepts only its
+independently reviewed form:
 
-| Input                 | Expected result                                                     | Evidence                                                                                                                                   |
-| --------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Exact sanitized bytes | No parsed candidates; one `unsupported_header` diagnostic at line 1 | The adapter detects a `PokerStars Game #` hand boundary, then rejects this one-digit-hour/explicit-ISO header outside the bounded grammar. |
+| Input                 | Expected result                        | Evidence                                                                                                               |
+| --------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Exact sanitized bytes | One detected, pending-review candidate | The adapter accepts the exact explicit-USD, one-digit-hour header and source-labelled body under `pokerstars-text/v4`. |
 
 The fixture has no `Dealt to` line. It cannot be transformed into a positive
 parser case by adding a hero, changing its header, or treating a known actor as
-the hero. Its present expectation remains rejection until a separately reviewed
-extension supplies full-state labels and implements the evidenced grammar.
-That expectation is a current parser boundary, not a permanent prohibition on
-qualifying this source.
+the hero.
 
 `ImportedHandState` already permits `hero_player_id=None` and `hero_cards=[]`.
 A complete detected-state expectation must explicitly label these unknowns;
@@ -47,19 +44,15 @@ hero requirement. Decision extraction still returns `incomplete_hand_state`
 when the hero is unknown, even after explicit approval. The separate reviewed
 HAND2 tournament form's required dealt-to line remains unchanged.
 
-For this source, full-state label preparation and bounded grammar qualification
-are remaining work, not a requirement to obtain another external file solely
-to supply hero cards or match an already supported header. The header has both
-a one-digit hour and an explicit `USD` token, unlike the supported 2008 legacy
-cash family. Labels must preserve that supplied currency, the three initial
-dealt-in seats, all actions/boards/results, and every unproved field. Keep the
-original bytes and sanitation mapping unchanged.
+The bounded mapping preserves the supplied currency, the three initial
+dealt-in seats, all actions/boards/results, and every unproved field. The
+header has both a one-digit hour and an explicit `USD` token, unlike the
+supported 2008 legacy cash family. Keep the original bytes and sanitation
+mapping unchanged.
 
-The complete source-authored state and target grammar now live in the
+The complete source-authored state and grammar live in the
 [HHSmithy source-label sheet](pokerstars-p1b-hhsmithy-source-labels.md).
-This evidence ledger remains the action-origin/candidate-semantics record;
-neither document implements a parser rule until an independent review confirms
-the relevant bounded row.
+This evidence ledger remains the action-origin/candidate-semantics record.
 
 ## Evidence reviewed for marker candidates
 
@@ -75,19 +68,19 @@ Those vendor statements establish that timeout and disconnect automation exist;
 they do not specify this historical export grammar, its complete marker set,
 the action-binding algorithm, reconnect ordering, or absence semantics.
 
-## Proposed rule and source-label ledger
+## Reviewed rule and source-label ledger
 
-Line numbers refer to the exact sanitized fixture. The proposed semantics
-revision is `pokerstars-cash-2014-timeout-disconnect-v1`; it is deliberately
-versioned to this observed source family and must not be applied to another
-channel, locale, or client version without its own reviewed evidence.
+Line numbers refer to the exact sanitized fixture. The semantics revision is
+`pokerstars-cash-2014-timeout-disconnect-v1`; it is deliberately versioned to
+this observed source family and must not be applied to another channel, locale,
+or client version without its own reviewed evidence.
 
-| Source marker and required binding                                                                                          | Labeled action                                                      | Proposed origin                                                                                                  | Cause/evidence                                                                                                                 | Scope and reset                                                                                                                                                                                      | Status                            |
-| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| `Player04 has timed out` immediately followed by `Player04: checks` (14–15, 20–21, 27–28)                                   | Same actor's immediately following check on the current street      | `client_automatic`, `explicit_marker`, confidence `1`, semantics revision above, `automatic_reason="timeout"`    | Retain both the marker and action lines.                                                                                       | One action only; consume the marker after that action. A new street, another actionable actor line, hand boundary, malformed binding, duplicate, or conflicting marker leaves the action unresolved. | Candidate for independent review. |
-| `Player02 has timed out while disconnected` immediately followed by `Player02: checks` (25–26) or `Player02: folds` (30–31) | Same actor's immediately following check/fold on the current street | `client_automatic`, `explicit_marker`, confidence `1`, semantics revision above, `automatic_reason="disconnect"` | Retain the combined marker and bound action. Line 24 is additional actor-specific disconnect context for the first occurrence. | One action only; consume the marker after that action. The combined marker is self-contained; a prior bare disconnect notice is never enough.                                                        | Candidate for independent review. |
-| `Observer01 is disconnected` (11)                                                                                           | None                                                                | No action-origin label                                                                                           | Retain as raw source text; it is not action evidence.                                                                          | It must not carry across actors, streets, hands, or files.                                                                                                                                           | Negative case.                    |
-| Unmarked ordinary calls/checks/bets/folds, including lines 9, 10, 17, 22, 29, 32, 34, and 35                                | Their own action only                                               | `unknown`, `unresolved`, no confidence/revision/reason                                                           | Action line only.                                                                                                              | No inference from legality, all-in status, a clean pot, a prior timeout, or an absent marker.                                                                                                        | Required negative case.           |
+| Source marker and required binding                                                                                          | Labeled action                                                      | Reviewed origin                                                                                                  | Cause/evidence                                                                                                                 | Scope and reset                                                                                                                                                                                      | Status                    |
+| --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------- |
+| `Player04 has timed out` immediately followed by `Player04: checks` (14–15, 20–21, 27–28)                                   | Same actor's immediately following check on the current street      | `client_automatic`, `explicit_marker`, confidence `1`, semantics revision above, `automatic_reason="timeout"`    | Retain both the marker and action lines.                                                                                       | One action only; consume the marker after that action. A new street, another actionable actor line, hand boundary, malformed binding, duplicate, or conflicting marker leaves the action unresolved. | Implemented bounded rule. |
+| `Player02 has timed out while disconnected` immediately followed by `Player02: checks` (25–26) or `Player02: folds` (30–31) | Same actor's immediately following check/fold on the current street | `client_automatic`, `explicit_marker`, confidence `1`, semantics revision above, `automatic_reason="disconnect"` | Retain the combined marker and bound action. Line 24 is additional actor-specific disconnect context for the first occurrence. | One action only; consume the marker after that action. The combined marker is self-contained; a prior bare disconnect notice is never enough.                                                        | Implemented bounded rule. |
+| `Observer01 is disconnected` (11)                                                                                           | None                                                                | No action-origin label                                                                                           | Retain as raw source text; it is not action evidence.                                                                          | It must not carry across actors, streets, hands, or files.                                                                                                                                           | Negative case.            |
+| Unmarked ordinary calls/checks/bets/folds, including lines 9, 10, 17, 22, 29, 32, 34, and 35                                | Their own action only                                               | `unknown`, `unresolved`, no confidence/revision/reason                                                           | Action line only.                                                                                                              | No inference from legality, all-in status, a clean pot, a prior timeout, or an absent marker.                                                                                                        | Required negative case.   |
 
 The combined `while disconnected` text names both timeout and disconnect. The
 existing single `automatic_reason` contract encodes it as `disconnect`, the
@@ -112,19 +105,14 @@ words.
   contract, but that does not make this parser evidence or satisfy a corpus
   gate.
 
-## Required independent review before implementation
+## Review and implementation boundary
 
-The parser PR may implement only rows whose historical grammar, actor/action
-binding, confidence, combined-cause encoding, and reset behavior receive a
-separate source review against the pinned original bytes and cited vendor
-material. It must also include a compatible, complete, independently labelled
-input. Here, compatible means representable by existing domain contracts and
-the explicitly reviewed target grammar; it does not mean already accepted by
-the current parser or ready for hero-decision extraction. This fixture remains
-a structured rejection today because its grammar and complete expected state
-have not been implemented and reviewed as a positive case. The review must
-verify that labels were authored from the source and this ledger before parser
-output, not copied from the changed adapter.
+PR #513 independently reviewed the historical grammar, actor/action binding,
+confidence, combined-cause encoding, reset behavior, and complete source
+labels against the pinned original bytes. It confirmed that the unknown hero is
+representable by existing domain contracts without being ready for
+hero-decision extraction. Labels were authored from the source and this ledger,
+not copied from parser output.
 
 The preparation must account for observer/join/disconnect notifications and the
 show/summary rank prose as well as the header and five candidate marker/action
@@ -135,11 +123,10 @@ and a bare disconnect must not become a causal marker. Rank prose remains
 source description under ADR 0078; do not derive a winner or repair source
 awards. Unknown or materially unmodeled behavior still rejects or escalates.
 
-First prepare complete source-authored labels and obtain independent review;
-then implement only qualified rows in a separate parser PR. No parser change
-or positive corpus qualification is conferred by this clarification. Missing
-reconnect, preselection and player-selected/absence semantics remain separate
-evidence gaps; they do not prevent preparation of this bounded source mapping.
+The adapter implements only the qualified rows above. This is not positive
+corpus qualification. Missing reconnect, preselection and player-selected /
+absence semantics remain separate evidence gaps; the HHSmithy mapping does not
+claim them.
 
 Any attempt to infer player-selected origins from missing markers, expand this
 legacy header into general PokerStars support, change `ActionOrigin` or corpus

@@ -43,8 +43,8 @@ from app.domain.poker import Card
 
 
 POKERSTARS_ADAPTER_ID = "pokerstars"
-POKERSTARS_ADAPTER_VERSION = "0.3.0"
-POKERSTARS_FORMAT_REVISION = "pokerstars-text/v3"
+POKERSTARS_ADAPTER_VERSION = "0.4.0"
+POKERSTARS_FORMAT_REVISION = "pokerstars-text/v4"
 
 _MONEY = (
     r"[$€£]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
@@ -62,6 +62,12 @@ _LEGACY_TIMEOUT_CASH_HEADER_RE = re.compile(
     rf"Hold'em No Limit \(\$(?P<small>{_CHIPS})/\$(?P<big>{_CHIPS})\) - "
     r"(?P<played_at>[0-9]{4}/[0-9]{2}/[0-9]{2} "
     r"[0-9]{2}:[0-9]{2}:[0-9]{2}) ET$"
+)
+_HHSMITHY_CASH_HEADER_RE = re.compile(
+    rf"^\ufeff?PokerStars Game #(?P<hand_id>[0-9]+):  "
+    rf"Hold'em No Limit \(\$(?P<small>{_CHIPS})/\$(?P<big>{_CHIPS}) USD\) - "
+    r"(?P<played_at>[0-9]{4}/[0-9]{2}/[0-9]{2} "
+    r"[0-9]:[0-9]{2}:[0-9]{2}) ET$"
 )
 _HEADER_START_RE = re.compile(
     r"^\ufeff?PokerStars Hand #(?P<hand_id>[^:]+):"
@@ -110,7 +116,14 @@ _COLLECTED_RE = re.compile(
 )
 _ACTOR_LINE_RE = re.compile(r"^(?P<name>.+): (?P<body>.+)$")
 _TIMEOUT_MARKER_RE = re.compile(r"^(?P<name>.+) has timed out$")
+_TIMEOUT_WHILE_DISCONNECTED_MARKER_RE = re.compile(
+    r"^(?P<name>.+) has timed out while disconnected$"
+)
 _SITTING_OUT_EVENT_RE = re.compile(r"^(?P<name>.+) is sitting out$")
+_HHSMITHY_DISCONNECTED_NOTICE_RE = re.compile(r"^(?P<name>.+) is disconnected$")
+_HHSMITHY_JOIN_NOTICE_RE = re.compile(
+    r"^(?P<name>.+) joins the table at seat #(?P<seat>[1-9][0-9]*)$"
+)
 _POST_RE = re.compile(
     rf"^posts (?P<post>small blind|big blind|the ante|straddle) "
     rf"(?P<amount>{_MONEY})(?P<all_in> and is all-in)?$"
@@ -130,6 +143,11 @@ _HISTORICAL_TOURNAMENT_RANK_DESCRIPTION = r"a pair of (?:Nines|Jacks|Kings)"
 _HISTORICAL_TOURNAMENT_SHOW_RE = re.compile(
     r"^shows \[(?P<cards>[^\]]+)\](?: \("
     rf"(?P<rank_description>{_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION})\))?$"
+)
+_HHSMITHY_RANK_DESCRIPTION = r"two pair, Eights and Threes"
+_HHSMITHY_SHOW_RE = re.compile(
+    r"^shows \[(?P<cards>[^\]]+)\] \("
+    rf"(?P<rank_description>{_HHSMITHY_RANK_DESCRIPTION})\)$"
 )
 _SUMMARY_SEAT_RE = re.compile(
     r"^Seat (?P<seat>[1-9][0-9]*): (?P<rest>.+)$"
@@ -152,6 +170,10 @@ _SUMMARY_SHOWDOWN_RESULT_RE = re.compile(
     rf"^ showed \[(?P<cards>[^\]]+)\] and "
     rf"(?:(?P<lost>lost)|won \((?P<amount>{_MONEY})\)) with "
     rf"(?P<rank_description>{_HISTORICAL_TOURNAMENT_RANK_DESCRIPTION})$"
+)
+_HHSMITHY_SUMMARY_SHOWDOWN_RESULT_RE = re.compile(
+    rf"^ showed \[(?P<cards>[^\]]+)\] and won \((?P<amount>{_MONEY})\) with "
+    rf"(?P<rank_description>{_HHSMITHY_RANK_DESCRIPTION})$"
 )
 _SUMMARY_BOARD_RE = re.compile(r"^Board \[(?P<cards>[^\]]+)\]$")
 _TOURNAMENT_FINISH_RE = re.compile(
@@ -304,6 +326,7 @@ class _ParsedHeader:
     blind_level: str | None = None
     allow_unqualified_dollar_amounts: bool = False
     allow_timeout_to_fold_origin: bool = False
+    allow_hhsmithy_cash_format: bool = False
 
     @property
     def is_historical_tournament(self) -> bool:
@@ -315,6 +338,9 @@ class _PendingTimeoutMarker:
     actor_id: str
     actor_name: str
     evidence: SourceEvidence
+    expected_action_types: frozenset[Literal["check", "fold"]]
+    semantics_revision: str
+    automatic_reason: Literal["timeout", "disconnect"]
 
 
 def parse_pokerstars_text(
@@ -538,6 +564,33 @@ def _parse_header(line: _SourceLine) -> _ParsedHeader:
             allow_timeout_to_fold_origin=True,
         )
 
+    hhsmithy_cash = _HHSMITHY_CASH_HEADER_RE.fullmatch(line.text)
+    if hhsmithy_cash is not None:
+        currency = "USD"
+        return _ParsedHeader(
+            hand_id=hhsmithy_cash.group("hand_id"),
+            currency=currency,
+            small_blind=_parse_positive_money(
+                hhsmithy_cash.group("small"),
+                currency,
+                line=line.number,
+                code="invalid_blind_amount",
+            ),
+            big_blind=_parse_positive_money(
+                hhsmithy_cash.group("big"),
+                currency,
+                line=line.number,
+                code="invalid_blind_amount",
+            ),
+            played_at=_parse_played_at(
+                hhsmithy_cash.group("played_at"),
+                "ET",
+                line=line.number,
+            ),
+            source_timezone="ET",
+            allow_hhsmithy_cash_format=True,
+        )
+
     tournament = _HISTORICAL_TOURNAMENT_HEADER_RE.fullmatch(line.text)
     if tournament is None:
         raise _HandParseError(
@@ -721,6 +774,7 @@ def _parse_hand(
         },
         allow_historical_tournament_results=header.is_historical_tournament,
         allow_timeout_to_fold_origin=header.allow_timeout_to_fold_origin,
+        allow_hhsmithy_cash_format=header.allow_hhsmithy_cash_format,
     )
     _validate_structural_blind_posts(
         parsed_body,
@@ -950,6 +1004,7 @@ def _parse_body(
     expected_position_tags_by_player: dict[str, frozenset[str]],
     allow_historical_tournament_results: bool,
     allow_timeout_to_fold_origin: bool,
+    allow_hhsmithy_cash_format: bool,
 ) -> _ParsedBody:
     street_names: list[Literal["preflop", "flop", "turn", "river"]] = ["preflop"]
     boards: list[list[Card]] = [[]]
@@ -1002,17 +1057,31 @@ def _parse_body(
     for line in lines[1:]:
         text = line.text
         if not text:
+            if pending_timeout_marker is not None and allow_hhsmithy_cash_format:
+                raise _HandParseError(
+                    "unbound_timeout_marker",
+                    "A timeout marker must bind the same actor's immediately following qualified action.",
+                    line_start=pending_timeout_marker.evidence.line_start,
+                    line_end=pending_timeout_marker.evidence.line_end,
+                )
             continue
-        if (
-            pending_timeout_marker is not None
-            and text != f"{pending_timeout_marker.actor_name}: folds"
-        ):
-            raise _HandParseError(
-                "unbound_timeout_marker",
-                "A timeout marker must bind the same actor's immediately following fold.",
-                line_start=pending_timeout_marker.evidence.line_start,
-                line_end=pending_timeout_marker.evidence.line_end,
+        if pending_timeout_marker is not None:
+            pending_action = _ACTOR_LINE_RE.fullmatch(text)
+            pending_action_type = (
+                {"checks": "check", "folds": "fold"}.get(
+                    pending_action.group("body")
+                )
+                if pending_action is not None
+                and pending_action.group("name") == pending_timeout_marker.actor_name
+                else None
             )
+            if pending_action_type not in pending_timeout_marker.expected_action_types:
+                raise _HandParseError(
+                    "unbound_timeout_marker",
+                    "A timeout marker must bind the same actor's immediately following qualified action.",
+                    line_start=pending_timeout_marker.evidence.line_start,
+                    line_end=pending_timeout_marker.evidence.line_end,
+                )
         sitting_out_event = _SITTING_OUT_EVENT_RE.fullmatch(text)
         if sitting_out_event is not None and allow_timeout_to_fold_origin:
             player_id = _dealt_in_player_id(
@@ -1032,7 +1101,9 @@ def _parse_body(
             continue
         last_timeout_fold_player_id = None
         timeout_marker = _TIMEOUT_MARKER_RE.fullmatch(text)
-        if timeout_marker is not None and allow_timeout_to_fold_origin:
+        if timeout_marker is not None and (
+            allow_timeout_to_fold_origin or allow_hhsmithy_cash_format
+        ):
             if not hole_seen or showdown_seen or award_seen or in_summary:
                 raise _HandParseError(
                     "timeout_marker_order",
@@ -1050,7 +1121,56 @@ def _parse_body(
                 ),
                 actor_name=actor_name,
                 evidence=_evidence(raw_source_id, line),
+                expected_action_types=(
+                    frozenset({"fold"})
+                    if allow_timeout_to_fold_origin
+                    else frozenset({"check"})
+                ),
+                semantics_revision=(
+                    "pokerstars-cash-2008-timeout-v1"
+                    if allow_timeout_to_fold_origin
+                    else "pokerstars-cash-2014-timeout-disconnect-v1"
+                ),
+                automatic_reason="timeout",
             )
+            continue
+        timeout_while_disconnected = _TIMEOUT_WHILE_DISCONNECTED_MARKER_RE.fullmatch(
+            text
+        )
+        if timeout_while_disconnected is not None and allow_hhsmithy_cash_format:
+            if not hole_seen or showdown_seen or award_seen or in_summary:
+                raise _HandParseError(
+                    "timeout_marker_order",
+                    "A timeout marker must occur during table action after hole cards.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
+            actor_name = timeout_while_disconnected.group("name")
+            pending_timeout_marker = _PendingTimeoutMarker(
+                actor_id=_dealt_in_player_id(
+                    actor_name,
+                    player_id_by_name,
+                    sitting_out_player_ids=sitting_out_player_ids,
+                    line=line.number,
+                ),
+                actor_name=actor_name,
+                evidence=_evidence(raw_source_id, line),
+                expected_action_types=frozenset({"check", "fold"}),
+                semantics_revision="pokerstars-cash-2014-timeout-disconnect-v1",
+                automatic_reason="disconnect",
+            )
+            continue
+        if allow_hhsmithy_cash_format and (
+            _HHSMITHY_DISCONNECTED_NOTICE_RE.fullmatch(text) is not None
+            or _HHSMITHY_JOIN_NOTICE_RE.fullmatch(text) is not None
+        ):
+            if not hole_seen or showdown_seen or award_seen or in_summary:
+                raise _HandParseError(
+                    "ancillary_event_order",
+                    "A reviewed ancillary notification must occur during table action.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
             continue
         if _TABLE_RE.fullmatch(text):
             if table_seen or seat_declaration_count or forced_post_seen or hole_seen:
@@ -1330,6 +1450,7 @@ def _parse_body(
                         allow_historical_tournament_results
                     ),
                     allow_timeout_to_fold_origin=allow_timeout_to_fold_origin,
+                    allow_hhsmithy_cash_format=allow_hhsmithy_cash_format,
                     summary_seat_numbers=summary_seat_numbers,
                 )
                 if allow_historical_tournament_results:
@@ -1582,6 +1703,7 @@ def _parse_body(
                 body,
                 evidence,
                 allow_rank_description=allow_historical_tournament_results,
+                allow_hhsmithy_rank_description=allow_hhsmithy_cash_format,
                 line=line.number,
             )
             if showdown_entry is not None:
@@ -1622,6 +1744,10 @@ def _parse_body(
                     )
                     if rank_description is not None:
                         showdown_rank_descriptions[player_id] = rank_description
+                elif allow_hhsmithy_cash_format:
+                    rank_description = _hhsmithy_rank_description(body)
+                    if rank_description is not None:
+                        showdown_rank_descriptions[player_id] = rank_description
                 showdown.append(showdown_entry)
                 continue
             if award_seen:
@@ -1659,11 +1785,12 @@ def _parse_body(
             if pending_timeout_marker is not None:
                 if (
                     player_id != pending_timeout_marker.actor_id
-                    or action.action_type != "fold"
+                    or action.action_type
+                    not in pending_timeout_marker.expected_action_types
                 ):
                     raise _HandParseError(
                         "unbound_timeout_marker",
-                        "A timeout marker must bind the same actor's immediately following fold.",
+                        "A timeout marker must bind the same actor's immediately following qualified action.",
                         line_start=pending_timeout_marker.evidence.line_start,
                         line_end=pending_timeout_marker.evidence.line_end,
                     )
@@ -1674,8 +1801,8 @@ def _parse_body(
                             basis="explicit_marker",
                             confidence=Decimal("1"),
                             evidence=[pending_timeout_marker.evidence, evidence],
-                            semantics_revision="pokerstars-cash-2008-timeout-v1",
-                            automatic_reason="timeout",
+                            semantics_revision=pending_timeout_marker.semantics_revision,
+                            automatic_reason=pending_timeout_marker.automatic_reason,
                         )
                     },
                 )
@@ -1737,7 +1864,7 @@ def _parse_body(
     if pending_timeout_marker is not None:
         raise _HandParseError(
             "unbound_timeout_marker",
-            "A timeout marker must bind the same actor's immediately following fold.",
+            "A timeout marker must bind the same actor's immediately following qualified action.",
             line_start=pending_timeout_marker.evidence.line_start,
             line_end=pending_timeout_marker.evidence.line_end,
         )
@@ -1795,6 +1922,19 @@ def _parse_body(
             "missing_tournament_trailer",
             "The reviewed historical tournament form requires its complete summary and finish evidence.",
         )
+    if allow_hhsmithy_cash_format and (
+        not summary_seen
+        or not summary_board_seen
+        or summary_seat_numbers != expected_summary_seat_numbers
+        or not showdown_seen
+        or stated_pot is None
+        or len(showdown) != 2
+        or len(awards) != 1
+    ):
+        raise _HandParseError(
+            "missing_hhsmithy_trailer",
+            "The reviewed HHSmithy form requires its complete result and summary evidence.",
+        )
 
     streets = [
         ImportedStreet(street=name, board_cards=board, actions=street_actions)
@@ -1847,6 +1987,7 @@ def _validate_summary_seat_line(
     awards: list[PotAward],
     allow_historical_tournament_results: bool,
     allow_timeout_to_fold_origin: bool,
+    allow_hhsmithy_cash_format: bool,
     summary_seat_numbers: set[int],
 ) -> None:
     summary = _SUMMARY_SEAT_RE.fullmatch(text)
@@ -2008,7 +2149,11 @@ def _validate_summary_seat_line(
     showdown_result = (
         _SUMMARY_SHOWDOWN_RESULT_RE.fullmatch(suffix)
         if allow_historical_tournament_results
-        else None
+        else (
+            _HHSMITHY_SUMMARY_SHOWDOWN_RESULT_RE.fullmatch(suffix)
+            if allow_hhsmithy_cash_format
+            else None
+        )
     )
     if showdown_result is not None:
         cards = _parse_cards(showdown_result.group("cards"), line=line)
@@ -2042,7 +2187,10 @@ def _validate_summary_seat_line(
             ),
             Decimal(0),
         )
-        if showdown_result.group("lost") is not None:
+        if (
+            allow_historical_tournament_results
+            and showdown_result.group("lost") is not None
+        ):
             if awarded != 0:
                 raise _HandParseError(
                     "summary_award_mismatch",
@@ -2063,6 +2211,23 @@ def _validate_summary_seat_line(
                     "The summary collection does not match parsed pot awards.",
                     line_start=line,
                 )
+        return
+
+    if allow_hhsmithy_cash_format and suffix == " mucked":
+        matching_showdown = next(
+            (entry for entry in showdown if entry.player_id == player_id),
+            None,
+        )
+        if (
+            matching_showdown is None
+            or matching_showdown.disposition != "mucked"
+            or matching_showdown.cards
+        ):
+            raise _HandParseError(
+                "summary_showdown_mismatch",
+                "The summary mucked disposition does not match the parsed showdown.",
+                line_start=line,
+            )
         return
 
     raise _HandParseError(
@@ -2272,12 +2437,17 @@ def _showdown_entry(
     evidence: SourceEvidence,
     *,
     allow_rank_description: bool,
+    allow_hhsmithy_rank_description: bool,
     line: int,
 ) -> ShowdownEntry | None:
     show = (
         _HISTORICAL_TOURNAMENT_SHOW_RE.fullmatch(body)
         if allow_rank_description
-        else _SHOW_RE.fullmatch(body)
+        else (
+            _HHSMITHY_SHOW_RE.fullmatch(body)
+            if allow_hhsmithy_rank_description
+            else _SHOW_RE.fullmatch(body)
+        )
     )
     if show is not None:
         cards = _parse_cards(show.group("cards"), line=line)
@@ -2316,6 +2486,13 @@ def _showdown_entry(
 
 def _historical_tournament_rank_description(body: str) -> str | None:
     match = _HISTORICAL_TOURNAMENT_SHOW_RE.fullmatch(body)
+    if match is None:
+        return None
+    return match.group("rank_description")
+
+
+def _hhsmithy_rank_description(body: str) -> str | None:
+    match = _HHSMITHY_SHOW_RE.fullmatch(body)
     if match is None:
         return None
     return match.group("rank_description")

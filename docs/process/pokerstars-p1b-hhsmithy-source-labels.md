@@ -1,12 +1,10 @@
 # PokerStars P1b HHSmithy Cash Source Labels
 
-Status: source-authored P1b development labels under #409. This packet defines
-the complete expected detected state and narrowly observed input grammar before
-a parser extension exists. It is not a passing assessment case,
-representative-corpus evidence, a current-client assertion, or an external
-poker-expert certification. The current parser expectation remains the
-structured `unsupported_header` rejection until a separate implementation PR
-uses this reviewed packet.
+Status: independently reviewed P1b source mapping under #409. The source-label
+review completed without findings on merged PR #513; the reviewed adapter
+extension maps the complete expected detected state and narrowly observed input
+grammar below. This is not a passing assessment case, representative-corpus
+evidence, a current-client assertion, or an external poker-expert certification.
 
 Date: 2026-09-09. Baseline: `0b5837142dfb32bb10943f1a0ae132610cbc1889`.
 
@@ -41,18 +39,17 @@ absence semantics.
 
 ## Current parser boundary
 
-The current adapter recognizes the `PokerStars Game #` hand boundary, then
-returns one `unsupported_header` diagnostic at line 1 and no parsed candidate.
-That regression remains required in this documentation-only change. Do not add
-a hero, rewrite the header, replace explicit `USD` with the older
-unknown-currency dollar grammar, or derive labels from a future successful
-parse.
+The reviewed adapter accepts the exact sanitized bytes as one detected,
+pending-review candidate under `pokerstars-text/v4`. It maps the source's
+explicit `USD`, one-digit-hour `PokerStars Game #` header, unknown hero, five
+qualified marker bindings, inert notifications, results, and source evidence.
+Do not add a hero, rewrite the header, replace explicit `USD` with the older
+unknown-currency dollar grammar, or derive the labels from parser output.
 
 ## Reviewed target grammar
 
-This is a narrow source grammar, not a general `PokerStars Game #` family. A
-later parser implementation may accept only the following source form after
-this packet receives independent review:
+This is a narrow source grammar, not a general `PokerStars Game #` family. The
+reviewed adapter accepts only the following source form:
 
 ```text
 PokerStars Game #<decimal>:  Hold'em No Limit ($<positive decimal>/$<positive decimal> USD) - <YYYY>/<MM>/<DD> <H>:<MM>:<SS> ET
@@ -101,8 +98,8 @@ is authorized by this label.
 
 Runtime import identifiers, source-file identity, import timestamp, detector
 revision, and raw/detected hashes use the existing constructors and deterministic
-test context. All other values below are expected after a future parser accepts
-this exact reviewed grammar.
+test context. All other values below are emitted by the reviewed adapter for
+this exact grammar.
 
 - Identity: `site="pokerstars"`, `source_hand_id="900000000020"`, ordinal 1
   (line 1).
@@ -225,26 +222,20 @@ unknowns, not fabricated zero-confidence facts. The state remains reviewable,
 but decision extraction is `incomplete_hand_state` before any origin-based
 decision selection.
 
-The separate parser PR must preserve the established 2008 unqualified-dollar
-family while keeping malformed or changed **explicit-USD one-digit-hour**
-headers, other new currencies/zones/limits, invalid source time, unbound or
-cross-scope markers, a bare disconnect, reconnect text,
-player-selected/preselection inference, joiner-as-seat behavior, and
-rank-derived winner claims outside this qualified surface. It must preserve the
-current structured rejection for this fixture until that implementation lands.
+The adapter preserves the established 2008 unqualified-dollar family while
+rejecting malformed or changed **explicit-USD one-digit-hour** headers, other
+new currencies/zones/limits, invalid source time, unbound or cross-scope
+markers, reconnect text, player-selected/preselection inference,
+joiner-as-seat behavior, and rank-derived winner claims outside this qualified
+surface. A bare disconnect remains accepted only as inert raw text and cannot
+classify a later action.
 
 ## Independent review and implementation gate
 
-Review this document against the pinned original bytes, not a parser-generated
-state. Independently reconstruct the three-seat ring, all 15 actions, five
-marker bindings, boards, supplied unknown hero, source results, and 0.90 / 0.04
-/ 0.86 arithmetic. Verify that header and ancillary rules are limited to the
-observed grammar and that no candidate claims reconnect or player-selected
-semantics.
-
-Only rows confirmed by that review may be implemented in a later focused parser
-PR. That implementation must retain this fixture digest and its current
-rejection test until it atomically replaces the boundary with full-state,
-unknown-hero, malformed/negative, raw-retention, and extraction-guard
-regressions. No schema, API, workspace, backup, approval, or corpus-gate
-change is authorized here.
+The independent review on PR #513 compared the pinned original bytes with the
+three-seat ring, all 15 actions, five marker bindings, boards, supplied unknown
+hero, source results, and 0.90 / 0.04 / 0.86 arithmetic. It found no issues.
+The implementation retains the fixture digest and adds full-state,
+unknown-hero, malformed/negative, raw-retention, and reimport regressions. No
+schema, API, workspace, backup, approval, or corpus-gate change is authorized
+by this source mapping.

@@ -58,24 +58,22 @@ representative distribution.
 | Repository material       | Sanitized source-only derivative at [`apps/backend/tests/fixtures/pokerstars/public-format/hhsmithy-cash-limit1.txt`](../../apps/backend/tests/fixtures/pokerstars/public-format/hhsmithy-cash-limit1.txt), attribution/license retained beside it                                                |
 | Sanitized fixture SHA-256 | `481c9ac5af9e20bc0fa6f55adf606d52733387993ef8aec2696193cadfde2ae0` (1,378 bytes)                                                                                                                                                                                                                  |
 | Sanitation                | Replaced player, observer, joiner, hand and table identifiers; retained source syntax, cards, amounts, timestamps, event order and line positions.                                                                                                                                                |
-| Independent labels        | Complete source-authored [HHSmithy labels](pokerstars-p1b-hhsmithy-source-labels.md) and the [action-origin packet](pokerstars-p1b-action-origin-evidence.md); independent source review is required before parser implementation.                                                                |
+| Independent labels        | Complete source-authored [HHSmithy labels](pokerstars-p1b-hhsmithy-source-labels.md) and the [action-origin packet](pokerstars-p1b-action-origin-evidence.md); independent source review completed without findings on merged PR #513.                                                            |
 
 This specimen records plain `has timed out`, `has timed out while disconnected`,
-and unrelated table/disconnect notifications. The current adapter detects its
-legacy `PokerStars Game #` hand boundary, then rejects the unsupported
-one-digit-hour/explicit-ISO header; it also lacks a dealt-to-hero line. It is
-therefore not a supported parser input, a proof of current-client behavior, or
-a complete action-origin rule. The bounded candidate labels, combined-cause
-encoding, evidence lines, scope/reset conditions, and explicit negative cases
-are recorded separately; missing markers continue to mean `unknown`.
+and unrelated table/disconnect notifications. The current adapter maps its
+independently reviewed one-digit-hour/explicit-USD form under
+`pokerstars-text/v4`; it also retains its missing hero as unknown. It is not
+proof of current-client behavior or a complete action-origin rule. The bounded
+labels, combined-cause encoding, evidence lines, scope/reset conditions, and
+explicit negative cases are recorded separately; missing markers continue to
+mean `unknown`.
 
-Its missing hero is explicitly labeled unknown using the existing detected
-model, while decision extraction stays unavailable. The independently reviewed
-expectation is a prerequisite to a bounded extension for its actual header,
-ancillary text and marker bindings. Neither
-an already supported header nor invented hero data is a prerequisite to that
-preparation; the original fixture remains a negative regression until the
-reviewed extension lands. The existing attributed-use record above is unchanged.
+Its missing hero is explicitly retained as unknown using the existing detected
+model, while decision extraction stays unavailable. The bounded mapping does
+not add a hero or use this one sample to broaden accepted PokerStars headers,
+ancillary text, or marker grammar. The existing attributed-use record above is
+unchanged.
 
 ## PokerStars cash legacy timeout-to-fold specimen
 
