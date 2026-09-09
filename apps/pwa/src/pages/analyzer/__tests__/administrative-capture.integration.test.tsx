@@ -431,6 +431,70 @@ describe("Analyzer administrative capture", () => {
     }
   });
 
+  it("retains only pending uploads when another protected request relocks", async () => {
+    const firstJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "first.png",
+    });
+    const pendingHistory = deferredResponse();
+    const pendingSecondUpload = deferredResponse();
+    const uploadResponses = [
+      jsonResponse(firstJob, 201),
+      pendingSecondUpload.promise,
+    ];
+    fetchMock().mockImplementation((url, options) => {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return pendingHistory.promise;
+      }
+      if (
+        url === "http://localhost:8000/api/admin/ocr/jobs" &&
+        options?.method === "POST"
+      ) {
+        return Promise.resolve(
+          uploadResponses.shift() ??
+            jsonResponse({ detail: "Unexpected upload" }, 500),
+        );
+      }
+      return Promise.resolve(processingQueueResponse([firstJob]));
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await switchToUploadMode(user);
+    await user.upload(screen.getByLabelText("Choose screenshots"), [
+      new File(["first"], "first.png", { type: "image/png" }),
+      new File(["second"], "second.png", { type: "image/png" }),
+      new File(["third"], "third.png", { type: "image/png" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
+    await waitFor(() => expect(uploadCalls()).toHaveLength(2));
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await switchToUploadMode(user);
+    expect(screen.getByText("2 screenshots selected")).toBeInTheDocument();
+    expect(screen.getByText("2 selected for upload")).toBeInTheDocument();
+
+    function uploadCalls() {
+      return fetchMock().mock.calls.filter(
+        ([url, options]) =>
+          url === "http://localhost:8000/api/admin/ocr/jobs" &&
+          options?.method === "POST",
+      );
+    }
+  });
+
   it("disables both administrator lock controls during screenshot metadata saves and locks on denial", async () => {
     const currentJob = jobRecord({
       id: "a".repeat(32),

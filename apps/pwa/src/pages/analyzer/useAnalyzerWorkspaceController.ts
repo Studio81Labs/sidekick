@@ -2382,6 +2382,17 @@ export function useAnalyzerWorkspaceController({
     expectedUploads: ProjectionMutationLease["expectedUploads"],
   ): Promise<JobRecord[]> {
     const selectedFiles = [...files];
+    const retainPendingUploadFiles = (startIndex: number) => {
+      const pendingFiles = selectedFiles.slice(startIndex);
+      const workspaceDraft = workspaceDraftRef.current;
+      if (workspaceDraft) {
+        workspaceDraftRef.current = {
+          ...workspaceDraft,
+          files: pendingFiles,
+        };
+      }
+      setFiles(pendingFiles);
+    };
     const controller = new AbortController();
     queueAbortControllerRef.current = controller;
     queueAbortRequestedRef.current = false;
@@ -2434,6 +2445,7 @@ export function useAnalyzerWorkspaceController({
           pipeline: pipelineSelection ?? undefined,
         });
         updateExpectedUpload(expectedUploadIndex, "parsed");
+        retainPendingUploadFiles(index + 1);
         appendJob(created);
         completedJobs.push(created);
         completedCount += 1;
@@ -2477,6 +2489,7 @@ export function useAnalyzerWorkspaceController({
           index,
           expectedUpload.requestId,
         );
+        retainPendingUploadFiles(index + 1);
         appendJob(errorJob);
         completedJobs.push(errorJob);
         attentionMessages.push(`${selectedFile.name}: ${message}`);
