@@ -79,3 +79,23 @@ legacy header/body grammar. The labels preserve `currency=None` because dollar
 notation supplies no ISO code; unmarked actions remain unknown. Do not rewrite
 it to a modern header or broaden the reviewed parser support. See the
 [legacy timeout labels](../../../../../../docs/process/pokerstars-p1b-game-timeout-source-labels.md).
+
+## wizardwerdna/pokerstats return-status lead
+
+[`wizardwerdna-pokerstats-return-status.txt`](./wizardwerdna-pokerstats-return-status.txt)
+is a sanitized derivative of lines 302–351 of the same pinned
+[`spec/file_many_hands.txt`](https://github.com/wizardwerdna/pokerstats/blob/315a4db29630c586fb080d084fa17dcad9494a84/spec/file_many_hands.txt#L302-L351).
+The retained MIT license above also covers this source selection.
+
+The fixture maps player, hand, and table identifiers one-to-one to invented
+values and normalizes trailing whitespace only. It retains the eight dealt-in
+seats, legacy header, dealt-to hero, timeout-to-fold/sit-out sequence, observed
+`has returned` status, actions, results, and summary syntax. It contains no
+original player, hand, table, account identifier, or local path.
+
+This public format sample remains a checksum-guarded `unsupported_line`
+regression at the return-status line. The status text is not evidence of a
+network reconnect, a player-selected action, changed participation, or a
+general event grammar. The independently authored source labels are
+[`docs/process/pokerstars-p1b-return-status-source-labels.md`](../../../../../../docs/process/pokerstars-p1b-return-status-source-labels.md);
+no parser rule is authorized until that packet receives separate review.
