@@ -1,5 +1,13 @@
 # Architecture
 
+V1 was never published to production. This reference describes repository
+composition, including pending removal work, not a promise to support an old
+release. [ADR 0079](../decisions/0079-adopt-an-unreleased-current-only-cutover.md)
+supersedes compatibility/fallback requirements: the target is one current local
+player application and an explicit operator OCR surface. At #516, layout 5 /
+backup 3 readers and the old analyzer/recommendation paths still exist; their
+removal and layout 6 / backup 4 cutover are pending, not completed behavior.
+
 The repository security, release, dependency-trust, and required-check baseline
 is defined by
 [ADR 0043](../decisions/0043-adopt-studio81-security-and-ci-baseline.md).
@@ -12,8 +20,8 @@ defined by
 The V2 target player/operator boundary, import-first persistence lifecycle, and
 capture-first migration are defined by
 [ADR 0046](../decisions/0046-adopt-import-first-learning-boundary.md). This
-reference continues to describe the currently deployed V1 architecture until
-the ADR's gated migration work is implemented. In particular, the Worker proxy
+reference describes the current repository while the ADR 0079 cutover is
+implemented. In particular, the Worker proxy
 and hosted file-backed API below are not an approved V2 player-data path: Phase 1
 requires the ADR's loopback-only, authenticated co-located player runtime and
 local writable system of record.
@@ -21,7 +29,7 @@ local writable system of record.
 implements the first runtime security substrate as a separate loopback-only
 application, one-use browser bootstrap, process-local authenticated session,
 CSRF boundary, and reserved hosted namespace. Later checkpoints extend this
-local composition, while V1 remains the deployed hosted product and the Phase 1
+local composition; no V1 production compatibility is required and the Phase 1
 gate remains closed.
 [ADR 0051](../decisions/0051-isolate-the-local-player-store-composition.md)
 attaches only the imported-hand store to that runtime, enforces a private

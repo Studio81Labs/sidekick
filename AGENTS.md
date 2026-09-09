@@ -35,6 +35,16 @@ process documentation, ADRs, and repository-local tooling.
 When sources conflict, prefer the most specific current source and do not
 silently reconcile a material product or architecture conflict.
 
+## Unreleased product and compatibility
+
+V1 was never published to production. Breaking changes are permitted; do not
+retain old application paths, compatibility-only code or V1 fallbacks. Follow
+[ADR 0079](docs/decisions/0079-adopt-an-unreleased-current-only-cutover.md) for the
+approved current-only cutover. Update current consumers and generated contracts
+together. Preserve current V2 integrity/security/lifecycle and explicitly
+required operator capabilities; do not silently delete existing data. Historical
+PokerStars input syntax and current V2 audit history are not V1 compatibility.
+
 ## Scope discipline
 
 - Solve the requested issue fully, but do not perform unrelated refactors.

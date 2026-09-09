@@ -2,6 +2,11 @@
 
 Status: accepted
 
+The V1 retention and pre-release compatibility requirements below are superseded
+by [ADR 0079](0079-adopt-an-unreleased-current-only-cutover.md). Domain, current
+V2 provenance/lifecycle and security requirements remain in force. Earlier
+implementation details are retained as decision history.
+
 Date: 2026-08-29
 
 ## Context
