@@ -1,7 +1,11 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import AnalyzerPage from "../AnalyzerPage";
+import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
+import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import type { DetectedState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
 import { ApiResponseError } from "../../../shared/api/core";
@@ -26,6 +30,15 @@ import {
   unlockAdministrativeAccess,
   uploadScreenshot,
 } from "../../../test/analyzerHarness";
+
+function QueryClientCapture({
+  onCapture,
+}: {
+  onCapture: (queryClient: QueryClient) => void;
+}) {
+  onCapture(useQueryClient());
+  return null;
+}
 
 describe("Analyzer administrative capture", () => {
   it("keeps the operator workspace behind administrator verification", async () => {
@@ -66,6 +79,76 @@ describe("Analyzer administrative capture", () => {
     expect(
       screen.queryByRole("group", { name: "Input mode" }),
     ).not.toBeInTheDocument();
+  });
+
+  it("fences an in-flight history read when the administrator locks", async () => {
+    const pendingHistory = deferredResponse();
+    let queryClient: QueryClient | null = null;
+    fetchMock().mockReturnValueOnce(pendingHistory.promise);
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <QueryClientCapture
+          onCapture={(capturedQueryClient) => {
+            queryClient = capturedQueryClient;
+          }}
+        />
+        <AnalyzerPage />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+    expect(queryClient).not.toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    );
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ total: 1, jobs: [approvedJob()] }));
+    });
+
+    await waitFor(() =>
+      expect(
+        queryClient?.getQueryData(historyQueryKeys.page()),
+      ).toBeUndefined(),
+    );
+  });
+
+  it("fences processing recovery when the administrator locks", async () => {
+    const pendingQueue = deferredResponse();
+    let queryClient: QueryClient | null = null;
+    window.sessionStorage.removeItem("poker-training-processing-synced");
+    fetchMock().mockReturnValueOnce(pendingQueue.promise);
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <QueryClientCapture
+          onCapture={(capturedQueryClient) => {
+            queryClient = capturedQueryClient;
+          }}
+        />
+        <AnalyzerPage />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+    expect(queryClient).not.toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    );
+    await act(async () => {
+      pendingQueue.resolve(processingQueueResponse([]));
+    });
+
+    await waitFor(() =>
+      expect(
+        queryClient?.getQueryData(jobQueryKeys.processingPage(0)),
+      ).toBeUndefined(),
+    );
   });
 
   it("sends the administrator credential with uploads", async () => {
