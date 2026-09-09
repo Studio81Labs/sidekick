@@ -103,10 +103,8 @@ tool.
 
 Prefer Cloudflare Access service credentials when the gateway calls the public
 Worker. Store `POKER_MCP_CF_ACCESS_CLIENT_ID` and
-`POKER_MCP_CF_ACCESS_CLIENT_SECRET` outside the repository. Direct backend
-access can use `POKER_MCP_API_PROXY_SECRET` only from a trusted gateway process;
-the value matches `POKER_PROXY_SHARED_SECRET` but remains an internal service
-credential, not agent identity. All credential-bearing targets require HTTPS.
+`POKER_MCP_CF_ACCESS_CLIENT_SECRET` outside the repository. All
+credential-bearing targets require HTTPS.
 
 The gateway does not expose uploads, jobs, images, history, approval, backup,
 dataset, benchmark, or archive operations. Use the explicit `/admin/ocr`

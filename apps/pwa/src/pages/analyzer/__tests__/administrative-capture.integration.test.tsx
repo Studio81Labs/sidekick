@@ -199,6 +199,32 @@ describe("Analyzer administrative capture", () => {
     ).not.toBeInTheDocument();
   });
 
+  it.each([
+    [
+      401,
+      "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    ],
+    [403, "Administrative OCR test mode is disabled on this deployment."],
+  ])(
+    "locks when a protected benchmark overview returns %i",
+    async (status, message) => {
+      fetchMock().mockResolvedValueOnce(
+        jsonResponse({ detail: "denied" }, status),
+      );
+      render(<UnverifiedAnalyzerTestApp />);
+      const user = await unlockAdministrativeAccess();
+
+      await user.click(
+        screen.getByRole("button", { name: "Parser benchmark" }),
+      );
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
   it("sends the administrator credential with uploads", async () => {
     const created = jobRecord();
     fetchMock()

@@ -25,6 +25,7 @@ interface UseBenchmarkControllerOptions {
   busy: boolean;
   importRecoveryPending: boolean;
   mutationRecoveryPending: () => boolean;
+  onAdministrativeDenial: (failure: unknown) => boolean;
   onError: (message: string | null) => void;
   onOpenJob: (job: JobRecord) => void;
   pipelineCapabilities: PipelineCapabilities | null;
@@ -44,6 +45,7 @@ export function useBenchmarkController({
   busy,
   importRecoveryPending,
   mutationRecoveryPending,
+  onAdministrativeDenial,
   onError,
   onOpenJob,
   pipelineCapabilities,
@@ -76,7 +78,12 @@ export function useBenchmarkController({
     reset: resetReportState,
     selectReport,
     setOverview,
-  } = useBenchmarkReportState({ administratorToken, dialogOpen, onError });
+  } = useBenchmarkReportState({
+    administratorToken,
+    dialogOpen,
+    onAdministrativeDenial,
+    onError,
+  });
   const reportStale = Boolean(
     report &&
     benchmarkCorpusIsUnverified(
@@ -173,7 +180,9 @@ export function useBenchmarkController({
         await revalidateAfterRun(pipelineSelection);
       }
     } catch (error) {
-      onError(messageFromError(error, "Parser benchmark failed"));
+      if (!onAdministrativeDenial(error)) {
+        onError(messageFromError(error, "Parser benchmark failed"));
+      }
     } finally {
       setRunning(false);
     }
@@ -218,6 +227,9 @@ export function useBenchmarkController({
           successfulRuns += 1;
           corpusRevalidationRequired ||= Boolean(nextReport.corpus_fingerprint);
         } catch (error) {
+          if (onAdministrativeDenial(error)) {
+            return;
+          }
           failures.push(
             `${pipeline.parser.label}: ${messageFromError(error, "Benchmark failed")}`,
           );
@@ -280,7 +292,9 @@ export function useBenchmarkController({
       onOpenJob(await getJob(jobId, administratorToken));
       closeDialog();
     } catch (error) {
-      onError(messageFromError(error, "Could not open benchmark hand"));
+      if (!onAdministrativeDenial(error)) {
+        onError(messageFromError(error, "Could not open benchmark hand"));
+      }
     } finally {
       setReviewJobId(null);
     }

@@ -50,6 +50,42 @@ describe("benchmark report state", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it.each(["load", "refresh"] as const)(
+    "routes a denied benchmark overview %s through the administrator lock",
+    async (operation) => {
+      const onAdministrativeDenial = vi.fn().mockReturnValue(true);
+      const onError = vi.fn();
+      fetchMock().mockResolvedValueOnce(
+        jsonResponse({ detail: "denied" }, 401),
+      );
+      const { result } = renderHook(
+        () =>
+          useBenchmarkReportState({
+            administratorToken: ADMINISTRATOR_TOKEN,
+            dialogOpen: false,
+            onAdministrativeDenial,
+            onError,
+          }),
+        { wrapper },
+      );
+
+      if (operation === "load") {
+        act(() => result.current.loadOverview(null));
+        await waitFor(() => expect(result.current.loading).toBe(false));
+      } else {
+        await act(async () => {
+          await result.current.refreshOverview({
+            failureMessage: "Could not refresh parser benchmark",
+            selection: null,
+          });
+        });
+      }
+
+      expect(onAdministrativeDenial).toHaveBeenCalledOnce();
+      expect(onError).not.toHaveBeenCalled();
+    },
+  );
+
   it("ignores an older overview response after a newer request wins", async () => {
     const first = deferredResponse();
     fetchMock()

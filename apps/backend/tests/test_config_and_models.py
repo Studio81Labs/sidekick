@@ -317,6 +317,30 @@ def test_current_environment_examples_omit_retired_mcp_write_settings(
     } & setting_names
 
 
+def test_mcp_gateway_guidance_omits_retired_api_credentials() -> None:
+    repository_root = Path(__file__).parents[3]
+    setting_names = {
+        line.partition("=")[0]
+        for line in (
+            repository_root / "apps/backend/mcp.env.example"
+        ).read_text().splitlines()
+        if "=" in line and not line.startswith("#")
+    }
+    deployment_guidance = (
+        repository_root / "docs/process/deployment.md"
+    ).read_text()
+
+    assert {
+        "POKER_MCP_CF_ACCESS_CLIENT_ID",
+        "POKER_MCP_CF_ACCESS_CLIENT_SECRET",
+    } <= setting_names
+    assert not {
+        "POKER_MCP_API_BEARER_TOKEN",
+        "POKER_MCP_API_PROXY_SECRET",
+    } & setting_names
+    assert "POKER_MCP_API_PROXY_SECRET" not in deployment_guidance
+
+
 @pytest.mark.parametrize(
     "hostname",
     ["127.1", "0177.0.0.1", "2130706433", "0x7f.1"],

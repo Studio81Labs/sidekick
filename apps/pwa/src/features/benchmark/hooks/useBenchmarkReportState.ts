@@ -25,6 +25,7 @@ import {
 interface UseBenchmarkReportStateOptions {
   administratorToken: string;
   dialogOpen: boolean;
+  onAdministrativeDenial?: (failure: unknown) => boolean;
   onError: (message: string | null) => void;
 }
 
@@ -36,6 +37,7 @@ interface RefreshBenchmarkOptions {
 export function useBenchmarkReportState({
   administratorToken,
   dialogOpen,
+  onAdministrativeDenial,
   onError,
 }: UseBenchmarkReportStateOptions) {
   const queryClient = useQueryClient();
@@ -53,6 +55,12 @@ export function useBenchmarkReportState({
   const comparisonReportRequestRef = useRef(0);
   const reportCacheRef = useRef(new Map<string, BenchmarkReport>());
   const reportRequestsRef = useRef(new Map<string, Promise<BenchmarkReport>>());
+  const administrativeDenialRef = useRef(onAdministrativeDenial);
+  administrativeDenialRef.current = onAdministrativeDenial;
+
+  function reportAdministrativeDenial(failure: unknown): boolean {
+    return administrativeDenialRef.current?.(failure) ?? false;
+  }
 
   useEffect(() => {
     mountedRef.current = true;
@@ -111,7 +119,10 @@ export function useBenchmarkReportState({
         setComparisonReport(loadedReport);
       })
       .catch((error) => {
-        if (requestId === comparisonReportRequestRef.current) {
+        if (
+          requestId === comparisonReportRequestRef.current &&
+          !reportAdministrativeDenial(error)
+        ) {
           toast.warning(
             messageFromError(error, "Could not compare benchmark cases"),
           );
@@ -176,7 +187,10 @@ export function useBenchmarkReportState({
         setSelectedReport(nextOverview.latest_report);
       })
       .catch((error) => {
-        if (requestId === overviewRequestRef.current) {
+        if (
+          requestId === overviewRequestRef.current &&
+          !reportAdministrativeDenial(error)
+        ) {
           onError(messageFromError(error, "Could not load parser benchmark"));
         }
       })
@@ -210,7 +224,11 @@ export function useBenchmarkReportState({
       setOverview(nextOverview);
       return nextOverview;
     } catch (error) {
-      if (mountedRef.current && requestId === overviewRequestRef.current) {
+      if (
+        mountedRef.current &&
+        requestId === overviewRequestRef.current &&
+        !reportAdministrativeDenial(error)
+      ) {
         onError(messageFromError(error, failureMessage));
       }
       return null;
@@ -282,7 +300,9 @@ export function useBenchmarkReportState({
         ),
       );
     } catch (error) {
-      onError(messageFromError(error, "Could not load benchmark report"));
+      if (!reportAdministrativeDenial(error)) {
+        onError(messageFromError(error, "Could not load benchmark report"));
+      }
     } finally {
       setReportLoading(false);
     }

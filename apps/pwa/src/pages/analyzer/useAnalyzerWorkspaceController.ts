@@ -401,6 +401,7 @@ export function useAnalyzerWorkspaceController({
     importRecoveryPending: benchmarkImportRecoveryPending,
     mutationRecoveryPending: () =>
       mutationRecoveryPending(["processing", "history"]),
+    onAdministrativeDenial: reportAdministrativeDenial,
     onError: setError,
     onOpenJob: upsertAndActivateJob,
     pipelineCapabilities,
