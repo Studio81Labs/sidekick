@@ -35,9 +35,25 @@ integration fixture for the current adapter:
 
 The fixture has no `Dealt to` line. It cannot be transformed into a positive
 parser case by adding a hero, changing its header, or treating a known actor as
-the hero. No full detected-state label is claimed for an input the current
-adapter rejects. The P1b test freezes this rejection so evidence preparation
-does not silently expand parser support.
+the hero. Its present expectation remains rejection until a separately reviewed
+extension supplies full-state labels and implements the evidenced grammar.
+That expectation is a current parser boundary, not a permanent prohibition on
+qualifying this source.
+
+`ImportedHandState` already permits `hero_player_id=None` and `hero_cards=[]`.
+A complete detected-state expectation must explicitly label these unknowns;
+it need not invent an extractable hero. Ordinary cash parsing has no universal
+hero requirement. Decision extraction still returns `incomplete_hand_state`
+when the hero is unknown, even after explicit approval. The separate reviewed
+HAND2 tournament form's required dealt-to line remains unchanged.
+
+For this source, full-state label preparation and bounded grammar qualification
+are remaining work, not a requirement to obtain another external file solely
+to supply hero cards or match an already supported header. The header has both
+a one-digit hour and an explicit `USD` token, unlike the supported 2008 legacy
+cash family. Labels must preserve that supplied currency, the three initial
+dealt-in seats, all actions/boards/results, and every unproved field. Keep the
+original bytes and sanitation mapping unchanged.
 
 ## Evidence reviewed for marker candidates
 
@@ -64,7 +80,7 @@ channel, locale, or client version without its own reviewed evidence.
 | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
 | `Player04 has timed out` immediately followed by `Player04: checks` (14–15, 20–21, 27–28)                                   | Same actor's immediately following check on the current street      | `client_automatic`, `explicit_marker`, confidence `1`, semantics revision above, `automatic_reason="timeout"`    | Retain both the marker and action lines.                                                                                       | One action only; consume the marker after that action. A new street, another actionable actor line, hand boundary, malformed binding, duplicate, or conflicting marker leaves the action unresolved. | Candidate for independent review. |
 | `Player02 has timed out while disconnected` immediately followed by `Player02: checks` (25–26) or `Player02: folds` (30–31) | Same actor's immediately following check/fold on the current street | `client_automatic`, `explicit_marker`, confidence `1`, semantics revision above, `automatic_reason="disconnect"` | Retain the combined marker and bound action. Line 24 is additional actor-specific disconnect context for the first occurrence. | One action only; consume the marker after that action. The combined marker is self-contained; a prior bare disconnect notice is never enough.                                                        | Candidate for independent review. |
-| `Observer01 is disconnected` (11)                                                                                           | None                                                                | No action-origin label                                                                                           | Retain only if a future parser has a source-event channel; it is not action evidence.                                          | It must not carry across actors, streets, hands, or files.                                                                                                                                           | Negative case.                    |
+| `Observer01 is disconnected` (11)                                                                                           | None                                                                | No action-origin label                                                                                           | Retain as raw source text; it is not action evidence.                                                                          | It must not carry across actors, streets, hands, or files.                                                                                                                                           | Negative case.                    |
 | Unmarked ordinary calls/checks/bets/folds, including lines 9, 10, 17, 22, 29, 32, 34, and 35                                | Their own action only                                               | `unknown`, `unresolved`, no confidence/revision/reason                                                           | Action line only.                                                                                                              | No inference from legality, all-in status, a clean pot, a prior timeout, or an absent marker.                                                                                                        | Required negative case.           |
 
 The combined `while disconnected` text names both timeout and disconnect. The
@@ -96,10 +112,28 @@ The parser PR may implement only rows whose historical grammar, actor/action
 binding, confidence, combined-cause encoding, and reset behavior receive a
 separate source review against the pinned original bytes and cited vendor
 material. It must also include a compatible, complete, independently labelled
-input; this fixture remains a structured rejection because it has no supported
-header or hero evidence. The review must verify that labels were authored from
-the source and this ledger before parser output, not copied from the changed
-adapter.
+input. Here, compatible means representable by existing domain contracts and
+the explicitly reviewed target grammar; it does not mean already accepted by
+the current parser or ready for hero-decision extraction. This fixture remains
+a structured rejection today because its grammar and complete expected state
+have not been implemented and reviewed as a positive case. The review must
+verify that labels were authored from the source and this ledger before parser
+output, not copied from the changed adapter.
+
+The preparation must account for observer/join/disconnect notifications and the
+show/summary rank prose as well as the header and five candidate marker/action
+bindings. Existing retained raw text can preserve inert notifications without
+a new structured event model. Any future accepted wording must be explicitly
+bounded and validated: joiners must not be added to the initial dealt-in ring,
+and a bare disconnect must not become a causal marker. Rank prose remains
+source description under ADR 0078; do not derive a winner or repair source
+awards. Unknown or materially unmodeled behavior still rejects or escalates.
+
+First prepare complete source-authored labels and obtain independent review;
+then implement only qualified rows in a separate parser PR. No parser change
+or positive corpus qualification is conferred by this clarification. Missing
+reconnect, preselection and player-selected/absence semantics remain separate
+evidence gaps; they do not prevent preparation of this bounded source mapping.
 
 Any attempt to infer player-selected origins from missing markers, expand this
 legacy header into general PokerStars support, change `ActionOrigin` or corpus

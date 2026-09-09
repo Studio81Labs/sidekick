@@ -69,6 +69,14 @@ a complete action-origin rule. The bounded candidate labels, combined-cause
 encoding, evidence lines, scope/reset conditions, and explicit negative cases
 are recorded separately; missing markers continue to mean `unknown`.
 
+Its missing hero can be explicitly labeled unknown using the existing detected
+model, while decision extraction stays unavailable. A complete independently
+reviewed expectation and a bounded extension for its actual header, ancillary
+text and marker bindings are remaining preparation/implementation work. Neither
+an already supported header nor invented hero data is a prerequisite to that
+preparation; the original fixture remains a negative regression until the
+reviewed extension lands. The existing attributed-use record above is unchanged.
+
 ## PokerStars cash legacy timeout-to-fold specimen
 
 | Field                     | Recorded value                                                                                                                                                                                                                                                         |
