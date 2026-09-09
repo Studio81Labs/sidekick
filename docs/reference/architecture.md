@@ -1290,22 +1290,19 @@ request correlation, and persisted review evidence used by the browser.
 Each stdio process or hosted endpoint is configured for exactly one `staging`
 or `production` target. The backend advertises
 `POKER_DEPLOYMENT_ENVIRONMENT` on its public health response, and the gateway
-verifies that identity before data access. Production configuration rejects
-write enablement and omits every mutation from tool discovery. Staging remains
-read-only unless an operator explicitly sets `POKER_MCP_ALLOW_WRITES=true`.
+verifies that identity before data access. The gateway is permanently read-only;
+there is no write enablement setting or mutation tool discovery.
 
-The read surface exposes environment status, the processing queue, individual
-jobs, history search, and parser benchmark summaries. The staging write surface
-is limited to approving a user-reviewed canonical state. Administrative backup,
-dataset, benchmark-run, and bulk-archive APIs remain outside the gateway.
+The sole tool exposes environment status. Jobs, images, history, parser
+benchmarks, backups, datasets, approval, upload, and archive APIs remain
+outside the gateway.
 
 Hosted MCP is mounted on the existing backend at `/mcp`, disabled by default,
 and uses stateless Streamable HTTP. Opaque `phmcp_` credentials are bound to
 the deployment environment and persisted as one-way hashes under
 `POKER_DATA_DIR/mcp`. The protected application surface creates, rotates, and
-revokes principals with read or read/write scopes. Production cannot enable
-writes; staging writes require both credential scope and the deployment gate.
-Separate per-principal read/write limits protect the protocol surface.
+revokes read-only principals. A single per-principal read limit protects the
+protocol surface.
 Token-issuance and MCP responses are non-cacheable. Credential state is a
 deployment concern and is excluded from portable application backups.
 

@@ -275,7 +275,7 @@ jobs:
             MCP_SMOKE_REQUEST=$(jq -cn \
               --arg name "GitHub deployment smoke ${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
               --arg expires_at "$MCP_SMOKE_EXPIRY" \
-              '{name: $name, scopes: ["read"], expires_at: $expires_at}')
+              '{name: $name, expires_at: $expires_at}')
             MCP_SMOKE_RESPONSE=$(curl --silent --show-error --fail-with-body \
               --connect-timeout 10 \
               --max-time 30 \

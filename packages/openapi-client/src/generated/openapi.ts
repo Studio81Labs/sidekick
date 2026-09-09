@@ -782,8 +782,6 @@ export interface components {
       expires_at?: string | null;
       /** Name */
       name: string;
-      /** Scopes */
-      scopes: ("read" | "write")[];
     };
     /** DetectedState */
     DetectedState: {
@@ -931,8 +929,6 @@ export interface components {
        * @enum {string}
        */
       environment: "local" | "staging" | "production";
-      /** Writes Enabled */
-      writes_enabled: boolean;
     };
     /** McpIssuedPrincipal */
     McpIssuedPrincipal: {
@@ -967,8 +963,6 @@ export interface components {
       name: string;
       /** Revoked At */
       revoked_at?: string | null;
-      /** Scopes */
-      scopes: ("read" | "write")[];
       /**
        * Status
        * @enum {string}

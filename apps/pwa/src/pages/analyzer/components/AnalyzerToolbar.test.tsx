@@ -84,7 +84,7 @@ describe("AnalyzerToolbar", () => {
     ).toBeDisabled();
     expect(
       screen.getByRole("button", { name: "Lock administrator session" }),
-    ).toBeEnabled();
+    ).toBeDisabled();
     expect(
       screen.getByRole("button", {
         name: "How to use Poker Training Analyzer",

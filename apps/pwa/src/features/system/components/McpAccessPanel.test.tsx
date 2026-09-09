@@ -30,7 +30,6 @@ const principal: McpPrincipal = {
   name: "Codex staging",
   environment: "staging",
   token_prefix: "abcdefghijkl",
-  scopes: ["read"],
   status: "active",
   created_at: "2026-08-07T10:00:00Z",
   updated_at: "2026-08-07T10:00:00Z",
@@ -45,7 +44,6 @@ describe("McpAccessPanel", () => {
       enabled: true,
       environment: "staging",
       endpoint: "https://poker-staging.example/mcp",
-      writes_enabled: true,
     });
     vi.mocked(listMcpPrincipals).mockResolvedValue([principal]);
     vi.mocked(createMcpPrincipalCommand).mockResolvedValue({
@@ -100,7 +98,6 @@ describe("McpAccessPanel", () => {
       adminToken: "admin-secret",
       input: {
         name: "Codex staging",
-        scopes: ["read"],
         expires_at: null,
       },
     });

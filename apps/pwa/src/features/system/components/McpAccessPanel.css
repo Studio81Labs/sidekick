@@ -38,9 +38,7 @@
   align-items: end;
   display: grid;
   gap: 8px;
-  grid-template-columns:
-    minmax(150px, 1.4fr) minmax(110px, 0.8fr) minmax(165px, 1fr)
-    auto;
+  grid-template-columns: minmax(150px, 1.4fr) minmax(165px, 1fr) auto;
 }
 
 .mcp-unlock-row {
@@ -71,8 +69,7 @@
 }
 
 .mcp-unlock-row .text-input-control,
-.mcp-create-grid .text-input-control,
-.mcp-create-grid .select-control-input {
+.mcp-create-grid .text-input-control {
   min-height: 34px;
 }
 

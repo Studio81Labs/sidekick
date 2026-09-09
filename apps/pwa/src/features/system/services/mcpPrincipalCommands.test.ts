@@ -13,14 +13,13 @@ describe("MCP principal commands", () => {
     vi.stubGlobal("fetch", fetchMock);
     const input = {
       name: "Codex staging",
-      scopes: ["read"] as const,
       expires_at: null,
     };
 
     await expect(
       createMcpPrincipalCommand({
         adminToken: "admin-secret",
-        input: { ...input, scopes: [...input.scopes] },
+        input,
       }),
     ).resolves.toEqual(result);
     expect(fetchMock).toHaveBeenCalledWith("/api/mcp/principals", {

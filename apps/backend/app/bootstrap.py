@@ -917,7 +917,6 @@ def create_app(
             endpoint=(
                 active_settings.mcp_public_url if active_settings.mcp_enabled else None
             ),
-            writes_enabled=active_settings.mcp_allow_writes,
         )
 
     async def list_mcp_principals() -> McpPrincipalList:
@@ -930,18 +929,9 @@ def create_app(
         request: CreateMcpPrincipalRequest,
     ) -> McpIssuedPrincipal:
         store_for_mcp = require_mcp_principal_store(mcp_principal_store)
-        if (
-            active_settings.deployment_environment != "staging"
-            and "write" in request.scopes
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="MCP write credentials can only be issued in staging",
-            )
         return await run_in_threadpool(
             store_for_mcp.create,
             name=request.name,
-            scopes=request.scopes,
             expires_at=request.expires_at,
         )
 

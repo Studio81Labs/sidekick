@@ -1115,6 +1115,7 @@
         "type": "object"
       },
       "CreateMcpPrincipalRequest": {
+        "additionalProperties": false,
         "properties": {
           "expires_at": {
             "anyOf": [
@@ -1133,19 +1134,9 @@
             "minLength": 3,
             "title": "Name",
             "type": "string"
-          },
-          "scopes": {
-            "items": {
-              "enum": ["read", "write"],
-              "type": "string"
-            },
-            "maxItems": 2,
-            "minItems": 1,
-            "title": "Scopes",
-            "type": "array"
           }
         },
-        "required": ["name", "scopes"],
+        "required": ["name"],
         "title": "CreateMcpPrincipalRequest",
         "type": "object"
       },
@@ -1651,13 +1642,9 @@
             "enum": ["local", "staging", "production"],
             "title": "Environment",
             "type": "string"
-          },
-          "writes_enabled": {
-            "title": "Writes Enabled",
-            "type": "boolean"
           }
         },
-        "required": ["enabled", "environment", "endpoint", "writes_enabled"],
+        "required": ["enabled", "environment", "endpoint"],
         "title": "McpAccessConfig",
         "type": "object"
       },
@@ -1745,14 +1732,6 @@
             ],
             "title": "Revoked At"
           },
-          "scopes": {
-            "items": {
-              "enum": ["read", "write"],
-              "type": "string"
-            },
-            "title": "Scopes",
-            "type": "array"
-          },
           "status": {
             "enum": ["active", "expired", "revoked"],
             "title": "Status",
@@ -1773,7 +1752,6 @@
           "name",
           "environment",
           "token_prefix",
-          "scopes",
           "status",
           "created_at",
           "updated_at"

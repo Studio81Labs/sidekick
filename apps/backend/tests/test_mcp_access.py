@@ -16,7 +16,6 @@ def test_principal_store_issues_once_rotates_and_revokes(tmp_path: Path) -> None
     store = McpPrincipalStore(tmp_path, "staging")
     issued = store.create(
         name="Codex staging read",
-        scopes=["read"],
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
 
@@ -44,7 +43,6 @@ def test_principal_store_binds_credentials_to_environment(tmp_path: Path) -> Non
     production = McpPrincipalStore(tmp_path, "production")
     issued = staging.create(
         name="Codex staging",
-        scopes=["read"],
         expires_at=None,
     )
 
@@ -70,16 +68,15 @@ def test_hosted_mcp_is_dark_by_default(tmp_path: Path) -> None:
         "enabled": False,
         "environment": "staging",
         "endpoint": None,
-        "writes_enabled": False,
     }
 
 
-def test_production_rejects_write_credentials(tmp_path: Path) -> None:
+def test_principal_issuance_rejects_retired_write_scope(tmp_path: Path) -> None:
     client = TestClient(
         create_app(
             Settings(
                 data_dir=tmp_path,
-                deployment_environment="production",
+                deployment_environment="staging",
                 api_rate_limit_enabled=False,
             )
         ),
@@ -89,16 +86,13 @@ def test_production_rejects_write_credentials(tmp_path: Path) -> None:
     rejected = client.post(
         "/api/mcp/principals",
         json={
-            "name": "Codex production",
+            "name": "Codex staging",
             "scopes": ["read", "write"],
             "expires_at": None,
         },
     )
 
-    assert rejected.status_code == 400
-    assert rejected.json()["detail"] == (
-        "MCP write credentials can only be issued in staging"
-    )
+    assert rejected.status_code == 422
 
 
 def test_hosted_mcp_requires_an_environment_token(tmp_path: Path) -> None:
@@ -143,7 +137,7 @@ def test_hosted_mcp_requires_an_environment_token(tmp_path: Path) -> None:
 
         issued = client.post(
             "/api/mcp/principals",
-            json={"name": "Codex staging", "scopes": ["read"], "expires_at": None},
+            json={"name": "Codex staging", "expires_at": None},
         )
         assert issued.status_code == 201
         token = issued.json()["token"]
@@ -208,7 +202,7 @@ def test_hosted_mcp_accepts_worker_canonical_ipv6_authority(
         token = client.post(
             "/api/mcp/principals",
             headers={"X-Poker-Proxy-Secret": proxy_secret},
-            json={"name": "IPv6 Codex", "scopes": ["read"], "expires_at": None},
+            json={"name": "IPv6 Codex", "expires_at": None},
         ).json()["token"]
         initialized = client.post(
             "/mcp",
@@ -224,19 +218,18 @@ def test_hosted_mcp_accepts_worker_canonical_ipv6_authority(
         assert initialized.status_code == 200
 
 
-def test_hosted_mcp_never_exposes_operator_write_tools(tmp_path: Path) -> None:
+def test_hosted_mcp_exposes_only_the_current_read_only_tool(tmp_path: Path) -> None:
     settings = Settings(
         data_dir=tmp_path,
         deployment_environment="staging",
         mcp_enabled=True,
         mcp_public_url="https://poker.test/mcp",
-        mcp_allow_writes=True,
         api_rate_limit_enabled=False,
     )
     with TestClient(create_app(settings), base_url="https://poker.test") as client:
         issued = client.post(
             "/api/mcp/principals",
-            json={"name": "Read-only Codex", "scopes": ["read"], "expires_at": None},
+            json={"name": "Read-only Codex", "expires_at": None},
         ).json()
         token = issued["token"]
         headers = {
@@ -275,7 +268,7 @@ def test_hosted_mcp_rate_limits_each_principal_before_recording_usage(
     with TestClient(create_app(settings), base_url="https://poker.test") as client:
         token = client.post(
             "/api/mcp/principals",
-            json={"name": "Limited Codex", "scopes": ["read"], "expires_at": None},
+            json={"name": "Limited Codex", "expires_at": None},
         ).json()["token"]
         headers = {
             "Authorization": f"Bearer {token}",
@@ -296,7 +289,7 @@ def test_hosted_mcp_limits_concurrent_body_reads_before_buffering(
     tmp_path: Path,
 ) -> None:
     store = McpPrincipalStore(tmp_path, "staging")
-    issued = store.create(name="Concurrent Codex", scopes=["read"], expires_at=None)
+    issued = store.create(name="Concurrent Codex", expires_at=None)
     first_body_started = asyncio.Event()
     release_first_body = asyncio.Event()
     second_receive_called = False
@@ -313,7 +306,6 @@ def test_hosted_mcp_limits_concurrent_body_reads_before_buffering(
         allowed_origins=frozenset(),
         proxy_shared_secret=None,
         read_calls_per_minute=60,
-        write_calls_per_minute=10,
     )
     middleware.body_read_limiter = _McpBodyReadLimiter(maximum_per_principal=1)
     scope = {

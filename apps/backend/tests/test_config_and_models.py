@@ -259,18 +259,13 @@ def test_settings_validate_hosted_mcp_configuration() -> None:
             mcp_enabled=True,
             mcp_public_url="https://poker.example:not-a-port/mcp",
         )
-    with pytest.raises(ValidationError, match="supported only in staging"):
-        Settings(deployment_environment="production", mcp_allow_writes=True)
-
     settings = Settings(
         deployment_environment="staging",
         mcp_enabled=True,
         mcp_public_url="https://faß.example:443/mcp",
         mcp_allowed_origins=["https://faß.example:443"],
-        mcp_allow_writes=True,
     )
     assert settings.mcp_enabled is True
-    assert settings.mcp_allow_writes is True
     assert settings.mcp_public_url == "https://xn--fa-hia.example/mcp"
     assert settings.mcp_allowed_origins == ["https://xn--fa-hia.example"]
 

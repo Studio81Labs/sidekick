@@ -13,7 +13,7 @@ import tempfile
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 McpScope = Literal["read", "write"]
@@ -43,7 +43,6 @@ class McpPrincipalSummary(BaseModel):
     name: str
     environment: McpEnvironment
     token_prefix: str
-    scopes: list[McpScope]
     status: Literal["active", "expired", "revoked"]
     created_at: datetime
     updated_at: datetime
@@ -65,12 +64,12 @@ class McpAccessConfig(BaseModel):
     enabled: bool
     environment: Literal["local", "staging", "production"]
     endpoint: str | None
-    writes_enabled: bool
 
 
 class CreateMcpPrincipalRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=3, max_length=100)
-    scopes: list[McpScope] = Field(min_length=1, max_length=2)
     expires_at: datetime | None = None
 
 
@@ -78,7 +77,6 @@ class McpAuthenticatedPrincipal(BaseModel):
     id: str
     name: str
     environment: McpEnvironment
-    scopes: list[McpScope]
 
 
 class _McpPrincipalFile(BaseModel):
@@ -113,13 +111,11 @@ class McpPrincipalStore:
         self,
         *,
         name: str,
-        scopes: list[McpScope],
         expires_at: datetime | None,
     ) -> McpIssuedPrincipal:
         normalized_name = name.strip()
         if len(normalized_name) < 3 or len(normalized_name) > 100:
             raise ValueError("MCP principal name must be 3-100 characters")
-        normalized_scopes = _validate_scopes(scopes)
         now = _now()
         normalized_expiry = _validate_expiry(expires_at, now)
         with self._locked(exclusive=True):
@@ -131,7 +127,7 @@ class McpPrincipalStore:
                 environment=self.environment,
                 token_prefix=generated[1],
                 token_hash=_hash_token(generated[0]),
-                scopes=normalized_scopes,
+                scopes=["read"],
                 created_at=now,
                 updated_at=now,
                 expires_at=normalized_expiry,
@@ -155,6 +151,7 @@ class McpPrincipalStore:
             record.token_prefix = generated[1]
             record.token_hash = _hash_token(generated[0])
             record.last_used_at = None
+            record.scopes = ["read"]
             record.updated_at = now
             self._write(payload)
         return McpIssuedPrincipal(
@@ -197,15 +194,12 @@ class McpPrincipalStore:
                 or not compare_digest(_hash_token(token), record.token_hash)
             ):
                 return None
-            try:
-                scopes = _validate_scopes(record.scopes)
-            except ValueError:
+            if not _has_read_scope(record.scopes):
                 return None
         return McpAuthenticatedPrincipal(
             id=record.id,
             name=record.name,
             environment=record.environment,
-            scopes=scopes,
         )
 
     def record_usage(self, token: str) -> bool:
@@ -231,9 +225,7 @@ class McpPrincipalStore:
                 or not compare_digest(_hash_token(token), record.token_hash)
             ):
                 return False
-            try:
-                _validate_scopes(record.scopes)
-            except ValueError:
+            if not _has_read_scope(record.scopes):
                 return False
             record.last_used_at = now
             record.updated_at = now
@@ -337,13 +329,10 @@ def _hash_token(token: str) -> str:
     return sha256(token.encode("ascii")).hexdigest()
 
 
-def _validate_scopes(scopes: list[McpScope]) -> list[McpScope]:
-    unique = sorted(set(scopes))
-    if not unique or len(unique) != len(scopes):
-        raise ValueError("MCP scopes must contain unique read or write values")
-    if "write" in unique and "read" not in unique:
-        raise ValueError("MCP write scope also requires read scope")
-    return unique
+def _has_read_scope(scopes: list[McpScope]) -> bool:
+    """Keep pre-cutover records usable as the one current read-only capability."""
+
+    return scopes.count("read") == 1
 
 
 def _validate_expiry(
@@ -376,7 +365,7 @@ def _summary(
     else:
         status = "active"
     return McpPrincipalSummary(
-        **record.model_dump(exclude={"token_hash"}),
+        **record.model_dump(exclude={"token_hash", "scopes"}),
         status=status,
     )
 

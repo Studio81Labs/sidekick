@@ -381,7 +381,6 @@ describe("Analyzer administrative capture", () => {
             enabled: false,
             environment: "staging",
             endpoint: "http://localhost:8000/mcp",
-            writes_enabled: false,
           }),
         );
       }
@@ -431,7 +430,6 @@ describe("Analyzer administrative capture", () => {
             enabled: false,
             environment: "staging",
             endpoint: "http://localhost:8000/mcp",
-            writes_enabled: false,
           }),
         );
       }
@@ -478,7 +476,6 @@ describe("Analyzer administrative capture", () => {
               enabled: true,
               environment: "staging",
               endpoint: "https://poker-staging.example/mcp",
-              writes_enabled: true,
             }),
           );
         }
@@ -533,7 +530,6 @@ describe("Analyzer administrative capture", () => {
           name: "Codex staging",
           environment: "staging",
           token_prefix: "abcdefghijkl",
-          scopes: ["read"],
           status: "active",
           created_at: "2026-08-07T10:00:00Z",
           updated_at: "2026-08-07T10:00:00Z",

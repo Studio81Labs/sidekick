@@ -141,7 +141,6 @@ def mcp_config() -> McpAccessConfig:
         enabled=True,
         environment="staging",
         endpoint="https://poker.test/mcp",
-        writes_enabled=True,
     )
 
 
@@ -152,7 +151,6 @@ def mcp_principal() -> McpPrincipalSummary:
         name="Codex test",
         environment="staging",
         token_prefix="tokenprefix1",
-        scopes=["read"],
         status="active",
         created_at=now,
         updated_at=now,
@@ -778,7 +776,7 @@ def test_mcp_admin_router_forwards_requests_and_preserves_issued_token_cache_rul
     async def create_principal(
         request: CreateMcpPrincipalRequest,
     ) -> McpIssuedPrincipal:
-        calls.append(("create", request.name, request.scopes, request.expires_at))
+        calls.append(("create", request.name, request.expires_at))
         return issued_mcp_principal()
 
     async def rotate_principal(principal_id: str) -> McpIssuedPrincipal:
@@ -802,7 +800,7 @@ def test_mcp_admin_router_forwards_requests_and_preserves_issued_token_cache_rul
         listed = client.get("/api/mcp/principals")
         created = client.post(
             "/api/mcp/principals",
-            json={"name": "Codex test", "scopes": ["read"], "expires_at": None},
+            json={"name": "Codex test", "expires_at": None},
         )
         rotated = client.post(f"/api/mcp/principals/{principal_id}/rotate")
         revoked = client.delete(f"/api/mcp/principals/{principal_id}")
@@ -811,7 +809,6 @@ def test_mcp_admin_router_forwards_requests_and_preserves_issued_token_cache_rul
         "enabled": True,
         "environment": "staging",
         "endpoint": "https://poker.test/mcp",
-        "writes_enabled": True,
     }
     assert listed.json()["principals"][0]["id"] == principal_id
     assert [response.status_code for response in (created, rotated, revoked)] == [
@@ -823,7 +820,7 @@ def test_mcp_admin_router_forwards_requests_and_preserves_issued_token_cache_rul
     assert rotated.headers["cache-control"] == "no-store"
     assert calls == [
         ("list",),
-        ("create", "Codex test", ["read"], None),
+        ("create", "Codex test", None),
         ("rotate", principal_id),
         ("revoke", principal_id),
     ]
@@ -858,7 +855,7 @@ def test_mcp_admin_router_maps_store_errors_without_changing_callback_policy() -
     ) as client:
         create_error = client.post(
             "/api/mcp/principals",
-            json={"name": "Codex test", "scopes": ["read"]},
+            json={"name": "Codex test"},
         )
         rotate_missing = client.post("/api/mcp/principals/mcp_missing/rotate")
         revoke_missing = client.delete("/api/mcp/principals/mcp_missing")

@@ -52,12 +52,14 @@ also expires after one hour so a failed cleanup cannot leave durable access.
 
 ## Principal lifecycle
 
-Open the app information dialog and find **Agent access**.
+Open the standalone **Agent access** administrator page at `/admin/ocr/mcp`.
+It remains available when the separately configured OCR test mode is disabled,
+because it uses the independent MCP administrator token boundary.
 
 - Enter the staging `MCP_ADMIN_TOKEN` and unlock credential management. The
   value stays only in browser component memory and is cleared by locking,
   closing, or reloading the page.
-- Create a descriptive credential and select the least privilege needed.
+- Create a descriptive read-only credential.
 - Copy the token from the one-time display into approved secret storage.
 - Rotate an active credential to replace a lost or exposed token.
 - Revoke it when access is no longer required.

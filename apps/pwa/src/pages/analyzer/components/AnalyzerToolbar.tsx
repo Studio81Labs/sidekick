@@ -62,6 +62,7 @@ export function AnalyzerToolbar({
           iconOnly
           className="header-icon-button active"
           onClick={onLockAdministrator}
+          disabled={busy}
           title="Lock administrator session"
           aria-label="Lock administrator session"
         >

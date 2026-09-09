@@ -21,6 +21,7 @@ export const analyzerPaths = {
   analyzer: "/admin/ocr",
   analyzerBenchmarks: "/admin/ocr/benchmarks",
   analyzerJob: "/admin/ocr/jobs/:jobId",
+  mcpAdministration: "/admin/ocr/mcp",
 } as const;
 
 export function analyzerJobPath(jobId: string): string {

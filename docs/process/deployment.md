@@ -135,7 +135,9 @@ deployment environment and in any other environment before enabling its MCP
 endpoint. The Worker requires it on `/api/mcp/principals` and descendant routes,
 compares it without forwarding it, and fails closed when the secret is missing.
 Enter it only into the **Agent access** unlock field; the PWA keeps it in
-memory until the dialog is closed, reloaded, or locked. Do not reuse an agent
+memory until the page is closed, reloaded, or locked. The credential-management
+page is `/admin/ocr/mcp` and remains available while OCR test mode is disabled.
+Do not reuse an agent
 credential or `API_PROXY_SECRET` for this purpose. The value must contain at
 least 32 printable ASCII characters without spaces; deployment rejects weak,
 malformed, or reused values.

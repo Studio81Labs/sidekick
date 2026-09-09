@@ -8,6 +8,10 @@ vi.mock("../pages/analyzer/AnalyzerRoute", () => ({
   default: ({ surface }: { surface: string }) => <div>Analyzer {surface}</div>,
 }));
 
+vi.mock("../pages/mcp/McpAdministrationPage", () => ({
+  default: () => <div>Agent access administration</div>,
+}));
+
 afterEach(cleanup);
 
 function LocationProbe() {
@@ -46,6 +50,12 @@ describe("AppRoutes", () => {
     renderRoute(path);
 
     expect(screen.getByText(`Analyzer ${surface}`)).toBeInTheDocument();
+  });
+
+  it("keeps MCP credential administration outside the OCR test-mode gate", () => {
+    renderRoute("/admin/ocr/mcp");
+
+    expect(screen.getByText("Agent access administration")).toBeInTheDocument();
   });
 
   it("builds encoded durable job paths", () => {

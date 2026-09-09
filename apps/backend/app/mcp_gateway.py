@@ -366,8 +366,8 @@ def _require_hosted_read_scope(*, require_auth: bool) -> None:
     if not require_auth:
         return
     principal = MCP_PRINCIPAL_CONTEXT.get()
-    if principal is None or "read" not in principal.scopes:
-        raise PermissionError("The MCP credential does not grant read access")
+    if principal is None:
+        raise PermissionError("The MCP credential is not authenticated")
 
 
 def main() -> None:
