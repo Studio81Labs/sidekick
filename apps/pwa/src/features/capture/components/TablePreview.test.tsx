@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from "@testing-library/react";
 import { createRef } from "react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { TablePreview, type TablePreviewProps } from "./TablePreview";
 
@@ -16,8 +16,11 @@ function previewProps(
     frameLabel: "No table selected",
     frameStreet: "No street",
     livePreviewVisible: false,
+    onRetryScreenshot: () => undefined,
     reviewCount: 0,
     screenSharing: false,
+    screenshotError: null,
+    screenshotStatus: "missing",
     screenshotUrl: null,
     ...overrides,
   };
@@ -52,6 +55,7 @@ describe("TablePreview", () => {
           frameLabel: "river-table.png",
           frameStreet: "river",
           reviewCount: 1,
+          screenshotStatus: "loaded",
           screenshotUrl: "/api/jobs/1/image",
         })}
       />,
@@ -76,6 +80,7 @@ describe("TablePreview", () => {
           frameLabel: "PokerStars table live preview",
           livePreviewVisible: true,
           screenSharing: true,
+          screenshotStatus: "loaded",
           screenshotUrl: "/api/jobs/1/image",
         })}
         ref={videoRef}
@@ -90,5 +95,27 @@ describe("TablePreview", () => {
       screen.getByRole("img", { name: "Uploaded poker table screenshot" }),
     ).toHaveClass("screenshot-preview", "hidden");
     expect(document.querySelector(".live-dot")).toHaveClass("active");
+  });
+
+  it("distinguishes a retryable image failure from a missing screenshot", () => {
+    const onRetryScreenshot = vi.fn();
+    render(
+      <TablePreview
+        {...previewProps({
+          onRetryScreenshot,
+          screenshotError: "Image service is unavailable",
+          screenshotStatus: "error",
+        })}
+      />,
+    );
+
+    expect(
+      screen.getByText("Image service is unavailable"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("No screenshot uploaded"),
+    ).not.toBeInTheDocument();
+    screen.getByRole("button", { name: "Retry screenshot" }).click();
+    expect(onRetryScreenshot).toHaveBeenCalledOnce();
   });
 });

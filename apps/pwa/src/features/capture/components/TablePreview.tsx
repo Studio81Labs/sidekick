@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
 
 import "./TablePreview.css";
+import { ButtonControl } from "../../../shared/components/FormControls";
 import { StateMessage } from "../../../shared/components/StateMessage";
 import { SummaryMetric } from "../../../shared/components/SummaryMetric";
 
@@ -11,8 +12,11 @@ export interface TablePreviewProps {
   frameLabel: string;
   frameStreet: string;
   livePreviewVisible: boolean;
+  onRetryScreenshot: () => void;
   reviewCount: number;
   screenSharing: boolean;
+  screenshotError: string | null;
+  screenshotStatus: "missing" | "loading" | "loaded" | "error";
   screenshotUrl: string | null;
 }
 
@@ -25,8 +29,11 @@ export const TablePreview = forwardRef<HTMLVideoElement, TablePreviewProps>(
       frameLabel,
       frameStreet,
       livePreviewVisible,
+      onRetryScreenshot,
       reviewCount,
       screenSharing,
+      screenshotError,
+      screenshotStatus,
       screenshotUrl,
     },
     ref,
@@ -63,7 +70,24 @@ export const TablePreview = forwardRef<HTMLVideoElement, TablePreviewProps>(
               alt="Uploaded poker table screenshot"
             />
           ) : null}
-          {!showLivePreview && !screenshotUrl ? (
+          {!showLivePreview && screenshotStatus === "loading" ? (
+            <StateMessage centered className="empty-screenshot" tone="inverse">
+              Loading screenshot...
+            </StateMessage>
+          ) : null}
+          {!showLivePreview && screenshotStatus === "error" ? (
+            <StateMessage
+              centered
+              className="empty-screenshot screenshot-load-error"
+              tone="inverse"
+            >
+              <span>{screenshotError ?? "Could not load the screenshot."}</span>
+              <ButtonControl onClick={onRetryScreenshot} variant="secondary">
+                Retry screenshot
+              </ButtonControl>
+            </StateMessage>
+          ) : null}
+          {!showLivePreview && screenshotStatus === "missing" ? (
             <StateMessage centered className="empty-screenshot" tone="inverse">
               No screenshot uploaded
             </StateMessage>

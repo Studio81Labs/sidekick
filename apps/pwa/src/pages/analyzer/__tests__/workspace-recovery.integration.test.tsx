@@ -1716,14 +1716,14 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(
-        screen.getByRole("button", { name: "Approve state" }),
-      ).toBeDisabled(),
+        JSON.parse(
+          String(window.localStorage.getItem("poker-training-processing-v1")),
+        ),
+      ).toEqual([persistedJob]),
     );
     expect(
-      JSON.parse(
-        String(window.localStorage.getItem("poker-training-processing-v1")),
-      ),
-    ).toEqual([persistedJob]);
+      screen.getByRole("button", { name: "Approve state" }),
+    ).toBeDisabled();
     expect(
       window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
     ).not.toBeNull();

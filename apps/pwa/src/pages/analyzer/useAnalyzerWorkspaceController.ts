@@ -241,6 +241,10 @@ export function useAnalyzerWorkspaceController({
     removePostflopAction,
     removePreflopAction,
     resetToParser,
+    retryScreenshot,
+    screenshotError,
+    screenshotReadyForApproval,
+    screenshotStatus,
     screenshotUrl,
     setActiveJobId,
     setApprovedStateKey,
@@ -257,6 +261,7 @@ export function useAnalyzerWorkspaceController({
     administratorToken,
     jobs,
     onActiveJobChange: selectActiveJob,
+    onAdministrativeDenial: reportAdministrativeDenial,
     onError: setError,
   });
   const {
@@ -2553,6 +2558,12 @@ export function useAnalyzerWorkspaceController({
     if (!job) {
       return;
     }
+    if (!screenshotReadyForApproval) {
+      setError(
+        "Wait for the matching screenshot to load before approving this job.",
+      );
+      return;
+    }
     if (!validation.state) {
       setError(
         validation.error ?? "Correct the detected state before approval",
@@ -3363,6 +3374,9 @@ export function useAnalyzerWorkspaceController({
       ref: videoRef,
       reviewCount: confidenceSummary.reviewCount,
       screenSharing,
+      onRetryScreenshot: retryScreenshot,
+      screenshotError,
+      screenshotStatus,
       screenshotUrl,
     },
     handReview: {

@@ -67,6 +67,13 @@ because it uses the independent MCP administrator token boundary.
 Use a read-only credential. Credential records live under `POKER_DATA_DIR/mcp`
 and are not part of application backup archives.
 
+Only current records with exactly the `read` scope are supported. An early
+development `principals.json` containing another scope is not upgraded,
+normalized, or deleted by the application. Keep that directory outside the
+active development data directory for audit, start with an empty development
+data directory, then create fresh principals through **Agent access**. Do not
+edit the stored scopes or attempt to recover an old token.
+
 ## Codex configuration
 
 Expose the token to the Codex process through an environment variable, then

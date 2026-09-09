@@ -38,7 +38,33 @@ interface UseHandReviewStateOptions {
   administratorToken: string;
   jobs: JobRecord[];
   onActiveJobChange: (jobId: string | null) => void;
+  onAdministrativeDenial: (failure: unknown) => boolean;
   onError: (message: string | null) => void;
+}
+
+type ScreenshotSource = {
+  administratorToken: string;
+  imageFilename: string;
+  jobId: string;
+};
+
+type ScreenshotState =
+  | { status: "missing" }
+  | { source: ScreenshotSource; status: "loading" }
+  | { source: ScreenshotSource; status: "loaded"; url: string }
+  | { source: ScreenshotSource; status: "error"; message: string };
+
+type ScreenshotStatus = ScreenshotState["status"];
+
+function sameScreenshotSource(
+  left: ScreenshotSource,
+  right: ScreenshotSource,
+): boolean {
+  return (
+    left.jobId === right.jobId &&
+    left.imageFilename === right.imageFilename &&
+    left.administratorToken === right.administratorToken
+  );
 }
 
 export function useHandReviewState({
@@ -46,6 +72,7 @@ export function useHandReviewState({
   administratorToken,
   jobs,
   onActiveJobChange,
+  onAdministrativeDenial,
   onError,
 }: UseHandReviewStateOptions) {
   const [form, setForm] = useState<StateForm>(() => stateToForm(EMPTY_STATE));
@@ -54,6 +81,8 @@ export function useHandReviewState({
   activeJobIdRef.current = activeJobId;
   const formBaselineRef = useRef(form);
   const formDirtyRef = useRef(false);
+  const onAdministrativeDenialRef = useRef(onAdministrativeDenial);
+  onAdministrativeDenialRef.current = onAdministrativeDenial;
 
   const job = useMemo(
     () =>
@@ -83,6 +112,40 @@ export function useHandReviewState({
         humanReadableMessage(job.error, "The screenshot needs attention"),
       ]
     : parserWarnings;
+  const screenshotSource = useMemo<ScreenshotSource | null>(
+    () =>
+      job && job.image_filename
+        ? {
+            administratorToken,
+            imageFilename: job.image_filename,
+            jobId: job.id,
+          }
+        : null,
+    [administratorToken, job?.id, job?.image_filename],
+  );
+  const screenshotSourceRef = useRef(screenshotSource);
+  screenshotSourceRef.current = screenshotSource;
+  const screenshotRequestGenerationRef = useRef(0);
+  const [screenshotRequestGeneration, setScreenshotRequestGeneration] =
+    useState(0);
+  const [screenshot, setScreenshot] = useState<ScreenshotState>({
+    status: "missing",
+  });
+  const currentScreenshot =
+    screenshot.status !== "missing" &&
+    screenshotSource !== null &&
+    sameScreenshotSource(screenshot.source, screenshotSource)
+      ? screenshot
+      : null;
+  const screenshotStatus: ScreenshotStatus =
+    currentScreenshot?.status ??
+    (screenshotSource === null ? "missing" : "loading");
+  const screenshotUrl =
+    currentScreenshot?.status === "loaded" ? currentScreenshot.url : null;
+  const screenshotError =
+    currentScreenshot?.status === "error" ? currentScreenshot.message : null;
+  const screenshotReadyForApproval =
+    screenshotSource === null || screenshotStatus === "loaded";
   const currentStateKey = validation.state
     ? approvalKey(validation.state)
     : null;
@@ -96,6 +159,7 @@ export function useHandReviewState({
     validation.state &&
     validation.state.hero_cards.length > 0 &&
     validation.state.street &&
+    screenshotReadyForApproval &&
     !currentStateApproved,
   );
   const completedPostflopActionCounts = useMemo(
@@ -116,7 +180,6 @@ export function useHandReviewState({
       ? completedPostflopActionCounts.flop >= 8
       : completedPostflopActionCounts.flop >= 8 &&
         completedPostflopActionCounts.turn >= 8;
-  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const confidenceSummary = useMemo(
     () => summarizeConfidences(confidences, warnings, validation.state),
     [confidences, validation.state, warnings],
@@ -136,33 +199,57 @@ export function useHandReviewState({
   }, [job, validation.error]);
 
   useEffect(() => {
-    if (!job || job.image_filename === "") {
-      setScreenshotUrl(null);
+    const requestGeneration = ++screenshotRequestGenerationRef.current;
+    if (screenshotSource === null) {
+      setScreenshot({ status: "missing" });
       return;
     }
     const controller = new AbortController();
     let objectUrl: string | null = null;
     let active = true;
-    void getJobImage(job.id, administratorToken, controller.signal)
+    const requestIsCurrent = () =>
+      active &&
+      requestGeneration === screenshotRequestGenerationRef.current &&
+      screenshotSourceRef.current !== null &&
+      sameScreenshotSource(screenshotSourceRef.current, screenshotSource);
+
+    setScreenshot({ source: screenshotSource, status: "loading" });
+    void getJobImage(
+      screenshotSource.jobId,
+      screenshotSource.administratorToken,
+      controller.signal,
+    )
       .then((image) => {
         objectUrl = URL.createObjectURL(image);
-        if (active) {
-          setScreenshotUrl(objectUrl);
-        } else {
+        if (!requestIsCurrent()) {
           URL.revokeObjectURL(objectUrl);
+          return;
         }
+        setScreenshot({
+          source: screenshotSource,
+          status: "loaded",
+          url: objectUrl,
+        });
       })
-      .catch(() => {
-        if (!controller.signal.aborted) {
-          setScreenshotUrl(null);
+      .catch((error: unknown) => {
+        if (!requestIsCurrent() || controller.signal.aborted) {
+          return;
         }
+        if (onAdministrativeDenialRef.current(error)) {
+          return;
+        }
+        setScreenshot({
+          source: screenshotSource,
+          status: "error",
+          message: messageFromError(error, "Could not load the screenshot"),
+        });
       });
     return () => {
       active = false;
       controller.abort();
       if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
     };
-  }, [administratorToken, job?.id, job?.image_filename]);
+  }, [screenshotRequestGeneration, screenshotSource]);
 
   function setActiveJobId(nextActiveJobId: string | null) {
     activeJobIdRef.current = nextActiveJobId;
@@ -180,6 +267,13 @@ export function useHandReviewState({
     setApprovedStateKey(
       nextJob?.approved_state ? approvalKey(nextJob.approved_state) : null,
     );
+  }
+
+  function retryScreenshot() {
+    const source = screenshotSourceRef.current;
+    if (source === null) return;
+    setScreenshot({ source, status: "loading" });
+    setScreenshotRequestGeneration((generation) => generation + 1);
   }
 
   function updateForm<K extends keyof StateForm>(
@@ -420,6 +514,10 @@ export function useHandReviewState({
     removePostflopAction,
     removePreflopAction,
     resetToParser,
+    retryScreenshot,
+    screenshotError,
+    screenshotReadyForApproval,
+    screenshotStatus,
     screenshotUrl,
     setActiveJobId,
     setApprovedStateKey,

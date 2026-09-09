@@ -51,6 +51,33 @@ def test_principal_store_binds_credentials_to_environment(tmp_path: Path) -> Non
     assert production.list() == []
 
 
+@pytest.mark.parametrize(
+    "retired_scopes",
+    [
+        ["read", "write"],
+        ["write"],
+        ["read", "read"],
+    ],
+)
+def test_principal_store_rejects_unsupported_persisted_scopes_without_mutation(
+    tmp_path: Path,
+    retired_scopes: list[str],
+) -> None:
+    store = McpPrincipalStore(tmp_path, "staging")
+    issued = store.create(name="Current-only check", expires_at=None)
+    principal_path = tmp_path / "mcp" / "principals.json"
+    persisted = json.loads(principal_path.read_text(encoding="utf-8"))
+    persisted["principals"][0]["scopes"] = retired_scopes
+    principal_path.write_text(json.dumps(persisted), encoding="utf-8")
+    unchanged = principal_path.read_text(encoding="utf-8")
+
+    assert store.authenticate(issued.token) is None
+    assert store.record_usage(issued.token) is False
+    with pytest.raises(ValueError, match="current read-only scope"):
+        store.rotate(issued.principal.id)
+    assert principal_path.read_text(encoding="utf-8") == unchanged
+
+
 def test_hosted_mcp_is_dark_by_default(tmp_path: Path) -> None:
     client = TestClient(
         create_app(

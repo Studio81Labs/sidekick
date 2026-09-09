@@ -16,7 +16,6 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict, Field
 
 
-McpScope = Literal["read", "write"]
 McpEnvironment = Literal["staging", "production"]
 MCP_TOKEN_PATTERN = re.compile(
     r"^phmcp_([A-Za-z0-9_-]{12})\.([A-Za-z0-9_-]{43})$"
@@ -30,7 +29,7 @@ class McpPrincipalRecord(BaseModel):
     environment: McpEnvironment
     token_prefix: str = Field(min_length=12, max_length=12)
     token_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    scopes: list[McpScope] = Field(min_length=1)
+    scopes: list[str] = Field(min_length=1)
     created_at: datetime
     updated_at: datetime
     expires_at: datetime | None = None
@@ -147,11 +146,14 @@ class McpPrincipalStore:
             record = self._find(payload, principal_id)
             if _summary(record, now).status != "active":
                 raise ValueError("MCP principal is not active")
+            if record.scopes != ["read"]:
+                raise ValueError(
+                    "MCP principal does not use the current read-only scope"
+                )
             generated = _generate_token()
             record.token_prefix = generated[1]
             record.token_hash = _hash_token(generated[0])
             record.last_used_at = None
-            record.scopes = ["read"]
             record.updated_at = now
             self._write(payload)
         return McpIssuedPrincipal(
@@ -194,7 +196,7 @@ class McpPrincipalStore:
                 or not compare_digest(_hash_token(token), record.token_hash)
             ):
                 return None
-            if not _has_read_scope(record.scopes):
+            if record.scopes != ["read"]:
                 return None
         return McpAuthenticatedPrincipal(
             id=record.id,
@@ -225,7 +227,7 @@ class McpPrincipalStore:
                 or not compare_digest(_hash_token(token), record.token_hash)
             ):
                 return False
-            if not _has_read_scope(record.scopes):
+            if record.scopes != ["read"]:
                 return False
             record.last_used_at = now
             record.updated_at = now
@@ -327,12 +329,6 @@ def _generate_token() -> tuple[str, str]:
 
 def _hash_token(token: str) -> str:
     return sha256(token.encode("ascii")).hexdigest()
-
-
-def _has_read_scope(scopes: list[McpScope]) -> bool:
-    """Keep pre-cutover records usable as the one current read-only capability."""
-
-    return scopes.count("read") == 1
 
 
 def _validate_expiry(

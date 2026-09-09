@@ -103,6 +103,44 @@ describe("Analyzer administrative capture", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("locks tools when the active screenshot image rejects the administrator", async () => {
+    const created = jobRecord();
+    const image = deferredResponse();
+    const existingFetch = globalThis.fetch;
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(`/jobs/${created.id}/image`)) {
+        return image.promise;
+      }
+      return existingFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetch);
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(processingQueueResponse([created]));
+    render(<UnverifiedAnalyzerTestApp />);
+
+    await uploadScreenshot();
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.some(([input]) =>
+          String(input).endsWith(`/jobs/${created.id}/image`),
+        ),
+      ).toBe(true),
+    );
+    await act(async () => {
+      image.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("verifies the typed token with the server before showing any control", async () => {
     const verification = administratorVerificationMock();
     render(<UnverifiedAnalyzerTestApp />);
