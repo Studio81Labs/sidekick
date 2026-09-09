@@ -43,8 +43,8 @@ from app.domain.poker import Card
 
 
 POKERSTARS_ADAPTER_ID = "pokerstars"
-POKERSTARS_ADAPTER_VERSION = "0.4.0"
-POKERSTARS_FORMAT_REVISION = "pokerstars-text/v4"
+POKERSTARS_ADAPTER_VERSION = "0.5.0"
+POKERSTARS_FORMAT_REVISION = "pokerstars-text/v5"
 
 _MONEY = (
     r"[$€£]?(?:[0-9]+|[0-9]{1,3}(?:,[0-9]{3})+)(?:\.[0-9]+)?"
@@ -120,6 +120,7 @@ _TIMEOUT_WHILE_DISCONNECTED_MARKER_RE = re.compile(
     r"^(?P<name>.+) has timed out while disconnected$"
 )
 _SITTING_OUT_EVENT_RE = re.compile(r"^(?P<name>.+) is sitting out$")
+_RETURN_STATUS_EVENT_RE = re.compile(r"^(?P<name>.+) has returned$")
 _HHSMITHY_DISCONNECTED_NOTICE_RE = re.compile(r"^(?P<name>.+) is disconnected$")
 _HHSMITHY_JOIN_NOTICE_RE = re.compile(
     r"^(?P<name>.+) joins the table at seat #(?P<seat>[1-9][0-9]*)$"
@@ -1053,6 +1054,7 @@ def _parse_body(
     historical_tournament_finish_index = 0
     pending_timeout_marker: _PendingTimeoutMarker | None = None
     last_timeout_fold_player_id: str | None = None
+    pending_return_status_player_id: str | None = None
 
     for line in lines[1:]:
         text = line.text
@@ -1063,6 +1065,16 @@ def _parse_body(
                     "A timeout marker must bind the same actor's immediately following qualified action.",
                     line_start=pending_timeout_marker.evidence.line_start,
                     line_end=pending_timeout_marker.evidence.line_end,
+                )
+            if (
+                pending_return_status_player_id is not None
+                and allow_timeout_to_fold_origin
+            ):
+                raise _HandParseError(
+                    "unsupported_return_status",
+                    "A legacy return status must immediately follow the same actor's timeout sit-out event.",
+                    line_start=line.number,
+                    line_end=line.number,
                 )
             continue
         if pending_timeout_marker is not None:
@@ -1098,7 +1110,26 @@ def _parse_body(
                     line_end=line.number,
                 )
             last_timeout_fold_player_id = None
+            pending_return_status_player_id = player_id
             continue
+        return_status_event = _RETURN_STATUS_EVENT_RE.fullmatch(text)
+        if return_status_event is not None and allow_timeout_to_fold_origin:
+            player_id = _dealt_in_player_id(
+                return_status_event.group("name"),
+                player_id_by_name,
+                sitting_out_player_ids=sitting_out_player_ids,
+                line=line.number,
+            )
+            if pending_return_status_player_id != player_id:
+                raise _HandParseError(
+                    "unsupported_return_status",
+                    "A legacy return status must immediately follow the same actor's timeout sit-out event.",
+                    line_start=line.number,
+                    line_end=line.number,
+                )
+            pending_return_status_player_id = None
+            continue
+        pending_return_status_player_id = None
         last_timeout_fold_player_id = None
         timeout_marker = _TIMEOUT_MARKER_RE.fullmatch(text)
         if timeout_marker is not None and (

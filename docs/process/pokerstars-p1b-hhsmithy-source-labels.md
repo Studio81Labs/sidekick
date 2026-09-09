@@ -40,7 +40,7 @@ absence semantics.
 ## Current parser boundary
 
 The reviewed adapter accepts the exact sanitized bytes as one detected,
-pending-review candidate under `pokerstars-text/v4`. It maps the source's
+pending-review candidate under `pokerstars-text/v5`. It maps the source's
 explicit `USD`, one-digit-hour `PokerStars Game #` header, unknown hero, five
 qualified marker bindings, inert notifications, results, and source evidence.
 Do not add a hero, rewrite the header, replace explicit `USD` with the older

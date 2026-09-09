@@ -47,7 +47,7 @@ local source path remains.
 The file is a public format sample and bounded P1b regression input. It is not
 a representative-corpus case, proof of current-client behavior, or proof that
 a missing marker identifies a player-selected action. The adapter maps only its
-independently reviewed `pokerstars-text/v4` header/body form: explicit `USD`, a
+independently reviewed `pokerstars-text/v5` header/body form: explicit `USD`, a
 one-digit-hour legacy header, an unknown hero, the three initial dealt-in
 seats, source results, inert notifications, and the five qualified marker
 bindings. Do not use it to introduce unrelated header, hero, reconnect, or
@@ -93,9 +93,12 @@ seats, legacy header, dealt-to hero, timeout-to-fold/sit-out sequence, observed
 `has returned` status, actions, results, and summary syntax. It contains no
 original player, hand, table, account identifier, or local path.
 
-This public format sample remains a checksum-guarded `unsupported_line`
-regression at the return-status line. The status text is not evidence of a
-network reconnect, a player-selected action, changed participation, or a
-general event grammar. The independently authored source labels are
-[`docs/process/pokerstars-p1b-return-status-source-labels.md`](../../../../../../docs/process/pokerstars-p1b-return-status-source-labels.md);
-no parser rule is authorized until that packet receives separate review.
+The adapter accepts the `has returned` text only immediately after the same
+known actor's reviewed legacy timeout-to-fold/sit-out sequence, under
+`pokerstars-text/v5`, and retains it only in raw source text. It creates no
+action, action origin, participation change, or status model. A blank,
+different actor, duplicate/prior return, intervening line, `has reconnected`,
+undeclared name, or any other context remains rejected. The status text is not
+evidence of network reconnection, a player-selected action, changed
+participation, or a general event grammar. The independently reviewed source
+labels are [`docs/process/pokerstars-p1b-return-status-source-labels.md`](../../../../../../docs/process/pokerstars-p1b-return-status-source-labels.md).
