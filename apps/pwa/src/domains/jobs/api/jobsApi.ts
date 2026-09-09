@@ -22,10 +22,6 @@ export function toJobQueue(response: JobQueueResponse): JobQueue {
   return response as unknown as JobQueue;
 }
 
-export function imageUrl(jobId: string): string {
-  return apiUrl(`/api/jobs/${jobId}/image`);
-}
-
 export async function uploadScreenshot(
   file: File,
   uploadRequestId: string,
@@ -40,7 +36,7 @@ export async function uploadScreenshot(
     form.append("parser_provider", pipeline.parser_provider);
     form.append("parser_layout_profile", pipeline.parser_layout_profile);
   }
-  const response = await requestJson<JobRecordResponse>("/api/jobs", {
+  const response = await requestJson<JobRecordResponse>("/api/admin/ocr/jobs", {
     method: "POST",
     body: form,
     headers: { Authorization: `Bearer ${administratorToken}` },
@@ -54,34 +50,48 @@ export async function uploadScreenshot(
 
 export async function getJob(
   jobId: string,
+  administratorToken: string,
   signal?: AbortSignal,
 ): Promise<JobRecord> {
-  const response = await requestJson<JobRecordResponse>(`/api/jobs/${jobId}`, {
-    ...(signal ? { signal } : {}),
-  });
+  const response = await requestJson<JobRecordResponse>(
+    `/api/admin/ocr/jobs/${encodeURIComponent(jobId)}`,
+    {
+      headers: { Authorization: `Bearer ${administratorToken}` },
+      ...(signal ? { signal } : {}),
+    },
+  );
   return toJobRecord(response);
 }
 
 export async function getProcessingJobs(
   offset = 0,
+  administratorToken: string,
   signal?: AbortSignal,
 ): Promise<JobQueue> {
   const query = offset > 0 ? `?offset=${offset}` : "";
-  const response = await requestJson<JobQueueResponse>(`/api/jobs${query}`, {
-    ...(signal ? { signal } : {}),
-  });
+  const response = await requestJson<JobQueueResponse>(
+    `/api/admin/ocr/jobs${query}`,
+    {
+      headers: { Authorization: `Bearer ${administratorToken}` },
+      ...(signal ? { signal } : {}),
+    },
+  );
   return toJobQueue(response);
 }
 
 export async function updateJobMetadata(
   jobId: string,
   metadata: JobMetadataUpdate,
+  administratorToken: string,
 ): Promise<JobRecord> {
   const response = await requestJson<JobRecordResponse>(
-    `/api/jobs/${encodeURIComponent(jobId)}/metadata`,
+    `/api/admin/ocr/jobs/${encodeURIComponent(jobId)}/metadata`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${administratorToken}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(metadata),
     },
   );
@@ -91,6 +101,7 @@ export async function updateJobMetadata(
 export async function approveState(
   jobId: string,
   state: CanonicalState,
+  administratorToken: string,
   signal?: AbortSignal,
 ): Promise<JobRecord> {
   const approval = {
@@ -98,10 +109,13 @@ export async function approveState(
     user_approved: true,
   } satisfies components["schemas"]["CanonicalState"];
   const response = await requestJson<JobRecordResponse>(
-    `/api/jobs/${jobId}/approve`,
+    `/api/admin/ocr/jobs/${encodeURIComponent(jobId)}/approve`,
     {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${administratorToken}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(approval),
       signal,
     },
@@ -109,15 +123,38 @@ export async function approveState(
   return toJobRecord(response);
 }
 
-export async function deleteJob(jobId: string): Promise<void> {
+export async function deleteJob(
+  jobId: string,
+  administratorToken: string,
+): Promise<void> {
   const response = await fetch(
-    apiUrl(`/api/jobs/${encodeURIComponent(jobId)}`),
+    apiUrl(`/api/admin/ocr/jobs/${encodeURIComponent(jobId)}`),
     {
       method: "DELETE",
       credentials: "include",
+      headers: { Authorization: `Bearer ${administratorToken}` },
     },
   );
   if (!response.ok && response.status !== 404) {
     await readJson<never>(response);
   }
+}
+
+export async function getJobImage(
+  jobId: string,
+  administratorToken: string,
+  signal?: AbortSignal,
+): Promise<Blob> {
+  const response = await fetch(
+    apiUrl(`/api/admin/ocr/jobs/${encodeURIComponent(jobId)}/image`),
+    {
+      credentials: "include",
+      headers: { Authorization: `Bearer ${administratorToken}` },
+      ...(signal ? { signal } : {}),
+    },
+  );
+  if (!response.ok) {
+    await readJson<never>(response);
+  }
+  return response.blob();
 }

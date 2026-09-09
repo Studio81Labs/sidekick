@@ -13,8 +13,8 @@ def create_admin_ocr_test_router(runtime: AdminOcrTestService) -> APIRouter:
     router = APIRouter()
 
     @router.get(
-        "/api/admin/ocr-test/session",
-        operation_id="admin_ocr_test_session_get",
+        "/api/admin/ocr/session",
+        operation_id="admin_ocr_session_get",
         response_model=AdminOcrTestSession,
     )
     def get_admin_ocr_test_session(

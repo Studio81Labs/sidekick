@@ -18,19 +18,22 @@ export const historyQueryKeys = {
 };
 
 export function historyPageQueryOptions(
+  administratorToken: string,
   offset = 0,
   query = "",
   limit?: number,
 ) {
   return queryOptions({
     queryKey: historyQueryKeys.page(offset, query, limit),
-    queryFn: ({ signal }) => getHistory(offset, query, limit, signal),
+    queryFn: ({ signal }) =>
+      getHistory(administratorToken, offset, query, limit, signal),
     staleTime: 0,
   });
 }
 
 export function fetchHistoryPageQuery(
   queryClient: QueryClient,
+  administratorToken: string,
   offset = 0,
   query = "",
   limit?: number,
@@ -38,18 +41,19 @@ export function fetchHistoryPageQuery(
   return cacheLatestQueryResult(
     queryClient,
     historyQueryKeys.page(offset, query, limit),
-    getHistory(offset, query, limit),
+    getHistory(administratorToken, offset, query, limit),
   );
 }
 
 export function useHistoryPageQuery(
+  administratorToken: string,
   offset = 0,
   query = "",
   limit?: number,
   enabled = true,
 ) {
   return useQuery({
-    ...historyPageQueryOptions(offset, query, limit),
+    ...historyPageQueryOptions(administratorToken, offset, query, limit),
     enabled,
   });
 }

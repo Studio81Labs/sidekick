@@ -14,7 +14,7 @@ export async function verifyAdministratorToken(
   signal?: AbortSignal,
 ): Promise<AdministrativeSession> {
   const response = await requestJson<AdminOcrTestSessionResponse>(
-    "/api/admin/ocr-test/session",
+    "/api/admin/ocr/session",
     {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",

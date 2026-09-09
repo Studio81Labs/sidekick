@@ -14,6 +14,7 @@ import { unlockFailureMessage } from "../lib/administrativeAccess";
 
 export interface AdministrativeAccessDialogProps {
   busy: boolean;
+  externalValidation?: string | null;
   onClose: () => void;
   onLock: () => void;
   onUnlock: (token: string) => Promise<AdministrativeUnlockResult>;
@@ -23,6 +24,7 @@ export interface AdministrativeAccessDialogProps {
 
 export function AdministrativeAccessDialog({
   busy,
+  externalValidation = null,
   onClose,
   onLock,
   onUnlock,
@@ -90,9 +92,9 @@ export function AdministrativeAccessDialog({
                 value={draft}
               />
             </FormField>
-            {validation ? (
+            {(validation ?? externalValidation) ? (
               <p className="administrative-access-validation" role="alert">
-                {validation}
+                {validation ?? externalValidation}
               </p>
             ) : null}
             <ButtonControl type="submit" disabled={verifying}>

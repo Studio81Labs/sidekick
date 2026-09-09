@@ -8,6 +8,7 @@ import { ApiResponseError } from "../../../shared/api/core";
 import {
   ADMINISTRATOR_TOKEN,
   AnalyzerTestApp as App,
+  UnverifiedAnalyzerTestApp,
   administratorVerificationMock,
   approvedJob,
   canonicalState,
@@ -27,12 +28,12 @@ import {
 } from "../../../test/analyzerHarness";
 
 describe("Analyzer administrative capture", () => {
-  it("keeps the player workspace import-first until an administrator unlocks", async () => {
-    render(<App />);
+  it("keeps the operator workspace behind administrator verification", async () => {
+    render(<UnverifiedAnalyzerTestApp />);
 
-    expect(screen.getByRole("region", { name: "Input" })).toHaveTextContent(
-      "administrator-only parser test tools",
-    );
+    expect(
+      screen.getByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByLabelText("Choose screenshots"),
     ).not.toBeInTheDocument();
@@ -46,7 +47,7 @@ describe("Analyzer administrative capture", () => {
   });
 
   it("shows the administrative banner and capture controls only while unlocked", async () => {
-    render(<App />);
+    render(<UnverifiedAnalyzerTestApp />);
     const user = await unlockAdministrativeAccess();
 
     expect(
@@ -92,7 +93,7 @@ describe("Analyzer administrative capture", () => {
     fetchMock()
       .mockResolvedValueOnce(jsonResponse({ detail: "denied" }, status))
       .mockResolvedValue(processingQueueResponse([]));
-    render(<App />);
+    render(<UnverifiedAnalyzerTestApp />);
 
     await uploadScreenshot();
 
@@ -104,12 +105,9 @@ describe("Analyzer administrative capture", () => {
 
   it("verifies the typed token with the server before showing any control", async () => {
     const verification = administratorVerificationMock();
-    render(<App />);
+    render(<UnverifiedAnalyzerTestApp />);
     const user = userEvent.setup();
 
-    await user.click(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    );
     await user.type(
       screen.getByLabelText("Administrative OCR test token"),
       `  ${ADMINISTRATOR_TOKEN}  `,
@@ -147,12 +145,9 @@ describe("Analyzer administrative capture", () => {
     ],
   ])("refuses to unlock on %s", async (_label, failure, message) => {
     mockAdministratorVerification(failure);
-    render(<App />);
+    render(<UnverifiedAnalyzerTestApp />);
     const user = userEvent.setup();
 
-    await user.click(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    );
     await user.type(
       screen.getByLabelText("Administrative OCR test token"),
       "wrong-token",
@@ -173,7 +168,7 @@ describe("Analyzer administrative capture", () => {
     expect(fetchMock()).not.toHaveBeenCalled();
   });
 
-  it("renders the import-first workspace and unlocks capture on demand", async () => {
+  it("renders the administrator OCR workspace after access is verified", async () => {
     fetchMock().mockResolvedValueOnce(
       jsonResponse({
         status: "ok",
@@ -184,14 +179,12 @@ describe("Analyzer administrative capture", () => {
     const user = userEvent.setup();
 
     expect(
-      screen.getByRole("heading", { name: "Poker Training Analyzer" }),
+      screen.getByRole("heading", { name: "Poker Hero" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Share window" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    ).toHaveAttribute("aria-pressed", "false");
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toHaveClass("active");
+    expect(screen.getByRole("button", { name: "Share window" })).toBeEnabled();
     expect(screen.getByLabelText("Screenshots queue")).toBeInTheDocument();
     expect(
       screen.getByText("No screenshots uploaded or captured yet"),
@@ -199,7 +192,7 @@ describe("Analyzer administrative capture", () => {
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
     expect(
-      screen.getByRole("dialog", { name: "About Poker Training Analyzer" }),
+      screen.getByRole("dialog", { name: "About Poker Hero" }),
     ).toBeInTheDocument();
     expect(
       await screen.findByText("OCR + computer vision"),
@@ -219,15 +212,8 @@ describe("Analyzer administrative capture", () => {
       screen.getByRole("button", { name: "Close app information" }),
     );
     expect(
-      screen.queryByRole("dialog", { name: "About Poker Training Analyzer" }),
+      screen.queryByRole("dialog", { name: "About Poker Hero" }),
     ).not.toBeInTheDocument();
-
-    await unlockAdministrativeAccess(user);
-
-    expect(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Share window" })).toBeEnabled();
 
     await switchToUploadMode(user);
 
@@ -406,7 +392,7 @@ describe("Analyzer administrative capture", () => {
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
     const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+      name: "About Poker Hero",
     });
 
     expect(
@@ -456,7 +442,7 @@ describe("Analyzer administrative capture", () => {
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
     const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+      name: "About Poker Hero",
     });
 
     expect(
@@ -476,6 +462,13 @@ describe("Analyzer administrative capture", () => {
               status: "ok",
               environment: "staging",
               parser_provider: "ocr_cv",
+            }),
+          );
+        }
+        if (url.endsWith("/api/admin/ocr/backups/export")) {
+          return Promise.resolve(
+            new Response("backup archive", {
+              headers: { "Content-Type": "application/zip" },
             }),
           );
         }
@@ -505,7 +498,7 @@ describe("Analyzer administrative capture", () => {
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
     const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+      name: "About Poker Hero",
     });
     await user.type(
       await within(dialog).findByLabelText("Agent access admin token"),
@@ -575,7 +568,7 @@ describe("Analyzer administrative capture", () => {
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
     expect(
       screen.queryByRole("dialog", {
-        name: "About Poker Training Analyzer",
+        name: "About Poker Hero",
       }),
     ).not.toBeInTheDocument();
   });
@@ -593,7 +586,7 @@ describe("Analyzer administrative capture", () => {
             }),
           );
         }
-        if (url.endsWith("/api/backups/restore")) {
+        if (url.endsWith("/api/admin/ocr/backups/restore")) {
           return Promise.resolve(
             jsonResponse({
               imported_jobs: 1,
@@ -605,10 +598,10 @@ describe("Analyzer administrative capture", () => {
             }),
           );
         }
-        if (url.endsWith("/api/jobs")) {
+        if (url.endsWith("/api/admin/ocr/jobs")) {
           return Promise.resolve(processingQueueResponse([restoredJob]));
         }
-        if (url.endsWith("/api/history")) {
+        if (url.endsWith("/api/admin/ocr/history")) {
           return Promise.resolve(
             jsonResponse({
               total: 0,
@@ -626,40 +619,32 @@ describe("Analyzer administrative capture", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
-    const lockedDialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+    const dialog = screen.getByRole("dialog", {
+      name: "About Poker Hero",
     });
     expect(
-      within(lockedDialog).getByRole("button", {
+      within(dialog).getByRole("button", {
         name: "Restore application backup",
       }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     expect(
-      within(lockedDialog).getByText(
-        "Unlock administrator tools to restore a backup.",
-      ),
-    ).toBeInTheDocument();
-    await user.click(
-      within(lockedDialog).getByRole("button", {
-        name: "Close app information",
-      }),
-    );
-
-    await unlockAdministrativeAccess(user);
-    await user.click(screen.getByRole("button", { name: "About this app" }));
-    const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
-    });
-    expect(
-      within(dialog).getByRole("link", {
+      within(dialog).getByRole("button", {
         name: "Download application backup",
       }),
-    ).toHaveAttribute("href", "http://localhost:8000/api/backups/export");
-    expect(
-      within(dialog).queryByText(
-        "Unlock administrator tools to restore a backup.",
+    ).toBeEnabled();
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Download application backup",
+      }),
+    );
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        "http://localhost:8000/api/admin/ocr/backups/export",
+        expect.objectContaining({
+          headers: { Authorization: `Bearer ${ADMINISTRATOR_TOKEN}` },
+        }),
       ),
-    ).not.toBeInTheDocument();
+    );
 
     const file = new File(["backup"], "poker-hero-backup.zip", {
       type: "application/zip",
@@ -682,7 +667,7 @@ describe("Analyzer administrative capture", () => {
       ).toBeInTheDocument(),
     );
     const restoreCall = fetchMock().mock.calls.find(([input]) =>
-      String(input).endsWith("/api/backups/restore"),
+      String(input).endsWith("/api/admin/ocr/backups/restore"),
     );
     expect(restoreCall).toBeDefined();
     expect(restoreCall?.[1]?.method).toBe("POST");
@@ -693,7 +678,7 @@ describe("Analyzer administrative capture", () => {
     expect((restoreCall?.[1]?.body as FormData).get("file")).toBe(file);
     expect(
       fetchMock().mock.calls.some(([input]) =>
-        String(input).endsWith("/api/history"),
+        String(input).endsWith("/api/admin/ocr/history"),
       ),
     ).toBe(true);
   });
@@ -834,7 +819,7 @@ describe("Analyzer administrative capture", () => {
 
     const payload = JSON.parse(String(fetchMock().mock.calls[2][1]?.body));
     expect(fetchMock().mock.calls[2][0]).toBe(
-      "http://localhost:8000/api/jobs/job-123/approve",
+      "http://localhost:8000/api/admin/ocr/jobs/job-123/approve",
     );
     expect(payload.opponents_at_current_bet).toBe(2);
     expect(payload.opponent_wager).toBe(2.5);
@@ -1296,7 +1281,7 @@ describe("Analyzer administrative capture", () => {
     await user.click(approveButton);
 
     expect(fetchMock().mock.calls[2][0]).toBe(
-      "http://localhost:8000/api/jobs/imported-job/approve",
+      "http://localhost:8000/api/admin/ocr/jobs/imported-job/approve",
     );
     const payload = JSON.parse(String(fetchMock().mock.calls[2][1]?.body));
     expect(payload.pot_size).toBe(20);
@@ -1412,7 +1397,7 @@ describe("Analyzer administrative capture", () => {
   it("shows processing progress and aborts unprocessed screenshots", async () => {
     fetchMock().mockImplementation((url, options) => {
       if (
-        url === "http://localhost:8000/api/jobs" &&
+        url === "http://localhost:8000/api/admin/ocr/jobs" &&
         options?.method !== "POST"
       ) {
         return Promise.resolve(processingQueueResponse([]));
@@ -1609,8 +1594,8 @@ describe("Analyzer administrative capture", () => {
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         4,
-        "http://localhost:8000/api/history",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/history",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(
@@ -1627,10 +1612,10 @@ describe("Analyzer administrative capture", () => {
       "true",
     );
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/history",
-      "http://localhost:8000/api/history",
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/history",
+      "http://localhost:8000/api/admin/ocr/history",
+      "http://localhost:8000/api/admin/ocr/history",
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/history",
     ]);
     expect(fetchMock().mock.calls[1][1]?.method).toBe("PUT");
   });
@@ -1710,7 +1695,7 @@ describe("Analyzer administrative capture", () => {
       (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (
-          url === "http://localhost:8000/api/history" &&
+          url === "http://localhost:8000/api/admin/ocr/history" &&
           init?.method === "PUT"
         ) {
           return Promise.resolve(
@@ -1722,7 +1707,7 @@ describe("Analyzer administrative capture", () => {
             ),
           );
         }
-        if (url === "http://localhost:8000/api/history") {
+        if (url === "http://localhost:8000/api/admin/ocr/history") {
           return Promise.resolve(
             jsonResponse({
               total: 0,
@@ -1731,7 +1716,7 @@ describe("Analyzer administrative capture", () => {
             }),
           );
         }
-        if (url === "http://localhost:8000/api/jobs") {
+        if (url === "http://localhost:8000/api/admin/ocr/jobs") {
           return Promise.resolve(
             processingQueueResponse(
               [competingAttempt],
@@ -1860,17 +1845,20 @@ describe("Analyzer administrative capture", () => {
           ? [index]
           : [],
       );
-    const queueReads = callIndexes("http://localhost:8000/api/jobs", "GET");
+    const queueReads = callIndexes(
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "GET",
+    );
     const nextQueuePage = callIndexes(
-      "http://localhost:8000/api/jobs?offset=100",
+      "http://localhost:8000/api/admin/ocr/jobs?offset=100",
       "GET",
     );
     const archiveAttempts = callIndexes(
-      "http://localhost:8000/api/history",
+      "http://localhost:8000/api/admin/ocr/history",
       "PUT",
     );
     const historyRefreshes = callIndexes(
-      "http://localhost:8000/api/history",
+      "http://localhost:8000/api/admin/ocr/history",
       "GET",
     );
 
@@ -1883,9 +1871,9 @@ describe("Analyzer administrative capture", () => {
     expect(archiveAttempts[0]).toBeLessThan(archiveAttempts[1]);
     expect(archiveAttempts[1]).toBeLessThan(historyRefreshes[0]);
     expect(queueReads.some((index) => index > historyRefreshes[0])).toBe(true);
-    expect(calls[historyRefreshes[0]][1]).toEqual({
-      credentials: "include",
-    });
+    expect(calls[historyRefreshes[0]][1]).toEqual(
+      expect.objectContaining({ credentials: "include" }),
+    );
   });
 
   it("clears persisted jobs when the bounded browser history cache is unavailable", async () => {

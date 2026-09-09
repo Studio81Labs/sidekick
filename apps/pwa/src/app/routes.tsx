@@ -25,7 +25,7 @@ export function AppRoutes() {
         path={appPaths.analyzerBenchmarks}
         element={<AnalyzerRoute surface="benchmarks" />}
       />
-      <Route path="*" element={<Navigate to={appPaths.analyzer} replace />} />
+      <Route path="*" element={<main>Page not found</main>} />
     </Routes>
   );
 }

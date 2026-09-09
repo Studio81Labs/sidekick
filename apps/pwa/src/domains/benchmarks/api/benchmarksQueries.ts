@@ -35,13 +35,18 @@ export const benchmarkQueryKeys = {
 };
 
 export function benchmarkOverviewQueryOptions(
-  pipeline?: ParserPipeline,
+  administratorToken: string,
+  pipeline: ParserPipeline | undefined,
   includeSignal = true,
 ) {
   return queryOptions({
     queryKey: benchmarkQueryKeys.overview(pipeline),
     queryFn: ({ signal }) =>
-      getBenchmarkOverview(pipeline, includeSignal ? signal : undefined),
+      getBenchmarkOverview(
+        pipeline,
+        administratorToken,
+        includeSignal ? signal : undefined,
+      ),
     ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
@@ -49,12 +54,17 @@ export function benchmarkOverviewQueryOptions(
 
 export function benchmarkReportQueryOptions(
   reportId: string,
+  administratorToken: string,
   includeSignal = true,
 ) {
   return queryOptions({
     queryKey: benchmarkQueryKeys.report(reportId),
     queryFn: ({ signal }) =>
-      getBenchmarkReport(reportId, includeSignal ? signal : undefined),
+      getBenchmarkReport(
+        reportId,
+        administratorToken,
+        includeSignal ? signal : undefined,
+      ),
     ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
@@ -62,12 +72,17 @@ export function benchmarkReportQueryOptions(
 
 export function benchmarkImportReceiptQueryOptions(
   requestId: string,
+  administratorToken: string,
   includeSignal = true,
 ) {
   return queryOptions({
     queryKey: benchmarkQueryKeys.importReceipt(requestId),
     queryFn: ({ signal }) =>
-      getBenchmarkDatasetImport(requestId, includeSignal ? signal : undefined),
+      getBenchmarkDatasetImport(
+        requestId,
+        administratorToken,
+        includeSignal ? signal : undefined,
+      ),
     ...(includeSignal ? {} : { retry: false }),
     staleTime: 0,
   });
@@ -76,37 +91,44 @@ export function benchmarkImportReceiptQueryOptions(
 export function fetchBenchmarkImportReceiptQuery(
   queryClient: QueryClient,
   requestId: string,
+  administratorToken: string,
 ) {
   return cacheLatestQueryResult(
     queryClient,
     benchmarkQueryKeys.importReceipt(requestId),
-    getBenchmarkDatasetImport(requestId),
+    getBenchmarkDatasetImport(requestId, administratorToken),
   );
 }
 
 export function useBenchmarkOverviewQuery(
-  pipeline?: ParserPipeline,
+  administratorToken: string,
+  pipeline: ParserPipeline | undefined,
   enabled = true,
 ) {
   return useQuery({
-    ...benchmarkOverviewQueryOptions(pipeline),
+    ...benchmarkOverviewQueryOptions(administratorToken, pipeline),
     enabled,
   });
 }
 
-export function useBenchmarkReportQuery(reportId: string, enabled = true) {
+export function useBenchmarkReportQuery(
+  reportId: string,
+  administratorToken: string,
+  enabled = true,
+) {
   return useQuery({
-    ...benchmarkReportQueryOptions(reportId),
+    ...benchmarkReportQueryOptions(reportId, administratorToken),
     enabled,
   });
 }
 
 export function useBenchmarkImportReceiptQuery(
   requestId: string,
+  administratorToken: string,
   enabled = true,
 ) {
   return useQuery({
-    ...benchmarkImportReceiptQueryOptions(requestId),
+    ...benchmarkImportReceiptQueryOptions(requestId, administratorToken),
     enabled,
   });
 }

@@ -4,24 +4,7 @@
  */
 
 export interface paths {
-  "/api/admin/ocr-test/session": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get Admin Ocr Test Session */
-    get: operations["admin_ocr_test_session_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/backups/export": {
+  "/api/admin/ocr/backups/export": {
     parameters: {
       query?: never;
       header?: never;
@@ -29,7 +12,7 @@ export interface paths {
       cookie?: never;
     };
     /** Export Application Backup */
-    get: operations["backups_export"];
+    get: operations["admin_ocr_backups_export"];
     put?: never;
     post?: never;
     delete?: never;
@@ -38,7 +21,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/backups/restore": {
+  "/api/admin/ocr/backups/restore": {
     parameters: {
       query?: never;
       header?: never;
@@ -48,14 +31,14 @@ export interface paths {
     get?: never;
     put?: never;
     /** Restore Backup */
-    post: operations["backups_restore"];
+    post: operations["admin_ocr_backups_restore"];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  "/api/benchmarks": {
+  "/api/admin/ocr/benchmarks": {
     parameters: {
       query?: never;
       header?: never;
@@ -63,7 +46,7 @@ export interface paths {
       cookie?: never;
     };
     /** Get Benchmark Overview */
-    get: operations["benchmarks_get"];
+    get: operations["admin_ocr_benchmarks_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -72,7 +55,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/benchmarks/export": {
+  "/api/admin/ocr/benchmarks/export": {
     parameters: {
       query?: never;
       header?: never;
@@ -80,7 +63,7 @@ export interface paths {
       cookie?: never;
     };
     /** Export Benchmark Dataset */
-    get: operations["benchmarks_export"];
+    get: operations["admin_ocr_benchmarks_export"];
     put?: never;
     post?: never;
     delete?: never;
@@ -89,7 +72,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/benchmarks/import": {
+  "/api/admin/ocr/benchmarks/import": {
     parameters: {
       query?: never;
       header?: never;
@@ -99,14 +82,14 @@ export interface paths {
     get?: never;
     put?: never;
     /** Import Benchmark Dataset */
-    post: operations["benchmarks_import"];
+    post: operations["admin_ocr_benchmarks_import"];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  "/api/benchmarks/imports/{request_id}": {
+  "/api/admin/ocr/benchmarks/imports/{request_id}": {
     parameters: {
       query?: never;
       header?: never;
@@ -114,7 +97,7 @@ export interface paths {
       cookie?: never;
     };
     /** Get Benchmark Dataset Import */
-    get: operations["benchmark_import_get"];
+    get: operations["admin_ocr_benchmark_import_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -123,7 +106,7 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  "/api/benchmarks/run": {
+  "/api/admin/ocr/benchmarks/run": {
     parameters: {
       query?: never;
       header?: never;
@@ -133,14 +116,14 @@ export interface paths {
     get?: never;
     put?: never;
     /** Run Parser Benchmark */
-    post: operations["benchmarks_run"];
+    post: operations["admin_ocr_benchmarks_run"];
     delete?: never;
     options?: never;
     head?: never;
     patch?: never;
     trace?: never;
   };
-  "/api/benchmarks/{report_id}": {
+  "/api/admin/ocr/benchmarks/{report_id}": {
     parameters: {
       query?: never;
       header?: never;
@@ -148,7 +131,146 @@ export interface paths {
       cookie?: never;
     };
     /** Get Benchmark Report */
-    get: operations["benchmark_report_get"];
+    get: operations["admin_ocr_benchmark_report_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/admin/ocr/history": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get History */
+    get: operations["admin_ocr_history_get"];
+    /** Archive Jobs */
+    put: operations["admin_ocr_history_archive"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/admin/ocr/jobs": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Processing Jobs */
+    get: operations["admin_ocr_jobs_list"];
+    put?: never;
+    /** Create Job */
+    post: operations["admin_ocr_jobs_create"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/admin/ocr/jobs/{job_id}": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Job */
+    get: operations["admin_ocr_job_get"];
+    put?: never;
+    post?: never;
+    /** Delete Job */
+    delete: operations["admin_ocr_job_delete"];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/admin/ocr/jobs/{job_id}/approve": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Approve Job */
+    post: operations["admin_ocr_job_approve"];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/admin/ocr/jobs/{job_id}/benchmark": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Set Benchmark Inclusion */
+    put: operations["admin_ocr_job_benchmark_update"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/admin/ocr/jobs/{job_id}/image": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Job Image */
+    get: operations["admin_ocr_job_image_get"];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/admin/ocr/jobs/{job_id}/metadata": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Update Job Metadata */
+    put: operations["admin_ocr_job_metadata_update"];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  "/api/admin/ocr/session": {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get Admin Ocr Test Session */
+    get: operations["admin_ocr_session_get"];
     put?: never;
     post?: never;
     delete?: never;
@@ -167,128 +289,6 @@ export interface paths {
     /** Health */
     get: operations["health_get"];
     put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/history": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get History */
-    get: operations["history_get"];
-    /** Archive Jobs */
-    put: operations["history_archive"];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/jobs": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get Processing Jobs */
-    get: operations["jobs_list"];
-    put?: never;
-    /** Create Job */
-    post: operations["jobs_create"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/jobs/{job_id}": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get Job */
-    get: operations["job_get"];
-    put?: never;
-    post?: never;
-    /** Delete Job */
-    delete: operations["job_delete"];
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/jobs/{job_id}/approve": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Approve Job */
-    post: operations["job_approve"];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/jobs/{job_id}/benchmark": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    /** Set Benchmark Inclusion */
-    put: operations["job_benchmark_update"];
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/jobs/{job_id}/image": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Get Job Image */
-    get: operations["job_image_get"];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  "/api/jobs/{job_id}/metadata": {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    /** Update Job Metadata */
-    put: operations["job_metadata_update"];
     post?: never;
     delete?: never;
     options?: never;
@@ -654,18 +654,18 @@ export interface components {
       /** Included */
       included: boolean;
     };
-    /** Body_backups_restore */
-    Body_backups_restore: {
+    /** Body_admin_ocr_backups_restore */
+    Body_admin_ocr_backups_restore: {
       /** File */
       file: string;
     };
-    /** Body_benchmarks_import */
-    Body_benchmarks_import: {
+    /** Body_admin_ocr_benchmarks_import */
+    Body_admin_ocr_benchmarks_import: {
       /** File */
       file: string;
     };
-    /** Body_jobs_create */
-    Body_jobs_create: {
+    /** Body_admin_ocr_jobs_create */
+    Body_admin_ocr_jobs_create: {
       /** File */
       file: string;
       /** Parser Layout Profile */
@@ -1097,36 +1097,7 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
-  admin_ocr_test_session_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["AdminOcrTestSession"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
-    };
-  };
-  backups_export: {
+  admin_ocr_backups_export: {
     parameters: {
       query?: never;
       header?: never;
@@ -1144,9 +1115,18 @@ export interface operations {
           "application/zip": string;
         };
       };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
     };
   };
-  backups_restore: {
+  admin_ocr_backups_restore: {
     parameters: {
       query?: never;
       header?: never;
@@ -1155,7 +1135,7 @@ export interface operations {
     };
     requestBody: {
       content: {
-        "multipart/form-data": components["schemas"]["Body_backups_restore"];
+        "multipart/form-data": components["schemas"]["Body_admin_ocr_backups_restore"];
       };
     };
     responses: {
@@ -1179,7 +1159,7 @@ export interface operations {
       };
     };
   };
-  benchmarks_get: {
+  admin_ocr_benchmarks_get: {
     parameters: {
       query?: {
         parser_provider?: string | null;
@@ -1211,7 +1191,7 @@ export interface operations {
       };
     };
   };
-  benchmarks_export: {
+  admin_ocr_benchmarks_export: {
     parameters: {
       query?: {
         parser_provider?: string | null;
@@ -1243,7 +1223,7 @@ export interface operations {
       };
     };
   };
-  benchmarks_import: {
+  admin_ocr_benchmarks_import: {
     parameters: {
       query?: never;
       header?: {
@@ -1254,7 +1234,7 @@ export interface operations {
     };
     requestBody: {
       content: {
-        "multipart/form-data": components["schemas"]["Body_benchmarks_import"];
+        "multipart/form-data": components["schemas"]["Body_admin_ocr_benchmarks_import"];
       };
     };
     responses: {
@@ -1278,7 +1258,7 @@ export interface operations {
       };
     };
   };
-  benchmark_import_get: {
+  admin_ocr_benchmark_import_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -1309,7 +1289,7 @@ export interface operations {
       };
     };
   };
-  benchmarks_run: {
+  admin_ocr_benchmarks_run: {
     parameters: {
       query?: never;
       header?: never;
@@ -1342,7 +1322,7 @@ export interface operations {
       };
     };
   };
-  benchmark_report_get: {
+  admin_ocr_benchmark_report_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -1373,27 +1353,7 @@ export interface operations {
       };
     };
   };
-  health_get: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      /** @description Successful Response */
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HealthResponse"];
-        };
-      };
-    };
-  };
-  history_get: {
+  admin_ocr_history_get: {
     parameters: {
       query?: {
         limit?: number;
@@ -1426,7 +1386,7 @@ export interface operations {
       };
     };
   };
-  history_archive: {
+  admin_ocr_history_archive: {
     parameters: {
       query?: {
         limit?: number;
@@ -1461,7 +1421,7 @@ export interface operations {
       };
     };
   };
-  jobs_list: {
+  admin_ocr_jobs_list: {
     parameters: {
       query?: {
         limit?: number;
@@ -1493,7 +1453,7 @@ export interface operations {
       };
     };
   };
-  jobs_create: {
+  admin_ocr_jobs_create: {
     parameters: {
       query?: never;
       header?: never;
@@ -1502,7 +1462,7 @@ export interface operations {
     };
     requestBody: {
       content: {
-        "multipart/form-data": components["schemas"]["Body_jobs_create"];
+        "multipart/form-data": components["schemas"]["Body_admin_ocr_jobs_create"];
       };
     };
     responses: {
@@ -1526,7 +1486,7 @@ export interface operations {
       };
     };
   };
-  job_get: {
+  admin_ocr_job_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -1557,7 +1517,7 @@ export interface operations {
       };
     };
   };
-  job_delete: {
+  admin_ocr_job_delete: {
     parameters: {
       query?: never;
       header?: never;
@@ -1586,7 +1546,7 @@ export interface operations {
       };
     };
   };
-  job_approve: {
+  admin_ocr_job_approve: {
     parameters: {
       query?: never;
       header?: never;
@@ -1621,7 +1581,7 @@ export interface operations {
       };
     };
   };
-  job_benchmark_update: {
+  admin_ocr_job_benchmark_update: {
     parameters: {
       query?: never;
       header?: never;
@@ -1656,7 +1616,7 @@ export interface operations {
       };
     };
   };
-  job_image_get: {
+  admin_ocr_job_image_get: {
     parameters: {
       query?: never;
       header?: never;
@@ -1690,7 +1650,7 @@ export interface operations {
       };
     };
   };
-  job_metadata_update: {
+  admin_ocr_job_metadata_update: {
     parameters: {
       query?: never;
       header?: never;
@@ -1721,6 +1681,55 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  admin_ocr_session_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["AdminOcrTestSession"];
+        };
+      };
+      /** @description Validation Error */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HTTPValidationError"];
+        };
+      };
+    };
+  };
+  health_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Successful Response */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/json": components["schemas"]["HealthResponse"];
         };
       };
     };

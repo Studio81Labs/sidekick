@@ -7,7 +7,6 @@ import { DialogFrame } from "../../../shared/components/DialogFrame";
 import { DialogHeader } from "../../../shared/components/DialogHeader";
 import {
   ButtonControl,
-  DownloadLinkControl,
   FileInputControl,
 } from "../../../shared/components/FormControls";
 import { McpAccessPanel } from "./McpAccessPanel";
@@ -20,11 +19,11 @@ export interface InfoProviderSummary {
 
 export interface InfoDialogProps {
   administrativeUnlocked: boolean;
-  backupDownloadUrl: string;
   backupRestoring: boolean;
   busy: boolean;
   mcpCloseBlocked: boolean;
   onClose: () => void;
+  onDownloadBackup: () => void;
   onMcpCloseBlockedChange: (blocked: boolean) => void;
   onRestoreBackup: (file: File) => void;
   providers: InfoProviderSummary | null;
@@ -33,11 +32,11 @@ export interface InfoDialogProps {
 
 export function InfoDialog({
   administrativeUnlocked,
-  backupDownloadUrl,
   backupRestoring,
   busy,
   mcpCloseBlocked,
   onClose,
+  onDownloadBackup,
   onMcpCloseBlockedChange,
   onRestoreBackup,
   providers,
@@ -53,7 +52,7 @@ export function InfoDialog({
     <DialogFrame className="info-dialog" titleId="info-dialog-title">
       <DialogHeader
         titleId="info-dialog-title"
-        title="About Poker Training Analyzer"
+        title="About Poker Hero"
         subtitle="Administrator OCR test console"
         closeLabel="Close app information"
         closeDisabled={closeDisabled}
@@ -117,16 +116,15 @@ export function InfoDialog({
             one portable ZIP.
           </p>
           <div className="data-recovery-actions">
-            <DownloadLinkControl
+            <ButtonControl
               className="secondary-button"
-              href={backupDownloadUrl}
-              download
+              onClick={onDownloadBackup}
               aria-label="Download application backup"
               disabled={busy}
             >
               <Download size={14} aria-hidden="true" />
               Download backup
-            </DownloadLinkControl>
+            </ButtonControl>
             <ButtonControl
               variant="secondary"
               onClick={() => backupInputRef.current?.click()}

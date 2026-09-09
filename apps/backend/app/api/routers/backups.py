@@ -17,12 +17,19 @@ def create_backups_router(runtime: BackupService) -> APIRouter:
     router = APIRouter()
 
     @router.get(
-        "/api/backups/export",
-        operation_id="backups_export",
+        "/api/admin/ocr/backups/export",
+        operation_id="admin_ocr_backups_export",
         response_class=StreamingResponse,
         responses={"200": {"content": ZIP_RESPONSE_CONTENT}},
     )
-    async def export_application_backup() -> StreamingResponse:
+    async def export_application_backup(
+        authorization: str | None = Header(
+            default=None,
+            alias="Authorization",
+            include_in_schema=False,
+        ),
+    ) -> StreamingResponse:
+        require_administrator(runtime.authorize_administrator(authorization))
         try:
             export = await runtime.export_backup()
         except ApplicationBackupTransportError as exc:
@@ -39,8 +46,8 @@ def create_backups_router(runtime: BackupService) -> APIRouter:
         )
 
     @router.post(
-        "/api/backups/restore",
-        operation_id="backups_restore",
+        "/api/admin/ocr/backups/restore",
+        operation_id="admin_ocr_backups_restore",
         response_model=ApplicationBackupRestoreResult,
     )
     async def restore_backup(

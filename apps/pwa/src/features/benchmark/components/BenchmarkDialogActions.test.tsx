@@ -22,6 +22,7 @@ function actionProps(
     includedCases: 3,
     onChooseDatasetImport: vi.fn(),
     onClose: vi.fn(),
+    onDatasetExport: vi.fn(),
     onDatasetImport: vi.fn(),
     onRun: vi.fn(),
     operationsLocked: false,

@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import asyncio
 import json
-import logging
 from pathlib import Path
 
 import pytest
@@ -178,10 +177,6 @@ def test_hosted_mcp_requires_an_environment_token(tmp_path: Path) -> None:
         assert tools.status_code == 200
         assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
             "get_environment_status",
-            "list_processing_jobs",
-            "get_job",
-            "search_history",
-            "list_benchmarks",
         }
 
         revoked = client.delete(
@@ -229,7 +224,7 @@ def test_hosted_mcp_accepts_worker_canonical_ipv6_authority(
         assert initialized.status_code == 200
 
 
-def test_hosted_mcp_requires_write_scope_for_approval(tmp_path: Path) -> None:
+def test_hosted_mcp_never_exposes_operator_write_tools(tmp_path: Path) -> None:
     settings = Settings(
         data_dir=tmp_path,
         deployment_environment="staging",
@@ -254,79 +249,7 @@ def test_hosted_mcp_requires_write_scope_for_approval(tmp_path: Path) -> None:
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         ).json()["result"]["tools"]
         names = {tool["name"] for tool in tools}
-        assert "approve_hand_state" in names
-        assert "submit_screenshot" not in names
-
-        denied = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "approve_hand_state",
-                    "arguments": {"job_id": "0" * 32, "state": {}},
-                },
-            },
-        )
-        assert denied.status_code == 200
-        assert denied.json()["result"]["isError"] is True
-        assert "does not grant write access" in denied.json()["result"]["content"][0]["text"]
-
-
-def test_hosted_mcp_preserves_internal_api_failure_request_id(
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    settings = Settings(
-        data_dir=tmp_path,
-        deployment_environment="staging",
-        mcp_enabled=True,
-        mcp_public_url="https://poker.test/mcp",
-        api_rate_limit_enabled=False,
-    )
-    with TestClient(create_app(settings), base_url="https://poker.test") as client:
-        token = client.post(
-            "/api/mcp/principals",
-            json={"name": "Codex staging", "scopes": ["read"], "expires_at": None},
-        ).json()["token"]
-        with caplog.at_level(logging.INFO, logger="poker.access"):
-            failed = client.post(
-                "/mcp",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json, text/event-stream",
-                },
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "get_job",
-                        "arguments": {"job_id": "0" * 32},
-                    },
-                },
-            )
-
-    assert failed.status_code == 200
-    assert failed.json()["result"]["isError"] is True
-    tool_error_text = failed.json()["result"]["content"][0]["text"]
-    tool_error = json.loads(tool_error_text[tool_error_text.index("{") :])
-    assert tool_error["status_code"] == 404
-    assert tool_error["request_id"]
-    access_events = [
-        json.loads(record.message)
-        for record in caplog.records
-        if record.name == "poker.access"
-    ]
-    internal_failure = next(
-        event
-        for event in access_events
-        if event["path"] == f"/api/jobs/{'0' * 32}"
-    )
-    assert internal_failure["status_code"] == 404
-    assert internal_failure["request_id"] == tool_error["request_id"]
+        assert names == {"get_environment_status"}
 
 
 def test_hosted_mcp_rate_limits_each_principal_before_recording_usage(

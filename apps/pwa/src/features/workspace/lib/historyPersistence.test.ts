@@ -71,15 +71,33 @@ describe("history persistence", () => {
       });
 
     await expect(
-      getHistorySearchExtent(queryClient, "river", 2),
+      getHistorySearchExtent(queryClient, "administrator-token", "river", 2),
     ).resolves.toEqual({
       total: 2,
       jobs: [firstJob, secondJob],
       snapshot_version: "stable",
     });
-    expect(getHistory).toHaveBeenNthCalledWith(1, 0, "river", 2);
-    expect(getHistory).toHaveBeenNthCalledWith(2, 1, "river", 1);
-    expect(getHistory).toHaveBeenNthCalledWith(3, 0, "river", 2);
+    expect(getHistory).toHaveBeenNthCalledWith(
+      1,
+      "administrator-token",
+      0,
+      "river",
+      2,
+    );
+    expect(getHistory).toHaveBeenNthCalledWith(
+      2,
+      "administrator-token",
+      1,
+      "river",
+      1,
+    );
+    expect(getHistory).toHaveBeenNthCalledWith(
+      3,
+      "administrator-token",
+      0,
+      "river",
+      2,
+    );
     expect(
       queryClient.getQueryData(historyQueryKeys.page(0, "river", 2)),
     ).toEqual({

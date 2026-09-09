@@ -24,6 +24,7 @@ function dialogProps(
     loading: false,
     onClose: vi.fn(),
     onChooseDatasetImport: vi.fn(),
+    onDatasetExport: vi.fn(),
     onDatasetImport: vi.fn(),
     onReviewCase: vi.fn(),
     onRun: vi.fn(),

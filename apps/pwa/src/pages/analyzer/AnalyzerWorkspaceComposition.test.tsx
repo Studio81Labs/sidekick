@@ -20,14 +20,6 @@ vi.mock("../../features/capture/components/AdministrativeTestBanner", () => ({
 vi.mock("../../features/capture/components/ImportFirstNotice", () => ({
   ImportFirstNotice: () => <div>Import-first notice slot</div>,
 }));
-vi.mock(
-  "../../features/admin-ocr-test/components/AdministrativeAccessDialog",
-  () => ({
-    AdministrativeAccessDialog: () => (
-      <div role="dialog">Administrator tools slot</div>
-    ),
-  }),
-);
 vi.mock("../../features/queue/components/ScreenshotQueuePanel", () => ({
   ScreenshotQueuePanel: () => <div>Queue slot</div>,
 }));
@@ -64,7 +56,6 @@ function mockView(
   vi.mocked(useAnalyzerWorkspaceController).mockReturnValue({
     administrativeBanner: {},
     dialogs: {
-      administrativeAccess: null,
       benchmark: null,
       help: { onClose: vi.fn() },
       info: null,
@@ -86,8 +77,10 @@ function mockView(
 function renderComposition() {
   render(
     <AnalyzerWorkspaceComposition
+      administratorToken="administrator-token"
       mutationOwnerId="test-owner"
       navigation={navigation}
+      onLockAdministrator={vi.fn()}
       route={{ jobId: null, surface: "workspace" }}
     />,
   );
@@ -105,8 +98,10 @@ describe("AnalyzerWorkspaceComposition", () => {
     expect(screen.getByText("Review slot")).toBeInTheDocument();
     expect(screen.getByRole("dialog")).toHaveTextContent("Help slot");
     expect(useAnalyzerWorkspaceController).toHaveBeenCalledWith({
+      administratorToken: "administrator-token",
       mutationOwnerId: "test-owner",
       navigation,
+      onLockAdministrator: expect.any(Function),
       route: { jobId: null, surface: "workspace" },
     });
   });
@@ -131,14 +126,5 @@ describe("AnalyzerWorkspaceComposition", () => {
     expect(
       screen.queryByText("Import-first notice slot"),
     ).not.toBeInTheDocument();
-  });
-
-  it("hosts the administrator tools dialog when the controller opens it", () => {
-    mockView({}, { administrativeAccess: {}, help: null });
-    renderComposition();
-
-    expect(screen.getByRole("dialog")).toHaveTextContent(
-      "Administrator tools slot",
-    );
   });
 });

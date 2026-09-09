@@ -50,7 +50,7 @@ describe("upload screenshot command", () => {
     expect(queryClient.getQueryState(processingKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(historyKey)?.isInvalidated).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
       expect.objectContaining({ signal: controller.signal }),
     );
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];

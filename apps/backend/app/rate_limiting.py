@@ -25,14 +25,14 @@ RATE_LIMIT_WINDOW_SECONDS = 60.0
 RATE_LIMIT_MAX_BUCKETS = 4096
 CONNECTING_IP_HEADER = "CF-Connecting-IP"
 _BENCHMARK_IMPORT_RECOVERY_PATH = re.compile(
-    r"^/api/benchmarks/imports/[^/]+$"
+    r"^/api/admin/ocr/benchmarks/imports/[^/]+$"
 )
 _DATA_TRANSFER_ROUTES = frozenset(
     {
-        ("GET", "/api/backups/export"),
-        ("POST", "/api/backups/restore"),
-        ("GET", "/api/benchmarks/export"),
-        ("POST", "/api/benchmarks/import"),
+        ("GET", "/api/admin/ocr/backups/export"),
+        ("POST", "/api/admin/ocr/backups/restore"),
+        ("GET", "/api/admin/ocr/benchmarks/export"),
+        ("POST", "/api/admin/ocr/benchmarks/import"),
     }
 )
 
@@ -137,12 +137,12 @@ class ApiRateLimiter:
 
 def rate_limit_category(method: str, path: str) -> RateLimitCategory | None:
     normalized_method = method.upper()
-    if normalized_method == "POST" and path == "/api/jobs":
+    if normalized_method == "POST" and path == "/api/admin/ocr/jobs":
         return "uploads"
-    if normalized_method == "GET" and path == "/api/admin/ocr-test/session":
+    if normalized_method == "GET" and path == "/api/admin/ocr/session":
         # Credential probing shares the upload budget it guards.
         return "uploads"
-    if normalized_method == "POST" and path == "/api/benchmarks/run":
+    if normalized_method == "POST" and path == "/api/admin/ocr/benchmarks/run":
         return "benchmarks"
     if (
         normalized_method == "GET"

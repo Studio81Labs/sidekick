@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { components } from "@poker-hero/openapi-client";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
 import {
-  benchmarkDatasetUrl,
   getBenchmarkDatasetImport,
   getBenchmarkOverview,
   getBenchmarkReport,
@@ -27,6 +26,7 @@ const overviewResponse = {} as BenchmarkOverviewResponse;
 const reportResponse = {} as BenchmarkReportResponse;
 const receiptResponse = {} as BenchmarkDatasetImportReceiptResponse;
 const importResultResponse = {} as BenchmarkDatasetImportResultResponse;
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 afterEach(resetApiMocks);
 
@@ -42,36 +42,28 @@ describe("benchmark API adapter", () => {
     );
   });
 
-  it("builds default and pipeline-scoped dataset export URLs", () => {
-    expect(benchmarkDatasetUrl()).toBe(
-      "http://localhost:8000/api/benchmarks/export",
-    );
-    expect(
-      benchmarkDatasetUrl({
-        parser_provider: "llm_vision",
-        parser_layout_profile: "pokerstars",
-      }),
-    ).toBe(
-      "http://localhost:8000/api/benchmarks/export?parser_provider=llm_vision&parser_layout_profile=pokerstars",
-    );
-  });
-
   it("runs only the selected parser and layout", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(jsonResponse({ id: "benchmark-1" }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await runParserBenchmark({
-      parser_provider: "ocr_cv",
-      parser_layout_profile: "fortuna_nations",
-    });
+    await runParserBenchmark(
+      {
+        parser_provider: "ocr_cv",
+        parser_layout_profile: "fortuna_nations",
+      },
+      ADMINISTRATOR_TOKEN,
+    );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/benchmarks/run",
+      "http://localhost:8000/api/admin/ocr/benchmarks/run",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Authorization: "Bearer administrator-token",
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({
           parser_provider: "ocr_cv",
           parser_layout_profile: "fortuna_nations",
@@ -87,14 +79,20 @@ describe("benchmark API adapter", () => {
       .mockResolvedValueOnce(jsonResponse(overviewResponse));
     vi.stubGlobal("fetch", fetchMock);
 
-    await getBenchmarkOverview({
-      parser_provider: "ocr_cv",
-      parser_layout_profile: "fortuna_nations",
-    });
+    await getBenchmarkOverview(
+      {
+        parser_provider: "ocr_cv",
+        parser_layout_profile: "fortuna_nations",
+      },
+      ADMINISTRATOR_TOKEN,
+    );
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna_nations",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna_nations",
+      {
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      },
     );
   });
 
@@ -105,18 +103,24 @@ describe("benchmark API adapter", () => {
       .mockResolvedValueOnce(jsonResponse(receiptResponse));
     vi.stubGlobal("fetch", fetchMock);
 
-    await getBenchmarkReport("report-1");
-    await getBenchmarkDatasetImport("request/1");
+    await getBenchmarkReport("report-1", ADMINISTRATOR_TOKEN);
+    await getBenchmarkDatasetImport("request/1", ADMINISTRATOR_TOKEN);
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "http://localhost:8000/api/benchmarks/report-1",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/benchmarks/report-1",
+      {
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      },
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:8000/api/benchmarks/imports/request%2F1",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/benchmarks/imports/request%2F1",
+      {
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      },
     );
   });
 
@@ -126,14 +130,21 @@ describe("benchmark API adapter", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
     vi.stubGlobal("fetch", fetchMock);
 
-    const result = await setBenchmarkInclusion(jobId, true);
+    const result = await setBenchmarkInclusion(
+      jobId,
+      true,
+      ADMINISTRATOR_TOKEN,
+    );
 
     expect(result).toEqual(jobResponse);
     expect(fetchMock).toHaveBeenCalledWith(
-      `http://localhost:8000/api/jobs/${jobId}/benchmark`,
+      `http://localhost:8000/api/admin/ocr/jobs/${jobId}/benchmark`,
       {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Authorization: "Bearer administrator-token",
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ included: true }),
         credentials: "include",
       },
@@ -158,7 +169,7 @@ describe("benchmark API adapter", () => {
     ).resolves.toEqual(importResult);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/benchmarks/import",
+      "http://localhost:8000/api/admin/ocr/benchmarks/import",
       expect.objectContaining({
         method: "POST",
         headers: {

@@ -4,10 +4,10 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { DetectedState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
-import AnalyzerPage from "../AnalyzerPage";
 import type { AnalyzerRouteNavigation } from "../analyzerRouteState";
 import {
   AnalyzerTestApp as App,
+  VerifiedAnalyzerPage,
   approvedJob,
   benchmarkOverviewForJob,
   canonicalState,
@@ -178,8 +178,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(await screen.findByDisplayValue("7d Ah")).toBeInTheDocument();
@@ -265,8 +265,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(
@@ -357,8 +357,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(
@@ -438,10 +438,10 @@ describe("Analyzer workspace recovery", () => {
     const pendingQueue = deferredResponse();
     fetchMock().mockImplementation((input) => {
       const url = String(input);
-      if (url.endsWith(`/api/jobs/${removedJob.id}`)) {
+      if (url.endsWith(`/api/admin/ocr/jobs/${removedJob.id}`)) {
         return Promise.resolve(jsonResponse(removedJob));
       }
-      if (url.endsWith("/api/jobs")) {
+      if (url.endsWith("/api/admin/ocr/jobs")) {
         return pendingQueue.promise;
       }
       return Promise.resolve(
@@ -459,7 +459,7 @@ describe("Analyzer workspace recovery", () => {
     };
     const view = render(
       <App>
-        <AnalyzerPage
+        <VerifiedAnalyzerPage
           navigation={navigation}
           route={{ jobId: removedJob.id, surface: "job" }}
         />
@@ -469,7 +469,7 @@ describe("Analyzer workspace recovery", () => {
     expect(await screen.findByDisplayValue("Ah Kd")).toBeInTheDocument();
     view.rerender(
       <App>
-        <AnalyzerPage
+        <VerifiedAnalyzerPage
           navigation={navigation}
           route={{ jobId: null, surface: "benchmarks" }}
         />
@@ -516,7 +516,7 @@ describe("Analyzer workspace recovery", () => {
     const pendingJob = deferredResponse();
     const pendingQueue = deferredResponse();
     fetchMock().mockImplementation((input) =>
-      String(input).endsWith("/api/jobs")
+      String(input).endsWith("/api/admin/ocr/jobs")
         ? pendingQueue.promise
         : pendingJob.promise,
     );
@@ -529,7 +529,7 @@ describe("Analyzer workspace recovery", () => {
     };
     const view = render(
       <App>
-        <AnalyzerPage
+        <VerifiedAnalyzerPage
           navigation={navigation}
           route={{ jobId: cachedJob.id, surface: "job" }}
         />
@@ -539,7 +539,7 @@ describe("Analyzer workspace recovery", () => {
 
     view.rerender(
       <App>
-        <AnalyzerPage
+        <VerifiedAnalyzerPage
           navigation={navigation}
           route={{ jobId: requestedJob.id, surface: "job" }}
         />
@@ -623,7 +623,7 @@ describe("Analyzer workspace recovery", () => {
       window.sessionStorage.getItem("poker-training-processing-synced"),
     ).toBeNull();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -855,9 +855,10 @@ describe("Analyzer workspace recovery", () => {
         name: /pristine-import\.png/,
       }),
     ).not.toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledWith("http://localhost:8000/api/jobs", {
-      credentials: "include",
-    });
+    expect(fetchMock()).toHaveBeenCalledWith(
+      "http://localhost:8000/api/admin/ocr/jobs",
+      expect.objectContaining({ credentials: "include" }),
+    );
   });
 
   it("reconciles malformed processing cache entries from the backend", async () => {
@@ -878,8 +879,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     await waitFor(() =>
@@ -916,8 +917,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(
@@ -976,8 +977,8 @@ describe("Analyzer workspace recovery", () => {
 
       await waitFor(() =>
         expect(fetchMock()).toHaveBeenCalledWith(
-          "http://localhost:8000/api/jobs",
-          { credentials: "include" },
+          "http://localhost:8000/api/admin/ocr/jobs",
+          expect.objectContaining({ credentials: "include" }),
         ),
       );
       expect(
@@ -1029,9 +1030,10 @@ describe("Analyzer workspace recovery", () => {
       }),
     ).toBeInTheDocument();
     expect(screen.getByDisplayValue("Ah Kd")).toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledWith("http://localhost:8000/api/jobs", {
-      credentials: "include",
-    });
+    expect(fetchMock()).toHaveBeenCalledWith(
+      "http://localhost:8000/api/admin/ocr/jobs",
+      expect.objectContaining({ credentials: "include" }),
+    );
     expect(
       JSON.parse(
         String(window.localStorage.getItem("poker-training-processing-v1")),
@@ -1069,9 +1071,10 @@ describe("Analyzer workspace recovery", () => {
     });
     expect(within(restoredItem).getByText("parsed")).toBeInTheDocument();
     expect(within(restoredItem).getByText("flop")).toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledWith("http://localhost:8000/api/jobs", {
-      credentials: "include",
-    });
+    expect(fetchMock()).toHaveBeenCalledWith(
+      "http://localhost:8000/api/admin/ocr/jobs",
+      expect.objectContaining({ credentials: "include" }),
+    );
   });
 
   it("keeps unsaved form edits out of the processing cache", async () => {
@@ -1131,9 +1134,10 @@ describe("Analyzer workspace recovery", () => {
         name: "Open screenshot 1: persisted-table.png",
       }),
     ).toBeInTheDocument();
-    expect(fetchMock()).toHaveBeenCalledWith("http://localhost:8000/api/jobs", {
-      credentials: "include",
-    });
+    expect(fetchMock()).toHaveBeenCalledWith(
+      "http://localhost:8000/api/admin/ocr/jobs",
+      expect.objectContaining({ credentials: "include" }),
+    );
     expect(
       JSON.parse(
         String(window.localStorage.getItem("poker-training-processing-v1")),
@@ -1217,15 +1221,15 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     screen.getByRole("button", { name: "Approve state" }).click();
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         2,
-        `http://localhost:8000/api/jobs/${cachedJob.id}/approve`,
+        `http://localhost:8000/api/admin/ocr/jobs/${cachedJob.id}/approve`,
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -1294,15 +1298,15 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     await user.click(screen.getByRole("button", { name: "Approve state" }));
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}/approve`,
+        `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -1331,9 +1335,9 @@ describe("Analyzer workspace recovery", () => {
       screen.getByRole("button", { name: "Approve state" }),
     ).toBeDisabled();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/jobs",
-      `http://localhost:8000/api/jobs/${jobId}/approve`,
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
+      `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -1376,8 +1380,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/history",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/history",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     await user.click(
@@ -1389,7 +1393,7 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}/approve`,
+        `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -1423,9 +1427,9 @@ describe("Analyzer workspace recovery", () => {
       screen.getByRole("button", { name: "Approve state" }),
     ).toBeDisabled();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/history",
-      `http://localhost:8000/api/jobs/${jobId}/approve`,
-      "http://localhost:8000/api/history",
+      "http://localhost:8000/api/admin/ocr/history",
+      `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
+      "http://localhost:8000/api/admin/ocr/history",
     ]);
   });
 
@@ -1464,7 +1468,7 @@ describe("Analyzer workspace recovery", () => {
     await user.click(screen.getByRole("button", { name: "Approve state" }));
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}/approve`,
+        `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -1492,9 +1496,9 @@ describe("Analyzer workspace recovery", () => {
       window.sessionStorage.getItem("poker-training-processing-synced"),
     ).toBe("true");
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${jobId}/approve`,
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/jobs",
+      `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -1542,7 +1546,7 @@ describe("Analyzer workspace recovery", () => {
     await user.click(screen.getByRole("button", { name: "Approve state" }));
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}/approve`,
+        `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -1727,7 +1731,7 @@ describe("Analyzer workspace recovery", () => {
       window.sessionStorage.getItem("poker-training-processing-synced"),
     ).toBeNull();
     expect(fetchMock().mock.calls[0]?.[0]).toBe(
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
     );
   });
 
@@ -1771,7 +1775,7 @@ describe("Analyzer workspace recovery", () => {
       ),
     ).toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
     expect(
       JSON.parse(
@@ -1845,7 +1849,7 @@ describe("Analyzer workspace recovery", () => {
     await user.click(screen.getByRole("button", { name: "Approve state" }));
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${jobId}/approve`,
+        `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -1866,9 +1870,9 @@ describe("Analyzer workspace recovery", () => {
       "true",
     );
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${jobId}/approve`,
-      "http://localhost:8000/api/history",
-      `http://localhost:8000/api/jobs/${jobId}`,
+      `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
+      "http://localhost:8000/api/admin/ocr/history",
+      `http://localhost:8000/api/admin/ocr/jobs/${jobId}`,
     ]);
   });
 
@@ -1935,9 +1939,9 @@ describe("Analyzer workspace recovery", () => {
       screen.getByRole("button", { name: "Approve state" }),
     ).toBeDisabled();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${parsedJob.id}/approve`,
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/jobs",
+      `http://localhost:8000/api/admin/ocr/jobs/${parsedJob.id}/approve`,
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -2014,9 +2018,9 @@ describe("Analyzer workspace recovery", () => {
       window.sessionStorage.getItem("poker-training-processing-synced"),
     ).toBe("true");
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -2230,12 +2234,12 @@ describe("Analyzer workspace recovery", () => {
     let historyReads = 0;
     fetchMock().mockImplementation((url, init) => {
       if (
-        url === "http://localhost:8000/api/history" &&
+        url === "http://localhost:8000/api/admin/ocr/history" &&
         init?.method === "PUT"
       ) {
         return pendingArchive.promise;
       }
-      if (url === "http://localhost:8000/api/jobs") {
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
         processingReads += 1;
         return Promise.resolve(
           processingQueueResponse(
@@ -2244,7 +2248,7 @@ describe("Analyzer workspace recovery", () => {
           ),
         );
       }
-      if (url === "http://localhost:8000/api/history") {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
         historyReads += 1;
         return Promise.resolve(
           jsonResponse({
@@ -2262,7 +2266,7 @@ describe("Analyzer workspace recovery", () => {
     await user.click(screen.getByRole("button", { name: "Clear reviewed" }));
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/history",
+        "http://localhost:8000/api/admin/ocr/history",
         expect.objectContaining({ method: "PUT" }),
       ),
     );
@@ -2353,7 +2357,7 @@ describe("Analyzer workspace recovery", () => {
     let processingReads = 0;
     let benchmarkReads = 0;
     fetchMock().mockImplementation((url, init) => {
-      if (url === "http://localhost:8000/api/benchmarks") {
+      if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
         return Promise.resolve(
           jsonResponse(
             benchmarkOverviewForJob(
@@ -2363,7 +2367,9 @@ describe("Analyzer workspace recovery", () => {
           ),
         );
       }
-      if (url === `http://localhost:8000/api/jobs/${benchmarkJobId}`) {
+      if (
+        url === `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}`
+      ) {
         benchmarkReads += 1;
         return Promise.resolve(
           jsonResponse(
@@ -2372,12 +2378,12 @@ describe("Analyzer workspace recovery", () => {
         );
       }
       if (
-        url === "http://localhost:8000/api/history" &&
+        url === "http://localhost:8000/api/admin/ocr/history" &&
         init?.method === "PUT"
       ) {
         return pendingArchive.promise;
       }
-      if (url === "http://localhost:8000/api/jobs") {
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
         processingReads += 1;
         return Promise.resolve(
           processingQueueResponse(
@@ -2386,7 +2392,7 @@ describe("Analyzer workspace recovery", () => {
           ),
         );
       }
-      if (url === "http://localhost:8000/api/history") {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
         return Promise.resolve(
           jsonResponse({
             total: archiveCommitted ? 2 : 0,
@@ -2417,7 +2423,7 @@ describe("Analyzer workspace recovery", () => {
     await user.click(screen.getByRole("button", { name: "Clear reviewed" }));
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/history",
+        "http://localhost:8000/api/admin/ocr/history",
         expect.objectContaining({ method: "PUT" }),
       ),
     );
@@ -2528,8 +2534,8 @@ describe("Analyzer workspace recovery", () => {
 
     expect(await screen.findByDisplayValue("20")).toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${jobId}/approve`,
-      `http://localhost:8000/api/jobs/${jobId}`,
+      `http://localhost:8000/api/admin/ocr/jobs/${jobId}/approve`,
+      `http://localhost:8000/api/admin/ocr/jobs/${jobId}`,
     ]);
   });
 
@@ -2561,7 +2567,7 @@ describe("Analyzer workspace recovery", () => {
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
+        "http://localhost:8000/api/admin/ocr/jobs",
         expect.anything(),
       ),
     );
@@ -2731,8 +2737,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     await user.click(screen.getByRole("button", { name: "Clear reviewed" }));
@@ -2756,8 +2762,8 @@ describe("Analyzer workspace recovery", () => {
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         3,
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(
@@ -2812,8 +2818,8 @@ describe("Analyzer workspace recovery", () => {
       }),
     ).toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/jobs?offset=100",
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs?offset=100",
     ]);
     expect(
       JSON.parse(
@@ -2855,8 +2861,8 @@ describe("Analyzer workspace recovery", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     const approveButton = screen.getByRole("button", { name: "Approve state" });
@@ -2948,8 +2954,8 @@ describe("Analyzer workspace recovery", () => {
 
       await waitFor(() =>
         expect(fetchMock()).toHaveBeenCalledWith(
-          "http://localhost:8000/api/jobs",
-          { credentials: "include" },
+          "http://localhost:8000/api/admin/ocr/jobs",
+          expect.objectContaining({ credentials: "include" }),
         ),
       );
       await unlockAdministrativeAccess(user);

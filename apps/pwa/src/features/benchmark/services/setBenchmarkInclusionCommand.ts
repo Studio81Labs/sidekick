@@ -9,6 +9,7 @@ import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 
 export type SetBenchmarkInclusionCommand = BenchmarkInclusionUpdate & {
+  administratorToken: string;
   jobId: string;
 };
 
@@ -16,7 +17,11 @@ export async function setBenchmarkInclusionCommand(
   queryClient: QueryClient,
   command: SetBenchmarkInclusionCommand,
 ) {
-  const job = await setBenchmarkInclusion(command.jobId, command.included);
+  const job = await setBenchmarkInclusion(
+    command.jobId,
+    command.included,
+    command.administratorToken,
+  );
   const cache = {
     updated: jobQueryKeys.detail(job.id),
     invalidated: [

@@ -62,9 +62,7 @@ def build_hosted_mcp_runtime(
     gateway_settings = McpGatewaySettings(
         environment=environment,
         api_base_url=public_origin,
-        allow_writes=settings.mcp_allow_writes,
         request_timeout_seconds=settings.external_request_timeout_seconds,
-        api_proxy_secret=settings.proxy_shared_secret,
     )
     client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=api_app),

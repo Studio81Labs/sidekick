@@ -8,6 +8,7 @@ import {
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 
 export type UpdateScreenshotMetadataCommand = {
+  administratorToken: string;
   jobId: string;
   metadata: JobMetadataUpdate;
 };
@@ -16,7 +17,11 @@ export async function updateScreenshotMetadataCommand(
   queryClient: QueryClient,
   command: UpdateScreenshotMetadataCommand,
 ) {
-  const job = await updateJobMetadata(command.jobId, command.metadata);
+  const job = await updateJobMetadata(
+    command.jobId,
+    command.metadata,
+    command.administratorToken,
+  );
   const cache = {
     updated: jobQueryKeys.detail(job.id),
     invalidated: [jobQueryKeys.processing(), historyQueryKeys.all] as const,

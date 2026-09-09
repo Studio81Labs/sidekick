@@ -23,11 +23,11 @@ function dialogProps(
 ): InfoDialogProps {
   return {
     administrativeUnlocked: true,
-    backupDownloadUrl: "http://localhost:8000/api/backups/export",
     backupRestoring: false,
     busy: false,
     mcpCloseBlocked: false,
     onClose: vi.fn(),
+    onDownloadBackup: vi.fn(),
     onMcpCloseBlockedChange: vi.fn(),
     onRestoreBackup: vi.fn(),
     providers: {
@@ -45,7 +45,7 @@ describe("InfoDialog", () => {
     const props = dialogProps();
     render(<InfoDialog {...props} />);
     const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+      name: "About Poker Hero",
     });
 
     expect(
@@ -65,10 +65,15 @@ describe("InfoDialog", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole("link", {
+      within(dialog).getByRole("button", {
         name: "Download application backup",
       }),
-    ).toHaveAttribute("href", props.backupDownloadUrl);
+    ).toBeEnabled();
+    await userEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Download application backup",
+      }),
+    );
 
     const backup = new File(["backup"], "poker-hero-backup.zip", {
       type: "application/zip",
@@ -84,6 +89,7 @@ describe("InfoDialog", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Done" }));
 
     expect(props.onRestoreBackup).toHaveBeenCalledWith(backup);
+    expect(props.onDownloadBackup).toHaveBeenCalledOnce();
     expect(input).toHaveValue("");
     expect(props.onMcpCloseBlockedChange).toHaveBeenCalledWith(true);
     expect(props.onClose).toHaveBeenCalledTimes(2);
@@ -105,8 +111,8 @@ describe("InfoDialog", () => {
       screen.getByText("Unlock administrator tools to restore a backup."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Download application backup" }),
-    ).toHaveAttribute("aria-disabled", "false");
+      screen.getByRole("button", { name: "Download application backup" }),
+    ).toBeEnabled();
   });
 
   it("distinguishes loading from unavailable provider details", () => {
@@ -150,8 +156,8 @@ describe("InfoDialog", () => {
       screen.getByRole("button", { name: "Restore application backup" }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("link", { name: "Download application backup" }),
-    ).toHaveAttribute("aria-disabled", "true");
+      screen.getByRole("button", { name: "Download application backup" }),
+    ).toBeDisabled();
     expect(screen.getByText("Restoring...")).toBeInTheDocument();
   });
 });

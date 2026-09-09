@@ -10,6 +10,9 @@ export default {
       if (url.pathname.includes("%")) {
         return privateJsonResponse(400, "Encoded URL paths are not supported");
       }
+      if (!isCurrentProxyPath(url.pathname)) {
+        return privateJsonResponse(404, "Not Found");
+      }
       const mcpAdminRequest = isMcpAdminRequest(url.pathname);
       if (mcpAdminRequest) {
         if (!isStrongMcpAdminToken(env.MCP_ADMIN_TOKEN)) {
@@ -52,6 +55,18 @@ const CONTENT_ADDRESSED_ASSET = /^\/assets\/.+-[A-Za-z0-9_-]{8,}\.[^/]+$/;
 function matchesPrivateProxyPath(pathname) {
   return (
     pathname === "/api" || pathname.startsWith("/api/") || pathname === "/mcp"
+  );
+}
+
+function isCurrentProxyPath(pathname) {
+  return (
+    pathname === "/api/health" ||
+    pathname === "/api/pipeline" ||
+    pathname === "/api/admin/ocr" ||
+    pathname.startsWith("/api/admin/ocr/") ||
+    pathname === "/api/mcp" ||
+    pathname.startsWith("/api/mcp/") ||
+    pathname === "/mcp"
   );
 }
 

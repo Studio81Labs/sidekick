@@ -171,7 +171,7 @@ describe("Analyzer benchmarks", () => {
     const groundTruthSwitch = within(dialog).getByRole("switch", {
       name: /Use current hand as ground truth/,
     });
-    const exportDataset = within(dialog).getByRole("link", {
+    const exportDataset = within(dialog).getByRole("button", {
       name: "Export dataset",
     });
     const datasetInput = within(dialog).getByLabelText("Parser dataset ZIP");
@@ -181,11 +181,7 @@ describe("Analyzer benchmarks", () => {
     expect(
       within(dialog).getByRole("button", { name: "Run benchmark" }),
     ).toBeDisabled();
-    expect(exportDataset).toHaveAttribute("aria-disabled", "true");
-    expect(exportDataset).toHaveAttribute(
-      "href",
-      "http://localhost:8000/api/benchmarks/export?parser_provider=ocr_cv&parser_layout_profile=fortuna",
-    );
+    expect(exportDataset).toBeDisabled();
 
     pendingOverview.resolve(
       jsonResponse({
@@ -197,7 +193,7 @@ describe("Analyzer benchmarks", () => {
     );
     await waitFor(() => expect(groundTruthSwitch).toBeEnabled());
     expect(datasetInput).toBeEnabled();
-    expect(exportDataset).toHaveAttribute("aria-disabled", "true");
+    expect(exportDataset).toBeDisabled();
     expect(
       within(dialog).getByRole("button", { name: "Run benchmark" }),
     ).toBeDisabled();
@@ -215,7 +211,7 @@ describe("Analyzer benchmarks", () => {
       expect(groundTruthSwitch).toHaveAttribute("aria-checked", "true"),
     );
     expect(datasetInput).toBeEnabled();
-    expect(exportDataset).toHaveAttribute("aria-disabled", "false");
+    expect(exportDataset).toBeEnabled();
     expect(
       within(dialog).getByRole("button", { name: "Close parser benchmark" }),
     ).toBeEnabled();
@@ -315,20 +311,20 @@ describe("Analyzer benchmarks", () => {
     );
 
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/jobs/job-123/approve",
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs/job-123/approve",
       "http://localhost:8000/api/pipeline",
-      "http://localhost:8000/api/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna",
-      "http://localhost:8000/api/jobs/job-123/benchmark",
-      "http://localhost:8000/api/benchmarks/run",
-      "http://localhost:8000/api/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna",
-      "http://localhost:8000/api/jobs/job-123/benchmark",
-      "http://localhost:8000/api/benchmarks/run",
-      "http://localhost:8000/api/benchmarks?parser_provider=ocr_cv&parser_layout_profile=generic",
+      "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna",
+      "http://localhost:8000/api/admin/ocr/jobs/job-123/benchmark",
+      "http://localhost:8000/api/admin/ocr/benchmarks/run",
+      "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna",
+      "http://localhost:8000/api/admin/ocr/jobs/job-123/benchmark",
+      "http://localhost:8000/api/admin/ocr/benchmarks/run",
+      "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=ocr_cv&parser_layout_profile=generic",
     ]);
     const benchmarkRequest = fetchMock().mock.calls.find(
-      ([url]) => url === "http://localhost:8000/api/benchmarks/run",
+      ([url]) => url === "http://localhost:8000/api/admin/ocr/benchmarks/run",
     )?.[1];
     expect(benchmarkRequest).toMatchObject({
       method: "POST",
@@ -620,9 +616,9 @@ describe("Analyzer benchmarks", () => {
       }),
     ).toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/benchmarks/run",
-      "http://localhost:8000/api/benchmarks",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/benchmarks/run",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
     ]);
   });
 
@@ -765,8 +761,8 @@ describe("Analyzer benchmarks", () => {
     ).toHaveTextContent("90%");
     expect(fetchMock()).toHaveBeenNthCalledWith(
       3,
-      "http://localhost:8000/api/benchmarks?parser_provider=llm_vision&parser_layout_profile=generic",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=llm_vision&parser_layout_profile=generic",
+      expect.objectContaining({ credentials: "include" }),
     );
     await user.click(within(dialog).getByRole("button", { name: "Done" }));
     await user.click(
@@ -1001,7 +997,7 @@ describe("Analyzer benchmarks", () => {
 
     const runBodies = fetchMock()
       .mock.calls.filter(
-        ([url]) => url === "http://localhost:8000/api/benchmarks/run",
+        ([url]) => url === "http://localhost:8000/api/admin/ocr/benchmarks/run",
       )
       .map(([, request]) => JSON.parse(String(request?.body)));
     expect(runBodies).toEqual([
@@ -1045,11 +1041,11 @@ describe("Analyzer benchmarks", () => {
     const importDataset = within(dialog).getByRole("button", {
       name: "Import dataset",
     });
-    const exportDataset = within(dialog).getByRole("link", {
+    const exportDataset = within(dialog).getByRole("button", {
       name: "Export dataset",
     });
     await waitFor(() => expect(importDataset).toBeEnabled());
-    expect(exportDataset).toHaveAttribute("aria-disabled", "true");
+    expect(exportDataset).toBeDisabled();
 
     const dataset = new File(["dataset-zip"], "parser-dataset.zip", {
       type: "application/zip",
@@ -1080,14 +1076,14 @@ describe("Analyzer benchmarks", () => {
     expect(within(dialog).getByText("2").closest("span")).toHaveTextContent(
       "2 ground-truth hands",
     );
-    expect(exportDataset).toHaveAttribute("aria-disabled", "false");
+    expect(exportDataset).toBeEnabled();
     expect(
       within(dialog).getByRole("button", { name: "Run benchmark" }),
     ).toBeEnabled();
     expect(importDataset).toBeEnabled();
 
     expect(fetchMock().mock.calls[1][0]).toBe(
-      "http://localhost:8000/api/benchmarks/import",
+      "http://localhost:8000/api/admin/ocr/benchmarks/import",
     );
     expect(fetchMock().mock.calls[1][1]).toMatchObject({
       method: "POST",
@@ -1103,19 +1099,19 @@ describe("Analyzer benchmarks", () => {
     expect(form.get("file")).toBe(dataset);
     expect(fetchMock()).toHaveBeenNthCalledWith(
       3,
-      "http://localhost:8000/api/benchmarks",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      expect.objectContaining({ credentials: "include" }),
     );
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         4,
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
   });
 
-  it("withholds dataset import until the administrator tools are unlocked", async () => {
+  it("makes dataset import available in the verified administrator workspace", async () => {
     fetchMock().mockImplementation(() =>
       Promise.resolve(
         jsonResponse({
@@ -1129,40 +1125,16 @@ describe("Analyzer benchmarks", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
-    const lockedDialog = await screen.findByRole("dialog", {
-      name: "Parser benchmark",
-    });
-    expect(
-      within(lockedDialog).getByRole("button", { name: "Import dataset" }),
-    ).toBeDisabled();
-    expect(
-      within(lockedDialog).getByLabelText("Parser dataset ZIP"),
-    ).toBeDisabled();
-    expect(
-      within(lockedDialog).getByText(
-        "Unlock administrator tools to import datasets.",
-      ),
-    ).toBeInTheDocument();
-
-    await user.click(
-      within(lockedDialog).getByRole("button", { name: "Done" }),
-    );
-    await unlockAdministrativeAccess(user);
-    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
     const dialog = await screen.findByRole("dialog", {
       name: "Parser benchmark",
     });
+    expect(within(dialog).getByLabelText("Parser dataset ZIP")).toBeEnabled();
 
     await waitFor(() =>
       expect(
         within(dialog).getByRole("button", { name: "Import dataset" }),
       ).toBeEnabled(),
     );
-    expect(
-      within(dialog).queryByText(
-        "Unlock administrator tools to import datasets.",
-      ),
-    ).not.toBeInTheDocument();
   });
 
   it("keeps a verified report current after an idempotent dataset import", async () => {
@@ -1196,11 +1168,11 @@ describe("Analyzer benchmarks", () => {
     fetchMock().mockImplementation(
       (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url === "http://localhost:8000/api/benchmarks") {
+        if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
           return Promise.resolve(jsonResponse(overview));
         }
         if (
-          url === "http://localhost:8000/api/benchmarks/import" &&
+          url === "http://localhost:8000/api/admin/ocr/benchmarks/import" &&
           init?.method === "POST"
         ) {
           return Promise.resolve(
@@ -1213,7 +1185,7 @@ describe("Analyzer benchmarks", () => {
             }),
           );
         }
-        if (url === "http://localhost:8000/api/jobs") {
+        if (url === "http://localhost:8000/api/admin/ocr/jobs") {
           return Promise.resolve(processingQueueResponse([activeJob]));
         }
         throw new Error(`Unexpected request: ${url}`);
@@ -1245,7 +1217,8 @@ describe("Analyzer benchmarks", () => {
     await waitFor(() =>
       expect(
         fetchMock().mock.calls.filter(
-          ([url]) => String(url) === "http://localhost:8000/api/benchmarks",
+          ([url]) =>
+            String(url) === "http://localhost:8000/api/admin/ocr/benchmarks",
         ),
       ).toHaveLength(2),
     );
@@ -1354,11 +1327,11 @@ describe("Analyzer benchmarks", () => {
     ).toBeInTheDocument();
     await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(5));
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}`,
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/benchmarks/import",
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}`,
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/benchmarks/import",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -1479,10 +1452,10 @@ describe("Analyzer benchmarks", () => {
       ).toBe("true"),
     );
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/benchmarks/import",
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/benchmarks/import",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -1593,10 +1566,10 @@ describe("Analyzer benchmarks", () => {
     ).toHaveClass("active");
     expect(heroCards).toHaveValue("7d Ah");
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/benchmarks/import",
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/benchmarks/import",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -1706,14 +1679,14 @@ describe("Analyzer benchmarks", () => {
       }),
     ).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/benchmarks/import",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/benchmarks/import",
       expect.stringMatching(
-        /^http:\/\/localhost:8000\/api\/benchmarks\/imports\/.+/,
+        /^http:\/\/localhost:8000\/api\/admin\/ocr\/benchmarks\/imports\/.+/,
       ),
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/history",
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/history",
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -1723,7 +1696,7 @@ describe("Analyzer benchmarks", () => {
     fetchMock().mockImplementation(
       (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
-        if (url === "http://localhost:8000/api/benchmarks") {
+        if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
           return Promise.resolve(
             jsonResponse({
               included_cases: 0,
@@ -1733,14 +1706,18 @@ describe("Analyzer benchmarks", () => {
           );
         }
         if (
-          url === "http://localhost:8000/api/benchmarks/import" &&
+          url === "http://localhost:8000/api/admin/ocr/benchmarks/import" &&
           init?.method === "POST"
         ) {
           return Promise.reject(
             new TypeError("Connection lost after dataset import"),
           );
         }
-        if (url.startsWith("http://localhost:8000/api/benchmarks/imports/")) {
+        if (
+          url.startsWith(
+            "http://localhost:8000/api/admin/ocr/benchmarks/imports/",
+          )
+        ) {
           recoveryAttempts += 1;
           const requestId = decodeURIComponent(url.split("/").pop() ?? "");
           return recoveryAttempts === 1
@@ -1770,7 +1747,7 @@ describe("Analyzer benchmarks", () => {
                 }),
               );
         }
-        if (url === "http://localhost:8000/api/jobs") {
+        if (url === "http://localhost:8000/api/admin/ocr/jobs") {
           return Promise.resolve(
             processingQueueResponse(
               [],
@@ -1778,7 +1755,7 @@ describe("Analyzer benchmarks", () => {
             ),
           );
         }
-        if (url === "http://localhost:8000/api/history") {
+        if (url === "http://localhost:8000/api/admin/ocr/history") {
           return Promise.resolve(
             jsonResponse({
               total: 0,
@@ -1812,15 +1789,16 @@ describe("Analyzer benchmarks", () => {
 
     await waitFor(() => expect(recoveryAttempts).toBe(1));
     const importRequest = fetchMock().mock.calls.find(
-      ([url]) => String(url) === "http://localhost:8000/api/benchmarks/import",
+      ([url]) =>
+        String(url) === "http://localhost:8000/api/admin/ocr/benchmarks/import",
     );
     const importRequestId = (
       importRequest?.[1]?.headers as Record<string, string>
     )["X-Benchmark-Import-Request-ID"];
     expect(importRequestId).toEqual(expect.any(String));
     expect(fetchMock()).toHaveBeenCalledWith(
-      `http://localhost:8000/api/benchmarks/imports/${importRequestId}`,
-      { credentials: "include" },
+      `http://localhost:8000/api/admin/ocr/benchmarks/imports/${importRequestId}`,
+      expect.objectContaining({ credentials: "include" }),
     );
     expect(
       window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
@@ -1884,11 +1862,11 @@ describe("Analyzer benchmarks", () => {
       const url = String(input);
       if (
         url ===
-        `http://localhost:8000/api/benchmarks/imports/${importRequestId}`
+        `http://localhost:8000/api/admin/ocr/benchmarks/imports/${importRequestId}`
       ) {
         return pendingReceipt.promise;
       }
-      if (url === "http://localhost:8000/api/benchmarks") {
+      if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
         return Promise.resolve(
           jsonResponse({
             included_cases: 1,
@@ -1897,12 +1875,12 @@ describe("Analyzer benchmarks", () => {
           }),
         );
       }
-      if (url === "http://localhost:8000/api/jobs") {
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
         return Promise.resolve(
           processingQueueResponse([], "completed-import-processing-snapshot"),
         );
       }
-      if (url === "http://localhost:8000/api/history") {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
         return Promise.resolve(
           jsonResponse({
             total: 0,
@@ -1925,15 +1903,16 @@ describe("Analyzer benchmarks", () => {
     });
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/benchmarks/imports/${importRequestId}`,
-        { credentials: "include" },
+        `http://localhost:8000/api/admin/ocr/benchmarks/imports/${importRequestId}`,
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(runButton).toBeDisabled();
     await user.click(runButton);
     expect(
       fetchMock().mock.calls.some(
-        ([url]) => String(url) === "http://localhost:8000/api/benchmarks/run",
+        ([url]) =>
+          String(url) === "http://localhost:8000/api/admin/ocr/benchmarks/run",
       ),
     ).toBe(false);
 
@@ -1988,7 +1967,7 @@ describe("Analyzer benchmarks", () => {
       const url = String(input);
       if (
         url ===
-        `http://localhost:8000/api/benchmarks/imports/${importRequestId}`
+        `http://localhost:8000/api/admin/ocr/benchmarks/imports/${importRequestId}`
       ) {
         recoveryAttempts += 1;
         return Promise.resolve(
@@ -2058,16 +2037,20 @@ describe("Analyzer benchmarks", () => {
     let receiptAttempts = 0;
     fetchMock().mockImplementation((input: RequestInfo | URL) => {
       const url = String(input);
-      if (url.startsWith("http://localhost:8000/api/benchmarks/imports/")) {
+      if (
+        url.startsWith(
+          "http://localhost:8000/api/admin/ocr/benchmarks/imports/",
+        )
+      ) {
         receiptAttempts += 1;
         return Promise.reject(new TypeError("Receipt endpoint unavailable"));
       }
-      if (url === "http://localhost:8000/api/jobs") {
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
         return Promise.resolve(
           processingQueueResponse([], "expired-import-processing-snapshot"),
         );
       }
-      if (url === "http://localhost:8000/api/history") {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
         return Promise.resolve(
           jsonResponse({
             total: 0,
@@ -2139,8 +2122,8 @@ describe("Analyzer benchmarks", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
@@ -2157,7 +2140,7 @@ describe("Analyzer benchmarks", () => {
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         3,
-        "http://localhost:8000/api/benchmarks/import",
+        "http://localhost:8000/api/admin/ocr/benchmarks/import",
         expect.objectContaining({ method: "POST" }),
       ),
     );
@@ -2444,10 +2427,7 @@ describe("Analyzer benchmarks", () => {
     );
     expect(
       screen.getByAltText("Uploaded poker table screenshot"),
-    ).toHaveAttribute(
-      "src",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/image`,
-    );
+    ).toHaveAttribute("src", expect.stringMatching(/^blob:/));
     expect(screen.getByLabelText(/Pot/)).toHaveValue("12.5");
     await waitFor(() =>
       expect(window.localStorage.getItem("poker-training-processing-v1")).toBe(
@@ -2455,8 +2435,8 @@ describe("Analyzer benchmarks", () => {
       ),
     );
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}`,
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}`,
     ]);
   });
 
@@ -2638,9 +2618,9 @@ describe("Analyzer benchmarks", () => {
       }),
     ).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/benchmark`,
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}/benchmark`,
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -2701,9 +2681,9 @@ describe("Analyzer benchmarks", () => {
     expect(groundTruthSwitch).toHaveAttribute("aria-checked", "false");
     expect(groundTruthSwitch).toBeEnabled();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${parsedJob.id}/benchmark`,
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/jobs/${parsedJob.id}/benchmark`,
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -2766,8 +2746,8 @@ describe("Analyzer benchmarks", () => {
       }),
     ).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/approve`,
-      "http://localhost:8000/api/jobs",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}/approve`,
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -2873,10 +2853,10 @@ describe("Analyzer benchmarks", () => {
         }),
       ).toHaveAttribute("aria-checked", String(includedAfterWrite));
       expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-        "http://localhost:8000/api/benchmarks",
-        `http://localhost:8000/api/jobs/${jobId}/benchmark`,
-        "http://localhost:8000/api/jobs",
-        "http://localhost:8000/api/benchmarks",
+        "http://localhost:8000/api/admin/ocr/benchmarks",
+        `http://localhost:8000/api/admin/ocr/jobs/${jobId}/benchmark`,
+        "http://localhost:8000/api/admin/ocr/jobs",
+        "http://localhost:8000/api/admin/ocr/benchmarks",
       ]);
     },
   );
@@ -2955,10 +2935,10 @@ describe("Analyzer benchmarks", () => {
       }),
     ).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/benchmark`,
-      "http://localhost:8000/api/jobs",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}`,
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}/benchmark`,
+      "http://localhost:8000/api/admin/ocr/jobs",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}`,
     ]);
   });
 
@@ -3044,11 +3024,11 @@ describe("Analyzer benchmarks", () => {
       window.sessionStorage.getItem("poker-training-processing-synced"),
     ).toBe("true");
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}`,
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/benchmark`,
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}`,
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}/benchmark`,
+      "http://localhost:8000/api/admin/ocr/jobs",
     ]);
   });
 
@@ -3114,9 +3094,9 @@ describe("Analyzer benchmarks", () => {
       }),
     ).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      `http://localhost:8000/api/jobs/${benchmarkJobId}/approve`,
-      "http://localhost:8000/api/jobs",
-      `http://localhost:8000/api/jobs/${benchmarkJobId}`,
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}/approve`,
+      "http://localhost:8000/api/admin/ocr/jobs",
+      `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJobId}`,
     ]);
   });
 
@@ -3287,9 +3267,9 @@ describe("Analyzer benchmarks", () => {
     ).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
       "http://localhost:8000/api/pipeline",
-      "http://localhost:8000/api/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna",
-      "http://localhost:8000/api/benchmarks?parser_provider=ocr_cv&parser_layout_profile=generic",
-      "http://localhost:8000/api/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna",
+      "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna",
+      "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=ocr_cv&parser_layout_profile=generic",
+      "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna",
     ]);
   });
 
@@ -3416,8 +3396,8 @@ describe("Analyzer benchmarks", () => {
     ).toBeInTheDocument();
     expect(within(dialog).queryByLabelText(/change/)).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      "http://localhost:8000/api/benchmarks/benchmark-earlier",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      "http://localhost:8000/api/admin/ocr/benchmarks/benchmark-earlier",
     ]);
   });
 
@@ -3679,8 +3659,8 @@ describe("Analyzer benchmarks", () => {
       }),
     ).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/benchmarks/${previousReport.id}`,
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/benchmarks/${previousReport.id}`,
     ]);
   });
 
@@ -3871,9 +3851,9 @@ describe("Analyzer benchmarks", () => {
       }),
     ).not.toBeInTheDocument();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/benchmarks",
-      `http://localhost:8000/api/benchmarks/${previousReport.id}`,
-      "http://localhost:8000/api/benchmarks",
+      "http://localhost:8000/api/admin/ocr/benchmarks",
+      `http://localhost:8000/api/admin/ocr/benchmarks/${previousReport.id}`,
+      "http://localhost:8000/api/admin/ocr/benchmarks",
     ]);
   });
 

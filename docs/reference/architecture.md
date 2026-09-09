@@ -173,18 +173,17 @@ reloads and merges into the latest job record so slow OCR does not block
 unrelated jobs and deleted uploads cannot be recreated by parser completion.
 
 Screenshot upload is an administrative OCR test surface, not a player data
-path (ADR 0046). `POST /api/jobs` fails closed unless
-`POKER_ADMIN_OCR_TEST_ENABLED` is set and the request carries the deployment's
-`POKER_ADMIN_OCR_TEST_TOKEN` as a bearer credential; the application-layer
-`AdminOcrTestAccessPolicy` compares it in constant time.
-`POST /api/benchmarks/import` and `POST /api/backups/restore` share that gate,
-because both persist screenshots the boundary would otherwise refuse, and both
-check it before the application reads the archive or opens any store (the
-framework still parses the multipart body first). `GET /api/admin/ocr-test/session`
-lets a client confirm a credential before it reveals any capture control; it
-answers `no-store` and shares the upload rate-limit budget. `GET /api/pipeline`
-advertises `administrative_ocr_test.enabled` so operators can see the
-deployment state.
+path (ADR 0046). Its hosted API is exclusively under `/api/admin/ocr/...`.
+Every job, history, parser-benchmark, and backup read or mutation first
+requires the disabled-by-default `POKER_ADMIN_OCR_TEST_ENABLED` mode and the
+deployment's `POKER_ADMIN_OCR_TEST_TOKEN` bearer credential; the
+application-layer `AdminOcrTestAccessPolicy` compares it in constant time
+before a service or store is reached. This includes archive import and image
+reads. `GET /api/admin/ocr/session` lets the UI confirm a credential before it
+reveals the workspace and answers `no-store`. The retired `/api/jobs`,
+`/api/history`, `/api/benchmarks`, and `/api/backups` namespaces are not
+registered. `GET /api/pipeline` advertises `administrative_ocr_test.enabled`
+so operators can see the deployment state.
 
 FastAPI composition remains in `app/bootstrap.py`, while extracted transport
 adapters live under `app/api/routers`. Health and pipeline queries dispatch
@@ -195,7 +194,7 @@ operations dispatch through the storage-independent `app/application/jobs.py`
 services. Benchmark dataset, report, import, and run operations dispatch
 through `app/application/benchmarks.py`; backup export and restore operations
 dispatch through `app/application/backups.py`;
-hosted MCP reaches the same boundaries through its internal ASGI API client.
+hosted MCP exposes only environment status and has no route to operator data.
 Remaining storage, locking, aggregation, and persistence stay behind
 bootstrap-owned callables until later application-service slices replace those
 concrete dependencies. Backup transport owns multipart limits and streaming
@@ -1352,12 +1351,14 @@ recorded in
 
 ### PWA
 
-`apps/pwa` owns two intentionally separate builds. The default hosted build owns
-administrator-only screenshot upload and capture, queue navigation, review and
-approval, parser benchmarking, and history. The `player/` entry owns only the
-loopback session bootstrap, local storage/recovery presentation, and player
-backup/restore controls. It imports no hosted application routes, API adapters,
-browser projections, administrative controls, or error-reporting integrations.
+`apps/pwa` owns two intentionally separate builds. The default hosted build has
+one explicit administrator entry at `/admin/ocr` (with its job and benchmark
+views) for screenshot upload/capture, queue navigation, review/approval, parser
+benchmarking, history, and backups. It has no `/analyzer` alias or fallback.
+The `player/` entry owns only the loopback session bootstrap, local
+storage/recovery presentation, and player backup/restore controls. It imports
+no hosted application routes, API adapters, browser projections,
+administrative controls, or error-reporting integrations.
 
 The hosted build is organized into application, page, feature, and shared
 layers. `src/app`
@@ -1431,15 +1432,15 @@ configuration and principal administration transport live in
 feature commands. The former shared endpoint facades have been removed, and
 the source-architecture suite prevents them from being recreated.
 
-Benchmark HTTP transport and dataset-export URL construction are owned by
-`domains/benchmarks/api/benchmarksApi.ts`. Parser benchmark writes pass through
+Benchmark HTTP transport and authenticated in-memory dataset downloads are
+owned by `domains/benchmarks/api/benchmarksApi.ts`. Parser benchmark writes pass through
 `features/benchmark/services/runParserBenchmarkCommand.ts`, which declares the
 benchmark-overview Query invalidation outcome. The former
 `shared/api/benchmarks.ts` facade has been removed.
 
 Health and pipeline reads use their existing system and pipeline domain
-adapters. Backup export URL construction now belongs to the backup domain and
-is exposed through the backup feature service used by the analyzer page. The
+adapters. Authenticated in-memory backup download belongs to the backup domain
+and is exposed through the backup feature service used by the operator page. The
 former `shared/api/system.ts` facade and duplicate transport are removed.
 PWA-only data contracts mirror those domains under `src/shared/types`; backend
 wire schemas come from `@poker-hero/openapi-client` and are confined to domain
@@ -1603,19 +1604,12 @@ rejected so they cannot bypass the typed source graph. Static Vite glob,
 `import.meta.url`, and triple-slash path dependencies are resolved and checked
 against the same layer rules.
 
-The PWA
-defensively normalizes optional provider metadata such as equity, candidate
-EVs/frequencies, exploitability, preflop stack/range/sizing policy, and fallback
-context. Supported postflop results also expose bounded tree/history metadata,
-later-street conditioning status, replayed line, posterior reach, active
-combinations, memory, and exploitability, while keeping exact configured OOP/IP
-ranges behind a collapsed disclosure; providers remain free to omit those
-fields. In production it uses same-origin `/api/*`;
+The hosted PWA uses same-origin `/api/*` only for public health/pipeline,
+administrator OCR, and the separately configured MCP endpoint. In production
 `worker.js` forwards those requests and the exact `/mcp` route to `BACKEND_URL`,
 replaces any browser-supplied proxy credential with its private
-`API_PROXY_SECRET` binding, enforces the separate administration bearer on MCP
-principal-management routes, and serves all other routes from Worker Static
-Assets. When
+`API_PROXY_SECRET` binding, denies the complete hosted `/api/player` namespace,
+and serves all other routes from Worker Static Assets. When
 `POKER_PROXY_SHARED_SECRET` is configured, FastAPI uses a constant-time
 comparison to reject application API traffic that bypasses or misconfigures the
 Worker. The Worker requires an HTTPS backend before attaching the secret,
@@ -1904,13 +1898,10 @@ requests only after a version change. Search results and their match count remai
 separate from the global archive count and newest-page browser cache.
 Local development uses `apps/backend/data`; the container contract uses
 `/app/data`. Coolify must mount persistent storage at `/app/data`. The container
-entrypoint repairs volume ownership, then runs a strict deployment cleanup as
-the non-root `poker` user before starting the requested process. Cleanup deletes
-only valid screenshot job directories whose raw record has the retired V1
-`recommended` status. It acquires the exclusive data-volume lock and rechecks
-the candidates before deletion; current, malformed, unknown, and untrusted-path
-records are not rewritten or removed. Current application models remain strict
-and never load the retired status.
+entrypoint repairs volume ownership, then starts as the non-root `poker` user.
+Current-only workspace and backup readers reject unsupported or unsafe existing
+development files before opening or mutating stores; they never relabel,
+delete, reset, or migrate them automatically.
 
 ## Deployment Topology
 

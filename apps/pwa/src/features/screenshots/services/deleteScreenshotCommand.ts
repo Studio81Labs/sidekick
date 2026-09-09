@@ -11,8 +11,9 @@ import {
 export async function deleteScreenshotCommand(
   queryClient: QueryClient,
   jobId: string,
+  administratorToken: string,
 ) {
-  await deleteJob(jobId);
+  await deleteJob(jobId, administratorToken);
   const cache = {
     removed: jobQueryKeys.detail(jobId),
     invalidated: [jobQueryKeys.processing(), historyQueryKeys.all] as const,

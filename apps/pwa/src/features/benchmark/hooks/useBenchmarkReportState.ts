@@ -23,6 +23,7 @@ import {
 } from "../lib/benchmarkReportPresentation";
 
 interface UseBenchmarkReportStateOptions {
+  administratorToken: string;
   dialogOpen: boolean;
   onError: (message: string | null) => void;
 }
@@ -33,6 +34,7 @@ interface RefreshBenchmarkOptions {
 }
 
 export function useBenchmarkReportState({
+  administratorToken,
   dialogOpen,
   onError,
 }: UseBenchmarkReportStateOptions) {
@@ -89,6 +91,7 @@ export function useBenchmarkReportState({
     setComparisonReportLoading(true);
     void loadCachedBenchmarkReport(
       previousReport.id,
+      administratorToken,
       reportCacheRef.current,
       reportRequestsRef.current,
       queryClient,
@@ -119,7 +122,7 @@ export function useBenchmarkReportState({
           setComparisonReportLoading(false);
         }
       });
-  }, [dialogOpen, previousReport, report]);
+  }, [administratorToken, dialogOpen, previousReport, report]);
 
   function cacheOverviewReport(nextOverview: BenchmarkOverview) {
     if (nextOverview.latest_report) {
@@ -157,7 +160,13 @@ export function useBenchmarkReportState({
       queryKey: benchmarkQueryKeys.overviews(),
     });
     void queryClient
-      .fetchQuery(benchmarkOverviewQueryOptions(selection ?? undefined, false))
+      .fetchQuery(
+        benchmarkOverviewQueryOptions(
+          administratorToken,
+          selection ?? undefined,
+          false,
+        ),
+      )
       .then((nextOverview) => {
         if (requestId !== overviewRequestRef.current) {
           return;
@@ -188,7 +197,11 @@ export function useBenchmarkReportState({
         queryKey: benchmarkQueryKeys.overviews(),
       });
       const nextOverview = await queryClient.fetchQuery(
-        benchmarkOverviewQueryOptions(selection ?? undefined, false),
+        benchmarkOverviewQueryOptions(
+          administratorToken,
+          selection ?? undefined,
+          false,
+        ),
       );
       if (!mountedRef.current || requestId !== overviewRequestRef.current) {
         return null;
@@ -262,6 +275,7 @@ export function useBenchmarkReportState({
       setSelectedReport(
         await loadCachedBenchmarkReport(
           reportId,
+          administratorToken,
           reportCacheRef.current,
           reportRequestsRef.current,
           queryClient,

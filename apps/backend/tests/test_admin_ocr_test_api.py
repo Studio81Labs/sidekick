@@ -11,10 +11,12 @@ from app.storage.file_job_store import FileJobStore
 from api_test_support import (
     ADMIN_OCR_TEST_HEADERS,
     ADMIN_OCR_TEST_TOKEN,
+    APPROVED_STATE,
     VALID_PNG,
     approve_job,
     import_benchmark_dataset,
     make_client,
+    make_transport_client,
     restore_application_backup,
     upload_job,
 )
@@ -22,7 +24,7 @@ from api_test_support import (
 
 def _post_upload(client: TestClient, headers: dict[str, str] | None = None):
     return client.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         headers=headers,
     )
@@ -41,7 +43,7 @@ def test_upload_is_forbidden_when_administrative_mode_is_disabled(tmp_path: Path
 
 
 def test_upload_requires_a_valid_administrator_bearer(tmp_path: Path) -> None:
-    client = make_client(tmp_path)
+    client = make_transport_client(tmp_path)
 
     missing = _post_upload(client)
     wrong_scheme = _post_upload(client, {"Authorization": f"Basic {ADMIN_OCR_TEST_TOKEN}"})
@@ -111,7 +113,7 @@ def test_upload_fails_closed_on_an_unexpected_authorization_decision(
 
 
 def _session(client: TestClient, headers: dict[str, str] | None = None):
-    return client.get("/api/admin/ocr-test/session", headers=headers)
+    return client.get("/api/admin/ocr/session", headers=headers)
 
 
 def test_session_confirms_a_valid_administrator_bearer(tmp_path: Path) -> None:
@@ -126,7 +128,7 @@ def test_session_confirms_a_valid_administrator_bearer(tmp_path: Path) -> None:
 
 
 def test_session_requires_a_valid_administrator_bearer(tmp_path: Path) -> None:
-    client = make_client(tmp_path)
+    client = make_transport_client(tmp_path)
 
     missing = _session(client)
     wrong_scheme = _session(client, {"Authorization": f"Basic {ADMIN_OCR_TEST_TOKEN}"})
@@ -188,15 +190,105 @@ def test_session_fails_closed_on_an_unexpected_authorization_decision(
     )
 
 
+def test_removed_data_routes_are_not_registered(tmp_path: Path) -> None:
+    """C3 removes the old public data surface instead of forwarding it."""
+
+    client = TestClient(
+        create_app(
+            Settings(
+                data_dir=tmp_path,
+                parser_provider="mock",
+                admin_ocr_test_enabled=True,
+                admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
+            )
+        )
+    )
+
+    for method, path in (
+        ("get", "/api/jobs"),
+        ("get", f"/api/jobs/{'a' * 32}"),
+        ("get", "/api/history"),
+        ("get", "/api/benchmarks"),
+        ("get", "/api/backups/export"),
+        ("get", "/api/admin/ocr-test/session"),
+    ):
+        response = getattr(client, method)(path, headers=ADMIN_OCR_TEST_HEADERS)
+        assert response.status_code == 404
+
+
+def test_every_current_admin_data_route_rejects_before_data_access(tmp_path: Path) -> None:
+    """Every C3 OCR data operation shares the server-side administrator gate."""
+
+    client = TestClient(
+        create_app(
+            Settings(
+                data_dir=tmp_path,
+                parser_provider="mock",
+                admin_ocr_test_enabled=True,
+                admin_ocr_test_token=ADMIN_OCR_TEST_TOKEN,
+            )
+        )
+    )
+    job_id = "a" * 32
+    requests = (
+        lambda: client.get("/api/admin/ocr/jobs"),
+        lambda: client.get(f"/api/admin/ocr/jobs/{job_id}"),
+        lambda: client.get(f"/api/admin/ocr/jobs/{job_id}/image"),
+        lambda: client.post(
+            "/api/admin/ocr/jobs",
+            files={"file": ("table.png", VALID_PNG, "image/png")},
+        ),
+        lambda: client.put(
+            f"/api/admin/ocr/jobs/{job_id}/metadata",
+            json={"title": None, "notes": None, "tags": []},
+        ),
+        lambda: client.delete(f"/api/admin/ocr/jobs/{job_id}"),
+        lambda: client.post(
+            f"/api/admin/ocr/jobs/{job_id}/approve",
+            json=APPROVED_STATE,
+        ),
+        lambda: client.get("/api/admin/ocr/history"),
+        lambda: client.put(
+            "/api/admin/ocr/history",
+            json={"job_ids": [job_id]},
+        ),
+        lambda: client.put(
+            f"/api/admin/ocr/jobs/{job_id}/benchmark",
+            json={"included": True},
+        ),
+        lambda: client.get("/api/admin/ocr/benchmarks"),
+        lambda: client.get("/api/admin/ocr/benchmarks/export"),
+        lambda: client.post(
+            "/api/admin/ocr/benchmarks/import",
+            files={"file": ("dataset.zip", b"not-read", "application/zip")},
+        ),
+        lambda: client.get("/api/admin/ocr/benchmarks/imports/request-1"),
+        lambda: client.get("/api/admin/ocr/benchmarks/report-1"),
+        lambda: client.post("/api/admin/ocr/benchmarks/run"),
+        lambda: client.get("/api/admin/ocr/backups/export"),
+        lambda: client.post(
+            "/api/admin/ocr/backups/restore",
+            files={"file": ("backup.zip", b"not-read", "application/zip")},
+        ),
+    )
+
+    for request in requests:
+        response = request()
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+    assert not (tmp_path / "jobs").exists() or not any((tmp_path / "jobs").iterdir())
+
+
 def _dataset_archive(tmp_path: Path) -> bytes:
     source = make_client(tmp_path / "dataset-source")
     job_id = upload_job(source).json()["id"]
     assert approve_job(source, job_id).status_code == 200
     assert source.put(
-        f"/api/jobs/{job_id}/benchmark",
+        f"/api/admin/ocr/jobs/{job_id}/benchmark",
         json={"included": True},
+        headers=ADMIN_OCR_TEST_HEADERS,
     ).status_code == 200
-    export = source.get("/api/benchmarks/export")
+    export = source.get("/api/admin/ocr/benchmarks/export", headers=ADMIN_OCR_TEST_HEADERS)
     assert export.status_code == 200
     return export.content
 
@@ -205,8 +297,12 @@ def _backup_archive(tmp_path: Path) -> tuple[bytes, str]:
     source = make_client(tmp_path / "backup-source")
     job_id = upload_job(source).json()["id"]
     assert approve_job(source, job_id).status_code == 200
-    assert source.put("/api/history", json={"job_ids": [job_id]}).status_code == 200
-    export = source.get("/api/backups/export")
+    assert source.put(
+        "/api/admin/ocr/history",
+        json={"job_ids": [job_id]},
+        headers=ADMIN_OCR_TEST_HEADERS,
+    ).status_code == 200
+    export = source.get("/api/admin/ocr/backups/export", headers=ADMIN_OCR_TEST_HEADERS)
     assert export.status_code == 200
     return export.content, job_id
 
@@ -245,7 +341,7 @@ def test_dataset_import_is_forbidden_when_administrative_mode_is_disabled(
 def test_dataset_import_requires_a_valid_administrator_bearer(tmp_path: Path) -> None:
     archive = _dataset_archive(tmp_path)
     target_dir = tmp_path / "target"
-    client = make_client(target_dir)
+    client = make_transport_client(target_dir)
 
     missing = import_benchmark_dataset(client, archive, headers={})
     wrong_scheme = import_benchmark_dataset(
@@ -333,7 +429,7 @@ def test_backup_restore_is_forbidden_when_administrative_mode_is_disabled(
 def test_backup_restore_requires_a_valid_administrator_bearer(tmp_path: Path) -> None:
     archive, job_id = _backup_archive(tmp_path)
     target_dir = tmp_path / "target"
-    client = make_client(target_dir)
+    client = make_transport_client(target_dir)
 
     missing = restore_application_backup(client, archive, headers={})
     wrong_scheme = restore_application_backup(
@@ -394,7 +490,7 @@ def test_backup_restore_fails_closed_on_an_unexpected_decision(
 def test_administrative_denials_precede_archive_reads(tmp_path: Path) -> None:
     # A denial that ran after the size guard would answer 413 instead of 401,
     # which would mean the router had already read the uploaded archive.
-    client = make_client(
+    client = make_transport_client(
         tmp_path,
         max_dataset_upload_bytes=8,
         max_backup_upload_bytes=8,

@@ -8,6 +8,7 @@ import { jsonResponse, resetApiMocks } from "../../../test/api";
 import { updateScreenshotMetadataCommand } from "./updateScreenshotMetadataCommand";
 
 afterEach(resetApiMocks);
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 describe("update screenshot metadata command", () => {
   it("returns an explicit outcome and updates only affected query families", async () => {
@@ -37,6 +38,7 @@ describe("update screenshot metadata command", () => {
     );
 
     const outcome = await updateScreenshotMetadataCommand(queryClient, {
+      administratorToken: ADMINISTRATOR_TOKEN,
       jobId: currentJob.id,
       metadata: {
         title: "Turn bluff",

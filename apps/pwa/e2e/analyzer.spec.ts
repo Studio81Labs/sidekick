@@ -33,20 +33,14 @@ async function unlockAdministrativeAccess(page: Page): Promise<void> {
   if (await banner.isVisible()) {
     return;
   }
-  await page.getByRole("button", { name: "Administrator tools" }).click();
   const dialog = page.getByRole("dialog", { name: "Administrator tools" });
   await dialog
     .getByLabel("Administrative OCR test token")
     .fill(ADMINISTRATOR_TOKEN);
   await dialog.getByRole("button", { name: "Unlock" }).click();
-  // The deployment verifies the credential before any capture control appears,
-  // so the dialog only reports the unlocked state once that round trip lands.
-  await expect(
-    dialog.getByRole("button", { name: "Lock administrator tools" }),
-  ).toBeVisible();
-  await dialog
-    .getByRole("button", { name: "Close administrator tools" })
-    .click();
+  // The access gate is replaced by the operator workspace only after the
+  // credential verification round trip succeeds.
+  await expect(dialog).toHaveCount(0);
   await expect(banner).toBeVisible();
 }
 
@@ -114,7 +108,7 @@ async function captureAdministrativeFrame(page: Page): Promise<{
 }> {
   const uploadResponsePromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/jobs` &&
       response.request().method() === "POST" &&
       response.ok(),
   );
@@ -147,7 +141,7 @@ async function uploadAdministrativeScreenshot(
   });
   const uploadResponsePromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/jobs` &&
       response.request().method() === "POST" &&
       response.ok(),
   );
@@ -167,16 +161,19 @@ async function createApprovedScreenshot(
   filename: string,
   potSize: number,
 ): Promise<{ id: string }> {
-  const uploadResponse = await page.request.post(`${BACKEND_URL}/api/jobs`, {
-    headers: ADMINISTRATOR_HEADERS,
-    multipart: {
-      file: {
-        name: filename,
-        mimeType: "image/png",
-        buffer: VALID_PNG,
+  const uploadResponse = await page.request.post(
+    `${BACKEND_URL}/api/admin/ocr/jobs`,
+    {
+      headers: ADMINISTRATOR_HEADERS,
+      multipart: {
+        file: {
+          name: filename,
+          mimeType: "image/png",
+          buffer: VALID_PNG,
+        },
       },
     },
-  });
+  );
   expect(uploadResponse.ok()).toBe(true);
   const uploadedJob = (await uploadResponse.json()) as {
     id: string;
@@ -186,8 +183,9 @@ async function createApprovedScreenshot(
     throw new Error(`History fixture ${filename} was not parsed`);
   }
   const approveResponse = await page.request.post(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}/approve`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${uploadedJob.id}/approve`,
     {
+      headers: ADMINISTRATOR_HEADERS,
       data: {
         ...uploadedJob.parser_result.state,
         pot_size: potSize,
@@ -200,9 +198,15 @@ async function createApprovedScreenshot(
 }
 
 async function expectAnalyzerReady(page: Page): Promise<void> {
-  await expect(
-    page.getByRole("region", { name: "Analyzer controls" }),
-  ).toBeVisible();
+  const accessGate = page.getByRole("dialog", { name: "Administrator tools" });
+  const controls = page.getByRole("region", {
+    name: "Administrator OCR controls",
+  });
+  if (!(await controls.isVisible())) {
+    await expect(accessGate).toBeVisible();
+    await unlockAdministrativeAccess(page);
+  }
+  await expect(controls).toBeVisible();
 }
 
 // The console reviews parser output only, so the retired learning surface must
@@ -345,13 +349,11 @@ test("keeps screenshot upload and live capture locked for players", async ({
   page,
 }) => {
   await page.goto("/");
-  await expectAnalyzerReady(page);
-
-  await expect(page.getByRole("region", { name: "Input" })).toContainText(
-    IMPORT_FIRST_NOTICE,
-  );
+  const dialog = page.getByRole("dialog", { name: "Administrator tools" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("administrator-only OCR test tools");
   await expect(
-    page.getByRole("note", { name: "Administrative OCR test mode" }),
+    page.getByRole("region", { name: "Administrator OCR controls" }),
   ).toHaveCount(0);
   await expect(page.getByRole("group", { name: "Input mode" })).toHaveCount(0);
   await expect(page.getByLabel("Choose screenshots")).toHaveCount(0);
@@ -361,24 +363,15 @@ test("keeps screenshot upload and live capture locked for players", async ({
   await expect(
     page.getByRole("button", { name: "Capture and parse" }),
   ).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /^Automation/ })).toHaveCount(
-    0,
-  );
   await expect(
-    page.getByRole("button", { name: "Configure automation" }),
+    page.getByRole("button", { name: "Parser benchmark" }),
   ).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Administrator tools" }),
-  ).toBeVisible();
 });
 
 test("unlocks and relocks the administrative OCR test tools", async ({
   page,
 }) => {
   await page.goto("/");
-  await expectAnalyzerReady(page);
-
-  await page.getByRole("button", { name: "Administrator tools" }).click();
   const dialog = page.getByRole("dialog", { name: "Administrator tools" });
   await expect(dialog).toBeVisible();
   await expect(dialog).toContainText(
@@ -389,7 +382,7 @@ test("unlocks and relocks the administrative OCR test tools", async ({
     .fill(ADMINISTRATOR_TOKEN);
   const sessionResponsePromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/admin/ocr-test/session` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/session` &&
       response.request().method() === "GET",
   );
   await dialog.getByRole("button", { name: "Unlock" }).click();
@@ -402,12 +395,6 @@ test("unlocks and relocks the administrative OCR test tools", async ({
     authorized: true,
     enabled: true,
   });
-  await expect(
-    dialog.getByRole("button", { name: "Lock administrator tools" }),
-  ).toBeVisible();
-  await dialog
-    .getByRole("button", { name: "Close administrator tools" })
-    .click();
   await expect(dialog).toHaveCount(0);
 
   const banner = page.getByRole("note", {
@@ -428,13 +415,11 @@ test("unlocks and relocks the administrative OCR test tools", async ({
     page.getByRole("button", { name: "Upload and parse" }),
   ).toBeVisible();
 
-  await banner
-    .getByRole("button", { name: "Lock administrator tools" })
+  await page
+    .getByRole("button", { name: "Lock administrator session" })
     .click();
+  await expect(dialog).toBeVisible();
   await expect(banner).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Input" })).toContainText(
-    IMPORT_FIRST_NOTICE,
-  );
   await expect(page.getByLabel("Choose screenshots")).toHaveCount(0);
 });
 
@@ -444,7 +429,7 @@ test("refuses to unlock when the deployment rejects the administrative token", a
   const attemptedJobUploads: string[] = [];
   page.on("request", (request) => {
     if (
-      request.url() === `${BACKEND_URL}/api/jobs` &&
+      request.url() === `${BACKEND_URL}/api/admin/ocr/jobs` &&
       request.method() === "POST"
     ) {
       attemptedJobUploads.push(request.url());
@@ -452,16 +437,13 @@ test("refuses to unlock when the deployment rejects the administrative token", a
   });
 
   await page.goto("/");
-  await expectAnalyzerReady(page);
-
-  await page.getByRole("button", { name: "Administrator tools" }).click();
   const dialog = page.getByRole("dialog", { name: "Administrator tools" });
   await dialog
     .getByLabel("Administrative OCR test token")
     .fill("rejected-administrative-ocr-test-token-98765");
   const rejectedSessionPromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/admin/ocr-test/session` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/session` &&
       response.request().method() === "GET",
   );
   await dialog.getByRole("button", { name: "Unlock" }).click();
@@ -476,20 +458,11 @@ test("refuses to unlock when the deployment rejects the administrative token", a
     "The administrative OCR test token was rejected. Unlock administrator" +
       " tools again with the deployment's token.",
   );
+  await expect(dialog).toBeVisible();
   await expect(
-    dialog.getByRole("button", { name: "Lock administrator tools" }),
-  ).toHaveCount(0);
-  await dialog
-    .getByRole("button", { name: "Close administrator tools" })
-    .click();
-
-  await expect(
-    page.getByRole("note", { name: "Administrative OCR test mode" }),
+    page.getByRole("region", { name: "Administrator OCR controls" }),
   ).toHaveCount(0);
   await expect(page.getByRole("group", { name: "Input mode" })).toHaveCount(0);
-  await expect(page.getByRole("region", { name: "Input" })).toContainText(
-    IMPORT_FIRST_NOTICE,
-  );
   await expect(page.getByLabel("Choose screenshots")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "Upload and parse" }),
@@ -504,7 +477,10 @@ test("keeps dataset import and backup restore behind administrator tools", async
   page,
 }) => {
   await page.goto("/");
-  await expectAnalyzerReady(page);
+  await expect(
+    page.getByRole("dialog", { name: "Administrator tools" }),
+  ).toBeVisible();
+  await unlockAdministrativeAccess(page);
 
   const benchmarkDialog = page.getByRole("dialog", {
     name: "Parser benchmark",
@@ -514,47 +490,20 @@ test("keeps dataset import and backup restore behind administrator tools", async
   });
   await page.getByRole("button", { name: "Parser benchmark" }).click();
   await expect(benchmarkDialog).toBeVisible();
-  await expect(importDatasetButton).toBeDisabled();
-  await expect(benchmarkDialog.getByLabel("Parser dataset ZIP")).toBeDisabled();
-  await expect(benchmarkDialog).toContainText(
-    "Unlock administrator tools to import datasets.",
-  );
+  await expect(importDatasetButton).toBeEnabled();
+  await expect(benchmarkDialog.getByLabel("Parser dataset ZIP")).toBeEnabled();
   await benchmarkDialog.getByRole("button", { name: "Done" }).click();
-  await expect(benchmarkDialog).toHaveCount(0);
 
   const infoDialog = page.getByRole("dialog", {
-    name: "About Poker Training Analyzer",
+    name: "About Poker Hero",
   });
   const restoreBackupButton = infoDialog.getByRole("button", {
     name: "Restore application backup",
   });
   await page.getByRole("button", { name: "About this app" }).click();
   await expect(infoDialog).toBeVisible();
-  await expect(restoreBackupButton).toBeDisabled();
-  await expect(infoDialog.getByLabel("Application backup ZIP")).toBeDisabled();
-  await expect(infoDialog).toContainText(
-    "Unlock administrator tools to restore a backup.",
-  );
-  await infoDialog.getByRole("button", { name: "Done" }).click();
-  await expect(infoDialog).toHaveCount(0);
-
-  await unlockAdministrativeAccess(page);
-
-  await page.getByRole("button", { name: "Parser benchmark" }).click();
-  await expect(importDatasetButton).toBeEnabled();
-  await expect(benchmarkDialog.getByLabel("Parser dataset ZIP")).toBeEnabled();
-  await expect(benchmarkDialog).not.toContainText(
-    "Unlock administrator tools to import datasets.",
-  );
-  await benchmarkDialog.getByRole("button", { name: "Done" }).click();
-  await expect(benchmarkDialog).toHaveCount(0);
-
-  await page.getByRole("button", { name: "About this app" }).click();
   await expect(restoreBackupButton).toBeEnabled();
   await expect(infoDialog.getByLabel("Application backup ZIP")).toBeEnabled();
-  await expect(infoDialog).not.toContainText(
-    "Unlock administrator tools to restore a backup.",
-  );
   await infoDialog.getByRole("button", { name: "Done" }).click();
   await expect(infoDialog).toHaveCount(0);
 });
@@ -567,7 +516,7 @@ test("approves an administrative upload in a console without learning controls",
   const uploadedJob = await uploadAdministrativeScreenshot(page, filename);
 
   await expect(
-    page.getByRole("region", { name: "Analyzer controls" }),
+    page.getByRole("region", { name: "Administrator OCR controls" }),
   ).toContainText(CONSOLE_SUBTITLE);
   await expect(
     page.getByRole("note", { name: "Administrative OCR test mode" }),
@@ -579,7 +528,8 @@ test("approves an administrative upload in a console without learning controls",
   await expectNoLearningControls(page);
 
   const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${uploadedJob.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(persistedResponse.ok()).toBe(true);
   expect(await persistedResponse.json()).toMatchObject({
@@ -590,18 +540,10 @@ test("approves an administrative upload in a console without learning controls",
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(uploadedJob.queueItem).toBeHidden();
 
-  // The retired learning surface has no route of its own any more: the deep
-  // link lands on the analyzer workspace instead of a training page.
-  await page.goto("/analyzer/training");
-  await expectAnalyzerReady(page);
-  await expect(page).toHaveURL(/\/analyzer$/);
-  await expect(
-    page.getByRole("region", { name: "Analyzer controls" }),
-  ).toContainText(CONSOLE_SUBTITLE);
-  await expect(page.getByRole("region", { name: "Input" })).toContainText(
-    IMPORT_FIRST_NOTICE,
-  );
-  await expectNoLearningControls(page);
+  // The retired learning surface has no hosted route or compatibility redirect.
+  await page.goto("/admin/ocr/training");
+  await expect(page).toHaveURL(/\/admin\/ocr\/training$/);
+  await expect(page.getByText("Page not found")).toBeVisible();
 });
 
 test("requires an administrator credential for the screenshot upload API", async ({
@@ -616,25 +558,34 @@ test("requires an administrator credential for the screenshot upload API", async
     },
   };
 
-  const anonymousUpload = await page.request.post(`${BACKEND_URL}/api/jobs`, {
-    multipart,
-  });
+  const anonymousUpload = await page.request.post(
+    `${BACKEND_URL}/api/admin/ocr/jobs`,
+    {
+      multipart,
+    },
+  );
   expect(anonymousUpload.status()).toBe(401);
   expect(anonymousUpload.headers()["www-authenticate"]).toBe("Bearer");
   expect(await anonymousUpload.json()).toEqual({
     detail: "Administrative OCR test authorization is required",
   });
 
-  const rejectedUpload = await page.request.post(`${BACKEND_URL}/api/jobs`, {
-    headers: { Authorization: "Bearer not-the-deployment-token" },
-    multipart,
-  });
+  const rejectedUpload = await page.request.post(
+    `${BACKEND_URL}/api/admin/ocr/jobs`,
+    {
+      headers: { Authorization: "Bearer not-the-deployment-token" },
+      multipart,
+    },
+  );
   expect(rejectedUpload.status()).toBe(401);
 
-  const authorizedUpload = await page.request.post(`${BACKEND_URL}/api/jobs`, {
-    headers: ADMINISTRATOR_HEADERS,
-    multipart,
-  });
+  const authorizedUpload = await page.request.post(
+    `${BACKEND_URL}/api/admin/ocr/jobs`,
+    {
+      headers: ADMINISTRATOR_HEADERS,
+      multipart,
+    },
+  );
   expect(authorizedUpload.status()).toBe(201);
   const authorizedJob = (await authorizedUpload.json()) as { id: string };
   expect(authorizedJob).toMatchObject({
@@ -642,7 +593,8 @@ test("requires an administrator credential for the screenshot upload API", async
     status: "parsed",
   });
   const cleanupResponse = await page.request.delete(
-    `${BACKEND_URL}/api/jobs/${authorizedJob.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${authorizedJob.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(cleanupResponse.status()).toBe(204);
 
@@ -658,7 +610,7 @@ test("requires an administrator credential for the screenshot upload API", async
 test("confirms the administrator credential through the session check API", async ({
   page,
 }) => {
-  const sessionUrl = `${BACKEND_URL}/api/admin/ocr-test/session`;
+  const sessionUrl = `${BACKEND_URL}/api/admin/ocr/session`;
 
   const anonymousSession = await page.request.get(sessionUrl);
   expect(anonymousSession.status()).toBe(401);
@@ -719,7 +671,8 @@ test("captures repeated shared-window frames into persisted history", async ({
   ).toBeVisible();
 
   const imageResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${firstCapture.id}/image`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${firstCapture.id}/image`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(imageResponse.ok()).toBe(true);
   expect(imageResponse.headers()["content-type"]).toContain("image/png");
@@ -734,7 +687,8 @@ test("captures repeated shared-window frames into persisted history", async ({
   expectPixelClose(sampledPixels.table, [153, 27, 63, 255]);
 
   const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${firstCapture.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${firstCapture.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(persistedResponse.ok()).toBe(true);
   const persistedJob = (await persistedResponse.json()) as {
@@ -796,7 +750,8 @@ test("captures repeated shared-window frames into persisted history", async ({
   await expect(firstCapture.queueItem).toContainText("parsed");
   await expect(secondCapture.queueItem).toContainText("parsed");
   const secondImageResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${secondCapture.id}/image`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${secondCapture.id}/image`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(secondImageResponse.ok()).toBe(true);
   const secondImageBytes = await secondImageResponse.body();
@@ -831,8 +786,12 @@ test("captures repeated shared-window frames into persisted history", async ({
   ).toBeVisible();
 
   const archivedResponses = await Promise.all([
-    page.request.get(`${BACKEND_URL}/api/jobs/${firstCapture.id}`),
-    page.request.get(`${BACKEND_URL}/api/jobs/${secondCapture.id}`),
+    page.request.get(`${BACKEND_URL}/api/admin/ocr/jobs/${firstCapture.id}`, {
+      headers: ADMINISTRATOR_HEADERS,
+    }),
+    page.request.get(`${BACKEND_URL}/api/admin/ocr/jobs/${secondCapture.id}`, {
+      headers: ADMINISTRATOR_HEADERS,
+    }),
   ]);
   for (const archivedResponse of archivedResponses) {
     expect(archivedResponse.ok()).toBe(true);
@@ -956,7 +915,8 @@ test("rejects a mismatched share source and recovers with a tab", async ({
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(capture.queueItem).toBeHidden();
   const archivedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${capture.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${capture.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(archivedResponse.ok()).toBe(true);
   const archivedJob = (await archivedResponse.json()) as {
@@ -1074,7 +1034,8 @@ test("recovers after the browser share picker is cancelled", async ({
   await page.getByRole("button", { name: "Clear reviewed" }).click();
   await expect(capture.queueItem).toBeHidden();
   const archivedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${capture.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${capture.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(archivedResponse.ok()).toBe(true);
   const archivedJob = (await archivedResponse.json()) as {
@@ -1109,7 +1070,7 @@ test("reviews one screenshot from upload through persisted history", async ({
   const queueItem = uploadedJob.queueItem;
   await expect(
     page.getByAltText("Uploaded poker table screenshot"),
-  ).toHaveAttribute("src", `${BACKEND_URL}/api/jobs/${uploadedJob.id}/image`);
+  ).toHaveAttribute("src", /^blob:/);
   await expect(page.getByLabel("Hero cards")).toHaveValue("Ah Kd");
   await expect(page.getByLabel("Board cards")).toHaveValue("Qs Jc 2h");
 
@@ -1130,7 +1091,8 @@ test("reviews one screenshot from upload through persisted history", async ({
   await expect(page.getByLabel("Pot")).toHaveValue("13");
 
   const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${uploadedJob.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(persistedResponse.ok()).toBe(true);
   const persistedJob = (await persistedResponse.json()) as {
@@ -1151,11 +1113,12 @@ test("overlays delete confirmation without resizing screenshot details", async (
   await page.getByRole("button", { name: "Approve state" }).click();
   await expect(uploadedJob.queueItem).toContainText("approved");
   const includeResponse = await page.request.put(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark`,
-    { data: { included: true } },
+    `${BACKEND_URL}/api/admin/ocr/jobs/${uploadedJob.id}/benchmark`,
+    { headers: ADMINISTRATOR_HEADERS, data: { included: true } },
   );
   expect(includeResponse.ok()).toBe(true);
   await page.reload();
+  await expectAnalyzerReady(page);
   await page
     .getByRole("button", {
       name: `Manage screenshot 1: ${filename}`,
@@ -1224,7 +1187,8 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   await expect(uploadedJob.queueItem).toContainText("approved");
 
   const initialOverviewResponse = await page.request.get(
-    `${BACKEND_URL}/api/benchmarks`,
+    `${BACKEND_URL}/api/admin/ocr/benchmarks`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(initialOverviewResponse.ok()).toBe(true);
   const initialOverview = (await initialOverviewResponse.json()) as {
@@ -1250,7 +1214,7 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   const includeResponsePromise = page.waitForResponse(
     (response) =>
       response.url() ===
-        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark` &&
+        `${BACKEND_URL}/api/admin/ocr/jobs/${uploadedJob.id}/benchmark` &&
       response.request().method() === "PUT",
   );
   const groundTruthToggle = benchmarkDialog.getByRole("switch", {
@@ -1265,7 +1229,7 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
 
   const runResponsePromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/benchmarks/run` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/benchmarks/run` &&
       response.request().method() === "POST",
   );
   await benchmarkDialog.getByRole("button", { name: "Run benchmark" }).click();
@@ -1303,11 +1267,9 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   ).toContainText("100%");
 
   const downloadPromise = page.waitForEvent("download");
-  await benchmarkDialog.getByRole("link", { name: "Export dataset" }).click();
+  await benchmarkDialog.getByRole("button", { name: "Export dataset" }).click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(
-    /^poker-hero-parser-dataset-\d{8}T\d{6}Z\.zip$/,
-  );
+  expect(download.suggestedFilename()).toBe("poker-hero-parser-dataset.zip");
   const datasetPath = await download.path();
   expect(datasetPath).not.toBeNull();
   if (datasetPath === null) {
@@ -1322,7 +1284,7 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
     },
   };
   const anonymousImport = await page.request.post(
-    `${BACKEND_URL}/api/benchmarks/import`,
+    `${BACKEND_URL}/api/admin/ocr/benchmarks/import`,
     { multipart: datasetMultipart },
   );
   expect(anonymousImport.status()).toBe(401);
@@ -1331,7 +1293,7 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
     detail: "Administrative OCR test authorization is required",
   });
   const authorizedImport = await page.request.post(
-    `${BACKEND_URL}/api/benchmarks/import`,
+    `${BACKEND_URL}/api/admin/ocr/benchmarks/import`,
     { headers: ADMINISTRATOR_HEADERS, multipart: datasetMultipart },
   );
   expect(authorizedImport.status()).toBe(200);
@@ -1343,12 +1305,12 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
 
   const importRequestPromise = page.waitForRequest(
     (request) =>
-      request.url() === `${BACKEND_URL}/api/benchmarks/import` &&
+      request.url() === `${BACKEND_URL}/api/admin/ocr/benchmarks/import` &&
       request.method() === "POST",
   );
   const importResponsePromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/benchmarks/import` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/benchmarks/import` &&
       response.request().method() === "POST",
   );
   await benchmarkDialog
@@ -1381,7 +1343,7 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   const excludeResponsePromise = page.waitForResponse(
     (response) =>
       response.url() ===
-        `${BACKEND_URL}/api/jobs/${uploadedJob.id}/benchmark` &&
+        `${BACKEND_URL}/api/admin/ocr/jobs/${uploadedJob.id}/benchmark` &&
       response.request().method() === "PUT",
   );
   await groundTruthToggle.click();
@@ -1396,7 +1358,8 @@ test("runs a parser benchmark and verifies its exported dataset", async ({
   await expect(uploadedJob.queueItem).toBeHidden();
 
   const persistedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${uploadedJob.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(persistedResponse.ok()).toBe(true);
   const persistedJob = (await persistedResponse.json()) as {
@@ -1433,20 +1396,18 @@ test("downloads and verifies an application backup through recovery", async ({
 
   await page.getByRole("button", { name: "About this app" }).click();
   const infoDialog = page.getByRole("dialog", {
-    name: "About Poker Training Analyzer",
+    name: "About Poker Hero",
   });
   await expect(infoDialog).toBeVisible();
 
   const downloadPromise = page.waitForEvent("download");
   await infoDialog
-    .getByRole("link", {
+    .getByRole("button", {
       name: "Download application backup",
     })
     .click();
   const download = await downloadPromise;
-  expect(download.suggestedFilename()).toMatch(
-    /^poker-hero-backup-\d{8}T\d{6}Z\.zip$/,
-  );
+  expect(download.suggestedFilename()).toBe("poker-hero-backup.zip");
   const backupPath = await download.path();
   expect(backupPath).not.toBeNull();
   if (backupPath === null) {
@@ -1461,7 +1422,7 @@ test("downloads and verifies an application backup through recovery", async ({
     },
   };
   const anonymousRestore = await page.request.post(
-    `${BACKEND_URL}/api/backups/restore`,
+    `${BACKEND_URL}/api/admin/ocr/backups/restore`,
     { multipart: backupMultipart },
   );
   expect(anonymousRestore.status()).toBe(401);
@@ -1470,7 +1431,7 @@ test("downloads and verifies an application backup through recovery", async ({
     detail: "Administrative OCR test authorization is required",
   });
   const authorizedRestore = await page.request.post(
-    `${BACKEND_URL}/api/backups/restore`,
+    `${BACKEND_URL}/api/admin/ocr/backups/restore`,
     { headers: ADMINISTRATOR_HEADERS, multipart: backupMultipart },
   );
   expect(authorizedRestore.status()).toBe(200);
@@ -1481,12 +1442,12 @@ test("downloads and verifies an application backup through recovery", async ({
 
   const restoreRequestPromise = page.waitForRequest(
     (request) =>
-      request.url() === `${BACKEND_URL}/api/backups/restore` &&
+      request.url() === `${BACKEND_URL}/api/admin/ocr/backups/restore` &&
       request.method() === "POST",
   );
   const restoreResponsePromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/backups/restore` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/backups/restore` &&
       response.request().method() === "POST",
   );
   await infoDialog
@@ -1517,7 +1478,8 @@ test("downloads and verifies an application backup through recovery", async ({
   await expect(archivedJob.queueItem).toBeHidden();
   await expect(pendingJob.queueItem).toContainText("parsed");
   const archivedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${archivedJob.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${archivedJob.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(archivedResponse.ok()).toBe(true);
   const archivedRecord = (await archivedResponse.json()) as {
@@ -1529,7 +1491,8 @@ test("downloads and verifies an application backup through recovery", async ({
     status: "approved",
   });
   const pendingResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${pendingJob.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${pendingJob.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(pendingResponse.ok()).toBe(true);
   const pendingRecord = (await pendingResponse.json()) as {
@@ -1591,7 +1554,10 @@ test("continues a screenshot batch when one upload is invalid", async ({
     ),
   ).toBeVisible();
 
-  const batchJobsResponse = await page.request.get(`${BACKEND_URL}/api/jobs`);
+  const batchJobsResponse = await page.request.get(
+    `${BACKEND_URL}/api/admin/ocr/jobs`,
+    { headers: ADMINISTRATOR_HEADERS },
+  );
   expect(batchJobsResponse.ok()).toBe(true);
   const batchJobs = (await batchJobsResponse.json()) as {
     jobs: Array<{
@@ -1642,7 +1608,7 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   });
   const failedUploadResponsePromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/jobs` &&
       response.request().method() === "POST" &&
       response.status() === 502,
   );
@@ -1668,7 +1634,10 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
     )
     .toBeNull();
 
-  const failedJobsResponse = await page.request.get(`${BACKEND_URL}/api/jobs`);
+  const failedJobsResponse = await page.request.get(
+    `${BACKEND_URL}/api/admin/ocr/jobs`,
+    { headers: ADMINISTRATOR_HEADERS },
+  );
   expect(failedJobsResponse.ok()).toBe(true);
   const failedJobs = (await failedJobsResponse.json()) as {
     jobs: Array<{
@@ -1726,7 +1695,7 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   });
   const recoveredUploadPromise = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/jobs` &&
       response.request().method() === "POST" &&
       response.ok(),
   );
@@ -1742,7 +1711,7 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   );
   await expect(matchingQueueItems.filter({ hasText: "parsed" })).toHaveCount(1);
 
-  await page.goto(`/analyzer/jobs/${recoveredJob.id}`);
+  await page.goto(`/admin/ocr/jobs/${recoveredJob.id}`);
   await expectAnalyzerReady(page);
   await expect(matchingQueueItems).toHaveCount(2);
   await page.getByRole("button", { name: "Approve state" }).click();
@@ -1752,7 +1721,8 @@ test("persists a parser failure and recovers by re-uploading the screenshot", as
   await expect(recoveredQueueItem).toHaveCount(1);
 
   const recoveredJobsResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs`,
+    `${BACKEND_URL}/api/admin/ocr/jobs`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(recoveredJobsResponse.ok()).toBe(true);
   const recoveredJobs = (await recoveredJobsResponse.json()) as {
@@ -1848,7 +1818,8 @@ test("restores history and processing after browser storage is cleared", async (
   await expect(page.getByLabel("Pot")).toHaveValue("66.75");
   await expect(restoredPendingJob).toContainText("parsed");
   const persistedArchivedResponse = await page.request.get(
-    `${BACKEND_URL}/api/jobs/${archivedJob.id}`,
+    `${BACKEND_URL}/api/admin/ocr/jobs/${archivedJob.id}`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(persistedArchivedResponse.ok()).toBe(true);
   const persistedArchivedJob = (await persistedArchivedResponse.json()) as {
@@ -1875,8 +1846,8 @@ test("searches beyond cached history without replacing active work", async ({
   const targetFilename = attemptFilename("deep-history-target", testInfo);
   const targetJob = await createApprovedScreenshot(page, targetFilename, 77.25);
   const targetArchiveResponse = await page.request.put(
-    `${BACKEND_URL}/api/history`,
-    { data: { job_ids: [targetJob.id] } },
+    `${BACKEND_URL}/api/admin/ocr/history`,
+    { headers: ADMINISTRATOR_HEADERS, data: { job_ids: [targetJob.id] } },
   );
   expect(targetArchiveResponse.ok()).toBe(true);
 
@@ -1890,13 +1861,14 @@ test("searches beyond cached history without replacing active work", async ({
     newerJobIds.push(fixture.id);
   }
   const newerArchiveResponse = await page.request.put(
-    `${BACKEND_URL}/api/history`,
-    { data: { job_ids: newerJobIds } },
+    `${BACKEND_URL}/api/admin/ocr/history`,
+    { headers: ADMINISTRATOR_HEADERS, data: { job_ids: newerJobIds } },
   );
   expect(newerArchiveResponse.ok()).toBe(true);
 
   const firstHistoryResponse = await page.request.get(
-    `${BACKEND_URL}/api/history`,
+    `${BACKEND_URL}/api/admin/ocr/history`,
+    { headers: ADMINISTRATOR_HEADERS },
   );
   expect(firstHistoryResponse.ok()).toBe(true);
   const firstHistory = (await firstHistoryResponse.json()) as {
@@ -1932,7 +1904,7 @@ test("searches beyond cached history without replacing active work", async ({
     const url = new URL(response.url());
     return (
       url.origin === BACKEND_URL &&
-      url.pathname === "/api/history" &&
+      url.pathname === "/api/admin/ocr/history" &&
       url.searchParams.get("query") === targetFilename
     );
   });
@@ -1986,8 +1958,8 @@ test("loads an older page of matching history results", async ({
   const oldestFilename = `${searchToken}-oldest.png`;
   const oldestJob = await createApprovedScreenshot(page, oldestFilename, 88.5);
   const oldestArchiveResponse = await page.request.put(
-    `${BACKEND_URL}/api/history`,
-    { data: { job_ids: [oldestJob.id] } },
+    `${BACKEND_URL}/api/admin/ocr/history`,
+    { headers: ADMINISTRATOR_HEADERS, data: { job_ids: [oldestJob.id] } },
   );
   expect(oldestArchiveResponse.ok()).toBe(true);
 
@@ -2001,8 +1973,8 @@ test("loads an older page of matching history results", async ({
     newerJobIds.push(fixture.id);
   }
   const newerArchiveResponse = await page.request.put(
-    `${BACKEND_URL}/api/history`,
-    { data: { job_ids: newerJobIds } },
+    `${BACKEND_URL}/api/admin/ocr/history`,
+    { headers: ADMINISTRATOR_HEADERS, data: { job_ids: newerJobIds } },
   );
   expect(newerArchiveResponse.ok()).toBe(true);
 
@@ -2027,7 +1999,7 @@ test("loads an older page of matching history results", async ({
     const url = new URL(response.url());
     return (
       url.origin === BACKEND_URL &&
-      url.pathname === "/api/history" &&
+      url.pathname === "/api/admin/ocr/history" &&
       url.searchParams.get("query") === searchToken &&
       url.searchParams.get("offset") === null
     );
@@ -2065,7 +2037,7 @@ test("loads an older page of matching history results", async ({
     const url = new URL(response.url());
     return (
       url.origin === BACKEND_URL &&
-      url.pathname === "/api/history" &&
+      url.pathname === "/api/admin/ocr/history" &&
       url.searchParams.get("query") === searchToken &&
       url.searchParams.get("offset") === "24"
     );

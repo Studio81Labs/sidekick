@@ -81,7 +81,7 @@ describe("Analyzer hand review", () => {
     const payload = JSON.parse(String(approveOptions?.body));
 
     expect(fetchMock().mock.calls[2][0]).toBe(
-      "http://localhost:8000/api/jobs/job-123/approve",
+      "http://localhost:8000/api/admin/ocr/jobs/job-123/approve",
     );
     expect(payload.current_bet).toBe(3.5);
     expect(payload.opponent_wager).toBeNull();

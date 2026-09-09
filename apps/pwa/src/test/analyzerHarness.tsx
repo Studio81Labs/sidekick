@@ -7,6 +7,13 @@ import { AppProviders } from "../app/providers/AppProviders";
 import * as adminOcrTestApi from "../domains/admin-ocr-test/api/adminOcrTestApi";
 import type { AdministrativeSession } from "../domains/admin-ocr-test/api/adminOcrTestApi";
 import AnalyzerPage from "../pages/analyzer/AnalyzerPage";
+import { AnalyzerWorkspaceComposition } from "../pages/analyzer/AnalyzerWorkspaceComposition";
+import { AnalyzerWorkflowProvider } from "../features/workspace/hooks/useAnalyzerWorkflow";
+import { useAnalyzerWorkflowOwnerId } from "../features/workspace/hooks/useAnalyzerWorkflowOwnerId";
+import type {
+  AnalyzerRouteNavigation,
+  AnalyzerRouteState,
+} from "../pages/analyzer/analyzerRouteState";
 import type { CanonicalState, DetectedState } from "../shared/types/poker";
 import type { JobRecord } from "../shared/types/jobs";
 
@@ -14,6 +21,7 @@ const AUTHORIZED_SESSION: AdministrativeSession = {
   enabled: true,
   authorized: true,
 };
+let analyzerApiFetchMock = vi.fn();
 
 /**
  * The unlock now asks the server, but the workspace suites drive `fetch` with
@@ -39,7 +47,49 @@ export function mockAdministratorVerification(
   return verification;
 }
 
+const TEST_ROUTE: AnalyzerRouteState = { jobId: null, surface: "workspace" };
+const TEST_NAVIGATION: AnalyzerRouteNavigation = {
+  closeSurface: () => undefined,
+  managed: false,
+  openBenchmarks: () => undefined,
+  openJob: () => undefined,
+  openWorkspace: () => undefined,
+};
+
+export function VerifiedAnalyzerPage({
+  navigation = TEST_NAVIGATION,
+  route = TEST_ROUTE,
+}: {
+  navigation?: AnalyzerRouteNavigation;
+  route?: AnalyzerRouteState;
+}) {
+  const mutationOwnerId = useAnalyzerWorkflowOwnerId();
+  return (
+    <AnalyzerWorkflowProvider mutationOwnerId={mutationOwnerId}>
+      <AnalyzerWorkspaceComposition
+        administratorToken={ADMINISTRATOR_TOKEN}
+        mutationOwnerId={mutationOwnerId}
+        navigation={navigation}
+        onLockAdministrator={() => undefined}
+        route={route}
+      />
+    </AnalyzerWorkflowProvider>
+  );
+}
+
+/**
+ * Workspace behavior suites start after a credential has already been verified.
+ * The route-level access gate itself is covered by the unverified harness below.
+ */
 export function AnalyzerTestApp({ children }: { children?: ReactNode }) {
+  return <AppProviders>{children ?? <VerifiedAnalyzerPage />}</AppProviders>;
+}
+
+export function UnverifiedAnalyzerTestApp({
+  children,
+}: {
+  children?: ReactNode;
+}) {
   return <AppProviders>{children ?? <AnalyzerPage />}</AppProviders>;
 }
 
@@ -191,7 +241,7 @@ export function nextDeferredResponse(
 }
 
 export function fetchMock() {
-  return vi.mocked(fetch);
+  return analyzerApiFetchMock;
 }
 
 export function stubCanvasCapture() {
@@ -247,7 +297,8 @@ export async function unlockAdministrativeAccess(user = userEvent.setup()) {
   if (screen.queryByRole("note", { name: "Administrative OCR test mode" })) {
     return user;
   }
-  await user.click(screen.getByRole("button", { name: "Administrator tools" }));
+  const accessGate =
+    screen.queryByLabelText("Administrative OCR test token") !== null;
   await user.type(
     screen.getByLabelText("Administrative OCR test token"),
     ADMINISTRATOR_TOKEN,
@@ -255,9 +306,11 @@ export async function unlockAdministrativeAccess(user = userEvent.setup()) {
   await user.click(screen.getByRole("button", { name: "Unlock" }));
   // The unlock is only granted once the server confirms the token.
   await screen.findByRole("note", { name: "Administrative OCR test mode" });
-  await user.click(
-    screen.getByRole("button", { name: "Close administrator tools" }),
-  );
+  if (!accessGate) {
+    await user.click(
+      screen.getByRole("button", { name: "Close administrator tools" }),
+    );
+  }
   return user;
 }
 
@@ -284,7 +337,21 @@ beforeEach(() => {
   window.sessionStorage.clear();
   window.sessionStorage.setItem("poker-training-processing-synced", "true");
   window.sessionStorage.setItem("poker-training-history-synced", "true");
-  vi.stubGlobal("fetch", vi.fn());
+  analyzerApiFetchMock = vi.fn();
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const requestUrl = input instanceof Request ? input.url : String(input);
+      if (/\/api\/admin\/ocr\/jobs\/[^/]+\/image(?:\?|$)/.test(requestUrl)) {
+        return Promise.resolve(
+          new Response("test screenshot", {
+            headers: { "Content-Type": "image/png" },
+          }),
+        );
+      }
+      return analyzerApiFetchMock(input, init);
+    }),
+  );
   Object.defineProperty(navigator, "mediaDevices", {
     configurable: true,
     value: undefined,

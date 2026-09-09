@@ -24,24 +24,24 @@ function renderRoute(path: string) {
 }
 
 describe("AppRoutes", () => {
-  it("redirects the compatibility root to the analyzer", async () => {
+  it("redirects the root to the administrator OCR entry point", async () => {
     renderRoute("/");
 
     expect(await screen.findByText("Analyzer workspace")).toBeInTheDocument();
     expect(screen.getByLabelText("Current path")).toHaveTextContent(
-      "/analyzer",
+      "/admin/ocr",
     );
   });
 
-  it("renders the durable analyzer workspace", () => {
-    renderRoute("/analyzer");
+  it("renders the durable administrator workspace", () => {
+    renderRoute("/admin/ocr");
 
     expect(screen.getByText("Analyzer workspace")).toBeInTheDocument();
   });
 
   it.each([
-    ["job", "/analyzer/jobs/job-123"],
-    ["benchmarks", "/analyzer/benchmarks"],
+    ["job", "/admin/ocr/jobs/job-123"],
+    ["benchmarks", "/admin/ocr/benchmarks"],
   ])("renders the durable %s surface", (surface, path) => {
     renderRoute(path);
 
@@ -49,15 +49,20 @@ describe("AppRoutes", () => {
   });
 
   it("builds encoded durable job paths", () => {
-    expect(analyzerJobPath("job / 123")).toBe("/analyzer/jobs/job%20%2F%20123");
+    expect(analyzerJobPath("job / 123")).toBe(
+      "/admin/ocr/jobs/job%20%2F%20123",
+    );
   });
 
-  it("returns unknown paths to the analyzer", async () => {
+  it("does not redirect unknown or removed analyzer paths", () => {
     renderRoute("/future-account-page");
 
-    expect(await screen.findByText("Analyzer workspace")).toBeInTheDocument();
+    expect(screen.getByText("Page not found")).toBeInTheDocument();
     expect(screen.getByLabelText("Current path")).toHaveTextContent(
-      "/analyzer",
+      "/future-account-page",
     );
+    cleanup();
+    renderRoute("/analyzer");
+    expect(screen.getByText("Page not found")).toBeInTheDocument();
   });
 });

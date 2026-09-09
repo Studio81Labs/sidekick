@@ -57,7 +57,11 @@ from app.domain.pipeline import (
 )
 from app.domain.poker import CanonicalState
 from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
-from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
+from api_test_support import (
+    ADMIN_OCR_TEST_HEADERS,
+    ADMIN_OCR_TEST_TOKEN,
+    CurrentAdminOcrTestClient,
+)
 
 ADMIN_OCR_TEST_POLICY = AdminOcrTestAccessPolicy.for_token(ADMIN_OCR_TEST_TOKEN)
 
@@ -213,22 +217,28 @@ def make_client(
     app = FastAPI()
     app.include_router(create_health_router(runtime))
     app.include_router(create_pipeline_router(runtime))
-    app.include_router(create_history_router(history_runtime))
+    app.include_router(
+        create_history_router(history_runtime, ADMIN_OCR_TEST_POLICY.authorize)
+    )
     app.include_router(
         create_mcp_admin_router(mcp_admin_runtime or default_mcp_admin_runtime())
     )
     app.include_router(
-        create_jobs_router(jobs_read_runtime or default_jobs_read_runtime())
+        create_jobs_router(
+            jobs_read_runtime or default_jobs_read_runtime(),
+            ADMIN_OCR_TEST_POLICY.authorize,
+        )
     )
     app.include_router(
         create_job_mutations_router(
-            jobs_mutation_runtime or default_jobs_mutation_runtime()
+            jobs_mutation_runtime or default_jobs_mutation_runtime(),
+            ADMIN_OCR_TEST_POLICY.authorize,
         )
     )
     app.include_router(
         create_job_upload_router(jobs_upload_runtime or default_jobs_upload_runtime())
     )
-    return TestClient(app)
+    return CurrentAdminOcrTestClient(app)
 
 
 def test_read_only_routers_use_injected_runtime_callables() -> None:
@@ -905,8 +915,14 @@ def test_router_composition_preserves_public_operation_ids() -> None:
         document = client.app.openapi()
 
     assert document["paths"]["/api/health"]["get"]["operationId"] == "health_get"
-    assert document["paths"]["/api/history"]["get"]["operationId"] == "history_get"
-    assert document["paths"]["/api/history"]["put"]["operationId"] == "history_archive"
+    assert (
+        document["paths"]["/api/admin/ocr/history"]["get"]["operationId"]
+        == "admin_ocr_history_get"
+    )
+    assert (
+        document["paths"]["/api/admin/ocr/history"]["put"]["operationId"]
+        == "admin_ocr_history_archive"
+    )
     assert document["paths"]["/api/mcp/config"]["get"]["operationId"] == "mcp_config_get"
     assert (
         document["paths"]["/api/mcp/principals"]["get"]["operationId"]
@@ -929,27 +945,44 @@ def test_router_composition_preserves_public_operation_ids() -> None:
         == "mcp_principal_revoke"
     )
     assert document["paths"]["/api/pipeline"]["get"]["operationId"] == "pipeline_get"
-    assert document["paths"]["/api/jobs"]["get"]["operationId"] == "jobs_list"
-    assert document["paths"]["/api/jobs"]["post"]["operationId"] == "jobs_create"
-    assert document["paths"]["/api/jobs/{job_id}"]["get"]["operationId"] == "job_get"
     assert (
-        document["paths"]["/api/jobs/{job_id}/metadata"]["put"]["operationId"]
-        == "job_metadata_update"
+        document["paths"]["/api/admin/ocr/jobs"]["get"]["operationId"]
+        == "admin_ocr_jobs_list"
     )
     assert (
-        document["paths"]["/api/jobs/{job_id}"]["delete"]["operationId"]
-        == "job_delete"
+        document["paths"]["/api/admin/ocr/jobs"]["post"]["operationId"]
+        == "admin_ocr_jobs_create"
     )
     assert (
-        document["paths"]["/api/jobs/{job_id}/approve"]["post"]["operationId"]
-        == "job_approve"
+        document["paths"]["/api/admin/ocr/jobs/{job_id}"]["get"]["operationId"]
+        == "admin_ocr_job_get"
     )
-    job_image_response = document["paths"]["/api/jobs/{job_id}/image"]["get"][
+    assert (
+        document["paths"]["/api/admin/ocr/jobs/{job_id}/metadata"]["put"][
+            "operationId"
+        ]
+        == "admin_ocr_job_metadata_update"
+    )
+    assert (
+        document["paths"]["/api/admin/ocr/jobs/{job_id}"]["delete"][
+            "operationId"
+        ]
+        == "admin_ocr_job_delete"
+    )
+    assert (
+        document["paths"]["/api/admin/ocr/jobs/{job_id}/approve"]["post"][
+            "operationId"
+        ]
+        == "admin_ocr_job_approve"
+    )
+    job_image_response = document["paths"]["/api/admin/ocr/jobs/{job_id}/image"]["get"][
         "responses"
     ]["200"]
     assert (
-        document["paths"]["/api/jobs/{job_id}/image"]["get"]["operationId"]
-        == "job_image_get"
+        document["paths"]["/api/admin/ocr/jobs/{job_id}/image"]["get"][
+            "operationId"
+        ]
+        == "admin_ocr_job_image_get"
     )
     assert job_image_response["content"] == {
         "image/gif": {"schema": {"type": "string", "format": "binary"}},

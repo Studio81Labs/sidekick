@@ -18,13 +18,13 @@ export interface AnalyzerRouteNavigationOptions {
 }
 
 export const analyzerPaths = {
-  analyzer: "/analyzer",
-  analyzerBenchmarks: "/analyzer/benchmarks",
-  analyzerJob: "/analyzer/jobs/:jobId",
+  analyzer: "/admin/ocr",
+  analyzerBenchmarks: "/admin/ocr/benchmarks",
+  analyzerJob: "/admin/ocr/jobs/:jobId",
 } as const;
 
 export function analyzerJobPath(jobId: string): string {
-  return `/analyzer/jobs/${encodeURIComponent(jobId)}`;
+  return `/admin/ocr/jobs/${encodeURIComponent(jobId)}`;
 }
 
 export function analyzerRouteState(

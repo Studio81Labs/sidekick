@@ -84,7 +84,7 @@ def test_request_id_is_returned_and_access_log_is_structured(
     client = make_client(tmp_path)
 
     response = client.get(
-        "/api/jobs?limit=1",
+        "/api/admin/ocr/jobs?limit=1",
         headers={"X-Request-ID": "worker-request-123"},
     )
 
@@ -103,7 +103,7 @@ def test_request_id_is_returned_and_access_log_is_structured(
             "level": "info",
             "method": "GET",
             "outcome": "completed",
-            "path": "/api/jobs",
+            "path": "/api/admin/ocr/jobs",
             "request_id": "worker-request-123",
             "status_code": 200,
         }
@@ -116,7 +116,7 @@ def test_invalid_request_id_is_replaced(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
     response = client.get(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         headers={"X-Request-ID": "invalid request id"},
     )
 
@@ -271,8 +271,8 @@ def test_client_disconnect_marks_file_response_failed(
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
-        "path": "/api/jobs/example/image",
-        "raw_path": b"/api/jobs/example/image",
+        "path": "/api/admin/ocr/jobs/example/image",
+        "raw_path": b"/api/admin/ocr/jobs/example/image",
         "query_string": b"",
         "headers": [],
         "client": ("127.0.0.1", 1234),
@@ -340,8 +340,8 @@ def test_client_disconnect_during_pathsend_marks_response_failed(
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
-        "path": "/api/jobs/example/image",
-        "raw_path": b"/api/jobs/example/image",
+        "path": "/api/admin/ocr/jobs/example/image",
+        "raw_path": b"/api/admin/ocr/jobs/example/image",
         "query_string": b"",
         "headers": [],
         "client": ("127.0.0.1", 1234),
@@ -410,8 +410,8 @@ def test_client_disconnect_during_final_body_send_marks_response_failed(
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
-        "path": "/api/jobs/example/image",
-        "raw_path": b"/api/jobs/example/image",
+        "path": "/api/admin/ocr/jobs/example/image",
+        "raw_path": b"/api/admin/ocr/jobs/example/image",
         "query_string": b"",
         "headers": [],
         "client": ("127.0.0.1", 1234),
@@ -466,8 +466,8 @@ def test_rejected_upload_monitors_receive_only_after_response_start(
         "http_version": "1.1",
         "method": "POST",
         "scheme": "http",
-        "path": "/api/jobs",
-        "raw_path": b"/api/jobs",
+        "path": "/api/admin/ocr/jobs",
+        "raw_path": b"/api/admin/ocr/jobs",
         "query_string": b"",
         "headers": [
             (b"content-length", b"1048576"),
@@ -542,8 +542,8 @@ def test_disconnect_during_rejected_upload_response_is_logged_as_failed(
         "http_version": "1.1",
         "method": "POST",
         "scheme": "http",
-        "path": "/api/jobs",
-        "raw_path": b"/api/jobs",
+        "path": "/api/admin/ocr/jobs",
+        "raw_path": b"/api/admin/ocr/jobs",
         "query_string": b"",
         "headers": [
             (b"content-length", b"1048576"),
@@ -623,8 +623,8 @@ def test_disconnect_during_successful_unread_body_response_is_logged_as_failed(
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
-        "path": "/api/jobs",
-        "raw_path": b"/api/jobs",
+        "path": "/api/admin/ocr/jobs",
+        "raw_path": b"/api/admin/ocr/jobs",
         "query_string": b"",
         "headers": [(b"content-length", b"1048576")],
         "client": ("127.0.0.1", 1234),
@@ -709,8 +709,8 @@ def test_response_start_does_not_create_concurrent_receive_calls(
         "http_version": "1.1",
         "method": "POST",
         "scheme": "http",
-        "path": "/api/jobs",
-        "raw_path": b"/api/jobs",
+        "path": "/api/admin/ocr/jobs",
+        "raw_path": b"/api/admin/ocr/jobs",
         "query_string": b"",
         "headers": [(b"content-length", b"1024")],
         "client": ("127.0.0.1", 1234),
@@ -769,8 +769,8 @@ def test_preexisting_disconnect_is_seen_before_synchronous_final_send(
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
-        "path": "/api/jobs",
-        "raw_path": b"/api/jobs",
+        "path": "/api/admin/ocr/jobs",
+        "raw_path": b"/api/admin/ocr/jobs",
         "query_string": b"",
         "headers": [],
         "client": ("127.0.0.1", 1234),
@@ -830,8 +830,8 @@ def test_completed_response_is_logged_before_post_response_failure(
         "http_version": "1.1",
         "method": "GET",
         "scheme": "http",
-        "path": "/api/benchmarks/imports/example",
-        "raw_path": b"/api/benchmarks/imports/example",
+        "path": "/api/admin/ocr/benchmarks/imports/example",
+        "raw_path": b"/api/admin/ocr/benchmarks/imports/example",
         "query_string": b"",
         "headers": [],
         "client": ("127.0.0.1", 1234),
@@ -878,7 +878,7 @@ def test_benchmark_recovery_poll_logs_before_background_import_finishes(
     responses: list[object] = []
 
     def poll_import() -> None:
-        responses.append(client.get(f"/api/benchmarks/imports/{request_id}"))
+        responses.append(client.get(f"/api/admin/ocr/benchmarks/imports/{request_id}"))
 
     poll_thread = Thread(target=poll_import)
     poll_thread.start()
@@ -887,7 +887,7 @@ def test_benchmark_recovery_poll_logs_before_background_import_finishes(
     access_events = [json.loads(record.message) for record in access_log_records]
     assert len(access_events) == 1
     assert access_events[0]["path"] == (
-        f"/api/benchmarks/imports/{request_id}"
+        f"/api/admin/ocr/benchmarks/imports/{request_id}"
     )
     assert access_events[0]["status_code"] == 200
     assert access_events[0]["outcome"] == "completed"
@@ -907,7 +907,7 @@ def test_cors_preflight_is_observed(
     client = make_client(tmp_path)
 
     response = client.options(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         headers={
             "Access-Control-Request-Headers": "X-Benchmark-Import-Request-ID",
             "Access-Control-Request-Method": "POST",
@@ -954,7 +954,7 @@ def test_cors_exposes_request_id_header(tmp_path: Path) -> None:
     client = make_client(tmp_path)
 
     response = client.get(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         headers={"Origin": "http://localhost:5173"},
     )
 
@@ -968,7 +968,7 @@ def test_proxy_shared_secret_protects_api_but_not_health(tmp_path: Path) -> None
 
     assert client.get("/api/health").status_code == 200
     rejected = client.get(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         headers={
             "Origin": "http://localhost:5173",
             "X-Request-ID": "rejected-request-123",
@@ -981,12 +981,12 @@ def test_proxy_shared_secret_protects_api_but_not_health(tmp_path: Path) -> None
     )
     assert rejected.headers["Access-Control-Expose-Headers"] == CORS_EXPOSED_HEADERS
     assert client.get(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         headers={"X-Poker-Proxy-Secret": "incorrect-secret-value-123456789"},
     ).status_code == 401
 
     authorized = client.get(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         headers={"X-Poker-Proxy-Secret": proxy_secret},
     )
 

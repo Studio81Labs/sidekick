@@ -11,11 +11,10 @@ import { ButtonControl } from "../../../shared/components/FormControls";
 import { SummaryMetric } from "../../../shared/components/SummaryMetric";
 
 export interface AnalyzerToolbarProps {
-  administrativeUnlocked: boolean;
   busy: boolean;
   historyTotal: number;
   onConfigurePipeline: () => void;
-  onOpenAdministrativeTools: () => void;
+  onLockAdministrator: () => void;
   onOpenBenchmark: () => void;
   onOpenHelp: () => void;
   onOpenInfo: () => void;
@@ -23,24 +22,23 @@ export interface AnalyzerToolbarProps {
 }
 
 export function AnalyzerToolbar({
-  administrativeUnlocked,
   busy,
   historyTotal,
   onConfigurePipeline,
-  onOpenAdministrativeTools,
+  onLockAdministrator,
   onOpenBenchmark,
   onOpenHelp,
   onOpenInfo,
   queueCount,
 }: AnalyzerToolbarProps) {
   return (
-    <section className="toolbar" aria-label="Analyzer controls">
+    <section className="toolbar" aria-label="Administrator OCR controls">
       <div className="brand-block">
         <div className="brand-mark" aria-hidden="true">
           A
         </div>
         <div>
-          <h1>Poker Training Analyzer</h1>
+          <h1>Poker Hero</h1>
           <p>
             Administrator OCR test console for Texas Hold&apos;em screenshots
           </p>
@@ -62,15 +60,10 @@ export function AnalyzerToolbar({
         <ButtonControl
           variant="secondary"
           iconOnly
-          className={
-            administrativeUnlocked
-              ? "header-icon-button active"
-              : "header-icon-button"
-          }
-          onClick={onOpenAdministrativeTools}
-          aria-pressed={administrativeUnlocked}
-          title="Administrator tools"
-          aria-label="Administrator tools"
+          className="header-icon-button active"
+          onClick={onLockAdministrator}
+          title="Lock administrator session"
+          aria-label="Lock administrator session"
         >
           <ShieldCheck size={18} aria-hidden="true" />
         </ButtonControl>

@@ -37,6 +37,7 @@ const jobResponse = {
   updated_at: "2026-08-24T00:00:00Z",
   upload_request_id: null,
 } satisfies components["schemas"]["JobRecord"];
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 describe("jobs API adapter", () => {
   it("preserves the required full metadata replacement contract", () => {
@@ -66,10 +67,15 @@ describe("jobs API adapter", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(jobResponse));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(getJob("job/123")).resolves.toEqual(jobResponse);
+    await expect(getJob("job/123", ADMINISTRATOR_TOKEN)).resolves.toEqual(
+      jobResponse,
+    );
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/jobs/job/123",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/jobs/job%2F123",
+      {
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      },
     );
   });
 
@@ -82,10 +88,15 @@ describe("jobs API adapter", () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse(queue));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(getProcessingJobs(100)).resolves.toEqual(queue);
+    await expect(getProcessingJobs(100, ADMINISTRATOR_TOKEN)).resolves.toEqual(
+      queue,
+    );
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/jobs?offset=100",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/jobs?offset=100",
+      {
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      },
     );
   });
 
@@ -105,7 +116,7 @@ describe("jobs API adapter", () => {
     ).resolves.toEqual({ ...jobResponse, upload_request_id: "upload-1" });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/jobs",
+      "http://localhost:8000/api/admin/ocr/jobs",
       expect.objectContaining({
         method: "POST",
         signal: controller.signal,
@@ -144,14 +155,17 @@ describe("jobs API adapter", () => {
       tags: ["turn", "bluff"],
     };
 
-    await expect(updateJobMetadata("job/123", metadata)).resolves.toEqual(
-      jobResponse,
-    );
+    await expect(
+      updateJobMetadata("job/123", metadata, ADMINISTRATOR_TOKEN),
+    ).resolves.toEqual(jobResponse);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/jobs/job%2F123/metadata",
+      "http://localhost:8000/api/admin/ocr/jobs/job%2F123/metadata",
       {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Authorization: "Bearer administrator-token",
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify(metadata),
         credentials: "include",
       },
@@ -165,13 +179,16 @@ describe("jobs API adapter", () => {
     const state = { ...canonicalState(), user_approved: false };
 
     await expect(
-      approveState("job/123", state, controller.signal),
+      approveState("job/123", state, ADMINISTRATOR_TOKEN, controller.signal),
     ).resolves.toEqual(jobResponse);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/jobs/job/123/approve",
+      "http://localhost:8000/api/admin/ocr/jobs/job%2F123/approve",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          Authorization: "Bearer administrator-token",
+          "Content-Type": "application/json",
+        },
         body: JSON.stringify({ ...state, user_approved: true }),
         signal: controller.signal,
         credentials: "include",
@@ -185,10 +202,16 @@ describe("jobs API adapter", () => {
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(deleteJob("job/123")).resolves.toBeUndefined();
+    await expect(
+      deleteJob("job/123", ADMINISTRATOR_TOKEN),
+    ).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/jobs/job%2F123",
-      { method: "DELETE", credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/jobs/job%2F123",
+      {
+        method: "DELETE",
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      },
     );
   });
 
@@ -198,7 +221,9 @@ describe("jobs API adapter", () => {
       .mockResolvedValueOnce(new Response(null, { status: 404 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(deleteJob("job/123")).resolves.toBeUndefined();
+    await expect(
+      deleteJob("job/123", ADMINISTRATOR_TOKEN),
+    ).resolves.toBeUndefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -20,6 +20,7 @@ import {
 import { deleteScreenshotCommand } from "./deleteScreenshotCommand";
 
 afterEach(resetApiMocks);
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 describe("delete screenshot command", () => {
   it("returns an explicit outcome and removes only affected cache data", async () => {
@@ -58,12 +59,16 @@ describe("delete screenshot command", () => {
     const detailKey = jobQueryKeys.detail(job.id);
     const pendingWrite = beginLatestQueryWrite(queryClient, detailKey);
     const staleReads = [
-      fetchJobQuery(queryClient, job.id),
-      fetchProcessingJobsQuery(queryClient),
-      fetchHistoryPageQuery(queryClient),
+      fetchJobQuery(queryClient, job.id, ADMINISTRATOR_TOKEN),
+      fetchProcessingJobsQuery(queryClient, ADMINISTRATOR_TOKEN),
+      fetchHistoryPageQuery(queryClient, ADMINISTRATOR_TOKEN),
     ];
 
-    const outcome = await deleteScreenshotCommand(queryClient, job.id);
+    const outcome = await deleteScreenshotCommand(
+      queryClient,
+      job.id,
+      ADMINISTRATOR_TOKEN,
+    );
     resolveDetail(jsonResponse(job));
     resolveProcessing(jsonResponse({ jobs: [job], total: 1 }));
     resolveHistory(jsonResponse({ jobs: [job], total: 1 }));
@@ -109,9 +114,9 @@ describe("delete screenshot command", () => {
       ),
     );
 
-    await expect(deleteScreenshotCommand(queryClient, job.id)).rejects.toThrow(
-      "Delete failed",
-    );
+    await expect(
+      deleteScreenshotCommand(queryClient, job.id, ADMINISTRATOR_TOKEN),
+    ).rejects.toThrow("Delete failed");
     expect(queryClient.getQueryData(detailKey)).toEqual(job);
     expect(queryClient.getQueryState(processingKey)?.isInvalidated).toBe(false);
   });

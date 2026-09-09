@@ -12,6 +12,7 @@ export function toJobHistory(response: JobHistoryResponse): JobHistory {
 }
 
 export async function getHistory(
+  administratorToken: string,
   offset = 0,
   query = "",
   limit?: number,
@@ -29,13 +30,19 @@ export async function getHistory(
   }
   const queryString = params.size > 0 ? `?${params.toString()}` : "";
   const response = await requestJson<JobHistoryResponse>(
-    `/api/history${queryString}`,
-    signal ? { signal } : undefined,
+    `/api/admin/ocr/history${queryString}`,
+    {
+      headers: { Authorization: `Bearer ${administratorToken}` },
+      ...(signal ? { signal } : {}),
+    },
   );
   return toJobHistory(response);
 }
 
-export async function archiveJobs(jobIds: string[]): Promise<JobHistory> {
+export async function archiveJobs(
+  jobIds: string[],
+  administratorToken: string,
+): Promise<JobHistory> {
   if (jobIds.length === 0) {
     throw new Error("At least one job is required to archive history");
   }
@@ -49,11 +56,17 @@ export async function archiveJobs(jobIds: string[]): Promise<JobHistory> {
     const request = {
       job_ids: jobIds.slice(offset, offset + HISTORY_ARCHIVE_BATCH_SIZE),
     } satisfies ArchiveJobsRequest;
-    const response = await requestJson<JobHistoryResponse>("/api/history", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(request),
-    });
+    const response = await requestJson<JobHistoryResponse>(
+      "/api/admin/ocr/history",
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${administratorToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(request),
+      },
+    );
     history = toJobHistory(response);
   }
   if (history === null) {

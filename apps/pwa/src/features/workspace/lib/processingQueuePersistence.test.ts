@@ -66,15 +66,33 @@ describe("processing queue persistence", () => {
         snapshot_version: "stable",
       });
 
-    await expect(getProcessingQueueExtent(queryClient)).resolves.toEqual({
+    await expect(
+      getProcessingQueueExtent(queryClient, "administrator-token"),
+    ).resolves.toEqual({
       total: 2,
       jobs: [persistedJob, secondJob],
       snapshot_version: "stable",
     });
-    expect(getProcessingJobs).toHaveBeenNthCalledWith(1, 0);
-    expect(getProcessingJobs).toHaveBeenNthCalledWith(2, 1);
-    expect(getProcessingJobs).toHaveBeenNthCalledWith(3, 0);
-    expect(getProcessingJobs).toHaveBeenNthCalledWith(4, 1);
+    expect(getProcessingJobs).toHaveBeenNthCalledWith(
+      1,
+      0,
+      "administrator-token",
+    );
+    expect(getProcessingJobs).toHaveBeenNthCalledWith(
+      2,
+      1,
+      "administrator-token",
+    );
+    expect(getProcessingJobs).toHaveBeenNthCalledWith(
+      3,
+      0,
+      "administrator-token",
+    );
+    expect(getProcessingJobs).toHaveBeenNthCalledWith(
+      4,
+      1,
+      "administrator-token",
+    );
     expect(queryClient.getQueryData(jobQueryKeys.processingPage(0))).toEqual({
       total: 2,
       jobs: [persistedJob],

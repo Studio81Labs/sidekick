@@ -15,6 +15,7 @@ import {
 } from "./jobsQueries";
 
 afterEach(resetApiMocks);
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 function wrapper({ children }: { children: ReactNode }) {
   return createElement(AppProviders, null, children);
@@ -32,12 +33,12 @@ describe("job query definitions", () => {
       "processing",
       { offset: 100 },
     ]);
-    expect(jobQueryOptions("job-123").queryKey).toEqual(
+    expect(jobQueryOptions("job-123", ADMINISTRATOR_TOKEN).queryKey).toEqual(
       jobQueryKeys.detail("job-123"),
     );
-    expect(processingJobsQueryOptions(100).queryKey).toEqual(
-      jobQueryKeys.processingPage(100),
-    );
+    expect(
+      processingJobsQueryOptions(ADMINISTRATOR_TOKEN, 100).queryKey,
+    ).toEqual(jobQueryKeys.processingPage(100));
   });
 
   it("keeps overlapping imperative reads independent and caches the newest", async () => {
@@ -70,8 +71,16 @@ describe("job query definitions", () => {
         ),
     );
 
-    const olderRequest = fetchJobQuery(queryClient, olderJob.id);
-    const newerRequest = fetchJobQuery(queryClient, newerJob.id);
+    const olderRequest = fetchJobQuery(
+      queryClient,
+      olderJob.id,
+      ADMINISTRATOR_TOKEN,
+    );
+    const newerRequest = fetchJobQuery(
+      queryClient,
+      newerJob.id,
+      ADMINISTRATOR_TOKEN,
+    );
     resolveNewer(jsonResponse(newerJob));
     await expect(newerRequest).resolves.toEqual(newerJob);
     resolveOlder(jsonResponse(olderJob));
@@ -97,9 +106,12 @@ describe("job query definitions", () => {
       ),
     );
 
-    const { unmount } = renderHook(() => useJobQuery("job-123", true), {
-      wrapper,
-    });
+    const { unmount } = renderHook(
+      () => useJobQuery("job-123", ADMINISTRATOR_TOKEN, true),
+      {
+        wrapper,
+      },
+    );
 
     await waitFor(() => expect(signal).toBeDefined());
     unmount();

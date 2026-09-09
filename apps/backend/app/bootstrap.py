@@ -490,7 +490,7 @@ class DataMutationLockMiddleware:
     """Coordinate API mutations with consistent cross-process snapshots."""
 
     MUTATING_METHODS = frozenset({"DELETE", "PATCH", "POST", "PUT"})
-    MUTATING_GET_PATH_PREFIXES = ("/api/benchmarks/imports/",)
+    MUTATING_GET_PATH_PREFIXES = ("/api/admin/ocr/benchmarks/imports/",)
 
     def __init__(self, app: ASGIApp, data_lock: InterprocessDataLock) -> None:
         self.app = app
@@ -1065,10 +1065,19 @@ def create_app(
     app.include_router(create_admin_ocr_test_router(admin_ocr_test_runtime))
     app.include_router(create_mcp_admin_router(mcp_admin_runtime))
 
-    app.include_router(create_history_router(history_runtime))
-    app.include_router(create_jobs_router(jobs_read_runtime))
+    app.include_router(
+        create_history_router(history_runtime, admin_ocr_test_policy.authorize)
+    )
+    app.include_router(
+        create_jobs_router(jobs_read_runtime, admin_ocr_test_policy.authorize)
+    )
     app.include_router(create_job_upload_router(jobs_upload_runtime))
-    app.include_router(create_job_mutations_router(jobs_mutation_runtime))
+    app.include_router(
+        create_job_mutations_router(
+            jobs_mutation_runtime,
+            admin_ocr_test_policy.authorize,
+        )
+    )
 
     def set_benchmark_inclusion(
         job_id: str,

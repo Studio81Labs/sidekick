@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { imageUrl } from "../../../domains/jobs/api/jobsApi";
+import { getJobImage } from "../../../domains/jobs/api/jobsApi";
 import { humanReadableMessage } from "../../../shared/api/core";
 import {
   PREFLOP_POSITIONS,
@@ -35,6 +35,7 @@ import type { JobRecord } from "../../../shared/types/jobs";
 
 interface UseHandReviewStateOptions {
   activeJobId: string | null;
+  administratorToken: string;
   jobs: JobRecord[];
   onActiveJobChange: (jobId: string | null) => void;
   onError: (message: string | null) => void;
@@ -42,6 +43,7 @@ interface UseHandReviewStateOptions {
 
 export function useHandReviewState({
   activeJobId,
+  administratorToken,
   jobs,
   onActiveJobChange,
   onError,
@@ -114,10 +116,7 @@ export function useHandReviewState({
       ? completedPostflopActionCounts.flop >= 8
       : completedPostflopActionCounts.flop >= 8 &&
         completedPostflopActionCounts.turn >= 8;
-  const screenshotUrl = useMemo(
-    () => (job && job.image_filename !== "" ? imageUrl(job.id) : null),
-    [job],
-  );
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null);
   const confidenceSummary = useMemo(
     () => summarizeConfidences(confidences, warnings, validation.state),
     [confidences, validation.state, warnings],
@@ -135,6 +134,35 @@ export function useHandReviewState({
     }
     toast.dismiss(VALIDATION_TOAST_ID);
   }, [job, validation.error]);
+
+  useEffect(() => {
+    if (!job || job.image_filename === "") {
+      setScreenshotUrl(null);
+      return;
+    }
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    let active = true;
+    void getJobImage(job.id, administratorToken, controller.signal)
+      .then((image) => {
+        objectUrl = URL.createObjectURL(image);
+        if (active) {
+          setScreenshotUrl(objectUrl);
+        } else {
+          URL.revokeObjectURL(objectUrl);
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setScreenshotUrl(null);
+        }
+      });
+    return () => {
+      active = false;
+      controller.abort();
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl);
+    };
+  }, [administratorToken, job?.id, job?.image_filename]);
 
   function setActiveJobId(nextActiveJobId: string | null) {
     activeJobIdRef.current = nextActiveJobId;

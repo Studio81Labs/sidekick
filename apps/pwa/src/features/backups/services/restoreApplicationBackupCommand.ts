@@ -1,15 +1,10 @@
 import type { QueryClient, QueryKey } from "@tanstack/react-query";
 
-import {
-  applicationBackupUrl,
-  restoreApplicationBackup,
-} from "../../../domains/backups/api/backupsApi";
+import { restoreApplicationBackup } from "../../../domains/backups/api/backupsApi";
 import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQueries";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
-
-export { applicationBackupUrl };
 
 export type RestoreApplicationBackupCommand = {
   administratorToken: string;

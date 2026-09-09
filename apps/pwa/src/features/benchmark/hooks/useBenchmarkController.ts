@@ -21,6 +21,7 @@ import { useBenchmarkReportState } from "./useBenchmarkReportState";
 import { runParserBenchmarkCommand } from "../services/runParserBenchmarkCommand";
 
 interface UseBenchmarkControllerOptions {
+  administratorToken: string;
   busy: boolean;
   importRecoveryPending: boolean;
   mutationRecoveryPending: () => boolean;
@@ -39,6 +40,7 @@ interface RefreshBenchmarkOptions {
 }
 
 export function useBenchmarkController({
+  administratorToken,
   busy,
   importRecoveryPending,
   mutationRecoveryPending,
@@ -74,7 +76,7 @@ export function useBenchmarkController({
     reset: resetReportState,
     selectReport,
     setOverview,
-  } = useBenchmarkReportState({ dialogOpen, onError });
+  } = useBenchmarkReportState({ administratorToken, dialogOpen, onError });
   const reportStale = Boolean(
     report &&
     benchmarkCorpusIsUnverified(
@@ -161,7 +163,10 @@ export function useBenchmarkController({
     try {
       const { report: latestReport } = await runParserBenchmarkCommand(
         queryClient,
-        { pipeline: pipelineSelection ?? undefined },
+        {
+          administratorToken,
+          pipeline: pipelineSelection ?? undefined,
+        },
       );
       applyReport(latestReport, true);
       if (latestReport.corpus_fingerprint) {
@@ -202,6 +207,7 @@ export function useBenchmarkController({
           const { report: nextReport } = await runParserBenchmarkCommand(
             queryClient,
             {
+              administratorToken,
               pipeline: {
                 parser_provider: pipeline.parser.id,
                 parser_layout_profile: pipeline.layout_profile,
@@ -271,7 +277,7 @@ export function useBenchmarkController({
     setReviewJobId(jobId);
     onError(null);
     try {
-      onOpenJob(await getJob(jobId));
+      onOpenJob(await getJob(jobId, administratorToken));
       closeDialog();
     } catch (error) {
       onError(messageFromError(error, "Could not open benchmark hand"));

@@ -718,7 +718,7 @@
         "title": "BenchmarkSelectionRequest",
         "type": "object"
       },
-      "Body_backups_restore": {
+      "Body_admin_ocr_backups_restore": {
         "properties": {
           "file": {
             "contentMediaType": "application/octet-stream",
@@ -727,10 +727,10 @@
           }
         },
         "required": ["file"],
-        "title": "Body_backups_restore",
+        "title": "Body_admin_ocr_backups_restore",
         "type": "object"
       },
-      "Body_benchmarks_import": {
+      "Body_admin_ocr_benchmarks_import": {
         "properties": {
           "file": {
             "contentMediaType": "application/octet-stream",
@@ -739,10 +739,10 @@
           }
         },
         "required": ["file"],
-        "title": "Body_benchmarks_import",
+        "title": "Body_admin_ocr_benchmarks_import",
         "type": "object"
       },
-      "Body_jobs_create": {
+      "Body_admin_ocr_jobs_create": {
         "properties": {
           "file": {
             "contentMediaType": "application/octet-stream",
@@ -793,7 +793,7 @@
           }
         },
         "required": ["file"],
-        "title": "Body_jobs_create",
+        "title": "Body_admin_ocr_jobs_create",
         "type": "object"
       },
       "CanonicalState": {
@@ -2051,15 +2051,16 @@
   },
   "openapi": "3.1.0",
   "paths": {
-    "/api/admin/ocr-test/session": {
+    "/api/admin/ocr/backups/export": {
       "get": {
-        "operationId": "admin_ocr_test_session_get",
+        "operationId": "admin_ocr_backups_export",
         "responses": {
           "200": {
             "content": {
-              "application/json": {
+              "application/zip": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdminOcrTestSession"
+                  "format": "binary",
+                  "type": "string"
                 }
               }
             },
@@ -2076,36 +2077,17 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Get Admin Ocr Test Session"
-      }
-    },
-    "/api/backups/export": {
-      "get": {
-        "operationId": "backups_export",
-        "responses": {
-          "200": {
-            "content": {
-              "application/zip": {
-                "schema": {
-                  "format": "binary",
-                  "type": "string"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
         "summary": "Export Application Backup"
       }
     },
-    "/api/backups/restore": {
+    "/api/admin/ocr/backups/restore": {
       "post": {
-        "operationId": "backups_restore",
+        "operationId": "admin_ocr_backups_restore",
         "requestBody": {
           "content": {
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/Body_backups_restore"
+                "$ref": "#/components/schemas/Body_admin_ocr_backups_restore"
               }
             }
           },
@@ -2136,9 +2118,9 @@
         "summary": "Restore Backup"
       }
     },
-    "/api/benchmarks": {
+    "/api/admin/ocr/benchmarks": {
       "get": {
-        "operationId": "benchmarks_get",
+        "operationId": "admin_ocr_benchmarks_get",
         "parameters": [
           {
             "in": "query",
@@ -2204,9 +2186,9 @@
         "summary": "Get Benchmark Overview"
       }
     },
-    "/api/benchmarks/export": {
+    "/api/admin/ocr/benchmarks/export": {
       "get": {
-        "operationId": "benchmarks_export",
+        "operationId": "admin_ocr_benchmarks_export",
         "parameters": [
           {
             "in": "query",
@@ -2273,9 +2255,9 @@
         "summary": "Export Benchmark Dataset"
       }
     },
-    "/api/benchmarks/import": {
+    "/api/admin/ocr/benchmarks/import": {
       "post": {
-        "operationId": "benchmarks_import",
+        "operationId": "admin_ocr_benchmarks_import",
         "parameters": [
           {
             "in": "header",
@@ -2301,7 +2283,7 @@
           "content": {
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/Body_benchmarks_import"
+                "$ref": "#/components/schemas/Body_admin_ocr_benchmarks_import"
               }
             }
           },
@@ -2332,9 +2314,9 @@
         "summary": "Import Benchmark Dataset"
       }
     },
-    "/api/benchmarks/imports/{request_id}": {
+    "/api/admin/ocr/benchmarks/imports/{request_id}": {
       "get": {
-        "operationId": "benchmark_import_get",
+        "operationId": "admin_ocr_benchmark_import_get",
         "parameters": [
           {
             "in": "path",
@@ -2371,9 +2353,9 @@
         "summary": "Get Benchmark Dataset Import"
       }
     },
-    "/api/benchmarks/run": {
+    "/api/admin/ocr/benchmarks/run": {
       "post": {
-        "operationId": "benchmarks_run",
+        "operationId": "admin_ocr_benchmarks_run",
         "requestBody": {
           "content": {
             "application/json": {
@@ -2416,9 +2398,9 @@
         "summary": "Run Parser Benchmark"
       }
     },
-    "/api/benchmarks/{report_id}": {
+    "/api/admin/ocr/benchmarks/{report_id}": {
       "get": {
-        "operationId": "benchmark_report_get",
+        "operationId": "admin_ocr_benchmark_report_get",
         "parameters": [
           {
             "in": "path",
@@ -2455,27 +2437,9 @@
         "summary": "Get Benchmark Report"
       }
     },
-    "/api/health": {
+    "/api/admin/ocr/history": {
       "get": {
-        "operationId": "health_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Health"
-      }
-    },
-    "/api/history": {
-      "get": {
-        "operationId": "history_get",
+        "operationId": "admin_ocr_history_get",
         "parameters": [
           {
             "in": "query",
@@ -2543,7 +2507,7 @@
         "summary": "Get History"
       },
       "put": {
-        "operationId": "history_archive",
+        "operationId": "admin_ocr_history_archive",
         "parameters": [
           {
             "in": "query",
@@ -2593,9 +2557,9 @@
         "summary": "Archive Jobs"
       }
     },
-    "/api/jobs": {
+    "/api/admin/ocr/jobs": {
       "get": {
-        "operationId": "jobs_list",
+        "operationId": "admin_ocr_jobs_list",
         "parameters": [
           {
             "in": "query",
@@ -2646,12 +2610,12 @@
         "summary": "Get Processing Jobs"
       },
       "post": {
-        "operationId": "jobs_create",
+        "operationId": "admin_ocr_jobs_create",
         "requestBody": {
           "content": {
             "multipart/form-data": {
               "schema": {
-                "$ref": "#/components/schemas/Body_jobs_create"
+                "$ref": "#/components/schemas/Body_admin_ocr_jobs_create"
               }
             }
           },
@@ -2682,9 +2646,9 @@
         "summary": "Create Job"
       }
     },
-    "/api/jobs/{job_id}": {
+    "/api/admin/ocr/jobs/{job_id}": {
       "delete": {
-        "operationId": "job_delete",
+        "operationId": "admin_ocr_job_delete",
         "parameters": [
           {
             "in": "path",
@@ -2714,7 +2678,7 @@
         "summary": "Delete Job"
       },
       "get": {
-        "operationId": "job_get",
+        "operationId": "admin_ocr_job_get",
         "parameters": [
           {
             "in": "path",
@@ -2751,9 +2715,9 @@
         "summary": "Get Job"
       }
     },
-    "/api/jobs/{job_id}/approve": {
+    "/api/admin/ocr/jobs/{job_id}/approve": {
       "post": {
-        "operationId": "job_approve",
+        "operationId": "admin_ocr_job_approve",
         "parameters": [
           {
             "in": "path",
@@ -2800,9 +2764,9 @@
         "summary": "Approve Job"
       }
     },
-    "/api/jobs/{job_id}/benchmark": {
+    "/api/admin/ocr/jobs/{job_id}/benchmark": {
       "put": {
-        "operationId": "job_benchmark_update",
+        "operationId": "admin_ocr_job_benchmark_update",
         "parameters": [
           {
             "in": "path",
@@ -2849,9 +2813,9 @@
         "summary": "Set Benchmark Inclusion"
       }
     },
-    "/api/jobs/{job_id}/image": {
+    "/api/admin/ocr/jobs/{job_id}/image": {
       "get": {
-        "operationId": "job_image_get",
+        "operationId": "admin_ocr_job_image_get",
         "parameters": [
           {
             "in": "path",
@@ -2907,9 +2871,9 @@
         "summary": "Get Job Image"
       }
     },
-    "/api/jobs/{job_id}/metadata": {
+    "/api/admin/ocr/jobs/{job_id}/metadata": {
       "put": {
-        "operationId": "job_metadata_update",
+        "operationId": "admin_ocr_job_metadata_update",
         "parameters": [
           {
             "in": "path",
@@ -2954,6 +2918,52 @@
           }
         },
         "summary": "Update Job Metadata"
+      }
+    },
+    "/api/admin/ocr/session": {
+      "get": {
+        "operationId": "admin_ocr_session_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminOcrTestSession"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Admin Ocr Test Session"
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health"
       }
     },
     "/api/mcp/config": {

@@ -31,6 +31,7 @@ export function cacheBenchmarkReport(
 
 export function loadCachedBenchmarkReport(
   reportId: string,
+  administratorToken: string,
   cache: Map<string, BenchmarkReport>,
   pendingRequests: Map<string, Promise<BenchmarkReport>>,
   queryClient: QueryClient,
@@ -44,7 +45,9 @@ export function loadCachedBenchmarkReport(
     return pending;
   }
   const request = queryClient
-    .fetchQuery(benchmarkReportQueryOptions(reportId, false))
+    .fetchQuery(
+      benchmarkReportQueryOptions(reportId, administratorToken, false),
+    )
     .then((report) => cacheBenchmarkReport(cache, report, queryClient))
     .finally(() => {
       if (pendingRequests.get(reportId) === request) {

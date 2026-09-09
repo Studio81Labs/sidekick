@@ -1,5 +1,5 @@
 import { type ChangeEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
@@ -17,15 +17,13 @@ import {
 import { screenshotLabel } from "../../shared/lib/screenshotPresentation";
 import { PERSISTED_JOB_ID_PATTERN } from "../../shared/lib/jobIdentity";
 import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchmarkController";
-import {
-  applicationBackupUrl,
-  restoreApplicationBackupCommand,
-} from "../../features/backups/services/restoreApplicationBackupCommand";
+import { downloadApplicationBackupCommand } from "../../features/backups/services/downloadApplicationBackupCommand";
+import { downloadBenchmarkDatasetCommand } from "../../features/benchmark/services/downloadBenchmarkDatasetCommand";
+import { restoreApplicationBackupCommand } from "../../features/backups/services/restoreApplicationBackupCommand";
 import {
   administrativeAccessDenial,
   administrativeAccessDenialMessage,
 } from "../../features/admin-ocr-test/lib/administrativeAccess";
-import { useAdministrativeAccess } from "../../features/admin-ocr-test/hooks/useAdministrativeAccess";
 import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource";
 import { uploadScreenshotCommand } from "../../features/capture/services/uploadScreenshotCommand";
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
@@ -119,14 +117,18 @@ type JobNavigationMode = "push" | "replace" | false;
 const NO_JOB_ATTENTION: Readonly<Record<string, string | undefined>> = {};
 
 export type AnalyzerWorkspaceControllerProps = {
+  administratorToken: string;
   mutationOwnerId: string;
   navigation: AnalyzerRouteNavigation;
+  onLockAdministrator: (reason?: string) => void;
   route: AnalyzerRouteState;
 };
 
 export function useAnalyzerWorkspaceController({
+  administratorToken,
   mutationOwnerId,
   navigation,
+  onLockAdministrator,
   route,
 }: AnalyzerWorkspaceControllerProps) {
   const queryClient = useQueryClient();
@@ -252,6 +254,7 @@ export function useAnalyzerWorkspaceController({
     warnings,
   } = useHandReviewState({
     activeJobId,
+    administratorToken,
     jobs,
     onActiveJobChange: selectActiveJob,
     onError: setError,
@@ -286,9 +289,13 @@ export function useAnalyzerWorkspaceController({
     stopShare: onStopScreenShare,
     videoRef,
   } = useCaptureSource({ onError: setError });
-  const administrativeAccess = useAdministrativeAccess({
-    onLock: onStopScreenShare,
-  });
+  const lockAdministrator = useCallback(
+    (reason?: string) => {
+      onStopScreenShare();
+      onLockAdministrator(reason);
+    },
+    [onLockAdministrator, onStopScreenShare],
+  );
   const {
     closeDialog: closeInfoDialog,
     dialogOpen: infoDialogOpen,
@@ -384,6 +391,7 @@ export function useAnalyzerWorkspaceController({
     targetLayoutProfile: benchmarkTargetLayoutProfile,
     updating: benchmarkUpdating,
   } = useBenchmarkController({
+    administratorToken,
     busy,
     importRecoveryPending: benchmarkImportRecoveryPending,
     mutationRecoveryPending: () =>
@@ -438,7 +446,7 @@ export function useAnalyzerWorkspaceController({
     benchmarksOpen: benchmarkDialogOpen,
     closeBenchmarks: closeBenchmarkDialog,
     jobs,
-    loadJob: (jobId) => fetchJobQuery(queryClient, jobId),
+    loadJob: (jobId) => fetchJobQuery(queryClient, jobId, administratorToken),
     onError: (routeError) =>
       setError(
         messageFromError(
@@ -565,6 +573,7 @@ export function useAnalyzerWorkspaceController({
         const recovery = fetchBenchmarkImportReceiptQuery(
           queryClient,
           benchmarkImportRequestId,
+          administratorToken,
         )
           .then(async (receipt) => {
             benchmarkImportRetryNotBefore = 0;
@@ -1244,7 +1253,9 @@ export function useAnalyzerWorkspaceController({
     historyJobRestoreActiveIdsRef.current = new Set(requestedJobIds);
     const restoreGeneration = historyMutationGenerationRef.current;
     const restore = Promise.all(
-      requestedJobIds.map((jobId) => fetchJobQuery(queryClient, jobId)),
+      requestedJobIds.map((jobId) =>
+        fetchJobQuery(queryClient, jobId, administratorToken),
+      ),
     )
       .then((incomingJobs) => {
         if (
@@ -1508,13 +1519,20 @@ export function useAnalyzerWorkspaceController({
           "Could not migrate legacy history before restoring processing",
         );
       }
-      const queue = await getProcessingQueueExtent(queryClient);
+      const queue = await getProcessingQueueExtent(
+        queryClient,
+        administratorToken,
+      );
       const lease = processingMutationLeaseRef.current;
       if (
         lease?.kind === "job" &&
         !queue.jobs.some((candidate) => candidate.id === lease.jobId)
       ) {
-        const leasedJob = await fetchJobQuery(queryClient, lease.jobId);
+        const leasedJob = await fetchJobQuery(
+          queryClient,
+          lease.jobId,
+          administratorToken,
+        );
         return {
           ...queue,
           revalidatedLeaseJob: leasedJob,
@@ -1525,7 +1543,9 @@ export function useAnalyzerWorkspaceController({
         const confirmationJobs = await Promise.all(
           lease.confirmationJobIds
             .filter((jobId) => !queueIds.has(jobId))
-            .map((jobId) => fetchJobQuery(queryClient, jobId)),
+            .map((jobId) =>
+              fetchJobQuery(queryClient, jobId, administratorToken),
+            ),
         );
         return {
           ...queue,
@@ -2048,7 +2068,12 @@ export function useAnalyzerWorkspaceController({
     setHistoryLoading(true);
     setError(null);
     try {
-      const page = await fetchHistoryPageQuery(queryClient, 0, query);
+      const page = await fetchHistoryPageQuery(
+        queryClient,
+        administratorToken,
+        0,
+        query,
+      );
       if (requestId !== historySearchRequestRef.current) {
         return;
       }
@@ -2074,6 +2099,7 @@ export function useAnalyzerWorkspaceController({
     try {
       const page = await getHistorySearchExtent(
         queryClient,
+        administratorToken,
         query,
         loadedCount,
       );
@@ -2116,6 +2142,7 @@ export function useAnalyzerWorkspaceController({
         const requestId = ++historySearchRequestRef.current;
         const page = await fetchHistoryPageQuery(
           queryClient,
+          administratorToken,
           visibleHistory.length,
           historySearchQuery,
         );
@@ -2135,6 +2162,7 @@ export function useAnalyzerWorkspaceController({
         }
         const rebuiltPage = await getHistorySearchExtent(
           queryClient,
+          administratorToken,
           historySearchQuery,
           Math.min(visibleHistory.length + HISTORY_CACHE_LIMIT, page.total),
         );
@@ -2144,9 +2172,15 @@ export function useAnalyzerWorkspaceController({
         applyHistorySearchPage(rebuiltPage);
         return;
       }
-      const page = await fetchHistoryPageQuery(queryClient, history.length);
+      const page = await fetchHistoryPageQuery(
+        queryClient,
+        administratorToken,
+        history.length,
+      );
       if (page.total !== historyTotal) {
-        applyHistoryPage(await fetchHistoryPageQuery(queryClient));
+        applyHistoryPage(
+          await fetchHistoryPageQuery(queryClient, administratorToken),
+        );
         return;
       }
       applyHistoryPage(page, true);
@@ -2165,8 +2199,9 @@ export function useAnalyzerWorkspaceController({
     setHistoryLoading(true);
     try {
       const page = jobIds
-        ? (await archiveJobsCommand(queryClient, jobIds)).history
-        : await fetchHistoryPageQuery(queryClient);
+        ? (await archiveJobsCommand(queryClient, jobIds, administratorToken))
+            .history
+        : await fetchHistoryPageQuery(queryClient, administratorToken);
       if (
         historyMutationGenerationRef.current !== restoreGeneration ||
         historyMutationCountRef.current > 0
@@ -2331,7 +2366,7 @@ export function useAnalyzerWorkspaceController({
           updateExpectedUpload(expectedUploadIndex, "failed");
           administrativeDenialMessage =
             administrativeAccessDenialMessage(denial);
-          administrativeAccess.lock();
+          lockAdministrator(administrativeDenialMessage);
           skippedCount = selectedFiles.length - completedCount;
           discardUnstartedUploads(index);
           break;
@@ -2390,13 +2425,6 @@ export function useAnalyzerWorkspaceController({
     if (files.length === 0 || mutationRecoveryPending(["processing"])) {
       return;
     }
-    const administratorToken = administrativeAccess.token;
-    if (administratorToken === null) {
-      setError(
-        "Unlock administrator tools before uploading or capturing screenshots.",
-      );
-      return;
-    }
     setBusy(true);
     setError(null);
     beginProcessingMembershipMutation();
@@ -2448,13 +2476,6 @@ export function useAnalyzerWorkspaceController({
 
   async function onCaptureScreen() {
     if (mutationRecoveryPending(["processing"])) {
-      return;
-    }
-    const administratorToken = administrativeAccess.token;
-    if (administratorToken === null) {
-      setError(
-        "Unlock administrator tools before uploading or capturing screenshots.",
-      );
       return;
     }
     setBusy(true);
@@ -2518,8 +2539,7 @@ export function useAnalyzerWorkspaceController({
         scheduleMutationLeaseRevalidation();
       }
       if (denial !== null) {
-        administrativeAccess.lock();
-        setError(administrativeAccessDenialMessage(denial));
+        lockAdministrator(administrativeAccessDenialMessage(denial));
       } else if (!deletedAfterUpload) {
         setError(messageFromError(captureError, "Screen capture failed"));
       }
@@ -2560,6 +2580,7 @@ export function useAnalyzerWorkspaceController({
     setError(null);
     try {
       const { job: approved } = await approveStateCommand(queryClient, {
+        administratorToken,
         jobId: job.id,
         state: validation.state,
       });
@@ -2585,17 +2606,11 @@ export function useAnalyzerWorkspaceController({
     if (denial === null) {
       return false;
     }
-    administrativeAccess.lock();
-    setError(administrativeAccessDenialMessage(denial));
+    lockAdministrator(administrativeAccessDenialMessage(denial));
     return true;
   }
 
   async function onApplicationBackupRestore(backupFile: File) {
-    const administratorToken = administrativeAccess.token;
-    if (administratorToken === null) {
-      setError("Unlock administrator tools before restoring a backup.");
-      return;
-    }
     if (busy || backupRestoring) {
       return;
     }
@@ -2641,6 +2656,46 @@ export function useAnalyzerWorkspaceController({
       setBackupRestoring(false);
       setBusy(false);
     }
+  }
+
+  async function downloadArchive(
+    request: () => Promise<Blob>,
+    filename: string,
+    failureMessage: string,
+  ) {
+    try {
+      const blob = await request();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      if (!reportAdministrativeDenial(downloadError)) {
+        setError(messageFromError(downloadError, failureMessage));
+      }
+    }
+  }
+
+  function onApplicationBackupDownload() {
+    return downloadArchive(
+      () => downloadApplicationBackupCommand(administratorToken),
+      "poker-hero-backup.zip",
+      "Could not download application backup",
+    );
+  }
+
+  function onBenchmarkDatasetDownload() {
+    return downloadArchive(
+      () =>
+        downloadBenchmarkDatasetCommand(
+          administratorToken,
+          pipelineSelection ?? undefined,
+        ),
+      "poker-hero-parser-dataset.zip",
+      "Could not export parser dataset",
+    );
   }
 
   async function applyBenchmarkDatasetImportResult(
@@ -2735,17 +2790,7 @@ export function useAnalyzerWorkspaceController({
   ) {
     const input = event.currentTarget;
     const datasetFile = input.files?.[0];
-    const administratorToken = administrativeAccess.token;
-    if (datasetFile && administratorToken === null) {
-      setError("Unlock administrator tools before importing datasets.");
-      input.value = "";
-      return;
-    }
-    if (
-      !datasetFile ||
-      administratorToken === null ||
-      benchmarkOperationsLocked
-    ) {
+    if (!datasetFile || benchmarkOperationsLocked) {
       input.value = "";
       return;
     }
@@ -2857,6 +2902,7 @@ export function useAnalyzerWorkspaceController({
     setError(null);
     try {
       const { job: updated } = await setBenchmarkInclusionCommand(queryClient, {
+        administratorToken,
         jobId: job.id,
         included,
       });
@@ -2959,6 +3005,7 @@ export function useAnalyzerWorkspaceController({
       const { job: updated } = await updateScreenshotMetadataCommand(
         queryClient,
         {
+          administratorToken,
           jobId: managedJob.id,
           metadata: { title, notes, tags },
         },
@@ -3115,7 +3162,11 @@ export function useAnalyzerWorkspaceController({
     setError(null);
     let restoreAfterMutation = false;
     try {
-      await deleteScreenshotCommand(queryClient, managedJob.id);
+      await deleteScreenshotCommand(
+        queryClient,
+        managedJob.id,
+        administratorToken,
+      );
       restoreAfterMutation = true;
       reconcileAuthoritativeScreenshotRemoval(managedJob, mutationScope);
       toast.success("Screenshot permanently deleted");
@@ -3184,6 +3235,7 @@ export function useAnalyzerWorkspaceController({
           await archiveJobsCommand(
             queryClient,
             readyJobs.map((candidate) => candidate.id),
+            administratorToken,
           )
         ).history,
       );
@@ -3238,11 +3290,10 @@ export function useAnalyzerWorkspaceController({
 
   return {
     toolbar: {
-      administrativeUnlocked: administrativeAccess.unlocked,
       busy,
       historyTotal,
       onConfigurePipeline: openPipelineDialog,
-      onOpenAdministrativeTools: administrativeAccess.openDialog,
+      onLockAdministrator: lockAdministrator,
       onOpenBenchmark: () => {
         openBenchmarkDialog();
         navigation.openBenchmarks();
@@ -3253,27 +3304,25 @@ export function useAnalyzerWorkspaceController({
     },
     administrativeBanner: {
       busy,
-      onLock: administrativeAccess.lock,
+      onLock: () => lockAdministrator(),
     },
-    inputSource: administrativeAccess.unlocked
-      ? {
-          busy,
-          files,
-          inputMode,
-          livePreviewVisible,
-          onCapture: onCaptureScreen,
-          onFilesChange: setFiles,
-          onInputModeChange: setInputMode,
-          onShareModeChange: setShareMode,
-          onStartOrViewShare: () =>
-            screenSharing ? setLivePreviewVisible(true) : onStartScreenShare(),
-          onStopShare: onStopScreenShare,
-          onUpload,
-          screenSharing,
-          screenSourceLabel,
-          shareMode,
-        }
-      : null,
+    inputSource: {
+      busy,
+      files,
+      inputMode,
+      livePreviewVisible,
+      onCapture: onCaptureScreen,
+      onFilesChange: setFiles,
+      onInputModeChange: setInputMode,
+      onShareModeChange: setShareMode,
+      onStartOrViewShare: () =>
+        screenSharing ? setLivePreviewVisible(true) : onStartScreenShare(),
+      onStopShare: onStopScreenShare,
+      onUpload,
+      screenSharing,
+      screenSourceLabel,
+      shareMode,
+    },
     queue: {
       activeJobId: job?.id ?? null,
       attentionByJobId: NO_JOB_ATTENTION,
@@ -3367,16 +3416,7 @@ export function useAnalyzerWorkspaceController({
             title: screenshotTitle,
           }
         : null,
-      administrativeAccess: administrativeAccess.dialogOpen
-        ? {
-            busy,
-            onClose: administrativeAccess.closeDialog,
-            onLock: administrativeAccess.lock,
-            onUnlock: administrativeAccess.unlock,
-            unlocked: administrativeAccess.unlocked,
-            verifying: administrativeAccess.verifying,
-          }
-        : null,
+      administrativeAccess: null,
       pipeline: pipelineDialogOpen
         ? {
             capabilities: pipelineCapabilities,
@@ -3392,12 +3432,12 @@ export function useAnalyzerWorkspaceController({
       help: helpDialogOpen ? { onClose: () => setHelpDialogOpen(false) } : null,
       info: infoDialogOpen
         ? {
-            administrativeUnlocked: administrativeAccess.unlocked,
-            backupDownloadUrl: applicationBackupUrl(),
+            administrativeUnlocked: true,
             backupRestoring,
             busy,
             mcpCloseBlocked,
             onClose: () => closeInfoDialog(backupRestoring),
+            onDownloadBackup: () => void onApplicationBackupDownload(),
             onMcpCloseBlockedChange: setMcpCloseBlocked,
             onRestoreBackup: (file: File) =>
               void onApplicationBackupRestore(file),
@@ -3407,7 +3447,7 @@ export function useAnalyzerWorkspaceController({
         : null,
       benchmark: benchmarkDialogOpen
         ? {
-            administrativeUnlocked: administrativeAccess.unlocked,
+            administrativeUnlocked: true,
             busy,
             comparisonProgress: benchmarkComparisonProgress,
             comparisonReport: benchmarkComparisonReport,
@@ -3425,6 +3465,7 @@ export function useAnalyzerWorkspaceController({
               navigation.closeSurface();
             },
             onDatasetImport: onBenchmarkDatasetImport,
+            onDatasetExport: () => void onBenchmarkDatasetDownload(),
             onReviewCase: reviewBenchmarkCase,
             onRun: onRunBenchmark,
             onRunComparison: onRunBenchmarkComparison,

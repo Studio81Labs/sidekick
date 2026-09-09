@@ -24,6 +24,7 @@ from app.storage.file_job_store import FileJobStore
 from api_test_support import (
     ADMIN_OCR_TEST_HEADERS,
     ADMIN_OCR_TEST_TOKEN,
+    CurrentAdminOcrTestClient,
     restore_application_backup,
 )
 
@@ -63,12 +64,12 @@ def make_client(data_dir: Path, **overrides: object) -> TestClient:
         "admin_ocr_test_token": ADMIN_OCR_TEST_TOKEN,
     }
     values.update(overrides)
-    return TestClient(create_app(Settings(**values)))
+    return CurrentAdminOcrTestClient(create_app(Settings(**values)))
 
 
 def create_reviewed_job(client: TestClient) -> dict[str, object]:
     upload = client.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         data={"upload_request_id": "backup-upload-1"},
         headers=ADMIN_OCR_TEST_HEADERS,
@@ -76,11 +77,11 @@ def create_reviewed_job(client: TestClient) -> dict[str, object]:
     assert upload.status_code == 201
     job_id = upload.json()["id"]
     assert client.post(
-        f"/api/jobs/{job_id}/approve",
+        f"/api/admin/ocr/jobs/{job_id}/approve",
         json=APPROVED_STATE,
     ).status_code == 200
     assert client.put(
-        f"/api/jobs/{job_id}/metadata",
+        f"/api/admin/ocr/jobs/{job_id}/metadata",
         json={
             "title": "Backup review hand",
             "notes": "Imported from the weekly study session.",
@@ -88,12 +89,12 @@ def create_reviewed_job(client: TestClient) -> dict[str, object]:
         },
     ).status_code == 200
     assert client.put(
-        f"/api/jobs/{job_id}/benchmark",
+        f"/api/admin/ocr/jobs/{job_id}/benchmark",
         json={"included": True},
     ).status_code == 200
-    benchmark = client.post("/api/benchmarks/run")
+    benchmark = client.post("/api/admin/ocr/benchmarks/run")
     assert benchmark.status_code == 200
-    archive = client.put("/api/history", json={"job_ids": [job_id]})
+    archive = client.put("/api/admin/ocr/history", json={"job_ids": [job_id]})
     assert archive.status_code == 200
     return archive.json()["jobs"][0]
 
@@ -120,7 +121,7 @@ def test_application_backup_round_trip_preserves_all_durable_state(
     source = make_client(source_dir)
     source_job = create_reviewed_job(source)
 
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
 
     assert export.status_code == 200
     assert export.headers["content-type"] == "application/zip"
@@ -154,7 +155,7 @@ def test_application_backup_round_trip_preserves_all_durable_state(
     restored_job = FileJobStore(destination_dir).get(str(source_job["id"]))
     assert restored_job == FileJobStore(source_dir).get(str(source_job["id"]))
     assert FileJobStore(destination_dir).image_path(restored_job).read_bytes() == VALID_PNG
-    history = destination.get("/api/history")
+    history = destination.get("/api/admin/ocr/history")
     assert history.status_code == 200
     assert history.json()["total"] == 1
     assert history.json()["jobs"][0]["title"] == "Backup review hand"
@@ -185,7 +186,7 @@ def test_empty_application_backup_round_trips(
 ) -> None:
     source = make_client(tmp_path / "source")
 
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
 
     assert export.status_code == 200
     destination = make_client(tmp_path / "destination")
@@ -206,7 +207,7 @@ def test_restore_does_not_block_unrelated_requests(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source = make_client(tmp_path / "source")
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     assert export.status_code == 200
 
     parse_started = Event()
@@ -237,6 +238,7 @@ def test_restore_does_not_block_unrelated_requests(
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://testserver",
+            headers=ADMIN_OCR_TEST_HEADERS,
         ) as client:
             restore_task = asyncio.create_task(
                 restore_application_backup(client, export.content)
@@ -288,12 +290,13 @@ def test_upload_waiting_for_backup_does_not_block_unrelated_requests(
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://testserver",
+            headers=ADMIN_OCR_TEST_HEADERS,
         ) as client:
-            export_task = asyncio.create_task(client.get("/api/backups/export"))
+            export_task = asyncio.create_task(client.get("/api/admin/ocr/backups/export"))
             assert await asyncio.to_thread(export_started.wait, 2)
             upload_task = asyncio.create_task(
                 client.post(
-                    "/api/jobs",
+                    "/api/admin/ocr/jobs",
                     files={"file": ("table.png", VALID_PNG, "image/png")},
                     headers=ADMIN_OCR_TEST_HEADERS,
                 )
@@ -329,7 +332,7 @@ def test_backup_export_returns_conflict_after_its_lock_wait_budget(
 
     def request_export() -> None:
         try:
-            responses.append(client.get("/api/backups/export"))
+            responses.append(client.get("/api/admin/ocr/backups/export"))
         except Exception as exc:
             failures.append(exc)
 
@@ -350,7 +353,7 @@ def test_backup_export_returns_conflict_after_its_lock_wait_budget(
         "detail": "Application backup export is busy; try again"
     }
 
-    retry = client.get("/api/backups/export")
+    retry = client.get("/api/admin/ocr/backups/export")
     assert retry.status_code == 200
 
 
@@ -386,13 +389,14 @@ def test_slow_backup_download_does_not_block_mutations(
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://testserver",
+            headers=ADMIN_OCR_TEST_HEADERS,
         ) as client:
-            export_task = asyncio.create_task(client.get("/api/backups/export"))
+            export_task = asyncio.create_task(client.get("/api/admin/ocr/backups/export"))
             assert await asyncio.to_thread(stream_started.wait, 2)
             try:
                 upload = await asyncio.wait_for(
                     client.post(
-                        "/api/jobs",
+                        "/api/admin/ocr/jobs",
                         files={"file": ("table.png", VALID_PNG, "image/png")},
                         headers=ADMIN_OCR_TEST_HEADERS,
                     ),
@@ -450,7 +454,7 @@ def test_restore_tracks_published_report_when_temp_cleanup_fails(
 ) -> None:
     source = make_client(tmp_path / "source")
     source_job = create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     assert export.status_code == 200
 
     original_unlink = Path.unlink
@@ -484,7 +488,7 @@ def test_backup_rejects_decompression_bomb_images_without_writing(
 ) -> None:
     source = make_client(tmp_path / "source")
     create_reviewed_job(source)
-    valid_export = source.get("/api/backups/export")
+    valid_export = source.get("/api/admin/ocr/backups/export")
     assert valid_export.status_code == 200
 
     def raise_decompression_bomb(*args: object, **kwargs: object):
@@ -496,7 +500,7 @@ def test_backup_rejects_decompression_bomb_images_without_writing(
         raise_decompression_bomb,
     )
 
-    rejected_export = source.get("/api/backups/export")
+    rejected_export = source.get("/api/admin/ocr/backups/export")
     destination_dir = tmp_path / "destination"
     destination = make_client(destination_dir)
     rejected_restore = restore_application_backup(destination, valid_export.content)
@@ -514,7 +518,7 @@ def test_restore_rejects_checksum_tampering_before_writing(
 ) -> None:
     source = make_client(tmp_path / "source")
     source_job = create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     tampered = rebuild_archive(
         export.content,
         {f"jobs/{source_job['id']}/original.png": VALID_PNG + b"tampered"},
@@ -549,7 +553,7 @@ def test_restore_rejects_coerced_manifest_integers_before_writing(
 ) -> None:
     source = make_client(tmp_path / "source")
     create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
     if field_path == "jobs.0.image_size":
@@ -580,7 +584,7 @@ def test_restore_rejects_naive_job_timestamp_before_writing(
 ) -> None:
     source = make_client(tmp_path / "source")
     source_job = create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         record_name = f"jobs/{source_job['id']}/job.json"
@@ -612,7 +616,7 @@ def test_restore_rejects_naive_report_timestamp_before_writing(
 ) -> None:
     source = make_client(tmp_path / "source")
     create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         report_name = manifest["benchmark_reports"][0]["report_file"]
@@ -663,7 +667,7 @@ def test_restore_rejects_coerced_benchmark_report_metrics_before_writing(
 ) -> None:
     source = make_client(tmp_path / "source")
     create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         report_name = manifest["benchmark_reports"][0]["report_file"]
@@ -721,7 +725,7 @@ def test_restore_rejects_inconsistent_benchmark_report_metrics_before_writing(
 ) -> None:
     source = make_client(tmp_path / "source")
     create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         report_name = manifest["benchmark_reports"][0]["report_file"]
@@ -772,7 +776,7 @@ def test_restore_rejects_invalid_benchmark_comparisons_before_writing(
 ) -> None:
     source = make_client(tmp_path / "source")
     create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         report_name = manifest["benchmark_reports"][0]["report_file"]
@@ -852,7 +856,7 @@ def test_restore_rejects_conflicting_existing_job_without_partial_import(
     source_dir = tmp_path / "source"
     source = make_client(source_dir)
     first_upload = source.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": ("first.png", VALID_PNG, "image/png")},
         headers=ADMIN_OCR_TEST_HEADERS,
     )
@@ -860,7 +864,7 @@ def test_restore_rejects_conflicting_existing_job_without_partial_import(
     first_job_id = first_upload.json()["id"]
     source_job_data = create_reviewed_job(source)
     source_job = FileJobStore(source_dir).get(str(source_job_data["id"]))
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
 
     destination_dir = tmp_path / "destination"
     conflicting_job = source_job.model_copy(
@@ -884,7 +888,7 @@ def test_restore_rejects_unexpected_archive_members(
 ) -> None:
     source = make_client(tmp_path / "source")
     create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     unexpected = rebuild_archive(export.content, {})
     output = BytesIO()
     with ZipFile(BytesIO(unexpected)) as source_archive:
@@ -908,13 +912,13 @@ def test_backup_size_limits_apply_to_export_and_restore(
         max_backup_upload_bytes=64,
     )
     upload = source.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         headers=ADMIN_OCR_TEST_HEADERS,
     )
     assert upload.status_code == 201
 
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
 
     assert export.status_code == 409
     assert "configured 64-byte archive limit" in export.json()["detail"]
@@ -934,7 +938,7 @@ def test_export_rejects_active_jobs_and_images_over_the_current_limit(
     active_dir = tmp_path / "active"
     active = make_client(active_dir)
     upload = active.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         headers=ADMIN_OCR_TEST_HEADERS,
     )
@@ -944,7 +948,7 @@ def test_export_rejects_active_jobs_and_images_over_the_current_limit(
     active_job.status = "created"
     active_store.save(active_job)
 
-    active_export = active.get("/api/backups/export")
+    active_export = active.get("/api/admin/ocr/backups/export")
 
     assert active_export.status_code == 409
     assert "Wait for active parsing" in active_export.json()["detail"]
@@ -961,7 +965,7 @@ def test_export_rejects_active_jobs_and_images_over_the_current_limit(
     oversized_store.save(oversized_job)
     oversized = make_client(oversized_dir, max_upload_bytes=1)
 
-    oversized_export = oversized.get("/api/backups/export")
+    oversized_export = oversized.get("/api/admin/ocr/backups/export")
 
     assert oversized_export.status_code == 409
     assert "Image exceeds the allowed size" in oversized_export.json()["detail"]
@@ -972,7 +976,7 @@ def test_restore_rejects_record_with_mismatched_job_id(
 ) -> None:
     source = make_client(tmp_path / "source")
     source_job = create_reviewed_job(source)
-    export = source.get("/api/backups/export")
+    export = source.get("/api/admin/ocr/backups/export")
     with ZipFile(BytesIO(export.content)) as archive:
         manifest = json.loads(archive.read("manifest.json"))
         record_name = f"jobs/{source_job['id']}/job.json"

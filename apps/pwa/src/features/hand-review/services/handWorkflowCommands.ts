@@ -13,6 +13,7 @@ import type { JobRecord } from "../../../shared/types/jobs";
 import type { CanonicalState } from "../../../shared/types/poker";
 
 export type ApproveStateCommand = {
+  administratorToken: string;
   jobId: string;
   signal?: AbortSignal;
   state: CanonicalState;
@@ -95,6 +96,7 @@ export async function approveStateCommand(
     const job = await approveState(
       command.jobId,
       command.state,
+      command.administratorToken,
       command.signal,
     );
     return await applyHandWorkflowCacheOutcome(

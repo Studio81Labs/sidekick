@@ -18,6 +18,7 @@ export { fetchJobQuery } from "../../../domains/jobs/api/jobsQueries";
 
 export async function getHistorySearchExtent(
   queryClient: QueryClient,
+  administratorToken: string,
   query: string,
   loadedCount: number,
 ): Promise<JobHistory> {
@@ -30,6 +31,7 @@ export async function getHistorySearchExtent(
     do {
       const page = await fetchHistoryPageQuery(
         queryClient,
+        administratorToken,
         jobs.length,
         query,
         Math.min(HISTORY_SEARCH_PAGE_LIMIT, loadedCount - jobs.length),
@@ -64,6 +66,7 @@ export async function getHistorySearchExtent(
 
 export async function getProcessingQueueExtent(
   queryClient: QueryClient,
+  administratorToken: string,
 ): Promise<JobQueue> {
   for (
     let attempt = 0;
@@ -76,7 +79,11 @@ export async function getProcessingQueueExtent(
     let total = 0;
 
     do {
-      const page = await fetchProcessingJobsQuery(queryClient, jobs.length);
+      const page = await fetchProcessingJobsQuery(
+        queryClient,
+        administratorToken,
+        jobs.length,
+      );
       if (
         snapshotVersion !== null &&
         page.snapshot_version !== undefined &&

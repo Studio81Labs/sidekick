@@ -81,15 +81,9 @@ describe("API Worker proxy", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("proxies the exact API root instead of serving the application shell", async () => {
-    let forwardedRequest;
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (request) => {
-        forwardedRequest = request;
-        return Response.json({ detail: "API root" });
-      }),
-    );
+  it("rejects the retired API root without serving the application shell", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     const assetsFetch = vi.fn();
 
     const response = await worker.fetch(
@@ -100,8 +94,8 @@ describe("API Worker proxy", () => {
       },
     );
 
-    expect(response.status).toBe(200);
-    expect(forwardedRequest.url).toBe("https://backend.example/api");
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(assetsFetch).not.toHaveBeenCalled();
   });
 
@@ -342,7 +336,7 @@ describe("API Worker proxy", () => {
       vi.fn(
         async () =>
           new Response(null, {
-            headers: { Location: "/api/jobs" },
+            headers: { Location: "/api/admin/ocr/jobs" },
             status: 307,
           }),
       ),
@@ -375,7 +369,7 @@ describe("API Worker proxy", () => {
     );
 
     const response = await worker.fetch(
-      new Request("https://poker.example/api/jobs", {
+      new Request("https://poker.example/api/admin/ocr/jobs", {
         headers: { "X-Poker-Proxy-Secret": "spoofed-browser-value" },
       }),
       {
@@ -403,7 +397,7 @@ describe("API Worker proxy", () => {
     );
 
     await worker.fetch(
-      new Request("https://poker.example/api/jobs", {
+      new Request("https://poker.example/api/admin/ocr/jobs", {
         headers: {
           "CF-Access-Authenticated-User-Email": "player@example.com",
           "CF-Connecting-IP": "203.0.113.10",
@@ -435,7 +429,7 @@ describe("API Worker proxy", () => {
     );
 
     await worker.fetch(
-      new Request("https://poker.example/api/jobs", {
+      new Request("https://poker.example/api/admin/ocr/jobs", {
         headers: { "X-Poker-Proxy-Secret": "spoofed-browser-value" },
       }),
       {
@@ -452,7 +446,7 @@ describe("API Worker proxy", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await worker.fetch(
-      new Request("https://poker.example/api/jobs"),
+      new Request("https://poker.example/api/admin/ocr/jobs"),
       {
         ASSETS: { fetch: vi.fn() },
         API_PROXY_SECRET: "trusted-worker-value",
@@ -470,7 +464,7 @@ describe("API Worker proxy", () => {
       .fn()
       .mockResolvedValueOnce(
         new Response(null, {
-          headers: { Location: "https://backend.example/api/jobs" },
+          headers: { Location: "https://backend.example/api/admin/ocr/jobs" },
           status: 307,
         }),
       )
@@ -483,7 +477,7 @@ describe("API Worker proxy", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await worker.fetch(
-      new Request("https://poker.example/api/jobs/"),
+      new Request("https://poker.example/api/admin/ocr/jobs/"),
       {
         ASSETS: { fetch: vi.fn() },
         API_PROXY_SECRET: "trusted-worker-value",
@@ -494,7 +488,9 @@ describe("API Worker proxy", () => {
     expect(response.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const redirectedRequest = fetchMock.mock.calls[1][0];
-    expect(redirectedRequest.url).toBe("https://backend.example/api/jobs");
+    expect(redirectedRequest.url).toBe(
+      "https://backend.example/api/admin/ocr/jobs",
+    );
     expect(redirectedRequest.headers.get("X-Poker-Proxy-Secret")).toBe(
       "trusted-worker-value",
     );
@@ -511,7 +507,7 @@ describe("API Worker proxy", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await worker.fetch(
-      new Request("https://poker.example/api/jobs"),
+      new Request("https://poker.example/api/admin/ocr/jobs"),
       {
         ASSETS: { fetch: vi.fn() },
         API_PROXY_SECRET: "trusted-worker-value",
@@ -535,7 +531,7 @@ describe("API Worker proxy", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await worker.fetch(
-      new Request("https://poker.example/api/jobs"),
+      new Request("https://poker.example/api/admin/ocr/jobs"),
       {
         ASSETS: { fetch: vi.fn() },
         API_PROXY_SECRET: "trusted-worker-value",
@@ -552,7 +548,7 @@ describe("API Worker proxy", () => {
       .fn()
       .mockResolvedValueOnce(
         new Response(null, {
-          headers: { Location: "/api/jobs/result" },
+          headers: { Location: "/api/admin/ocr/jobs/result" },
           status: 303,
         }),
       )
@@ -560,7 +556,7 @@ describe("API Worker proxy", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await worker.fetch(
-      new Request("https://poker.example/api/jobs", {
+      new Request("https://poker.example/api/admin/ocr/jobs", {
         body: "upload",
         headers: { "Content-Type": "text/plain" },
         method: "POST",
@@ -604,7 +600,7 @@ describe("API Worker proxy", () => {
       "",
     ].join("\r\n");
     const request = new Request(
-      "https://poker.example/api/jobs?source=upload",
+      "https://poker.example/api/admin/ocr/jobs?source=upload",
       {
         body: multipartBody,
         headers: {
@@ -621,7 +617,7 @@ describe("API Worker proxy", () => {
 
     expect(response.status).toBe(201);
     expect(forwardedRequest.url).toBe(
-      "https://backend.example/api/jobs?source=upload",
+      "https://backend.example/api/admin/ocr/jobs?source=upload",
     );
     expect(forwardedRequest.headers.get("content-type")).toContain(
       "multipart/form-data; boundary=",

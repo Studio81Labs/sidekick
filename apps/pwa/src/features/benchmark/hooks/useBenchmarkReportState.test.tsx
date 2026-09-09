@@ -11,6 +11,8 @@ import {
 import type { BenchmarkOverview } from "../../../shared/types/benchmarks";
 import { useBenchmarkReportState } from "./useBenchmarkReportState";
 
+const ADMINISTRATOR_TOKEN = "administrator-token";
+
 function wrapper({ children }: PropsWithChildren) {
   return createElement(AppProviders, null, children);
 }
@@ -31,7 +33,12 @@ describe("benchmark report state", () => {
     fetchMock().mockResolvedValueOnce(jsonResponse(overview("job-1")));
     const onError = vi.fn();
     const { result } = renderHook(
-      () => useBenchmarkReportState({ dialogOpen: false, onError }),
+      () =>
+        useBenchmarkReportState({
+          administratorToken: ADMINISTRATOR_TOKEN,
+          dialogOpen: false,
+          onError,
+        }),
       { wrapper },
     );
 
@@ -49,7 +56,12 @@ describe("benchmark report state", () => {
       .mockImplementationOnce(() => first.promise)
       .mockResolvedValueOnce(jsonResponse(overview("job-2")));
     const { result } = renderHook(
-      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      () =>
+        useBenchmarkReportState({
+          administratorToken: ADMINISTRATOR_TOKEN,
+          dialogOpen: false,
+          onError: vi.fn(),
+        }),
       { wrapper },
     );
 
@@ -72,7 +84,12 @@ describe("benchmark report state", () => {
     const pending = deferredResponse();
     fetchMock().mockImplementationOnce(() => pending.promise);
     const { result } = renderHook(
-      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      () =>
+        useBenchmarkReportState({
+          administratorToken: ADMINISTRATOR_TOKEN,
+          dialogOpen: false,
+          onError: vi.fn(),
+        }),
       { wrapper },
     );
 
@@ -93,7 +110,12 @@ describe("benchmark report state", () => {
     const latestReport = overview("job-1").latest_report;
     expect(latestReport).not.toBeNull();
     const { result } = renderHook(
-      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      () =>
+        useBenchmarkReportState({
+          administratorToken: ADMINISTRATOR_TOKEN,
+          dialogOpen: false,
+          onError: vi.fn(),
+        }),
       { wrapper },
     );
 

@@ -28,7 +28,7 @@ async function withServer(handler, exercise) {
   }
 }
 
-test("checks the committed app shell, proxy, and MCP security boundaries", async () => {
+test("checks the committed app shell, retired route, and MCP security boundaries", async () => {
   const committedPwaDocument = await readFile(
     new URL("../apps/pwa/index.html", import.meta.url),
     "utf8",
@@ -46,6 +46,10 @@ test("checks the committed app shell, proxy, and MCP security boundaries", async
       if (request.url === "/app") {
         response.writeHead(200, { "Content-Type": "text/html" });
         response.end(committedPwaDocument);
+        return;
+      }
+      if (request.url === "/api/jobs?limit=1") {
+        response.writeHead(404).end();
         return;
       }
       if (request.url === "/api/mcp/principals" || request.url === "/mcp") {
@@ -110,15 +114,17 @@ test("rejects a publicly exposed MCP administration route", async () => {
         response.writeHead(200).end(VALID_PWA_DOCUMENT);
         return;
       }
+      if (request.url === "/api/jobs?limit=1") {
+        response.writeHead(404).end();
+        return;
+      }
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(
         request.url === "/api/health"
           ? JSON.stringify({ status: "ok" })
           : request.url === "/api/mcp/config"
             ? JSON.stringify({ enabled: true })
-            : request.url === "/api/jobs?limit=1"
-              ? JSON.stringify({ jobs: [] })
-              : JSON.stringify({ principals: [] }),
+            : JSON.stringify({ principals: [] }),
       );
     },
     async (baseUrl) => {
@@ -139,6 +145,10 @@ test("accepts an absent MCP endpoint when hosted access is disabled", async () =
     (request, response) => {
       if (request.url === "/") {
         response.writeHead(200).end(VALID_PWA_DOCUMENT);
+        return;
+      }
+      if (request.url === "/api/jobs?limit=1") {
+        response.writeHead(404).end();
         return;
       }
       if (request.url === "/api/mcp/principals") {
@@ -173,6 +183,10 @@ test("rejects an absent admin binding when hosted MCP is enabled", async () => {
     (request, response) => {
       if (request.url === "/") {
         response.writeHead(200).end(VALID_PWA_DOCUMENT);
+        return;
+      }
+      if (request.url === "/api/jobs?limit=1") {
+        response.writeHead(404).end();
         return;
       }
       if (request.url === "/api/mcp/principals") {

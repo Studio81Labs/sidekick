@@ -9,6 +9,7 @@ import { jsonResponse, resetApiMocks } from "../../../test/api";
 import { setBenchmarkInclusionCommand } from "./setBenchmarkInclusionCommand";
 
 afterEach(resetApiMocks);
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 describe("set benchmark inclusion command", () => {
   it("returns the updated job and invalidates only affected query families", async () => {
@@ -41,6 +42,7 @@ describe("set benchmark inclusion command", () => {
     );
 
     const outcome = await setBenchmarkInclusionCommand(queryClient, {
+      administratorToken: ADMINISTRATOR_TOKEN,
       jobId: currentJob.id,
       included: true,
     });
@@ -79,6 +81,7 @@ describe("set benchmark inclusion command", () => {
 
     await expect(
       setBenchmarkInclusionCommand(queryClient, {
+        administratorToken: ADMINISTRATOR_TOKEN,
         jobId: currentJob.id,
         included: true,
       }),

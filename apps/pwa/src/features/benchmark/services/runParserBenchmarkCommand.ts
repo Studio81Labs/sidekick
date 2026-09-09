@@ -7,6 +7,7 @@ import {
 import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQueries";
 
 export type RunParserBenchmarkCommand = {
+  administratorToken: string;
   pipeline?: ParserPipeline;
 };
 
@@ -14,7 +15,10 @@ export async function runParserBenchmarkCommand(
   queryClient: QueryClient,
   command: RunParserBenchmarkCommand,
 ) {
-  const report = await runParserBenchmark(command.pipeline);
+  const report = await runParserBenchmark(
+    command.pipeline,
+    command.administratorToken,
+  );
   const cache = { invalidated: [benchmarkQueryKeys.overviews()] as const };
 
   await Promise.all(

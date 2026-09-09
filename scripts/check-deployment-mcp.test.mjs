@@ -56,8 +56,7 @@ function respondToBaseCheck(request, response, mcpConfig) {
     return true;
   }
   if (request.url === "/api/jobs?limit=1") {
-    response.writeHead(200, { "Content-Type": "application/json" });
-    response.end(JSON.stringify({ jobs: [], total: 0 }));
+    response.writeHead(404).end();
     return true;
   }
   return false;

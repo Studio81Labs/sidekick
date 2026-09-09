@@ -8,6 +8,7 @@ import { jsonResponse, resetApiMocks } from "../../../test/api";
 import { archiveJobsCommand } from "./archiveJobsCommand";
 
 afterEach(resetApiMocks);
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 describe("archive jobs command", () => {
   it("returns explicit detail and projection cache outcomes", async () => {
@@ -32,7 +33,11 @@ describe("archive jobs command", () => {
       vi.fn().mockResolvedValueOnce(jsonResponse(history)),
     );
 
-    const outcome = await archiveJobsCommand(queryClient, [job.id]);
+    const outcome = await archiveJobsCommand(
+      queryClient,
+      [job.id],
+      ADMINISTRATOR_TOKEN,
+    );
 
     expect(outcome).toEqual({
       history,
@@ -77,9 +82,9 @@ describe("archive jobs command", () => {
       ),
     );
 
-    await expect(archiveJobsCommand(queryClient, [job.id])).rejects.toThrow(
-      "Archive failed",
-    );
+    await expect(
+      archiveJobsCommand(queryClient, [job.id], ADMINISTRATOR_TOKEN),
+    ).rejects.toThrow("Archive failed");
     expect(queryClient.getQueryData(detailKey)).toEqual(job);
     expect(queryClient.getQueryState(detailKey)?.isInvalidated).toBe(false);
   });

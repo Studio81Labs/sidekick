@@ -22,3 +22,5 @@ and the open Phase 0
 [V2 grading reference source assessment](./reference/v2-grading-reference-assessment.md).
 The current shared-gate status and explicit Phase 1 no-go are recorded in the
 [V2 Phase 0 gate-readiness ledger](./reference/v2-phase-0-gate-readiness.md).
+The pre-release current-only cutover is recorded in the
+[removal inventory](./reference/current-only-cutover-removal-inventory.md).

@@ -40,6 +40,38 @@ APPROVED_STATE = {
 }
 
 
+class CurrentAdminOcrTestClient(TestClient):
+    """Keep behavioral fixtures on the current admin contract during C3 migration.
+
+    Individual feature tests exercise application behavior, not URL migration. Their
+    historical paths are rewritten only inside this test client and receive the
+    test administrator credential. Dedicated transport tests use an ordinary
+    ``TestClient`` to prove the removed paths remain unregistered.
+    """
+
+    _legacy_prefixes = (
+        ("/api/admin/ocr-test/session", "/api/admin/ocr/session"),
+        ("/api/benchmarks", "/api/admin/ocr/benchmarks"),
+        ("/api/backups", "/api/admin/ocr/backups"),
+        ("/api/history", "/api/admin/ocr/history"),
+        ("/api/jobs", "/api/admin/ocr/jobs"),
+    )
+
+    def request(self, method: str, url: object, *args: object, **kwargs: object):
+        path = str(url)
+        for legacy_prefix, current_prefix in self._legacy_prefixes:
+            if path == legacy_prefix or path.startswith(f"{legacy_prefix}/") or path.startswith(
+                f"{legacy_prefix}?"
+            ):
+                path = f"{current_prefix}{path[len(legacy_prefix):]}"
+                break
+        if path == "/api/admin/ocr" or path.startswith("/api/admin/ocr/"):
+            headers = dict(kwargs.get("headers") or {})
+            headers.setdefault("Authorization", ADMIN_OCR_TEST_HEADERS["Authorization"])
+            kwargs["headers"] = headers
+        return super().request(method, path, *args, **kwargs)
+
+
 def make_client(tmp_path: Path, **settings_overrides: object) -> TestClient:
     settings_values = {
         "data_dir": tmp_path,
@@ -49,7 +81,20 @@ def make_client(tmp_path: Path, **settings_overrides: object) -> TestClient:
     }
     settings_values.update(settings_overrides)
     app = create_app(Settings(**settings_values))
-    return TestClient(app)
+    return CurrentAdminOcrTestClient(app)
+
+
+def make_transport_client(tmp_path: Path, **settings_overrides: object) -> TestClient:
+    """Build an unwrapped client for authentication and route-contract checks."""
+
+    settings_values = {
+        "data_dir": tmp_path,
+        "parser_provider": "mock",
+        "admin_ocr_test_enabled": True,
+        "admin_ocr_test_token": ADMIN_OCR_TEST_TOKEN,
+    }
+    settings_values.update(settings_overrides)
+    return TestClient(create_app(Settings(**settings_values)))
 
 
 def upload_job(
@@ -65,7 +110,7 @@ def upload_job(
         else None
     )
     return client.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": (filename, content, content_type)},
         data=data,
         headers=ADMIN_OCR_TEST_HEADERS,
@@ -83,7 +128,7 @@ def upload_job_with_pipeline(
         "parser_layout_profile": parser_layout_profile,
     }
     return client.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         data=data,
         headers=ADMIN_OCR_TEST_HEADERS,
@@ -91,7 +136,11 @@ def upload_job_with_pipeline(
 
 
 def approve_job(client: TestClient, job_id: str, state: dict[str, object] | None = None):
-    return client.post(f"/api/jobs/{job_id}/approve", json=state or APPROVED_STATE)
+    return client.post(
+        f"/api/admin/ocr/jobs/{job_id}/approve",
+        json=state or APPROVED_STATE,
+        headers=ADMIN_OCR_TEST_HEADERS,
+    )
 
 
 def import_benchmark_dataset(
@@ -110,7 +159,7 @@ def import_benchmark_dataset(
     if request_id is not None:
         request_headers["X-Benchmark-Import-Request-ID"] = request_id
     return client.post(
-        "/api/benchmarks/import",
+        "/api/admin/ocr/benchmarks/import",
         files={"file": ("dataset.zip", archive_bytes, "application/zip")},
         headers=request_headers,
     )
@@ -128,7 +177,7 @@ def restore_application_backup(
     shares the upload bearer. Pass `headers={}` for the unauthenticated path.
     """
     return client.post(
-        "/api/backups/restore",
+        "/api/admin/ocr/backups/restore",
         files={"file": ("backup.zip", archive_bytes, "application/zip")},
         headers=dict(ADMIN_OCR_TEST_HEADERS if headers is None else headers),
     )

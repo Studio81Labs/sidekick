@@ -8,8 +8,9 @@ import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
 export async function archiveJobsCommand(
   queryClient: QueryClient,
   jobIds: string[],
+  administratorToken: string,
 ) {
-  const history = await archiveJobs(jobIds);
+  const history = await archiveJobs(jobIds, administratorToken);
   const detailKeys = jobIds.map((jobId) => jobQueryKeys.detail(jobId));
   const projectionKeys = [
     jobQueryKeys.processing(),

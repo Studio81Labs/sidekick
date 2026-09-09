@@ -1,5 +1,5 @@
 import type { components } from "@poker-hero/openapi-client";
-import { apiUrl } from "../../../shared/api/core";
+import { apiUrl, readJson } from "../../../shared/api/core";
 import {
   type JsonRequestOptions,
   requestJson,
@@ -19,11 +19,9 @@ export type ParserPipeline = Pick<
   "parser_provider" | "parser_layout_profile"
 >;
 
-export function benchmarkDatasetUrl(pipeline?: ParserPipeline): string {
-  const url = apiUrl("/api/benchmarks/export");
-  if (!pipeline) {
-    return url;
-  }
+function benchmarkDatasetPath(pipeline?: ParserPipeline): string {
+  const url = "/api/admin/ocr/benchmarks/export";
+  if (!pipeline) return url;
   const search = new URLSearchParams({
     parser_provider: pipeline.parser_provider,
     parser_layout_profile: pipeline.parser_layout_profile,
@@ -67,7 +65,8 @@ export function toBenchmarkDatasetImportResult(
 }
 
 export async function getBenchmarkOverview(
-  pipeline?: ParserPipeline,
+  pipeline: ParserPipeline | undefined,
+  administratorToken: string,
   signal?: AbortSignal,
 ): Promise<BenchmarkOverview> {
   const search = new URLSearchParams();
@@ -77,47 +76,65 @@ export async function getBenchmarkOverview(
   }
   const query = search.size > 0 ? `?${search.toString()}` : "";
   const response = await requestJson<BenchmarkOverviewResponse>(
-    `/api/benchmarks${query}`,
-    signal ? { signal } : undefined,
+    `/api/admin/ocr/benchmarks${query}`,
+    {
+      headers: { Authorization: `Bearer ${administratorToken}` },
+      ...(signal ? { signal } : {}),
+    },
   );
   return toBenchmarkOverview(response);
 }
 
 export async function getBenchmarkDatasetImport(
   requestId: string,
+  administratorToken: string,
   signal?: AbortSignal,
 ): Promise<BenchmarkDatasetImportReceipt> {
   const response = await requestJson<BenchmarkDatasetImportReceiptResponse>(
-    `/api/benchmarks/imports/${encodeURIComponent(requestId)}`,
-    signal ? { signal } : undefined,
+    `/api/admin/ocr/benchmarks/imports/${encodeURIComponent(requestId)}`,
+    {
+      headers: { Authorization: `Bearer ${administratorToken}` },
+      ...(signal ? { signal } : {}),
+    },
   );
   return toBenchmarkDatasetImportReceipt(response);
 }
 
 export async function getBenchmarkReport(
   reportId: string,
+  administratorToken: string,
   signal?: AbortSignal,
 ): Promise<BenchmarkReport> {
   const response = await requestJson<BenchmarkReportResponse>(
-    `/api/benchmarks/${reportId}`,
-    signal ? { signal } : undefined,
+    `/api/admin/ocr/benchmarks/${encodeURIComponent(reportId)}`,
+    {
+      headers: { Authorization: `Bearer ${administratorToken}` },
+      ...(signal ? { signal } : {}),
+    },
   );
   return toBenchmarkReport(response);
 }
 
 export async function runParserBenchmark(
-  pipeline?: ParserPipeline,
+  pipeline: ParserPipeline | undefined,
+  administratorToken: string,
 ): Promise<BenchmarkReport> {
-  const request: JsonRequestOptions = { method: "POST" };
+  const request: JsonRequestOptions = {
+    method: "POST",
+    headers: { Authorization: `Bearer ${administratorToken}` },
+  };
   if (pipeline) {
-    request.headers = { "Content-Type": "application/json" };
+    request.headers = {
+      ...request.headers,
+      "Content-Type": "application/json",
+    };
     request.body = JSON.stringify({
       parser_provider: pipeline.parser_provider,
       parser_layout_profile: pipeline.parser_layout_profile,
     });
   }
   const response = await requestJson<BenchmarkReportResponse>(
-    "/api/benchmarks/run",
+    "/api/admin/ocr/benchmarks/run",
     request,
   );
   return toBenchmarkReport(response);
@@ -131,7 +148,7 @@ export async function importBenchmarkDataset(
   const form = new FormData();
   form.append("file", file);
   const response = await requestJson<BenchmarkDatasetImportResultResponse>(
-    "/api/benchmarks/import",
+    "/api/admin/ocr/benchmarks/import",
     {
       method: "POST",
       headers: {
@@ -147,15 +164,33 @@ export async function importBenchmarkDataset(
 export async function setBenchmarkInclusion(
   jobId: string,
   included: boolean,
+  administratorToken: string,
 ): Promise<JobRecord> {
   const update: BenchmarkInclusionUpdate = { included };
   const response = await requestJson<JobRecordResponse>(
-    `/api/jobs/${jobId}/benchmark`,
+    `/api/admin/ocr/jobs/${encodeURIComponent(jobId)}/benchmark`,
     {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${administratorToken}`,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify(update),
     },
   );
   return toJobRecord(response);
+}
+
+export async function downloadBenchmarkDataset(
+  administratorToken: string,
+  pipeline?: ParserPipeline,
+): Promise<Blob> {
+  const response = await fetch(apiUrl(benchmarkDatasetPath(pipeline)), {
+    credentials: "include",
+    headers: { Authorization: `Bearer ${administratorToken}` },
+  });
+  if (!response.ok) {
+    await readJson<never>(response);
+  }
+  return response.blob();
 }
