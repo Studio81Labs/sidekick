@@ -1878,6 +1878,50 @@ describe("Analyzer administrative capture", () => {
     ).toBeInTheDocument();
   });
 
+  it("stops a pending shared stream after an administrator denial relocks", async () => {
+    let resolveDisplayMedia!: (stream: MediaStream) => void;
+    const getDisplayMedia = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          resolveDisplayMedia = resolve;
+        }),
+    );
+    const stop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getDisplayMedia },
+    });
+    fetchMock().mockResolvedValueOnce(jsonResponse({ detail: "denied" }, 401));
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(screen.getByRole("button", { name: "Share window" }));
+    expect(getDisplayMedia).toHaveBeenCalledTimes(1);
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveDisplayMedia({
+        getTracks: () => [{ stop }],
+        getVideoTracks: () => [
+          { getSettings: () => ({ displaySurface: "window" }) },
+        ],
+      } as unknown as MediaStream);
+    });
+
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("captures a shared screen frame and uploads it for parsing", async () => {
     const { addEventListener, getDisplayMedia } = stubDisplayMedia("browser");
     stubCanvasCapture();

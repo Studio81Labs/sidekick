@@ -28,6 +28,20 @@ export function useCaptureSource({ onError }: UseCaptureSourceOptions) {
   const [sourceLabel, setSourceLabel] = useState<string | null>(null);
   const [previewVisible, setPreviewVisible] = useState(false);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  // A browser chooser cannot be cancelled once getDisplayMedia has opened it.
+  // Advance this synchronously when the owner stops or unmounts the capture
+  // surface so a subsequently granted stream is stopped instead of escaping
+  // the now-locked administrator session.
+  const shareRequestRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      shareRequestRef.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -61,6 +75,8 @@ export function useCaptureSource({ onError }: UseCaptureSourceOptions) {
   }, [stream]);
 
   async function startShare(mode: ShareMode = shareMode) {
+    const shareRequest = shareRequestRef.current + 1;
+    shareRequestRef.current = shareRequest;
     if (!navigator.mediaDevices?.getDisplayMedia) {
       onError("Screen sharing is not supported in this browser");
       return;
@@ -70,6 +86,10 @@ export function useCaptureSource({ onError }: UseCaptureSourceOptions) {
       const nextStream = await navigator.mediaDevices.getDisplayMedia(
         displayMediaOptions(mode),
       );
+      if (!mountedRef.current || shareRequest !== shareRequestRef.current) {
+        stopMediaStream(nextStream);
+        return;
+      }
       const displaySurface = getDisplaySurface(nextStream);
       if (!displaySurfaceMatchesMode(displaySurface, mode)) {
         stopMediaStream(nextStream);
@@ -85,11 +105,14 @@ export function useCaptureSource({ onError }: UseCaptureSourceOptions) {
       setStream(nextStream);
       setPreviewVisible(true);
     } catch (error) {
-      onError(messageFromError(error, "Screen sharing was cancelled"));
+      if (mountedRef.current && shareRequest === shareRequestRef.current) {
+        onError(messageFromError(error, "Screen sharing was cancelled"));
+      }
     }
   }
 
   function stopShare() {
+    shareRequestRef.current += 1;
     setSourceLabel(null);
     setStream(null);
     setPreviewVisible(false);
