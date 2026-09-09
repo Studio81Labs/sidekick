@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./McpAccessPanel.css";
 
 import {
@@ -22,11 +22,7 @@ import type {
 } from "../../../shared/types/mcp";
 import { useMcpUpdateSafety } from "../hooks/useMcpUpdateSafety";
 
-export function McpAccessPanel({
-  onCloseBlockedChange,
-}: {
-  onCloseBlockedChange?: (blocked: boolean) => void;
-}) {
+export function McpAccessPanel() {
   const [config, setConfig] = useState<McpAccessConfig | null>(null);
   const [principals, setPrincipals] = useState<McpPrincipal[]>([]);
   const [adminToken, setAdminToken] = useState("");
@@ -39,7 +35,6 @@ export function McpAccessPanel({
   const [tokenRequestPending, setTokenRequestPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tokenPending = issued !== null || tokenRequestPending;
-  const closeBlocked = tokenPending || busyId !== null;
   const mcpDirtyVersion = useMemo(
     () => ({}),
     [adminToken, expiry, issued, name],
@@ -53,10 +48,6 @@ export function McpAccessPanel({
     },
     mcpDirtyVersion,
   );
-
-  useLayoutEffect(() => {
-    onCloseBlockedChange?.(closeBlocked);
-  }, [closeBlocked, onCloseBlockedChange]);
 
   useEffect(() => {
     let active = true;

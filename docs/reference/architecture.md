@@ -1408,10 +1408,10 @@ deployment path.
 
 `shared/pwa/updateSafety.tsx` aggregates named dirty and busy reasons from
 independent feature owners. The analyzer registers all correction, screenshot,
-capture, mutation, restore, and benchmark state; Agent access
-registers administrator and credential drafts, unacknowledged one-time tokens,
-and mutations. The information dialog blocks every close path for the complete
-MCP mutation and unacknowledged-token lifetime, keeping that owner mounted.
+capture, mutation, restore, and benchmark state. The standalone Agent access
+page registers administrator and credential drafts, unacknowledged one-time
+tokens, and mutations independently of the OCR session, so an OCR relock
+cannot unmount its credential owner.
 `PwaRuntime` uses the aggregate for unload protection and worker
 updates. Its disconnected status probes the stable manifest with cache bypass
 and a bounded timeout rather than trusting `navigator.onLine`; it retries on

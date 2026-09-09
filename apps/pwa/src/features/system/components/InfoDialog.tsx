@@ -9,7 +9,6 @@ import {
   ButtonControl,
   FileInputControl,
 } from "../../../shared/components/FormControls";
-import { McpAccessPanel } from "./McpAccessPanel";
 
 export interface InfoProviderSummary {
   recognition: string;
@@ -21,10 +20,8 @@ export interface InfoDialogProps {
   administrativeUnlocked: boolean;
   backupRestoring: boolean;
   busy: boolean;
-  mcpCloseBlocked: boolean;
   onClose: () => void;
   onDownloadBackup: () => void;
-  onMcpCloseBlockedChange: (blocked: boolean) => void;
   onRestoreBackup: (file: File) => void;
   providers: InfoProviderSummary | null;
   systemInfoLoading: boolean;
@@ -34,16 +31,14 @@ export function InfoDialog({
   administrativeUnlocked,
   backupRestoring,
   busy,
-  mcpCloseBlocked,
   onClose,
   onDownloadBackup,
-  onMcpCloseBlockedChange,
   onRestoreBackup,
   providers,
   systemInfoLoading,
 }: InfoDialogProps) {
   const backupInputRef = useRef<HTMLInputElement | null>(null);
-  const closeDisabled = backupRestoring || mcpCloseBlocked;
+  const closeDisabled = backupRestoring;
   // Restoring a backup mints jobs, so the server requires the same
   // administrator credential the upload path uses.
   const restoreDisabled = busy || backupRestoring || !administrativeUnlocked;
@@ -99,15 +94,6 @@ export function InfoDialog({
             Designed for post-hand study. It does not place bets or interact
             directly with a poker client.
           </p>
-        </section>
-        <section className="info-dialog-section">
-          <h3>Agent access</h3>
-          <p>
-            Create environment-bound bearer credentials for trusted developer
-            agents. Store each token when it is shown; only its hash remains on
-            the server.
-          </p>
-          <McpAccessPanel onCloseBlockedChange={onMcpCloseBlockedChange} />
         </section>
         <section className="info-dialog-section data-recovery-section">
           <h3>Data and recovery</h3>

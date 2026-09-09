@@ -4,18 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { InfoDialog, type InfoDialogProps } from "./InfoDialog";
 
-vi.mock("./McpAccessPanel", () => ({
-  McpAccessPanel: ({
-    onCloseBlockedChange,
-  }: {
-    onCloseBlockedChange?: (blocked: boolean) => void;
-  }) => (
-    <button type="button" onClick={() => onCloseBlockedChange?.(true)}>
-      Simulate blocked close
-    </button>
-  ),
-}));
-
 afterEach(cleanup);
 
 function dialogProps(
@@ -25,10 +13,8 @@ function dialogProps(
     administrativeUnlocked: true,
     backupRestoring: false,
     busy: false,
-    mcpCloseBlocked: false,
     onClose: vi.fn(),
     onDownloadBackup: vi.fn(),
-    onMcpCloseBlockedChange: vi.fn(),
     onRestoreBackup: vi.fn(),
     providers: {
       recognition: "External vision model",
@@ -41,7 +27,7 @@ function dialogProps(
 }
 
 describe("InfoDialog", () => {
-  it("renders active providers and delegates backup and MCP interactions", async () => {
+  it("renders active providers and delegates backup interactions", async () => {
     const props = dialogProps();
     render(<InfoDialog {...props} />);
     const dialog = screen.getByRole("dialog", {
@@ -59,6 +45,7 @@ describe("InfoDialog", () => {
     expect(
       within(dialog).queryByText("Recommendation"),
     ).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("Agent access")).not.toBeInTheDocument();
     expect(
       within(dialog).getByText(
         "Back up screenshots, approved ground truth, and benchmark reports in one portable ZIP.",
@@ -81,9 +68,6 @@ describe("InfoDialog", () => {
     const input = within(dialog).getByLabelText("Application backup ZIP");
     await userEvent.upload(input, backup);
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Simulate blocked close" }),
-    );
-    await userEvent.click(
       within(dialog).getByRole("button", { name: "Close app information" }),
     );
     await userEvent.click(within(dialog).getByRole("button", { name: "Done" }));
@@ -91,7 +75,6 @@ describe("InfoDialog", () => {
     expect(props.onRestoreBackup).toHaveBeenCalledWith(backup);
     expect(props.onDownloadBackup).toHaveBeenCalledOnce();
     expect(input).toHaveValue("");
-    expect(props.onMcpCloseBlockedChange).toHaveBeenCalledWith(true);
     expect(props.onClose).toHaveBeenCalledTimes(2);
     expect(
       within(dialog).queryByText(
@@ -143,7 +126,6 @@ describe("InfoDialog", () => {
         {...dialogProps({
           backupRestoring: true,
           busy: true,
-          mcpCloseBlocked: true,
         })}
       />,
     );

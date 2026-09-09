@@ -70,9 +70,9 @@ initial registry covers:
   operations.
 
 New local drafts and non-replayable operations must register before they ship.
-The information dialog cannot close while an MCP mutation is active or a
-one-time credential remains unacknowledged, so the MCP safety owner stays
-mounted for the full operation lifetime.
+The standalone Agent access page owns MCP mutations and one-time credentials
+independently of the OCR session, so an OCR relock cannot unmount that owner
+before a token is acknowledged.
 
 The separately built local player PWA owns an equivalent coordinator inside
 its isolated source tree. Its one-use session bootstrap and every player API

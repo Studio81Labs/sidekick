@@ -59,8 +59,7 @@ describe("McpAccessPanel", () => {
 
   it("blocks token-producing actions until the one-time token is dismissed", async () => {
     const user = userEvent.setup();
-    const onCloseBlockedChange = vi.fn();
-    render(<McpAccessPanel onCloseBlockedChange={onCloseBlockedChange} />);
+    render(<McpAccessPanel />);
 
     await user.type(
       await screen.findByLabelText("Agent access admin token"),
@@ -82,7 +81,6 @@ describe("McpAccessPanel", () => {
       screen.getByRole("button", { name: "Create credential" }),
     ).toBeDisabled();
     expect(screen.getByRole("button", { name: "Rotate" })).toBeDisabled();
-    expect(onCloseBlockedChange).toHaveBeenLastCalledWith(true);
     expect(rotateMcpPrincipalCommand).not.toHaveBeenCalled();
     expect(revokeMcpPrincipalCommand).not.toHaveBeenCalled();
 
@@ -92,7 +90,6 @@ describe("McpAccessPanel", () => {
       screen.getByRole("button", { name: "Create credential" }),
     ).toBeEnabled();
     expect(screen.getByRole("button", { name: "Rotate" })).toBeEnabled();
-    expect(onCloseBlockedChange).toHaveBeenLastCalledWith(false);
     expect(listMcpPrincipals).toHaveBeenCalledWith("admin-secret");
     expect(createMcpPrincipalCommand).toHaveBeenCalledWith({
       adminToken: "admin-secret",
@@ -103,9 +100,8 @@ describe("McpAccessPanel", () => {
     });
   });
 
-  it("blocks dialog close for the full revocation request", async () => {
+  it("locks credential controls for the full revocation request", async () => {
     const user = userEvent.setup();
-    const onCloseBlockedChange = vi.fn();
     let resolveRevocation: ((value: McpPrincipal) => void) | undefined;
     vi.mocked(revokeMcpPrincipalCommand).mockImplementation(
       () =>
@@ -114,7 +110,7 @@ describe("McpAccessPanel", () => {
         }),
     );
     vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<McpAccessPanel onCloseBlockedChange={onCloseBlockedChange} />);
+    render(<McpAccessPanel />);
 
     await user.type(
       await screen.findByLabelText("Agent access admin token"),
@@ -125,9 +121,6 @@ describe("McpAccessPanel", () => {
     );
     await user.click(await screen.findByRole("button", { name: "Revoke" }));
 
-    await waitFor(() =>
-      expect(onCloseBlockedChange).toHaveBeenLastCalledWith(true),
-    );
     expect(screen.getByRole("button", { name: "Revoke" })).toBeDisabled();
 
     resolveRevocation?.({
@@ -137,7 +130,7 @@ describe("McpAccessPanel", () => {
     });
 
     await waitFor(() =>
-      expect(onCloseBlockedChange).toHaveBeenLastCalledWith(false),
+      expect(screen.getByText(/revoked/)).toBeInTheDocument(),
     );
     expect(revokeMcpPrincipalCommand).toHaveBeenCalledWith({
       adminToken: "admin-secret",

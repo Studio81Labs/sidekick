@@ -311,9 +311,7 @@ export function useAnalyzerWorkspaceController({
     closeDialog: closeInfoDialog,
     dialogOpen: infoDialogOpen,
     loading: systemInfoLoading,
-    mcpCloseBlocked,
     openDialog: openInfoDialog,
-    setMcpCloseBlocked,
     systemInfo,
   } = useSystemInfoDialog();
   const {
@@ -3522,10 +3520,8 @@ export function useAnalyzerWorkspaceController({
             administrativeUnlocked: true,
             backupRestoring,
             busy: busy || archiveDownloading,
-            mcpCloseBlocked,
             onClose: () => closeInfoDialog(backupRestoring),
             onDownloadBackup: () => void onApplicationBackupDownload(),
-            onMcpCloseBlockedChange: setMcpCloseBlocked,
             onRestoreBackup: (file: File) =>
               void onApplicationBackupRestore(file),
             providers: activeInfoProviders,
