@@ -15,6 +15,7 @@ import {
   UnverifiedAnalyzerTestApp,
   administratorVerificationMock,
   approvedJob,
+  benchmarkOverviewForJob,
   canonicalState,
   deferredResponse,
   detectedState,
@@ -198,6 +199,148 @@ describe("Analyzer administrative capture", () => {
       screen.queryByRole("note", { name: "Administrative OCR test mode" }),
     ).not.toBeInTheDocument();
   });
+
+  it("disables both administrator lock controls during screenshot metadata saves", async () => {
+    const currentJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "metadata-lock.png",
+    });
+    const pendingMetadata = deferredResponse();
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockReturnValueOnce(pendingMetadata.promise);
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Manage screenshot 1: metadata-lock.png",
+      }),
+    );
+    const details = screen.getByRole("dialog", { name: "Screenshot details" });
+    await user.type(within(details).getByLabelText("Title"), "Reviewed");
+    await user.click(
+      within(details).getByRole("button", { name: "Save details" }),
+    );
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Lock administrator tools" }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      pendingMetadata.resolve(
+        jsonResponse({ ...currentJob, title: "Reviewed" }),
+      );
+    });
+  });
+
+  it("disables both administrator lock controls during benchmark inclusion", async () => {
+    const currentJob = approvedJob();
+    currentJob.id = "b".repeat(32);
+    currentJob.original_filename = "benchmark-lock.png";
+    currentJob.benchmark_included = false;
+    const pendingInclusion = deferredResponse();
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockImplementation((url) => {
+      if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
+        return Promise.resolve(
+          jsonResponse(
+            benchmarkOverviewForJob(
+              currentJob.id,
+              currentJob.original_filename,
+            ),
+          ),
+        );
+      }
+      if (
+        url ===
+        `http://localhost:8000/api/admin/ocr/jobs/${currentJob.id}/benchmark`
+      ) {
+        return pendingInclusion.promise;
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
+        return Promise.resolve(processingQueueResponse([currentJob]));
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return Promise.resolve(
+          jsonResponse({ total: 0, jobs: [], snapshot_version: "history" }),
+        );
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(<App />);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
+    const benchmarkDialog = await screen.findByRole("dialog", {
+      name: "Parser benchmark",
+    });
+    await user.click(
+      await within(benchmarkDialog).findByRole("switch", {
+        name: /Use current hand as ground truth/,
+      }),
+    );
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        `http://localhost:8000/api/admin/ocr/jobs/${currentJob.id}/benchmark`,
+        expect.objectContaining({ method: "PUT" }),
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Lock administrator tools" }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      pendingInclusion.resolve(
+        jsonResponse({ ...currentJob, benchmark_included: true }),
+      );
+    });
+  });
+
+  it.each([
+    [
+      401,
+      "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    ],
+    [403, "Administrative OCR test mode is disabled on this deployment."],
+  ])(
+    "locks when an uncached routed job returns %i",
+    async (status, message) => {
+      const pendingJob = deferredResponse();
+      fetchMock().mockReturnValueOnce(pendingJob.promise);
+      render(
+        <UnverifiedAnalyzerTestApp>
+          <AnalyzerPage route={{ jobId: "c".repeat(32), surface: "job" }} />
+        </UnverifiedAnalyzerTestApp>,
+      );
+
+      await unlockAdministrativeAccess();
+      await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        pendingJob.resolve(jsonResponse({ detail: "denied" }, status));
+      });
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+      ).not.toBeInTheDocument();
+    },
+  );
 
   it.each([
     [

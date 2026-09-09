@@ -426,6 +426,13 @@ export function useAnalyzerWorkspaceController({
       JSON.stringify(parsedScreenshotTags) !==
         JSON.stringify(screenshotTags(managedJob))),
   );
+  const administratorLockDisabled =
+    busy ||
+    screenshotMetadataSaving ||
+    screenshotDeleting ||
+    benchmarkImporting ||
+    benchmarkRunning ||
+    benchmarkUpdating;
   const analyzerDirtyVersion = useMemo(
     () => ({}),
     [files, form, screenshotNotes, screenshotTagInput, screenshotTitle],
@@ -453,13 +460,16 @@ export function useAnalyzerWorkspaceController({
     closeBenchmarks: closeBenchmarkDialog,
     jobs,
     loadJob: (jobId) => fetchJobQuery(queryClient, jobId, administratorToken),
-    onError: (routeError) =>
-      setError(
-        messageFromError(
-          routeError,
-          "The requested analyzer job could not load",
-        ),
-      ),
+    onError: (routeError) => {
+      if (!reportAdministrativeDenial(routeError)) {
+        setError(
+          messageFromError(
+            routeError,
+            "The requested analyzer job could not load",
+          ),
+        );
+      }
+    },
     onJobLoading: (jobId) => {
       alignWorkspaceToJob(null);
       selectActiveJob(jobId);
@@ -3316,6 +3326,7 @@ export function useAnalyzerWorkspaceController({
     toolbar: {
       busy,
       historyTotal,
+      lockDisabled: administratorLockDisabled,
       onConfigurePipeline: openPipelineDialog,
       onLockAdministrator: lockAdministrator,
       onOpenBenchmark: () => {
@@ -3327,7 +3338,7 @@ export function useAnalyzerWorkspaceController({
       queueCount,
     },
     administrativeBanner: {
-      busy,
+      lockDisabled: administratorLockDisabled,
       onLock: () => lockAdministrator(),
     },
     inputSource: {

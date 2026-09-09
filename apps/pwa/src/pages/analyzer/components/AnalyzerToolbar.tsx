@@ -13,6 +13,7 @@ import { SummaryMetric } from "../../../shared/components/SummaryMetric";
 export interface AnalyzerToolbarProps {
   busy: boolean;
   historyTotal: number;
+  lockDisabled: boolean;
   onConfigurePipeline: () => void;
   onLockAdministrator: () => void;
   onOpenBenchmark: () => void;
@@ -24,6 +25,7 @@ export interface AnalyzerToolbarProps {
 export function AnalyzerToolbar({
   busy,
   historyTotal,
+  lockDisabled,
   onConfigurePipeline,
   onLockAdministrator,
   onOpenBenchmark,
@@ -62,7 +64,7 @@ export function AnalyzerToolbar({
           iconOnly
           className="header-icon-button active"
           onClick={onLockAdministrator}
-          disabled={busy}
+          disabled={lockDisabled}
           title="Lock administrator session"
           aria-label="Lock administrator session"
         >

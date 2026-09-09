@@ -12,6 +12,7 @@ function toolbarProps(
   return {
     busy: false,
     historyTotal: 7,
+    lockDisabled: false,
     onConfigurePipeline: vi.fn(),
     onLockAdministrator: vi.fn(),
     onOpenBenchmark: vi.fn(),
@@ -74,7 +75,9 @@ describe("AnalyzerToolbar", () => {
   });
 
   it("renders inactive states and locks commands that depend on backend work", () => {
-    render(<AnalyzerToolbar {...toolbarProps({ busy: true })} />);
+    render(
+      <AnalyzerToolbar {...toolbarProps({ busy: true, lockDisabled: true })} />,
+    );
 
     expect(
       screen.getByRole("button", { name: "Configure analysis plugins" }),
@@ -92,6 +95,17 @@ describe("AnalyzerToolbar", () => {
     ).toBeEnabled();
     expect(
       screen.getByRole("button", { name: "About this app" }),
+    ).toBeEnabled();
+  });
+
+  it("can disable only the lock command for an active non-busy mutation", () => {
+    render(<AnalyzerToolbar {...toolbarProps({ lockDisabled: true })} />);
+
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Configure analysis plugins" }),
     ).toBeEnabled();
   });
 });
