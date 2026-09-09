@@ -385,9 +385,10 @@ def test_player_runtime_rejects_an_imported_hand_store_symlink(
     tmp_path: Path,
 ) -> None:
     data_dir = tmp_path / "player-data"
-    data_dir.mkdir(mode=0o700)
+    _create_player_runtime(data_dir)
     target = tmp_path / "outside-store"
     target.mkdir()
+    (data_dir / "imported-hands").rmdir()
     (data_dir / "imported-hands").symlink_to(target, target_is_directory=True)
 
     with pytest.raises(PlayerDataDirectoryError, match="must be a directory inside"):
@@ -1164,7 +1165,7 @@ def test_player_api_reports_a_layout_change_as_restart_required(
     client, runtime = player_client(tmp_path)
     session = exchange_session(client, runtime)
     (tmp_path / PLAYER_WORKSPACE_MANIFEST_FILENAME).write_text(
-        '{"layout_version":6,"schema":"poker-hero-player-workspace"}\n',
+        '{"layout_version":7,"schema":"poker-hero-player-workspace"}\n',
         encoding="utf-8",
     )
 
@@ -3286,8 +3287,8 @@ def test_pending_lifecycle_recovery_blocks_volume_operations_only(
 def test_player_storage_status_preserves_quarantine_across_restarts(
     tmp_path: Path,
 ) -> None:
+    _create_player_runtime(tmp_path)
     imported_hands = tmp_path / "imported-hands"
-    imported_hands.mkdir(mode=0o700)
     interrupted = imported_hands / ".cascade" / "interrupted-cascade"
     interrupted.mkdir(parents=True)
     (interrupted / "ready").write_bytes(b"")

@@ -309,28 +309,26 @@ def test_missing_source_time_and_economics_stay_explicitly_unknown() -> None:
     assert restored.game.blinds.ante_mode == "unknown"
 
 
-def test_legacy_no_ante_checksum_remains_stable_with_unknown_mode() -> None:
+def test_current_state_hash_binds_unknown_ante_mode_and_full_serialization() -> None:
     state = hand_state()
-    legacy_payload = state.model_dump(mode="json")
-    legacy_payload["game"]["blinds"].pop("ante_mode")
-    legacy_checksum = sha256(
+    current_checksum = sha256(
         json.dumps(
-            legacy_payload,
+            state.model_dump(mode="json"),
             ensure_ascii=False,
             separators=(",", ":"),
             sort_keys=True,
         ).encode("utf-8")
     ).hexdigest()
 
-    assert imported_hand_state_sha256(state) == legacy_checksum
+    assert imported_hand_state_sha256(state) == current_checksum
     retained = DetectedImportedHand(
-        detection_id="legacy-detection",
+        detection_id="current-detection",
         raw_source_id="file-1",
         detector_id="pokerstars",
         detector_version="1.0.0",
         detected_at=NOW,
         state=state,
-        content_sha256=legacy_checksum,
+        content_sha256=current_checksum,
     )
     assert retained.state.game.blinds.ante_mode == "unknown"
 
@@ -345,10 +343,38 @@ def test_legacy_no_ante_checksum_remains_stable_with_unknown_mode() -> None:
             )
         }
     )
-    assert imported_hand_state_sha256(explicit_per_player_state) == legacy_checksum
+    assert imported_hand_state_sha256(explicit_per_player_state) != current_checksum
+    # A confirmed zero ante is semantically equivalent regardless of the posting
+    # label, while the full content checksum still preserves the detected label.
+    zero_ante_state = state.model_copy(
+        update={
+            "game": state.game.model_copy(
+                update={
+                    "blinds": state.game.blinds.model_copy(update={"ante": Decimal(0)})
+                }
+            )
+        }
+    )
+    zero_ante_per_player_state = zero_ante_state.model_copy(
+        update={
+            "game": zero_ante_state.game.model_copy(
+                update={
+                    "blinds": zero_ante_state.game.blinds.model_copy(
+                        update={"ante_mode": "per_player"}
+                    )
+                }
+            )
+        }
+    )
+    assert imported_hand_state_sha256(zero_ante_state) != imported_hand_state_sha256(
+        zero_ante_per_player_state
+    )
+    assert detected_imported_hand_semantic_sha256(
+        zero_ante_state
+    ) == detected_imported_hand_semantic_sha256(zero_ante_per_player_state)
 
 
-def test_positive_ante_modes_have_distinct_state_hashes() -> None:
+def test_positive_ante_modes_have_distinct_state_and_semantic_hashes() -> None:
     payload = hand_state().model_dump(mode="python")
     payload["game"]["blinds"]["ante"] = Decimal("0.1")
     payload["game"]["blinds"].pop("ante_mode")
@@ -377,20 +403,7 @@ def test_positive_ante_modes_have_distinct_state_hashes() -> None:
             )
         }
     )
-    legacy_per_player_payload = per_player_state.model_dump(mode="json")
-    legacy_per_player_payload["game"]["blinds"].pop("ante_mode")
-    legacy_per_player_checksum = sha256(
-        json.dumps(
-            legacy_per_player_payload,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
-    assert (
-        imported_hand_state_sha256(per_player_state)
-        == legacy_per_player_checksum
-    )
+
     assert len(
         {
             imported_hand_state_sha256(unknown_state),
@@ -398,6 +411,14 @@ def test_positive_ante_modes_have_distinct_state_hashes() -> None:
             imported_hand_state_sha256(big_blind_state),
         }
     ) == 3
+    assert len(
+        {
+            detected_imported_hand_semantic_sha256(unknown_state),
+            detected_imported_hand_semantic_sha256(per_player_state),
+            detected_imported_hand_semantic_sha256(big_blind_state),
+        }
+    ) == 3
+
 
 
 @pytest.mark.parametrize("field", ["excerpt", "marker"])
@@ -623,7 +644,7 @@ def test_paid_places_are_independent_from_the_remaining_field() -> None:
     assert economics.paid_places > economics.players_remaining
 
 
-def test_tournament_entry_source_facts_omit_unknowns_and_round_trip_known_values() -> None:
+def test_tournament_entry_source_facts_keep_unknowns_in_current_serialization() -> None:
     unknown = TournamentEconomics.model_validate(
         {
             "kind": "tournament",
@@ -634,12 +655,16 @@ def test_tournament_entry_source_facts_omit_unknowns_and_round_trip_known_values
         }
     )
 
-    assert {"entry_buy_in", "entry_fee", "blind_level"}.isdisjoint(
-        unknown.model_dump(mode="python")
-    )
-    assert {"entry_buy_in", "entry_fee", "blind_level"}.isdisjoint(
-        unknown.model_dump(mode="json")
-    )
+    assert {
+        "entry_buy_in": None,
+        "entry_fee": None,
+        "blind_level": None,
+    }.items() <= unknown.model_dump(mode="python").items()
+    assert {
+        "entry_buy_in": None,
+        "entry_fee": None,
+        "blind_level": None,
+    }.items() <= unknown.model_dump(mode="json").items()
 
     known = TournamentEconomics(
         currency="USD",
@@ -672,23 +697,23 @@ def test_tournament_entry_source_facts_reject_invalid_values(
         TournamentEconomics.model_validate({"kind": "tournament", **values})
 
 
-def test_tournament_entry_source_facts_preserve_legacy_state_and_decision_bytes() -> None:
+def test_current_tournament_state_and_decision_serializations_round_trip() -> None:
     state = ImportedHandState.model_validate(three_way_tournament_extraction_payload())
     record = extraction_record_for_state(state)
     extraction = extract_hero_decision_points(record)
 
-    assert imported_hand_state_sha256(state) == (
-        "f94cb6c0b4802326e06a539c69a58d9dd4658327369ac09b5ff58bba63f9bd44"
-    )
-    assert detected_imported_hand_semantic_sha256(state) == (
-        "dde925413dd57fa432e839119f4a9d8f26fa636b19e77c08c7cef0a18f5cc597"
-    )
-    assert sha256(record.model_dump_json().encode()).hexdigest() == (
-        "46efa12739db4237a7c112ec3f2d49540803fa9593fbd5ef4f37797cd205b220"
-    )
-    assert sha256(extraction.model_dump_json().encode()).hexdigest() == (
-        "ef544f0c0cc018664fe6a0981f2794a75011c0268c28732af29f011f3def84f9"
-    )
+    current_payload = state.model_dump(mode="json")
+    assert imported_hand_state_sha256(state) == sha256(
+        json.dumps(
+            current_payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    assert ImportedHandState.model_validate_json(state.model_dump_json()) == state
+    assert ImportedHandRecord.model_validate_json(record.model_dump_json()) == record
+    assert type(extraction).model_validate_json(extraction.model_dump_json()) == extraction
 
 
 def test_tournament_entry_source_facts_bind_known_values_without_changing_readiness() -> None:
@@ -736,7 +761,7 @@ def test_tournament_entry_source_facts_are_removable_review_corrections() -> Non
     )
     assert isinstance(approved_state, dict)
     for field in ("entry_buy_in", "entry_fee", "blind_level"):
-        approved_state["game"]["economics"].pop(field)
+        approved_state["game"]["economics"][field] = None
 
     revision = canonical_revision_from_review(
         detected(detected_state),
@@ -747,10 +772,16 @@ def test_tournament_entry_source_facts_are_removable_review_corrections() -> Non
         correction_reason="The source entry values are not confirmed for this hand.",
     )
 
-    assert {"entry_buy_in", "entry_fee", "blind_level"}.isdisjoint(
-        revision.state.game.economics.model_dump(mode="json")
-    )
-    assert revision.corrections[0].field_pointer == "/game/economics"
+    assert {
+        "entry_buy_in": None,
+        "entry_fee": None,
+        "blind_level": None,
+    }.items() <= revision.state.game.economics.model_dump(mode="json").items()
+    assert {correction.field_pointer for correction in revision.corrections} == {
+        "/game/economics/blind_level",
+        "/game/economics/entry_buy_in",
+        "/game/economics/entry_fee",
+    }
 
 
 def test_stated_net_pot_cannot_exceed_gross_when_rake_is_unknown() -> None:

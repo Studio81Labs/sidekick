@@ -441,18 +441,9 @@ class TournamentEconomics(ImportedHandModel):
     tournament_id: Identifier | None = None
     tournament_type: NonEmptyText | None = None
     stage: NonEmptyText | None = None
-    entry_buy_in: NonNegativeDecimal | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    entry_fee: NonNegativeDecimal | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
-    blind_level: NonEmptyText | None = Field(
-        default=None,
-        exclude_if=lambda value: value is None,
-    )
+    entry_buy_in: NonNegativeDecimal | None = None
+    entry_fee: NonNegativeDecimal | None = None
+    blind_level: NonEmptyText | None = None
     currency: str | None = Field(
         default=None,
         min_length=3,
@@ -3727,7 +3718,7 @@ def imported_hand_state_sha256(state: ImportedHandState) -> str:
     """Return the canonical checksum used to identify detected-state content."""
 
     return sha256(
-        imported_hand_canonical_json(_state_payload_for_hash(state))
+        imported_hand_canonical_json(state.model_dump(mode="json"))
     ).hexdigest()
 
 
@@ -3984,7 +3975,7 @@ def _review_differences(
 def _detected_state_semantic_sha256(state: ImportedHandState) -> str:
     """Hash detected poker meaning without source-file location evidence."""
 
-    normalized = _without_source_evidence(_state_payload_for_hash(state))
+    normalized = _without_source_evidence(state.model_dump(mode="json"))
     if state.game.blinds.ante == 0:
         normalized["game"]["blinds"].pop("ante_mode", None)
     chronology = normalized["chronology"]
@@ -3997,20 +3988,6 @@ def detected_imported_hand_semantic_sha256(state: ImportedHandState) -> str:
     """Hash detected poker meaning independently of source occurrence evidence."""
 
     return _detected_state_semantic_sha256(state)
-
-
-def _state_payload_for_hash(state: ImportedHandState) -> dict[str, Any]:
-    """Keep legacy no-ante/per-player hashes stable while binding uncertainty."""
-
-    payload = state.model_dump(mode="json")
-    blinds = payload["game"]["blinds"]
-    ante_mode = state.game.blinds.ante_mode
-    ante = state.game.blinds.ante
-    if ante_mode == "per_player" or (
-        ante_mode == "unknown" and (ante is None or ante == 0)
-    ):
-        blinds.pop("ante_mode")
-    return payload
 
 
 def derive_structural_positions(

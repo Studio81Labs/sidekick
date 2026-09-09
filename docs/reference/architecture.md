@@ -4,9 +4,9 @@ V1 was never published to production. This reference describes repository
 composition, including pending removal work, not a promise to support an old
 release. [ADR 0079](../decisions/0079-adopt-an-unreleased-current-only-cutover.md)
 supersedes compatibility/fallback requirements: the target is one current local
-player application and an explicit operator OCR surface. At #516, layout 5 /
-backup 3 readers and the old analyzer/recommendation paths still exist; their
-removal and layout 6 / backup 4 cutover are pending, not completed behavior.
+player application and an explicit operator OCR surface. The #517 C1 cutover
+uses layout 6 and backup schema 4 as the only local persistence formats. The
+old analyzer/recommendation paths remain pending C2/C3 removal work.
 
 The repository security, release, dependency-trust, and required-check baseline
 is defined by
@@ -37,12 +37,12 @@ player-owned data directory, performs interrupted-write recovery before
 startup, and exposes authenticated read-only storage status. It still adds no
 player-record or mutation route at that checkpoint.
 [ADR 0059](../decisions/0059-version-the-local-player-workspace-layout.md)
-adds the durable player-workspace compatibility boundary. A private immutable
-version 1 manifest is validated before stores open; an existing manifestless
-imported-hand layout is adopted under the exclusive data-volume lock without
-rewriting retained record, artifact, or recovery bytes. Unknown, malformed,
-insecure, or structurally incomplete layouts fail startup, and the authenticated
-storage view discloses the active layout version.
+records the historical durable player-workspace compatibility boundary.
+[ADR 0079](../decisions/0079-adopt-an-unreleased-current-only-cutover.md)
+supersedes its adoption and migration behavior: only an empty new directory may
+initialize the current layout 6; older, future, malformed, insecure, or
+structurally incomplete layouts fail startup before stores open or mutate.
+The authenticated storage view discloses the active layout version.
 [ADR 0060](../decisions/0060-export-before-removing-local-player-data.md)
 adds a local-only export-before-remove transaction for the versioned player
 workspace. It durably publishes and independently reparses a new portable
@@ -317,11 +317,12 @@ as learning evidence. Conflict resolutions are retained audit events, so a
 deletion request must be ordered after them before deletion can proceed.
 
 [ADR 0077](../decisions/0077-retain-tournament-entry-and-level-source-facts.md)
-records the implemented P1a0 compatibility extension for separate tournament
-entry buy-in, fee and blind-level source facts under #409. It preserves
-absent-field serialization and retained hashes, and advances workspace layout
-to v5 and portable backup output to v3 before tournament parser work. It does
-not establish source-time semantics or clear the Phase 0 evidence gates.
+records the historical P1a0 extension for separate tournament entry buy-in, fee
+and blind-level source facts under #409. [ADR 0079](../decisions/0079-adopt-an-unreleased-current-only-cutover.md)
+supersedes its compatibility clauses: current serialization preserves explicit
+unknown nulls and hashes complete state, with layout 6 and portable backup
+schema 4 only. It does not establish source-time semantics or clear the Phase 0
+evidence gates.
 
 Parsed hand-history candidates enter this aggregate through
 `app/application/imported_hand_ingestion.py`, composed under the local
@@ -528,10 +529,10 @@ The local runtime's imported-hand backup contract is a separate V2-only
 `poker-hero-player-backup` ZIP, not the hosted application's V1 job/benchmark
 archive. Export holds the data volume exclusively while validating and
 checksumming exact record, retained decision-artifact, and historical
-reference-activated-grade bytes. Backup schema v2 added grade manifests and
-schema v3 advances the reader boundary for retained optional tournament source
-facts; the decoder accepts v1, v2, and v3 archives. Restore verifies
-the whole archive before taking that exclusive hold, then classifies every
+reference-activated-grade bytes. The current-only decoder writes and accepts
+backup schema v4 only; schemas v1-v3, future schemas, and malformed archives
+fail complete preflight before restore mutation. Restore verifies the whole
+archive before taking that exclusive hold, then classifies every
 candidate against live deletion generation and lifecycle state. Active
 artifacts are re-derived from their canonical record, not trusted from checksum
 validity alone. Stale evidence is skipped; merge requirements, tombstone
@@ -755,12 +756,12 @@ rewritten snapshots; it is not a signature. The local player workspace now owns
 the trusted current catalog revision and digest in a bounded, owner-only,
 versioned state file. Publication runs under the exclusive volume lock, requires
 the expected current revision and digest, preserves the exact prior history, and
-atomically appends one validated activation. Workspace layout v3 initialized an
-empty fixed-identity catalog and migrated v1/v2 only after the new authority was
-durable. Current startup rejects missing, malformed, shared, symlinked, or
-digest-invalid catalog state. Locked readers reload this authority rather than
-trusting the point-in-time snapshot nested in a grade. ADR 0071 records the
-persistence and compare-and-swap boundary.
+atomically appends one validated activation. Layout v3's initialization and
+migration description is historical: current layout 6 requires the complete
+current authority set from a new empty directory and rejects missing,
+malformed, shared, symlinked, or digest-invalid catalog state. Locked readers
+reload this authority rather than trusting the point-in-time snapshot nested in
+a grade. ADR 0071 records the persistence and compare-and-swap boundary.
 
 The player workspace now also owns the current learning-content authority that
 ADR 0070's eventual revalidation requires. Its fixed-identity catalog retains
@@ -768,12 +769,10 @@ complete taxonomy and mapping lineages together with immutable principle
 revisions and their full reviewer-lifecycle histories. The last taxonomy and
 mapping are current and compatible; publication uses an exact predecessor
 digest and revision compare-and-swap under the exclusive volume lock and can
-only append revisions or lifecycle events. Workspace layout v4 added an empty,
-owner-only, bounded, atomic catalog while preserving v1-v3 hand, consent, and
-reference-catalog state. Layout v5 retains that authority and fences readers
-before optional tournament source facts can be persisted. The catalog is
-product/reference authority and is excluded from portable player backup and
-restore. ADR 0072 records this boundary.
+only append revisions or lifecycle events. Layout v4/v5 catalog migration
+history is superseded by the current-only layout 6 initialization rule; the
+catalog remains product/reference authority and is excluded from portable player
+backup and restore. ADR 0072 records this boundary.
 
 The packaged reference and learning-content catalogs remain empty and no API
 publishes either one. Production composition still does not authorize a solved
@@ -924,10 +923,11 @@ generations under the exclusive player-volume lock and atomically replace an
 owner-only state file. The file contains no credentials, outbound request,
 route binding, response, or player record. Consent is deliberately excluded
 from player backup and restore so an archive cannot resurrect authorization
-after revocation. Workspace layout v2 and ADR 0066 record the v1-to-v2 consent
-migration; current layout v5 retains that state, the reference-activation
-catalog authority from ADR 0071, and the learning-content authority from ADR 0072. The runtime remains
-local-only because no configured transport consumes the consent. The
+after revocation. Workspace layout v2 and ADR 0066 record the historical
+consent migration; current-only layout v6 retains consent, the
+reference-activation catalog authority from ADR 0071, and the learning-content
+authority from ADR 0072. The runtime remains local-only because no configured
+transport consumes the consent. The
 transport-neutral application guard can consume only an injected atomic
 authority snapshot and is not wired into the packaged composition.
 

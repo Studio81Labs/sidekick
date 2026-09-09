@@ -3816,9 +3816,11 @@ def test_tournament_entry_source_facts_bind_the_economic_configuration_hash() ->
     enriched = TournamentEconomics.model_validate(enriched_values)
     equivalent = TournamentEconomics.model_validate(equivalent_values)
 
-    assert {"entry_buy_in", "entry_fee", "blind_level"}.isdisjoint(
-        baseline.model_dump(mode="json")
-    )
+    assert {
+        "entry_buy_in": None,
+        "entry_fee": None,
+        "blind_level": None,
+    }.items() <= baseline.model_dump(mode="json").items()
     assert recommendation_economic_configuration_sha256(enriched) == (
         recommendation_economic_configuration_sha256(equivalent)
     )

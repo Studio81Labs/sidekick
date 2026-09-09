@@ -42,6 +42,7 @@ from app.application.reference_activation import (
     revalidate_reference_activated_grade as revalidate_reference_grade,
 )
 from app.data_lock import (
+    DATA_LOCK_FILENAME,
     DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_TIMEOUT_SECONDS,
     DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
@@ -151,7 +152,7 @@ DEFAULT_PLAYER_HAND_LOCK_STRIPES = 64
 PLAYER_HAND_LOCK_PREFIX = ".poker-hero-player-hand-lifecycle"
 PLAYER_WORKSPACE_MANIFEST_FILENAME = ".poker-hero-player-workspace.json"
 PLAYER_WORKSPACE_SCHEMA = "poker-hero-player-workspace"
-PLAYER_WORKSPACE_LAYOUT_VERSION = 5
+PLAYER_WORKSPACE_LAYOUT_VERSION = 6
 MAX_PLAYER_WORKSPACE_MANIFEST_BYTES = 4096
 
 
@@ -159,7 +160,7 @@ class _PlayerWorkspaceManifest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_name: Literal[PLAYER_WORKSPACE_SCHEMA] = Field(alias="schema")
-    layout_version: Literal[1, 2, 3, 4, PLAYER_WORKSPACE_LAYOUT_VERSION]
+    layout_version: Literal[PLAYER_WORKSPACE_LAYOUT_VERSION]
 
     @field_validator("layout_version", mode="before")
     @classmethod
@@ -597,7 +598,8 @@ def _read_player_workspace_manifest(
     except ValidationError as exc:
         raise PlayerDataDirectoryError(
             "The player workspace manifest is malformed or uses an unsupported"
-            " layout version"
+            " layout version."
+            + _current_only_workspace_remediation()
         ) from exc
 
 
@@ -689,35 +691,95 @@ def _publish_player_workspace_manifest(data_dir: Path) -> None:
         ) from exc
 
 
-def _replace_player_workspace_manifest(data_dir: Path) -> None:
-    manifest_path = data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME
-    temp_path: Path | None = None
+def _current_only_workspace_remediation() -> str:
+    return (
+        " Preserve this directory outside the active POKER_DATA_DIR, start the "
+        "current runtime with a new empty private data directory, then reimport "
+        "authorized source text as fresh unapproved detections."
+    )
+
+
+def _require_empty_workspace_initialization_dir(data_dir: Path) -> None:
+    """Allow first initialization only in a root with no retained workspace data.
+
+    The data lock is the one deliberate exception: a concurrent first opener
+    creates it before the second opener can inspect the manifest. It contains no
+    player data and is rechecked beneath the exclusive hold before initialization.
+    """
+
     try:
-        with tempfile.NamedTemporaryFile(
-            "wb",
-            dir=data_dir,
-            prefix=".poker-hero-player-workspace.",
-            suffix=".tmp",
-            delete=False,
-        ) as temp_file:
-            temp_path = Path(temp_file.name)
-            os.fchmod(temp_file.fileno(), 0o600)
-            temp_file.write(_player_workspace_manifest_payload())
-            temp_file.flush()
-            os.fsync(temp_file.fileno())
-        os.replace(temp_path, manifest_path)
-        temp_path = None
-        _fsync_player_data_dir(data_dir)
+        entries = {entry.name for entry in data_dir.iterdir()}
     except OSError as exc:
         raise PlayerDataDirectoryError(
-            f"Cannot durably upgrade the player workspace manifest: {exc}"
+            "Cannot safely inspect the player data directory before initialization"
         ) from exc
-    finally:
-        if temp_path is not None:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+    if entries.difference({DATA_LOCK_FILENAME}):
+        raise PlayerDataDirectoryError(
+            "The player data directory is nonempty but has no supported current "
+            "workspace manifest."
+            + _current_only_workspace_remediation()
+        )
+
+
+def _initialize_current_workspace_components(data_dir: Path) -> None:
+    """Create the complete layout-six store set for a new empty directory."""
+
+    _require_imported_hands_dir(data_dir, create_if_missing=True)
+    remote_reference_consent = FileRemoteReferenceConsentStore(data_dir)
+    try:
+        remote_reference_consent.initialize_empty()
+    except RemoteReferenceConsentStorageError as exc:
+        raise PlayerDataDirectoryError(str(exc)) from exc
+    reference_activation_catalog = FileReferenceActivationCatalogStore(data_dir)
+    try:
+        reference_activation_catalog.initialize_empty()
+    except ReferenceActivationCatalogStorageError as exc:
+        raise PlayerDataDirectoryError(str(exc)) from exc
+    learning_content_catalog = FileLearningContentCatalogStore(data_dir)
+    try:
+        learning_content_catalog.initialize_empty()
+    except LearningContentCatalogStorageError as exc:
+        raise PlayerDataDirectoryError(str(exc)) from exc
+
+
+def _open_current_workspace_components(
+    data_dir: Path,
+    *,
+    write_lock_timeout_seconds: int,
+) -> tuple[
+    FileRemoteReferenceConsentStore,
+    FileReferenceActivationCatalogStore,
+    FileLearningContentCatalogStore,
+    FileImportedHandStore,
+]:
+    """Open every required current-layout component without creating one."""
+
+    _require_durable_player_workspace_manifest(data_dir)
+    _require_imported_hands_dir(data_dir, create_if_missing=False)
+    remote_reference_consent = FileRemoteReferenceConsentStore(data_dir)
+    try:
+        remote_reference_consent.load()
+    except RemoteReferenceConsentStorageError as exc:
+        raise PlayerDataDirectoryError(str(exc)) from exc
+    reference_activation_catalog = FileReferenceActivationCatalogStore(data_dir)
+    try:
+        reference_activation_catalog.load()
+    except ReferenceActivationCatalogStorageError as exc:
+        raise PlayerDataDirectoryError(str(exc)) from exc
+    learning_content_catalog = FileLearningContentCatalogStore(data_dir)
+    try:
+        learning_content_catalog.load()
+    except LearningContentCatalogStorageError as exc:
+        raise PlayerDataDirectoryError(str(exc)) from exc
+    return (
+        remote_reference_consent,
+        reference_activation_catalog,
+        learning_content_catalog,
+        FileImportedHandStore(
+            data_dir,
+            write_lock_timeout_seconds=write_lock_timeout_seconds,
+        ),
+    )
 
 
 @dataclass(frozen=True)
@@ -759,7 +821,6 @@ class PlayerWorkspace:
             startup_lock_timeout_seconds=startup_lock_timeout_seconds,
             write_lock_timeout_seconds=write_lock_timeout_seconds,
             create_if_missing=True,
-            adopt_manifestless=True,
         )
 
     @classmethod
@@ -771,7 +832,7 @@ class PlayerWorkspace:
         startup_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_SHARED_TIMEOUT_SECONDS,
         write_lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
     ) -> "PlayerWorkspace":
-        """Open only an already-versioned workspace without creating or adopting."""
+        """Open only an already-versioned current workspace without creating it."""
 
         return cls._open(
             data_dir,
@@ -779,7 +840,6 @@ class PlayerWorkspace:
             startup_lock_timeout_seconds=startup_lock_timeout_seconds,
             write_lock_timeout_seconds=write_lock_timeout_seconds,
             create_if_missing=False,
-            adopt_manifestless=False,
         )
 
     @classmethod
@@ -791,7 +851,6 @@ class PlayerWorkspace:
         startup_lock_timeout_seconds: int,
         write_lock_timeout_seconds: int,
         create_if_missing: bool,
-        adopt_manifestless: bool,
     ) -> "PlayerWorkspace":
         private_data_dir = prepare_player_data_directory(
             data_dir,
@@ -800,18 +859,17 @@ class PlayerWorkspace:
         data_lock = InterprocessDataLock(private_data_dir)
         recovery = ImportedHandRecoveryReport()
         manifest_hint = _read_player_workspace_manifest(private_data_dir)
-        if manifest_hint is None and not adopt_manifestless:
-            raise PlayerDataDirectoryError(
-                "The existing player data directory is missing its versioned"
-                " workspace manifest"
-            )
-        if (
-            manifest_hint is not None
-            and manifest_hint.layout_version == PLAYER_WORKSPACE_LAYOUT_VERSION
-        ):
-            # Re-read and construct beneath the shared hold. A future layout
-            # migration must take the exclusive side, so it cannot publish a
-            # new layout between validation and store construction.
+        if manifest_hint is None:
+            if not create_if_missing:
+                raise PlayerDataDirectoryError(
+                    "The existing player data directory is missing its current "
+                    "workspace manifest."
+                    + _current_only_workspace_remediation()
+                )
+            _require_empty_workspace_initialization_dir(private_data_dir)
+        else:
+            # Re-read and construct beneath the shared hold. It cannot race an
+            # initializer, and a changed manifest cannot produce a mixed view.
             with data_lock.hold(
                 exclusive=False,
                 timeout_seconds=startup_lock_timeout_seconds,
@@ -824,33 +882,12 @@ class PlayerWorkspace:
                     raise PlayerDataDirectoryError(
                         "The player workspace manifest changed during startup"
                     )
-                _require_durable_player_workspace_manifest(private_data_dir)
-                _require_imported_hands_dir(
-                    private_data_dir,
-                    create_if_missing=False,
-                )
-                remote_reference_consent = FileRemoteReferenceConsentStore(
-                    private_data_dir
-                )
-                try:
-                    remote_reference_consent.load()
-                except RemoteReferenceConsentStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                reference_activation_catalog = (
-                    FileReferenceActivationCatalogStore(private_data_dir)
-                )
-                try:
-                    reference_activation_catalog.load()
-                except ReferenceActivationCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                learning_content_catalog = FileLearningContentCatalogStore(
-                    private_data_dir
-                )
-                try:
-                    learning_content_catalog.load()
-                except LearningContentCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                imported_hands = FileImportedHandStore(
+                (
+                    remote_reference_consent,
+                    reference_activation_catalog,
+                    learning_content_catalog,
+                    imported_hands,
+                ) = _open_current_workspace_components(
                     private_data_dir,
                     write_lock_timeout_seconds=write_lock_timeout_seconds,
                 )
@@ -868,45 +905,21 @@ class PlayerWorkspace:
                         recovery=recovery,
                     )
 
-        # A missing legacy marker or an interrupted store requires the
-        # exclusive side. Re-read everything after acquiring it so a future
-        # migration or another adopter cannot leave this process with stale
-        # layout assumptions.
+        # First initialization and current-layout interrupted-write recovery
+        # take the exclusive side. Older, malformed, and manifestless retained
+        # directories are rejected; they are never adopted or migrated.
         with data_lock.hold(
             exclusive=True,
             timeout_seconds=recovery_lock_timeout_seconds,
         ):
             manifest = _read_player_workspace_manifest(private_data_dir)
             if manifest is None:
-                if manifest_hint is not None or not adopt_manifestless:
+                if manifest_hint is not None or not create_if_missing:
                     raise PlayerDataDirectoryError(
                         "The player workspace manifest changed during startup"
                     )
-                _require_imported_hands_dir(
-                    private_data_dir,
-                    create_if_missing=True,
-                )
-                remote_reference_consent = FileRemoteReferenceConsentStore(
-                    private_data_dir
-                )
-                try:
-                    remote_reference_consent.initialize_empty()
-                except RemoteReferenceConsentStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                reference_activation_catalog = (
-                    FileReferenceActivationCatalogStore(private_data_dir)
-                )
-                try:
-                    reference_activation_catalog.initialize_empty()
-                except ReferenceActivationCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                learning_content_catalog = FileLearningContentCatalogStore(
-                    private_data_dir
-                )
-                try:
-                    learning_content_catalog.initialize_empty()
-                except LearningContentCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
+                _require_empty_workspace_initialization_dir(private_data_dir)
+                _initialize_current_workspace_components(private_data_dir)
                 _publish_player_workspace_manifest(private_data_dir)
                 manifest = _read_player_workspace_manifest(private_data_dir)
                 if (
@@ -914,180 +927,14 @@ class PlayerWorkspace:
                     or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
                 ):
                     raise PlayerDataDirectoryError(
-                        "The player workspace manifest is missing after migration"
+                        "The player workspace manifest is missing after initialization"
                     )
-            elif manifest.layout_version == 1:
-                _require_durable_player_workspace_manifest(private_data_dir)
-                _require_imported_hands_dir(
-                    private_data_dir,
-                    create_if_missing=False,
-                )
-                remote_reference_consent = FileRemoteReferenceConsentStore(
-                    private_data_dir
-                )
-                try:
-                    remote_reference_consent.initialize_empty()
-                except RemoteReferenceConsentStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                reference_activation_catalog = (
-                    FileReferenceActivationCatalogStore(private_data_dir)
-                )
-                try:
-                    reference_activation_catalog.initialize_empty()
-                except ReferenceActivationCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                learning_content_catalog = FileLearningContentCatalogStore(
-                    private_data_dir
-                )
-                try:
-                    learning_content_catalog.initialize_empty()
-                except LearningContentCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                _replace_player_workspace_manifest(private_data_dir)
-                manifest = _read_player_workspace_manifest(private_data_dir)
-                if (
-                    manifest is None
-                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
-                ):
-                    raise PlayerDataDirectoryError(
-                        "The player workspace manifest is missing after upgrade"
-                    )
-            elif manifest.layout_version == 2:
-                _require_durable_player_workspace_manifest(private_data_dir)
-                _require_imported_hands_dir(
-                    private_data_dir,
-                    create_if_missing=False,
-                )
-                remote_reference_consent = FileRemoteReferenceConsentStore(
-                    private_data_dir
-                )
-                try:
-                    remote_reference_consent.load()
-                except RemoteReferenceConsentStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                reference_activation_catalog = (
-                    FileReferenceActivationCatalogStore(private_data_dir)
-                )
-                try:
-                    reference_activation_catalog.initialize_empty()
-                except ReferenceActivationCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                learning_content_catalog = FileLearningContentCatalogStore(
-                    private_data_dir
-                )
-                try:
-                    learning_content_catalog.initialize_empty()
-                except LearningContentCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                _replace_player_workspace_manifest(private_data_dir)
-                manifest = _read_player_workspace_manifest(private_data_dir)
-                if (
-                    manifest is None
-                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
-                ):
-                    raise PlayerDataDirectoryError(
-                        "The player workspace manifest is missing after upgrade"
-                    )
-            elif manifest.layout_version == 3:
-                _require_durable_player_workspace_manifest(private_data_dir)
-                _require_imported_hands_dir(
-                    private_data_dir,
-                    create_if_missing=False,
-                )
-                remote_reference_consent = FileRemoteReferenceConsentStore(
-                    private_data_dir
-                )
-                try:
-                    remote_reference_consent.load()
-                except RemoteReferenceConsentStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                reference_activation_catalog = (
-                    FileReferenceActivationCatalogStore(private_data_dir)
-                )
-                try:
-                    reference_activation_catalog.load()
-                except ReferenceActivationCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                learning_content_catalog = FileLearningContentCatalogStore(
-                    private_data_dir
-                )
-                try:
-                    learning_content_catalog.initialize_empty()
-                except LearningContentCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                _replace_player_workspace_manifest(private_data_dir)
-                manifest = _read_player_workspace_manifest(private_data_dir)
-                if (
-                    manifest is None
-                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
-                ):
-                    raise PlayerDataDirectoryError(
-                        "The player workspace manifest is missing after upgrade"
-                    )
-            elif manifest.layout_version == 4:
-                _require_durable_player_workspace_manifest(private_data_dir)
-                _require_imported_hands_dir(
-                    private_data_dir,
-                    create_if_missing=False,
-                )
-                remote_reference_consent = FileRemoteReferenceConsentStore(
-                    private_data_dir
-                )
-                try:
-                    remote_reference_consent.load()
-                except RemoteReferenceConsentStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                reference_activation_catalog = (
-                    FileReferenceActivationCatalogStore(private_data_dir)
-                )
-                try:
-                    reference_activation_catalog.load()
-                except ReferenceActivationCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                learning_content_catalog = FileLearningContentCatalogStore(
-                    private_data_dir
-                )
-                try:
-                    learning_content_catalog.load()
-                except LearningContentCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                _replace_player_workspace_manifest(private_data_dir)
-                manifest = _read_player_workspace_manifest(private_data_dir)
-                if (
-                    manifest is None
-                    or manifest.layout_version != PLAYER_WORKSPACE_LAYOUT_VERSION
-                ):
-                    raise PlayerDataDirectoryError(
-                        "The player workspace manifest is missing after upgrade"
-                    )
-            else:
-                _require_durable_player_workspace_manifest(private_data_dir)
-                _require_imported_hands_dir(
-                    private_data_dir,
-                    create_if_missing=False,
-                )
-                remote_reference_consent = FileRemoteReferenceConsentStore(
-                    private_data_dir
-                )
-                try:
-                    remote_reference_consent.load()
-                except RemoteReferenceConsentStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                reference_activation_catalog = (
-                    FileReferenceActivationCatalogStore(private_data_dir)
-                )
-                try:
-                    reference_activation_catalog.load()
-                except ReferenceActivationCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-                learning_content_catalog = FileLearningContentCatalogStore(
-                    private_data_dir
-                )
-                try:
-                    learning_content_catalog.load()
-                except LearningContentCatalogStorageError as exc:
-                    raise PlayerDataDirectoryError(str(exc)) from exc
-            imported_hands = FileImportedHandStore(
+            (
+                remote_reference_consent,
+                reference_activation_catalog,
+                learning_content_catalog,
+                imported_hands,
+            ) = _open_current_workspace_components(
                 private_data_dir,
                 write_lock_timeout_seconds=write_lock_timeout_seconds,
             )
