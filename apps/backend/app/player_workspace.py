@@ -699,13 +699,8 @@ def _current_only_workspace_remediation() -> str:
     )
 
 
-def _require_empty_workspace_initialization_dir(data_dir: Path) -> None:
-    """Allow first initialization only in a root with no retained workspace data.
-
-    The data lock is the one deliberate exception: a concurrent first opener
-    creates it before the second opener can inspect the manifest. It contains no
-    player data and is rechecked beneath the exclusive hold before initialization.
-    """
+def _workspace_has_retained_entries(data_dir: Path) -> bool:
+    """Return whether a manifestless root has entries other than the data lock."""
 
     try:
         entries = {entry.name for entry in data_dir.iterdir()}
@@ -713,12 +708,22 @@ def _require_empty_workspace_initialization_dir(data_dir: Path) -> None:
         raise PlayerDataDirectoryError(
             "Cannot safely inspect the player data directory before initialization"
         ) from exc
-    if entries.difference({DATA_LOCK_FILENAME}):
-        raise PlayerDataDirectoryError(
-            "The player data directory is nonempty but has no supported current "
-            "workspace manifest."
-            + _current_only_workspace_remediation()
-        )
+    return bool(entries.difference({DATA_LOCK_FILENAME}))
+
+
+def _reject_nonempty_manifestless_workspace() -> None:
+    raise PlayerDataDirectoryError(
+        "The player data directory is nonempty but has no supported current "
+        "workspace manifest."
+        + _current_only_workspace_remediation()
+    )
+
+
+def _require_empty_workspace_initialization_dir(data_dir: Path) -> None:
+    """Allow initialization only if the root still has no retained data."""
+
+    if _workspace_has_retained_entries(data_dir):
+        _reject_nonempty_manifestless_workspace()
 
 
 def _initialize_current_workspace_components(data_dir: Path) -> None:
@@ -859,6 +864,7 @@ class PlayerWorkspace:
         data_lock = InterprocessDataLock(private_data_dir)
         recovery = ImportedHandRecoveryReport()
         manifest_hint = _read_player_workspace_manifest(private_data_dir)
+        manifestless_entries_observed = False
         if manifest_hint is None:
             if not create_if_missing:
                 raise PlayerDataDirectoryError(
@@ -866,7 +872,12 @@ class PlayerWorkspace:
                     "workspace manifest."
                     + _current_only_workspace_remediation()
                 )
-            _require_empty_workspace_initialization_dir(private_data_dir)
+            # A concurrent initializer can have created current-layout files
+            # before publishing its manifest. Take the exclusive lock and
+            # re-read before treating those files as unsupported retained data.
+            manifestless_entries_observed = _workspace_has_retained_entries(
+                private_data_dir
+            )
         else:
             # Re-read and construct beneath the shared hold. It cannot race an
             # initializer, and a changed manifest cannot produce a mixed view.
@@ -918,6 +929,8 @@ class PlayerWorkspace:
                     raise PlayerDataDirectoryError(
                         "The player workspace manifest changed during startup"
                     )
+                if manifestless_entries_observed:
+                    _reject_nonempty_manifestless_workspace()
                 _require_empty_workspace_initialization_dir(private_data_dir)
                 _initialize_current_workspace_components(private_data_dir)
                 _publish_player_workspace_manifest(private_data_dir)
