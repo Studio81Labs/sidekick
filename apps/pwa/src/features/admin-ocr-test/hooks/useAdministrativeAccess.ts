@@ -17,6 +17,7 @@ export type AdministrativeUnlockResult =
 
 export interface UseAdministrativeAccessOptions {
   onLock?: () => void;
+  onUnlock?: () => void;
   /** Overridable so unit tests exercise the outcomes without a transport. */
   verify?: (token: string) => Promise<AdministrativeSession>;
 }
@@ -42,6 +43,7 @@ function failureFromError(error: unknown): AdministrativeUnlockFailure {
 
 export function useAdministrativeAccess({
   onLock,
+  onUnlock,
   verify = verifyAdministratorToken,
 }: UseAdministrativeAccessOptions): AdministrativeAccessState {
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -50,10 +52,12 @@ export function useAdministrativeAccess({
   // The owner's lock handler (stopping an active screen share) is redefined on
   // every render, so keep a ref to the latest one instead of a stale closure.
   const onLockRef = useRef(onLock);
+  const onUnlockRef = useRef(onUnlock);
   const verifyRef = useRef(verify);
 
   useEffect(() => {
     onLockRef.current = onLock;
+    onUnlockRef.current = onUnlock;
     verifyRef.current = verify;
   });
 
@@ -74,6 +78,7 @@ export function useAdministrativeAccess({
         if (!session.authorized) {
           return "unauthorized";
         }
+        onUnlockRef.current?.();
         setToken(normalized);
         return "unlocked";
       } catch (error) {

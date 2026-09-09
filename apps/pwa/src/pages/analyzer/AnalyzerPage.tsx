@@ -1,5 +1,5 @@
 import "./AnalyzerPage.css";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { AnalyzerWorkspaceComposition } from "./AnalyzerWorkspaceComposition";
 import type {
@@ -39,10 +39,27 @@ export default function AnalyzerPage({
 }: AnalyzerPageProps) {
   const mutationOwnerId = useAnalyzerWorkflowOwnerId();
   const queryClient = useQueryClient();
-  const administrativeAccess = useAdministrativeAccess({});
   const [accessError, setAccessError] = useState<string | null>(null);
+  const administratorAccessGenerationRef = useRef(0);
+  const [workspaceAccessGeneration, setWorkspaceAccessGeneration] = useState(0);
+  const advanceAdministratorAccessGeneration = useCallback(() => {
+    const nextGeneration = administratorAccessGenerationRef.current + 1;
+    administratorAccessGenerationRef.current = nextGeneration;
+    setWorkspaceAccessGeneration(nextGeneration);
+  }, []);
+  const administrativeAccess = useAdministrativeAccess({
+    onUnlock: advanceAdministratorAccessGeneration,
+  });
   const lockAdministrator = useCallback(
-    (reason?: string) => {
+    (reason?: string, expectedAccessGeneration?: number) => {
+      if (
+        expectedAccessGeneration !== undefined &&
+        expectedAccessGeneration !== administratorAccessGenerationRef.current
+      ) {
+        return;
+      }
+
+      advanceAdministratorAccessGeneration();
       setAccessError(typeof reason === "string" ? reason : null);
       // Imperative administrator reads cache their own promises, so clearing
       // React Query alone cannot prevent an already-running read from writing
@@ -53,12 +70,14 @@ export default function AnalyzerPage({
       queryClient.clear();
       administrativeAccess.lock();
     },
-    [administrativeAccess, queryClient],
+    [administrativeAccess, advanceAdministratorAccessGeneration, queryClient],
   );
   const unlockAdministrator = useCallback(
     async (token: string) => {
       const result = await administrativeAccess.unlock(token);
-      if (result === "unlocked") setAccessError(null);
+      if (result === "unlocked") {
+        setAccessError(null);
+      }
       return result;
     },
     [administrativeAccess],
@@ -86,7 +105,9 @@ export default function AnalyzerPage({
         administratorToken={administrativeAccess.token}
         mutationOwnerId={mutationOwnerId}
         navigation={navigation}
-        onLockAdministrator={lockAdministrator}
+        onLockAdministrator={(reason) =>
+          lockAdministrator(reason, workspaceAccessGeneration)
+        }
         route={route}
       />
     </AnalyzerWorkflowProvider>

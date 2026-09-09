@@ -118,6 +118,36 @@ describe("Analyzer administrative capture", () => {
     );
   });
 
+  it("ignores a delayed denial from a prior administrator session", async () => {
+    const pendingHistory = deferredResponse();
+    fetchMock().mockReturnValueOnce(pendingHistory.promise);
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    );
+    await unlockAdministrativeAccess(user);
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("note", { name: "Administrative OCR test mode" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeInTheDocument();
+  });
+
   it("fences processing recovery when the administrator locks", async () => {
     const pendingQueue = deferredResponse();
     let queryClient: QueryClient | null = null;

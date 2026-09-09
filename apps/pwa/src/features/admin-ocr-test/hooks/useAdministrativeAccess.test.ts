@@ -44,6 +44,20 @@ describe("useAdministrativeAccess", () => {
     expect(result.current.unlocked).toBe(true);
   });
 
+  it("notifies the owner before exposing an authorized session", async () => {
+    const onUnlock = vi.fn();
+    const { result } = renderHook(() =>
+      useAdministrativeAccess({ onUnlock, verify: authorizedVerifier() }),
+    );
+
+    await act(async () => {
+      await result.current.unlock("secret-token");
+    });
+
+    expect(onUnlock).toHaveBeenCalledOnce();
+    expect(result.current.unlocked).toBe(true);
+  });
+
   it("never asks the server about a blank token", async () => {
     const verify = authorizedVerifier();
     const { result } = renderHook(() => useAdministrativeAccess({ verify }));
