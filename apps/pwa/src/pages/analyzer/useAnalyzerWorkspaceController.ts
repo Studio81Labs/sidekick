@@ -53,6 +53,7 @@ import {
   getProcessingQueueExtent,
 } from "../../features/workspace/lib/queryReads";
 import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
+import { isQueryAccessGenerationSuperseded } from "../../shared/api/queryCache";
 import {
   ERROR_TOAST_ID,
   isAbortError,
@@ -2392,6 +2393,11 @@ export function useAnalyzerWorkspaceController({
           discardUnstartedUploads(index + 1);
           break;
         }
+        if (isQueryAccessGenerationSuperseded(uploadError)) {
+          skippedCount = selectedFiles.length - completedCount;
+          discardUnstartedUploads(index);
+          break;
+        }
         const denial =
           uploadError instanceof ApiResponseError
             ? administrativeAccessDenial(uploadError.status)
@@ -2576,6 +2582,8 @@ export function useAnalyzerWorkspaceController({
       }
       if (denial !== null) {
         lockAdministrator(administrativeAccessDenialMessage(denial));
+      } else if (isQueryAccessGenerationSuperseded(captureError)) {
+        // An automatic lock superseded this completion before it could cache.
       } else if (!deletedAfterUpload) {
         setError(messageFromError(captureError, "Screen capture failed"));
       }
@@ -2643,6 +2651,9 @@ export function useAnalyzerWorkspaceController({
 
   /** Locks the tools on an administrative denial; false for other failures. */
   function reportAdministrativeDenial(failure: unknown): boolean {
+    if (isQueryAccessGenerationSuperseded(failure)) {
+      return true;
+    }
     const denial =
       failure instanceof ApiResponseError
         ? administrativeAccessDenial(failure.status)

@@ -4,7 +4,9 @@ import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { approveState } from "../../../domains/jobs/api/jobsApi";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import {
+  assertQueryAccessGenerationCurrent,
   beginLatestQueryWrite,
+  captureQueryAccessGeneration,
   finishLatestQueryWrite,
   latestQueryWriteIsCurrent,
   supersedeLatestQueryResults,
@@ -44,6 +46,7 @@ function preserveNewerCachedMetadata(
 async function applyHandWorkflowCacheOutcome(
   queryClient: QueryClient,
   job: JobRecord,
+  accessGeneration: object,
   detailWriteToken: object,
 ) {
   const invalidated: QueryKey[] = [
@@ -65,6 +68,7 @@ async function applyHandWorkflowCacheOutcome(
   guarded.forEach((queryKey) =>
     supersedeLatestQueryResults(queryClient, queryKey),
   );
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   cache.detailSeeded = latestQueryWriteIsCurrent(
     queryClient,
     cache.updated,
@@ -90,6 +94,7 @@ export async function approveStateCommand(
   queryClient: QueryClient,
   command: ApproveStateCommand,
 ) {
+  const accessGeneration = captureQueryAccessGeneration(queryClient);
   const detailKey = jobQueryKeys.detail(command.jobId);
   const detailWriteToken = beginLatestQueryWrite(queryClient, detailKey);
   try {
@@ -102,6 +107,7 @@ export async function approveStateCommand(
     return await applyHandWorkflowCacheOutcome(
       queryClient,
       job,
+      accessGeneration,
       detailWriteToken,
     );
   } finally {

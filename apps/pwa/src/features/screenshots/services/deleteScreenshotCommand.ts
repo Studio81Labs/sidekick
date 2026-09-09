@@ -4,6 +4,8 @@ import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { deleteJob } from "../../../domains/jobs/api/jobsApi";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
   supersedeLatestQueryResults,
   supersedeLatestQueryWrites,
 } from "../../../shared/api/queryCache";
@@ -13,6 +15,7 @@ export async function deleteScreenshotCommand(
   jobId: string,
   administratorToken: string,
 ) {
+  const accessGeneration = captureQueryAccessGeneration(queryClient);
   await deleteJob(jobId, administratorToken);
   const cache = {
     removed: jobQueryKeys.detail(jobId),
@@ -31,6 +34,7 @@ export async function deleteScreenshotCommand(
     ),
   ]);
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   queryClient.removeQueries({ queryKey: cache.removed, exact: true });
   await Promise.all(
     cache.invalidated.map((queryKey) =>

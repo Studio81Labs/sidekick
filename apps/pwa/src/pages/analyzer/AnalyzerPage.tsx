@@ -10,7 +10,10 @@ import { AnalyzerWorkflowProvider } from "../../features/workspace/hooks/useAnal
 import { useAnalyzerWorkflowOwnerId } from "../../features/workspace/hooks/useAnalyzerWorkflowOwnerId";
 import { AdministrativeAccessDialog } from "../../features/admin-ocr-test/components/AdministrativeAccessDialog";
 import { useAdministrativeAccess } from "../../features/admin-ocr-test/hooks/useAdministrativeAccess";
-import { supersedeLatestQueryResults } from "../../shared/api/queryCache";
+import {
+  supersedeLatestQueryResults,
+  supersedeQueryAccessGeneration,
+} from "../../shared/api/queryCache";
 
 const DEFAULT_ANALYZER_ROUTE: AnalyzerRouteState = {
   jobId: null,
@@ -44,6 +47,7 @@ export default function AnalyzerPage({
       // Imperative administrator reads cache their own promises, so clearing
       // React Query alone cannot prevent an already-running read from writing
       // its result back after this session is locked.
+      supersedeQueryAccessGeneration(queryClient);
       supersedeLatestQueryResults(queryClient, []);
       void queryClient.cancelQueries();
       queryClient.clear();

@@ -152,6 +152,75 @@ describe("Analyzer administrative capture", () => {
     );
   });
 
+  it("fences a completed mutation when a concurrent protected read locks the administrator", async () => {
+    const currentJob = jobRecord({
+      id: "d".repeat(32),
+      original_filename: "fenced-metadata.png",
+    });
+    const pendingMetadata = deferredResponse();
+    let queryClient: QueryClient | null = null;
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockImplementation((url) => {
+      if (
+        url ===
+        `http://localhost:8000/api/admin/ocr/jobs/${currentJob.id}/metadata`
+      ) {
+        return pendingMetadata.promise;
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return Promise.resolve(jsonResponse({ detail: "denied" }, 401));
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <QueryClientCapture
+          onCapture={(capturedQueryClient) => {
+            queryClient = capturedQueryClient;
+          }}
+        />
+        <AnalyzerPage />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Manage screenshot 1: fenced-metadata.png",
+      }),
+    );
+    const details = screen.getByRole("dialog", { name: "Screenshot details" });
+    await user.type(within(details).getByLabelText("Title"), "Fenced");
+    await user.click(
+      within(details).getByRole("button", { name: "Save details" }),
+    );
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      pendingMetadata.resolve(jsonResponse({ ...currentJob, title: "Fenced" }));
+    });
+
+    expect(queryClient).not.toBeNull();
+    await waitFor(() =>
+      expect(
+        queryClient?.getQueryData(jobQueryKeys.detail(currentJob.id)),
+      ).toBeUndefined(),
+    );
+  });
+
   it.each([
     [
       401,

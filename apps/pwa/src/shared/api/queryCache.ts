@@ -7,6 +7,55 @@ type LatestRequest = {
 
 const latestRequests = new WeakMap<QueryClient, Map<string, LatestRequest>>();
 const latestWrites = new WeakMap<QueryClient, Map<string, LatestRequest>>();
+const accessGenerations = new WeakMap<QueryClient, object>();
+
+export class QueryAccessGenerationSupersededError extends Error {
+  constructor() {
+    super("Administrator access changed before this operation completed");
+    this.name = "QueryAccessGenerationSupersededError";
+  }
+}
+
+function currentAccessGeneration(queryClient: QueryClient): object {
+  let generation = accessGenerations.get(queryClient);
+  if (!generation) {
+    generation = {};
+    accessGenerations.set(queryClient, generation);
+  }
+  return generation;
+}
+
+/** Captures the administrator-access generation before an async mutation starts. */
+export function captureQueryAccessGeneration(queryClient: QueryClient): object {
+  return currentAccessGeneration(queryClient);
+}
+
+export function queryAccessGenerationIsCurrent(
+  queryClient: QueryClient,
+  generation: object,
+): boolean {
+  return currentAccessGeneration(queryClient) === generation;
+}
+
+/** Prevents prior administrator mutations from repopulating a cleared cache. */
+export function supersedeQueryAccessGeneration(queryClient: QueryClient): void {
+  accessGenerations.set(queryClient, {});
+}
+
+export function assertQueryAccessGenerationCurrent(
+  queryClient: QueryClient,
+  generation: object,
+): void {
+  if (!queryAccessGenerationIsCurrent(queryClient, generation)) {
+    throw new QueryAccessGenerationSupersededError();
+  }
+}
+
+export function isQueryAccessGenerationSuperseded(
+  error: unknown,
+): error is QueryAccessGenerationSupersededError {
+  return error instanceof QueryAccessGenerationSupersededError;
+}
 
 function queryKeyStartsWith(
   queryKey: QueryKey,

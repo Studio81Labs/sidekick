@@ -4,7 +4,11 @@ import { restoreApplicationBackup } from "../../../domains/backups/api/backupsAp
 import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQueries";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
-import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
+import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
+  supersedeLatestQueryResults,
+} from "../../../shared/api/queryCache";
 
 export type RestoreApplicationBackupCommand = {
   administratorToken: string;
@@ -15,6 +19,7 @@ export async function restoreApplicationBackupCommand(
   queryClient: QueryClient,
   command: RestoreApplicationBackupCommand,
 ) {
+  const accessGeneration = captureQueryAccessGeneration(queryClient);
   const result = await restoreApplicationBackup(
     command.file,
     command.administratorToken,
@@ -32,6 +37,7 @@ export async function restoreApplicationBackupCommand(
       queryClient.cancelQueries({ queryKey, exact: false }),
     ),
   );
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   cache.removed.forEach((queryKey) => {
     supersedeLatestQueryResults(queryClient, queryKey);
     queryClient.removeQueries({ queryKey, exact: false });

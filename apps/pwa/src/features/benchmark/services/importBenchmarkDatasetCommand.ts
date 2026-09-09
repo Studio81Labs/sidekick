@@ -4,7 +4,11 @@ import { importBenchmarkDataset } from "../../../domains/benchmarks/api/benchmar
 import { benchmarkQueryKeys } from "../../../domains/benchmarks/api/benchmarksQueries";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
-import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
+import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
+  supersedeLatestQueryResults,
+} from "../../../shared/api/queryCache";
 
 export type ImportBenchmarkDatasetCommand = {
   administratorToken: string;
@@ -16,6 +20,7 @@ export async function importBenchmarkDatasetCommand(
   queryClient: QueryClient,
   command: ImportBenchmarkDatasetCommand,
 ) {
+  const accessGeneration = captureQueryAccessGeneration(queryClient);
   const result = await importBenchmarkDataset(
     command.file,
     command.requestId,
@@ -41,6 +46,7 @@ export async function importBenchmarkDatasetCommand(
   cache.invalidated.forEach((queryKey) =>
     supersedeLatestQueryResults(queryClient, queryKey),
   );
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   await Promise.all(
     cache.invalidated.map((queryKey) =>
       queryClient.invalidateQueries({ queryKey, refetchType: "none" }),
