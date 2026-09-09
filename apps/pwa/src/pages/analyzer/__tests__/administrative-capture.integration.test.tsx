@@ -495,6 +495,98 @@ describe("Analyzer administrative capture", () => {
     }
   });
 
+  it("reuses a pending upload request ID after its completion is superseded", async () => {
+    const pendingHistory = deferredResponse();
+    let historyRequests = 0;
+    let committedJob: JobRecord | null = null;
+    let committedRequestId: string | null = null;
+    fetchMock().mockImplementation((url, options) => {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        historyRequests += 1;
+        return historyRequests === 1
+          ? pendingHistory.promise
+          : Promise.resolve(
+              jsonResponse({
+                total: 0,
+                jobs: [],
+                snapshot_version: "restored-history",
+              }),
+            );
+      }
+      if (
+        url === "http://localhost:8000/api/admin/ocr/jobs" &&
+        options?.method === "POST"
+      ) {
+        const requestId = String(
+          (options.body as FormData).get("upload_request_id"),
+        );
+        if (committedJob === null) {
+          committedRequestId = requestId;
+          committedJob = jobRecord({
+            id: "a".repeat(32),
+            original_filename: "committed-before-lock.png",
+            upload_request_id: requestId,
+          });
+          pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+        }
+        return Promise.resolve(jsonResponse(committedJob, 201));
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
+        return Promise.resolve(
+          processingQueueResponse(committedJob ? [committedJob] : []),
+        );
+      }
+      return Promise.reject(new Error(`Unexpected request: ${String(url)}`));
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await waitFor(() => expect(historyRequests).toBe(1));
+    await switchToUploadMode(user);
+    await user.upload(
+      screen.getByLabelText("Choose screenshots"),
+      new File(["screenshot"], "committed-before-lock.png", {
+        type: "image/png",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await switchToUploadMode(user);
+    expect(screen.getByText("1 selected for upload")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
+      ).toBeNull(),
+    );
+    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
+    await waitFor(() => expect(uploadCalls()).toHaveLength(2));
+    expect(
+      uploadCalls().map(([, options]) =>
+        (options?.body as FormData).get("upload_request_id"),
+      ),
+    ).toEqual([committedRequestId, committedRequestId]);
+    expect(
+      screen.getAllByRole("button", {
+        name: /Open screenshot \d+: committed-before-lock\.png/,
+      }),
+    ).toHaveLength(1);
+
+    function uploadCalls() {
+      return fetchMock().mock.calls.filter(
+        ([url, options]) =>
+          url === "http://localhost:8000/api/admin/ocr/jobs" &&
+          options?.method === "POST",
+      );
+    }
+  });
+
   it("disables both administrator lock controls during screenshot metadata saves and locks on denial", async () => {
     const currentJob = jobRecord({
       id: "a".repeat(32),
@@ -1227,6 +1319,104 @@ describe("Analyzer administrative capture", () => {
         String(input).endsWith("/api/admin/ocr/history"),
       ),
     ).toBe(true);
+  });
+
+  it("reconciles projections when a committed backup restore is superseded", async () => {
+    const cachedJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "cached-before-restore.png",
+    });
+    const restoredJob = jobRecord({
+      id: "b".repeat(32),
+      original_filename: "restored-after-lock.png",
+    });
+    const pendingHistory = deferredResponse();
+    const pendingRestore = deferredResponse();
+    let historyRequests = 0;
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([cachedJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) {
+        return Promise.resolve(jsonResponse({ status: "ok" }));
+      }
+      if (url.endsWith("/api/admin/ocr/backups/restore")) {
+        return pendingRestore.promise;
+      }
+      if (url.endsWith("/api/admin/ocr/history")) {
+        historyRequests += 1;
+        return historyRequests === 1
+          ? pendingHistory.promise
+          : Promise.resolve(
+              jsonResponse({
+                total: 0,
+                jobs: [],
+                snapshot_version: "restored-history",
+              }),
+            );
+      }
+      if (url.endsWith("/api/admin/ocr/jobs")) {
+        return Promise.resolve(processingQueueResponse([restoredJob]));
+      }
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await waitFor(() => expect(historyRequests).toBe(1));
+    await user.click(screen.getByRole("button", { name: "About this app" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "About Poker Hero",
+    });
+    await user.upload(
+      within(dialog).getByLabelText("Application backup ZIP"),
+      new File(["backup"], "poker-hero-backup.zip", {
+        type: "application/zip",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock().mock.calls.some(([input]) =>
+          String(input).endsWith("/api/admin/ocr/backups/restore"),
+        ),
+      ).toBe(true),
+    );
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+      pendingRestore.resolve(
+        jsonResponse({
+          imported_jobs: 1,
+          reused_jobs: 0,
+          imported_benchmark_reports: 0,
+          reused_benchmark_reports: 0,
+          total_jobs: 1,
+          total_benchmark_reports: 0,
+        }),
+      );
+    });
+    expect(
+      await screen.findByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
+    expect(
+      window.sessionStorage.getItem("poker-training-processing-synced"),
+    ).toBeNull();
+    expect(
+      window.sessionStorage.getItem("poker-training-history-synced"),
+    ).toBeNull();
+
+    await unlockAdministrativeAccess(user);
+    expect(
+      await screen.findByRole("button", {
+        name: "Open screenshot 1: restored-after-lock.png",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("fences a slow archive download when another request locks the session", async () => {

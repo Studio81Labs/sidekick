@@ -345,6 +345,14 @@ export function useAnalyzerWorkspaceController({
     jobs,
     onError: setError,
   });
+  const pendingUploadRequestIdsRef = useRef(
+    new Map(
+      initialDraft?.pendingUploadRequestIds.map(({ file, requestId }) => [
+        file,
+        requestId,
+      ]) ?? [],
+    ),
+  );
   const benchmarkDatasetInputRef = useRef<HTMLInputElement | null>(null);
   const archiveDownloadInFlightRef = useRef(false);
   const jobsRef = useRef(jobs);
@@ -449,6 +457,7 @@ export function useAnalyzerWorkspaceController({
             jobId: job.id,
           }
         : null,
+    pendingUploadRequestIds: pendingUploadRequestIdsFor(files),
     screenshotMetadata:
       screenshotMetadataDraft && managedJob
         ? {
@@ -463,12 +472,17 @@ export function useAnalyzerWorkspaceController({
     (reason?: string, preservedFiles?: readonly File[]) => {
       const workspaceDraft = workspaceDraftRef.current;
       if (workspaceDraft) {
+        const retainedFiles = [...(preservedFiles ?? workspaceDraft.files)];
         onPreserveDraft?.({
           ...workspaceDraft,
           // A batch may have produced jobs before a later request loses
           // access. Retain only that denied request and unstarted files, so
           // reauthentication cannot submit completed queue items again.
-          files: [...(preservedFiles ?? workspaceDraft.files)],
+          files: retainedFiles,
+          pendingUploadRequestIds:
+            workspaceDraft.pendingUploadRequestIds.filter(({ file }) =>
+              retainedFiles.includes(file),
+            ),
         });
       }
       onStopScreenShare();
@@ -476,6 +490,39 @@ export function useAnalyzerWorkspaceController({
     },
     [onLockAdministrator, onPreserveDraft, onStopScreenShare],
   );
+
+  function pendingUploadRequestIdsFor(selectedFiles: readonly File[]) {
+    return selectedFiles.flatMap((file) => {
+      const requestId = pendingUploadRequestIdsRef.current.get(file);
+      return requestId ? [{ file, requestId }] : [];
+    });
+  }
+
+  function updateWorkspaceDraftFiles(selectedFiles: readonly File[]) {
+    const workspaceDraft = workspaceDraftRef.current;
+    if (!workspaceDraft) {
+      return;
+    }
+    workspaceDraftRef.current = {
+      ...workspaceDraft,
+      files: [...selectedFiles],
+      pendingUploadRequestIds: pendingUploadRequestIdsFor(selectedFiles),
+    };
+  }
+
+  function setSelectedFiles(selectedFiles: readonly File[]) {
+    const nextFiles = [...selectedFiles];
+    const requestIds = pendingUploadRequestIdsRef.current;
+    pendingUploadRequestIdsRef.current = new Map(
+      nextFiles.flatMap((file) => {
+        const requestId = requestIds.get(file);
+        return requestId ? [[file, requestId] as const] : [];
+      }),
+    );
+    updateWorkspaceDraftFiles(nextFiles);
+    setFiles(nextFiles);
+  }
+
   const administratorLockDisabled =
     busy ||
     archiveDownloading ||
@@ -2332,8 +2379,18 @@ export function useAnalyzerWorkspaceController({
   }
 
   function appendJob(created: JobRecord) {
-    updateJobs((current) => [...current, created]);
-    activateJob(created, "replace");
+    const currentJob = jobsRef.current.find(
+      (candidate) => candidate.id === created.id,
+    );
+    const normalizedJob = preserveUploadRequestId(created, currentJob);
+    updateJobs((current) =>
+      current.some((candidate) => candidate.id === normalizedJob.id)
+        ? current.map((candidate) =>
+            candidate.id === normalizedJob.id ? normalizedJob : candidate,
+          )
+        : [...current, normalizedJob],
+    );
+    activateJob(normalizedJob, "replace");
   }
 
   function applyApprovedJob(
@@ -2384,14 +2441,7 @@ export function useAnalyzerWorkspaceController({
     const selectedFiles = [...files];
     const retainPendingUploadFiles = (startIndex: number) => {
       const pendingFiles = selectedFiles.slice(startIndex);
-      const workspaceDraft = workspaceDraftRef.current;
-      if (workspaceDraft) {
-        workspaceDraftRef.current = {
-          ...workspaceDraft,
-          files: pendingFiles,
-        };
-      }
-      setFiles(pendingFiles);
+      setSelectedFiles(pendingFiles);
     };
     const controller = new AbortController();
     queueAbortControllerRef.current = controller;
@@ -2520,7 +2570,7 @@ export function useAnalyzerWorkspaceController({
         `${attentionMessages.length} screenshot${attentionMessages.length === 1 ? "" : "s"} need attention. Check the failed queue items.`,
       );
     }
-    setFiles([]);
+    setSelectedFiles([]);
     setQueueProgress(null);
     queueAbortControllerRef.current = null;
     queueAbortRequestedRef.current = false;
@@ -2534,10 +2584,19 @@ export function useAnalyzerWorkspaceController({
     setBusy(true);
     setError(null);
     beginProcessingMembershipMutation();
-    const expectedUploads = files.map(() => ({
-      requestId: createMutationRequestId(),
+    const expectedUploads = files.map((file) => ({
+      requestId:
+        pendingUploadRequestIdsRef.current.get(file) ??
+        createMutationRequestId(),
       target: "parsed" as const,
     }));
+    for (const [index, file] of files.entries()) {
+      pendingUploadRequestIdsRef.current.set(
+        file,
+        expectedUploads[index].requestId,
+      );
+    }
+    updateWorkspaceDraftFiles(files);
     installMutationLease(
       "processing",
       startProjectionMutationLease(
@@ -2768,6 +2827,14 @@ export function useAnalyzerWorkspaceController({
           : `Backup already present: ${reusedItems} ${reusedItems === 1 ? "record" : "records"} verified`,
       );
     } catch (backupError) {
+      if (isQueryAccessGenerationSuperseded(backupError)) {
+        // The restore may have committed before a concurrent denial locked
+        // this session. Make the next administrator session reload both
+        // projections without touching its replacement QueryClient.
+        markProcessingQueueSessionUnsynced();
+        markHistorySessionUnsynced();
+        return;
+      }
       if (!reportAdministrativeDenial(backupError)) {
         setError(
           messageFromError(backupError, "Could not restore application backup"),
@@ -3455,7 +3522,7 @@ export function useAnalyzerWorkspaceController({
       inputMode,
       livePreviewVisible,
       onCapture: onCaptureScreen,
-      onFilesChange: setFiles,
+      onFilesChange: setSelectedFiles,
       onInputModeChange: setInputMode,
       onShareModeChange: setShareMode,
       onStartOrViewShare: () =>
