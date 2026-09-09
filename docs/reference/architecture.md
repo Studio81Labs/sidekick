@@ -350,6 +350,9 @@ to detected fields and actions; ordinary table actions remain origin-`unknown`,
 while explicit blind, ante, straddle, and uncalled-return markers are
 forced/system evidence. The separately reviewed legacy 2008 cash family maps
 an immediate same-actor timeout-to-fold pair to a versioned automatic origin.
+In that family, the reviewed exact same-actor return-status line after the
+validated timeout, fold, and sit-out sequence is retained raw-only; it creates
+no reconnect, participation, or action-origin semantics.
 The separately reviewed 2014 HHSmithy cash form maps its explicit-USD,
 one-digit-hour header, unknown hero, initial dealt-in ring, inert
 join/disconnect notifications, and exact plain-timeout-to-check or combined
@@ -391,10 +394,10 @@ cases so an expected rejection cannot stand in for verified parser coverage.
 The separate labeled-only gate is limited to independently reviewed incomplete
 hands, whose correct safe outcome may be rejection.
 The documented runnable gate covers only the adapter's current matching-parse
-surface. Tournament variants beyond the reviewed historical HAND2 form, and
-player-selected origins, disconnect and broader automatic cases remain
-unsupported Phase 0 blockers beyond the bounded timeout-to-fold rule. Their verified
-parsed gates must be added from independently reviewed examples; a
+surface. Tournament variants beyond the reviewed historical HAND2 form,
+player-selected origins, reconnect/absence semantics, and automatic cases
+beyond the reviewed timeout subsets remain unsupported Phase 0 blockers. Their
+verified parsed gates must be added from independently reviewed examples; a
 current-surface exit status of zero is not full Phase 0 acceptance.
 
 These contracts are now backed by a player-local file store. Authenticated,

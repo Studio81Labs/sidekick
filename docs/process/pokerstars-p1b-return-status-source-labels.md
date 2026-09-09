@@ -1,10 +1,11 @@
 # PokerStars P1b Return-Status Source Labels
 
-Status: source-authored P1b development labels under #409. This packet records
-one observed historical status line and the complete surrounding detected state
-before any parser extension. It is not a passing assessment case,
-representative-corpus evidence, current-client assertion, network-reconnect
-claim, player-selected-origin claim, or external poker-expert certification.
+Status: independently reviewed P1b source mapping under #409. The source-label
+review completed without findings on merged PR #515. This packet records one
+observed historical status line and the complete surrounding detected state for
+the bounded parser mapping below. It is not a representative-corpus case,
+current-client assertion, network-reconnect claim, player-selected-origin
+claim, or external poker-expert certification.
 
 Date: 2026-09-09. Baseline: `63cec315ffa06ac1c54130d0c2d5536080d6c3dd`.
 
@@ -32,10 +33,10 @@ normalizes trailing whitespace only. Header family, timestamp/dollar notation,
 eight declared seats, cards, amounts, event order, and line numbers remain.
 
 The original selected bytes contain trailing spaces on seat/action/summary
-lines. At current `main`, those bytes first fail with `missing_seats`; applying
-only the explicit trailing-whitespace normalization above exposes the
-`unsupported_line` at sanitized line 22. Neither observation is a successful
-parse or evidence to silently normalize unrelated inputs.
+lines. Before this bounded mapping, those bytes first failed with
+`missing_seats`; applying only the explicit trailing-whitespace normalization
+above exposed the then-unsupported line at sanitized line 22. The sanitation
+does not authorize silently normalizing unrelated inputs.
 
 Export channel, PokerStars client/build, locale provenance, and current-client
 applicability are unknown. These labels were authored from the pinned source,
@@ -44,37 +45,37 @@ arithmetic, not from changed parser output. The separate legacy timeout packet
 already establishes the immediate 2008 timeout-to-fold binding; this source
 does not widen that source family.
 
-## Current parser boundary
+## Reviewed parser boundary
 
-The sanitized fixture has the already reviewed two-digit-hour legacy cash
-header, an immediate `has timed out` → same-actor fold pair, and immediate
-`is sitting out` line. The current adapter accepts those existing pieces but
-returns one `unsupported_line` diagnostic at line 22 for:
+The sanitized fixture has the reviewed two-digit-hour legacy cash header, an
+immediate `has timed out` → same-actor fold pair, and immediate `is sitting
+out` line. The adapter accepts this exact same-actor sequence under
+`pokerstars-text/v5`, retaining the line below as raw source text only:
 
 ```text
 Player07 has returned
 ```
 
-It returns no candidate. That checksum-guarded rejection is required until a
-separate parser PR follows independent review of this packet. Do not remove the
-line, infer a network reconnection, turn the player back into a new seat,
-change participation, or infer a player-selected/preselected action to obtain
-a parse.
+It creates no source event, action, action origin, participation change, or
+derived status. Do not infer a network reconnection, turn the player back into
+a new seat, change participation, or infer a player-selected/preselected action
+to obtain a parse.
 
-The line is observed source text only. It does not establish its transport
-meaning, a causal scope for later actions, a reconnect event model, or a
-general `<name> has returned` grammar. The same upstream collection also has a
-return status for an undeclared name at original line 542; that occurrence is
-not a labeled fixture and forbids generalizing this one dealt-in case.
+The accepted grammar is not general `<name> has returned` syntax. It requires
+that exact text immediately after the same known dealt-in actor's already
+validated legacy timeout → fold → sit-out sequence. A blank line, another
+actor, a duplicate or prior return, any intervening line, `has reconnected`,
+an undeclared name, or a status outside that context remains rejected. The
+same upstream collection also has a return status for an undeclared name at
+original line 542; that occurrence is not a labeled fixture and must not be
+generalized from this one dealt-in case.
 
 ## Complete source-authored target state
 
 The state below is the independently authored complete expected detected state
-if a later, separately reviewed mapping admits this exact status as inert raw
-text. It is not emitted by the current parser and does not authorize that
-mapping. Runtime import identifiers, source-file identity, import timestamp,
-detector revision, and raw/detected hashes use the existing constructors and
-deterministic test context.
+emitted by the bounded reviewed mapping. Runtime import identifiers,
+source-file identity, import timestamp, detector revision, and raw/detected
+hashes use the existing constructors and deterministic test context.
 
 - Identity: `site="pokerstars"`, `source_hand_id="900000000022"`, ordinal 1
   (line 1).
@@ -178,7 +179,7 @@ Expected warning, in exact order:
 
 1. `Action origin is unresolved for 16 player decision(s); review is required.`
 
-## Unsupported meaning and review gate
+## Unsupported meaning and implementation gate
 
 This packet does not establish a network reconnection, reconnection duration,
 re-entered/dealt-in participation, a new player/seat, preselection, ordinary
@@ -186,10 +187,9 @@ action voluntariness, or player-selected absence semantics. It does not add a
 `reconnect` corpus tag; no such current `CorpusTag` exists. Parser output must
 not emit `user_confirmed`.
 
-An independent review must compare this packet with the pinned original bytes,
-reconstruct the eight-seat ring, 20 actions, timeout binding, raw status lines,
-boards, summary and 1.75 / 0.05 / 1.70 arithmetic, and verify the current
-normalized-fixture rejection. Only then may a separate focused parser PR decide
-whether an exact inert raw-status mapping is safe. No schema, API, persistence,
-approval, extraction, backup, corpus-gate, reconnect, or player-selected
-behavior is authorized by these labels.
+The independent source review compared this packet with the pinned original
+bytes, reconstructed the eight-seat ring, 20 actions, timeout binding, raw
+status line, boards, summary, and 1.75 / 0.05 / 1.70 arithmetic. The focused
+parser regression verifies this exact detected state and the bounded negative
+cases. No schema, API, persistence, approval, extraction, backup, corpus-gate,
+reconnect, or player-selected behavior is authorized by these labels.

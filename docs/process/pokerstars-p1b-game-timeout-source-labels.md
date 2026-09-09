@@ -51,7 +51,9 @@ The reviewed parser maps this one legacy `PokerStars Game #` source family. It
 must not rewrite the fixture, infer a hero, turn `$` into `USD`, or generalize
 the family beyond the labels below. The HHSmithy fixture now has its own
 independently reviewed, explicit-USD one-digit-hour grammar and versioned 2014
-marker semantics; neither family generalizes the other.
+marker semantics. The return-status source uses this legacy family only for the
+separately reviewed immediate timeout → fold → sit-out → raw-return sequence;
+neither family generalizes the other.
 
 ## Expected detected state
 

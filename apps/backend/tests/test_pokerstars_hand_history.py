@@ -1493,8 +1493,8 @@ def test_public_legacy_timeout_specimen_matches_source_labels() -> None:
     }
 
 
-def test_public_return_status_specimen_remains_a_structured_rejection() -> None:
-    """P1b preserves the source-authored return-status boundary."""
+def test_public_return_status_specimen_matches_source_labels(tmp_path: Path) -> None:
+    """P1b maps only the reviewed inert return-status sequence."""
 
     source_bytes = (
         PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-return-status.txt"
@@ -1508,16 +1508,220 @@ def test_public_return_status_specimen_remains_a_structured_rejection() -> None:
         context=import_context("wizardwerdna-pokerstats-return-status.txt"),
     )
 
-    assert result.hands == ()
+    assert result.diagnostics == ()
+    assert len(result.hands) == 1
+    parsed = result.hands[0]
+    candidate = parsed.candidate
+    state = candidate.detection.state
+
+    assert candidate.raw.raw_text == source_bytes.decode("utf-8")
+    assert candidate.raw.identity.source_hand_id == "900000000022"
+    assert candidate.raw.chronology.played_at == datetime(
+        2008, 10, 31, 17, 21, 34, tzinfo=timezone(timedelta(hours=-4))
+    )
+    assert candidate.raw.chronology.source_timezone == "ET"
+    assert candidate.raw.provenance.adapter_id == POKERSTARS_ADAPTER_ID
+    assert candidate.raw.provenance.adapter_version == POKERSTARS_ADAPTER_VERSION
+    assert candidate.raw.provenance.format_revision == POKERSTARS_FORMAT_REVISION
+    assert state.game.economics.kind == "cash"
+    assert state.game.economics.currency is None
+    assert (
+        state.game.blinds.small_blind,
+        state.game.blinds.big_blind,
+        state.game.blinds.ante,
+        state.game.blinds.ante_mode,
+        state.game.blinds.straddle,
+    ) == (Decimal("0.25"), Decimal("0.50"), Decimal(0), "unknown", None)
+    assert state.button_seat == 8
+    assert state.hero_player_id == "seat-8"
+    assert [card.code for card in state.hero_cards] == ["9h", "6s"]
     assert [
         (
-            diagnostic.code,
-            diagnostic.hand_ordinal,
-            diagnostic.source_hand_id,
-            diagnostic.line_start,
+            seat.seat_number,
+            seat.player_id,
+            seat.display_name,
+            seat.starting_stack,
+            seat.participation,
+            seat.position.display_label if seat.position is not None else None,
+            seat.position.button_distance if seat.position is not None else None,
+            seat.position.action_index if seat.position is not None else None,
         )
+        for seat in state.seats
+    ] == [
+        (1, "seat-1", "Player01", Decimal("34.90"), "dealt_in", "BB", 2, 7),
+        (3, "seat-3", "Player03", Decimal("99.10"), "dealt_in", "UTG", 3, 0),
+        (4, "seat-4", "Player04", Decimal(44), "dealt_in", "UTG+1", 4, 1),
+        (5, "seat-5", "Player05", Decimal("45.60"), "dealt_in", "LJ", 5, 2),
+        (6, "seat-6", "Player06", Decimal("18.80"), "dealt_in", "HJ", 6, 3),
+        (7, "seat-7", "Player07", Decimal("31.95"), "dealt_in", "CO", 7, 4),
+        (8, "seat-8", "Player08", Decimal("59.30"), "dealt_in", "BTN", 0, 5),
+        (9, "seat-9", "Player09", Decimal("50.25"), "dealt_in", "SB", 1, 6),
+    ]
+    assert [
+        (street.street, [card.code for card in street.board_cards])
+        for street in state.streets
+    ] == [
+        ("preflop", []),
+        ("flop", ["Ac", "2h", "Qd"]),
+        ("turn", ["Ac", "2h", "Qd", "6h"]),
+        ("river", ["Ac", "2h", "Qd", "6h", "7c"]),
+    ]
+    assert [
+        (
+            street.street,
+            action.sequence,
+            action.actor_id,
+            action.action_type,
+            action.amount,
+            action.total_committed,
+            action.origin.kind,
+            action.origin.basis,
+            action.origin.confidence,
+            action.origin.semantics_revision,
+            action.origin.automatic_reason,
+            [source.line_start for source in action.origin.evidence],
+            [source.line_start for source in action.evidence],
+        )
+        for street in state.streets
+        for action in street.actions
+    ] == [
+        ("preflop", 0, "seat-9", "post_small_blind", Decimal("0.25"), Decimal("0.25"), "forced_system", "explicit_marker", Decimal(1), None, None, [11], [11]),
+        ("preflop", 1, "seat-1", "post_big_blind", Decimal("0.50"), Decimal("0.50"), "forced_system", "explicit_marker", Decimal(1), None, None, [12], [12]),
+        ("preflop", 2, "seat-3", "call", Decimal("0.50"), Decimal("0.50"), "unknown", "unresolved", None, None, None, [15], [15]),
+        ("preflop", 3, "seat-4", "fold", None, Decimal(0), "unknown", "unresolved", None, None, None, [16], [16]),
+        ("preflop", 4, "seat-5", "fold", None, Decimal(0), "unknown", "unresolved", None, None, None, [17], [17]),
+        ("preflop", 5, "seat-6", "call", Decimal("0.50"), Decimal("0.50"), "unknown", "unresolved", None, None, None, [18], [18]),
+        ("preflop", 6, "seat-7", "fold", None, Decimal(0), "client_automatic", "explicit_marker", Decimal(1), "pokerstars-cash-2008-timeout-v1", "timeout", [19, 20], [20]),
+        ("preflop", 7, "seat-8", "fold", None, Decimal(0), "unknown", "unresolved", None, None, None, [23], [23]),
+        ("preflop", 8, "seat-9", "fold", None, Decimal("0.25"), "unknown", "unresolved", None, None, None, [24], [24]),
+        ("preflop", 9, "seat-1", "check", None, Decimal("0.50"), "unknown", "unresolved", None, None, None, [25], [25]),
+        ("flop", 0, "seat-1", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [27], [27]),
+        ("flop", 1, "seat-3", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [28], [28]),
+        ("flop", 2, "seat-6", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [29], [29]),
+        ("turn", 0, "seat-1", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [31], [31]),
+        ("turn", 1, "seat-3", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [32], [32]),
+        ("turn", 2, "seat-6", "check", None, Decimal(0), "unknown", "unresolved", None, None, None, [33], [33]),
+        ("river", 0, "seat-1", "bet", Decimal(1), Decimal(1), "unknown", "unresolved", None, None, None, [35], [35]),
+        ("river", 1, "seat-3", "fold", None, Decimal(0), "unknown", "unresolved", None, None, None, [36], [36]),
+        ("river", 2, "seat-6", "fold", None, Decimal(0), "unknown", "unresolved", None, None, None, [37], [37]),
+        ("river", 3, "seat-1", "uncalled_return", Decimal(1), Decimal(0), "forced_system", "explicit_marker", Decimal(1), None, None, [38], [38]),
+    ]
+    assert state.results is not None
+    assert state.results.stated_pot.model_dump(mode="python") == {
+        "gross_total": Decimal("1.75"),
+        "rake": Decimal("0.05"),
+        "net_total": Decimal("1.70"),
+        "gross_pots": [],
+    }
+    assert state.results.showdown == []
+    assert [
+        (award.player_id, award.amount, award.pot_index)
+        for award in state.results.awards
+    ] == [("seat-1", Decimal("1.70"), None)]
+    assert state.results.players == []
+    assert candidate.detection.warnings == [
+        "Action origin is unresolved for 16 player decision(s); review is required."
+    ]
+    assert parsed.disposition == "clean"
+    assert parsed.reconciliation.status == "pass"
+    assert parsed.reconciliation.discrepancy == Decimal(0)
+    assert parsed.reconciliation.contributions == {
+        "seat-1": Decimal("0.50"),
+        "seat-3": Decimal("0.50"),
+        "seat-4": Decimal(0),
+        "seat-5": Decimal(0),
+        "seat-6": Decimal("0.50"),
+        "seat-7": Decimal(0),
+        "seat-8": Decimal(0),
+        "seat-9": Decimal("0.25"),
+    }
+    assert "Player07 has returned" in candidate.raw.raw_text
+    service = ImportedHandIngestionService(store=FileImportedHandStore(tmp_path))
+    assert service.ingest(candidate).disposition == "created_pending_review"
+    reimport_candidate = parse_pokerstars_text(
+        source_bytes.decode("utf-8"),
+        context=PokerStarsImportContext(
+            import_id="test-import:return-status-reimport.txt",
+            imported_at=IMPORTED_AT,
+            source_filename="return-status-reimport.txt",
+        ),
+    ).hands[0].candidate
+    assert service.ingest(reimport_candidate).disposition == "recorded_exact_reimport"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "expected_code", "expected_line"),
+    [
+        ("Player07 has returned", "Player08 has returned", "unsupported_return_status", 22),
+        (
+            "Player07 is sitting out\nPlayer07 has returned",
+            "Player07 has returned\nPlayer07 is sitting out",
+            "unsupported_return_status",
+            21,
+        ),
+        (
+            "Player07 is sitting out\nPlayer07 has returned",
+            "Player07 is sitting out\n\nPlayer07 has returned",
+            "unsupported_return_status",
+            22,
+        ),
+        (
+            "Player07 is sitting out\nPlayer07 has returned\nPlayer08: folds",
+            "Player07 is sitting out\nPlayer08: folds\nPlayer07 has returned",
+            "unsupported_return_status",
+            23,
+        ),
+        (
+            "Player07 has returned\nPlayer08: folds",
+            "Player07 has returned\nPlayer07 has returned\nPlayer08: folds",
+            "unsupported_return_status",
+            23,
+        ),
+        ("Player07 has returned", "Player07 has reconnected", "unsupported_line", 22),
+        ("Player07 has returned", "Observer01 has returned", "unknown_player", 22),
+    ],
+)
+def test_public_return_status_specimen_rejects_unlabelled_extensions(
+    old: str,
+    new: str,
+    expected_code: str,
+    expected_line: int,
+) -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-return-status.txt"
+    ).read_text().replace(old, new, 1)
+
+    result = parse_pokerstars_text(
+        source,
+        context=import_context("return-status-negative.txt"),
+    )
+
+    assert result.hands == ()
+    assert [(diagnostic.code, diagnostic.line_start) for diagnostic in result.diagnostics] == [
+        (expected_code, expected_line)
+    ]
+
+
+def test_return_status_rejection_is_isolated_from_a_valid_sibling() -> None:
+    source = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-return-status.txt"
+    ).read_text()
+    malformed = source.replace("Player07 has returned", "Player08 has returned", 1)
+    valid = (
+        PUBLIC_FORMAT_FIXTURES / "wizardwerdna-pokerstats-timeout-fold.txt"
+    ).read_text()
+
+    result = parse_pokerstars_text(
+        f"{malformed}\n{valid}",
+        context=import_context("return-status-isolation.txt"),
+    )
+
+    assert [hand.hand_ordinal for hand in result.hands] == [2]
+    assert result.hands[0].candidate.raw.identity.source_hand_id == "900000000021"
+    assert [
+        (diagnostic.hand_ordinal, diagnostic.code, diagnostic.line_start)
         for diagnostic in result.diagnostics
-    ] == [("unsupported_line", 1, "900000000022", 22)]
+    ] == [(1, "unsupported_return_status", 22)]
 
 
 @pytest.mark.parametrize(

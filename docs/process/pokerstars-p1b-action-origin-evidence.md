@@ -31,7 +31,7 @@ independently reviewed form:
 
 | Input                 | Expected result                        | Evidence                                                                                                               |
 | --------------------- | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Exact sanitized bytes | One detected, pending-review candidate | The adapter accepts the exact explicit-USD, one-digit-hour header and source-labelled body under `pokerstars-text/v4`. |
+| Exact sanitized bytes | One detected, pending-review candidate | The adapter accepts the exact explicit-USD, one-digit-hour header and source-labelled body under `pokerstars-text/v5`. |
 
 The fixture has no `Dealt to` line. It cannot be transformed into a positive
 parser case by adding a hero, changing its header, or treating a known actor as

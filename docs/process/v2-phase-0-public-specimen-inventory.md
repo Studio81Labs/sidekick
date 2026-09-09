@@ -63,7 +63,7 @@ representative distribution.
 This specimen records plain `has timed out`, `has timed out while disconnected`,
 and unrelated table/disconnect notifications. The current adapter maps its
 independently reviewed one-digit-hour/explicit-USD form under
-`pokerstars-text/v4`; it also retains its missing hero as unknown. It is not
+`pokerstars-text/v5`; it also retains its missing hero as unknown. It is not
 proof of current-client behavior or a complete action-origin rule. The bounded
 labels, combined-cause encoding, evidence lines, scope/reset conditions, and
 explicit negative cases are recorded separately; missing markers continue to
@@ -111,20 +111,20 @@ qualification.
 | Repository material       | Sanitized source-only derivative at [`apps/backend/tests/fixtures/pokerstars/public-format/wizardwerdna-pokerstats-return-status.txt`](../../apps/backend/tests/fixtures/pokerstars/public-format/wizardwerdna-pokerstats-return-status.txt), attribution/license retained beside it |
 | Sanitized fixture SHA-256 | `b1e4f6ef89fbe9125b7a4efcdfb9363fd539a310379f87d6a571779e050523fa` (1,506 bytes)                                                                                                                                                                                                     |
 | Sanitation                | Replaced player, hand, and table identifiers and normalized trailing whitespace only; retained the observed header, eight-seat ring, hero/cards, action/result order, timeout/sit-out/return status, and summary syntax                                                              |
-| Independent labels        | Complete source-authored [return-status labels](pokerstars-p1b-return-status-source-labels.md); independent review remains required before a parser change                                                                                                                           |
+| Independent labels        | Complete independently reviewed [return-status labels](pokerstars-p1b-return-status-source-labels.md), reviewed before the bounded parser mapping                                                                                                                                    |
 
 This source contains an immediate timeout-to-fold/sit-out sequence and then
-`has returned` for the same dealt-in player. The current adapter recognizes its
-legacy header and existing timeout-to-fold pair, but deliberately rejects the
-sanitized hand at the return-status line. The source does not prove a network
-reconnect, causal status scope, manual/preselected choice, a changed dealt-in
-ring, or current-client behavior. It is not a representative-corpus case.
+`has returned` for the same dealt-in player. The adapter recognizes only that
+exact contextual line under `pokerstars-text/v5` and retains it raw-only; it
+does not create a source event, action, origin, or participation change. The
+source does not prove a network reconnect, causal status scope,
+manual/preselected choice, a changed dealt-in ring, or current-client behavior.
+It is not a representative-corpus case.
 
-The original selected bytes have trailing spaces and currently fail earlier at
-seat parsing. The committed derivative applies only the explicit
-trailing-whitespace normalization documented above, which exposes the intended
-return-status rejection. Neither outcome is a passing parse or a positive
-grammar qualification.
+The original selected bytes have trailing spaces and fail earlier at seat
+parsing. The committed derivative applies only the explicit trailing-whitespace
+normalization documented above. That sanitation does not establish a broader
+input-normalization rule or a positive general status grammar.
 
 ## HRC viewer example
 
