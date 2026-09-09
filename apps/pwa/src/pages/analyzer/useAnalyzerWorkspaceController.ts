@@ -53,7 +53,11 @@ import {
   getProcessingQueueExtent,
 } from "../../features/workspace/lib/queryReads";
 import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
-import { isQueryAccessGenerationSuperseded } from "../../shared/api/queryCache";
+import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
+  isQueryAccessGenerationSuperseded,
+} from "../../shared/api/queryCache";
 import {
   ERROR_TOAST_ID,
   isAbortError,
@@ -202,6 +206,7 @@ export function useAnalyzerWorkspaceController({
     () => readProcessingQueue() ?? [],
   );
   const [helpDialogOpen, setHelpDialogOpen] = useState(false);
+  const [archiveDownloading, setArchiveDownloading] = useState(false);
   const [backupRestoring, setBackupRestoring] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>(
     () => readHistory() ?? [],
@@ -337,6 +342,7 @@ export function useAnalyzerWorkspaceController({
     onError: setError,
   });
   const benchmarkDatasetInputRef = useRef<HTMLInputElement | null>(null);
+  const archiveDownloadInFlightRef = useRef(false);
   const jobsRef = useRef(jobs);
   const processingCacheInitializedRef = useRef(false);
   const processingMembershipGenerationRef = useRef(0);
@@ -429,6 +435,7 @@ export function useAnalyzerWorkspaceController({
   );
   const administratorLockDisabled =
     busy ||
+    archiveDownloading ||
     screenshotMetadataSaving ||
     screenshotDeleting ||
     benchmarkImporting ||
@@ -2718,8 +2725,16 @@ export function useAnalyzerWorkspaceController({
     filename: string,
     failureMessage: string,
   ) {
+    if (archiveDownloadInFlightRef.current) {
+      return;
+    }
+
+    archiveDownloadInFlightRef.current = true;
+    setArchiveDownloading(true);
+    const accessGeneration = captureQueryAccessGeneration(queryClient);
     try {
       const blob = await request();
+      assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -2730,6 +2745,9 @@ export function useAnalyzerWorkspaceController({
       if (!reportAdministrativeDenial(downloadError)) {
         setError(messageFromError(downloadError, failureMessage));
       }
+    } finally {
+      archiveDownloadInFlightRef.current = false;
+      setArchiveDownloading(false);
     }
   }
 
@@ -3503,7 +3521,7 @@ export function useAnalyzerWorkspaceController({
         ? {
             administrativeUnlocked: true,
             backupRestoring,
-            busy,
+            busy: busy || archiveDownloading,
             mcpCloseBlocked,
             onClose: () => closeInfoDialog(backupRestoring),
             onDownloadBackup: () => void onApplicationBackupDownload(),
@@ -3522,7 +3540,8 @@ export function useAnalyzerWorkspaceController({
             comparisonReport: benchmarkComparisonReport,
             comparisonReportLoading: benchmarkComparisonReportLoading,
             currentJob: job,
-            datasetExportDisabled: benchmarkDatasetExportDisabled,
+            datasetExportDisabled:
+              benchmarkDatasetExportDisabled || archiveDownloading,
             datasetInputRef: benchmarkDatasetInputRef,
             importInProgress: benchmarkImporting,
             includedCases: benchmarkIncludedCases,

@@ -1153,6 +1153,65 @@ describe("Analyzer administrative capture", () => {
     ).toBe(true);
   });
 
+  it("fences a slow archive download when another request locks the session", async () => {
+    const pendingArchive = deferredResponse();
+    const createObjectURL = vi.fn(() => "blob:archive");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    fetchMock().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) {
+        return Promise.resolve(jsonResponse({ status: "ok" }));
+      }
+      if (url.endsWith("/api/admin/ocr/backups/export")) {
+        return pendingArchive.promise;
+      }
+      if (url.endsWith("/api/admin/ocr/history")) {
+        return Promise.resolve(jsonResponse({ detail: "denied" }, 401));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(screen.getByRole("button", { name: "About this app" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "About Poker Hero",
+    });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Download application backup",
+      }),
+    );
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        "http://localhost:8000/api/admin/ocr/backups/export",
+        expect.anything(),
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Close app information" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      pendingArchive.resolve(new Response("archive"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
   it("uploads a screenshot, populates parser state, and enables approval", async () => {
     const created = jobRecord();
     fetchMock()

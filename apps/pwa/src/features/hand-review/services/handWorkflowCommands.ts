@@ -60,6 +60,7 @@ async function applyHandWorkflowCacheOutcome(
   };
   const guarded = [cache.updated, ...cache.invalidated];
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   await Promise.all(
     guarded.map((queryKey) =>
       queryClient.cancelQueries({ queryKey, exact: false }),

@@ -38,6 +38,7 @@ export async function importBenchmarkDatasetCommand(
     ] as readonly QueryKey[],
   };
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   await Promise.all(
     cache.invalidated.map((queryKey) =>
       queryClient.cancelQueries({ queryKey, exact: false }),

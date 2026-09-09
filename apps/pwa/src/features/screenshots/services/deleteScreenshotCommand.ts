@@ -23,6 +23,7 @@ export async function deleteScreenshotCommand(
   };
   const superseded = [cache.removed, ...cache.invalidated] as const;
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   supersedeLatestQueryWrites(queryClient, cache.removed);
   for (const queryKey of superseded) {
     supersedeLatestQueryResults(queryClient, queryKey);

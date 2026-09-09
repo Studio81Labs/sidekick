@@ -32,6 +32,7 @@ export async function restoreApplicationBackupCommand(
     ] as readonly QueryKey[],
   };
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   await Promise.all(
     cache.removed.map((queryKey) =>
       queryClient.cancelQueries({ queryKey, exact: false }),

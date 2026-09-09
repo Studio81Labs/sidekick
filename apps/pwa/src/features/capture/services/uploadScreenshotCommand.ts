@@ -35,6 +35,7 @@ export async function uploadScreenshotCommand(
   };
   const guarded = [cache.updated, ...cache.invalidated] as const;
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   await Promise.all(
     guarded.map((queryKey) =>
       queryClient.cancelQueries({ queryKey, exact: false }),

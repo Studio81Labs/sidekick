@@ -23,6 +23,7 @@ export async function archiveJobsCommand(
   ] as const;
   const invalidated: QueryKey[] = [...detailKeys, ...projectionKeys];
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   for (const queryKey of invalidated) {
     supersedeLatestQueryResults(queryClient, queryKey);
   }
