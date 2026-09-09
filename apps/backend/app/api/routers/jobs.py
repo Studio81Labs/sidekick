@@ -4,7 +4,6 @@ from fastapi import (
     APIRouter,
     File,
     Form,
-    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -13,7 +12,7 @@ from fastapi import (
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
-from app.api.administrative_access import require_administrator
+from app.api.administrative_access import administrator_access_route
 from app.api.dependencies import (
     JobMutationConflictError,
     JobTransportNotFoundError,
@@ -42,7 +41,9 @@ def create_jobs_router(
 ) -> APIRouter:
     """Build the processing job read router with application dependencies."""
 
-    router = APIRouter()
+    router = APIRouter(
+        route_class=administrator_access_route(authorize_administrator)
+    )
 
     @router.get(
         "/api/admin/ocr/jobs",
@@ -52,13 +53,7 @@ def create_jobs_router(
     def get_processing_jobs(
         limit: int = Query(default=100, ge=1, le=100),
         offset: int = Query(default=0, ge=0),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> JobQueue:
-        require_administrator(authorize_administrator(authorization))
         return runtime.list_jobs(limit, offset)
 
     @router.get(
@@ -68,13 +63,7 @@ def create_jobs_router(
     )
     def get_job(
         job_id: str,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> JobRecord:
-        require_administrator(authorize_administrator(authorization))
         try:
             return runtime.get_job(job_id)
         except JobTransportNotFoundError as exc:
@@ -88,13 +77,7 @@ def create_jobs_router(
     )
     def get_job_image(
         job_id: str,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> Response:
-        require_administrator(authorize_administrator(authorization))
         try:
             image = runtime.get_image(job_id)
         except JobTransportNotFoundError as exc:
@@ -107,7 +90,9 @@ def create_jobs_router(
 def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
     """Build the multipart processing-job upload router (administrative OCR test surface)."""
 
-    router = APIRouter()
+    router = APIRouter(
+        route_class=administrator_access_route(runtime.authorize_administrator)
+    )
 
     @router.post(
         "/api/admin/ocr/jobs",
@@ -135,14 +120,7 @@ def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
             max_length=64,
             pattern=r"^[a-z0-9_]+$",
         ),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> JobRecord:
-        require_administrator(runtime.authorize_administrator(authorization))
-
         pipeline_request = JobUploadPipelineRequest(
             parser_provider=parser_provider,
             parser_layout_profile=parser_layout_profile,
@@ -187,7 +165,9 @@ def create_job_mutations_router(
 ) -> APIRouter:
     """Build the processing job mutation router with application dependencies."""
 
-    router = APIRouter()
+    router = APIRouter(
+        route_class=administrator_access_route(authorize_administrator)
+    )
 
     @router.put(
         "/api/admin/ocr/jobs/{job_id}/metadata",
@@ -197,13 +177,7 @@ def create_job_mutations_router(
     def update_job_metadata(
         job_id: str,
         metadata: ScreenshotMetadataRequest,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> JobRecord:
-        require_administrator(authorize_administrator(authorization))
         try:
             return runtime.update_metadata(job_id, metadata)
         except JobTransportNotFoundError as exc:
@@ -217,13 +191,7 @@ def create_job_mutations_router(
     )
     def delete_job(
         job_id: str,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> Response:
-        require_administrator(authorize_administrator(authorization))
         try:
             runtime.delete_job(job_id)
         except JobTransportNotFoundError as exc:
@@ -240,13 +208,7 @@ def create_job_mutations_router(
     def approve_job(
         job_id: str,
         state: CanonicalState,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> JobRecord:
-        require_administrator(authorize_administrator(authorization))
         try:
             return runtime.approve_job(job_id, state)
         except JobTransportNotFoundError as exc:

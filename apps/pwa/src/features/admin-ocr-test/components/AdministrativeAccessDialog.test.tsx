@@ -95,6 +95,18 @@ describe("AdministrativeAccessDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not render close controls when used as the access gate", () => {
+    const { onClose: _onClose, ...props } = dialogProps();
+    render(<AdministrativeAccessDialog {...props} />);
+
+    expect(
+      screen.queryByRole("button", { name: "Close administrator tools" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Close" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("offers lock once unlocked and holds it while a batch runs", async () => {
     const props = dialogProps({ unlocked: true });
     const { rerender } = render(<AdministrativeAccessDialog {...props} />);

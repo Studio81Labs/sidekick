@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.application.benchmarks import BenchmarkService
-from app.api.administrative_access import require_administrator
+from app.api.administrative_access import administrator_access_route
 from app.api.dependencies import (
     BACKGROUND_TASK_STATE_KEY,
     BenchmarkConfigurationError,
@@ -39,7 +39,9 @@ from app.domain.hands import JobRecord
 def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
     """Build the parser benchmark router with application-owned operations."""
 
-    router = APIRouter()
+    router = APIRouter(
+        route_class=administrator_access_route(runtime.authorize_administrator)
+    )
 
     @router.put(
         "/api/admin/ocr/jobs/{job_id}/benchmark",
@@ -49,13 +51,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
     def set_benchmark_inclusion(
         job_id: str,
         selection: BenchmarkSelectionRequest,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> JobRecord:
-        require_administrator(runtime.authorize_administrator(authorization))
         try:
             return runtime.update_inclusion(job_id, selection)
         except BenchmarkTransportNotFoundError as exc:
@@ -81,13 +77,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             max_length=64,
             pattern=r"^[a-z0-9_]+$",
         ),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> BenchmarkOverview:
-        require_administrator(runtime.authorize_administrator(authorization))
         try:
             return runtime.get_overview(parser_provider, parser_layout_profile)
         except BenchmarkInputError as exc:
@@ -112,13 +102,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             max_length=64,
             pattern=r"^[a-z0-9_]+$",
         ),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> StreamingResponse:
-        require_administrator(runtime.authorize_administrator(authorization))
         try:
             export = runtime.export_dataset(parser_provider, parser_layout_profile)
         except BenchmarkInputError as exc:
@@ -147,14 +131,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             max_length=128,
             pattern=BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
         ),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> BenchmarkDatasetImportResult:
-        require_administrator(runtime.authorize_administrator(authorization))
-
         archive_bytes = await file.read(runtime.max_dataset_upload_bytes + 1)
         if len(archive_bytes) > runtime.max_dataset_upload_bytes:
             raise HTTPException(
@@ -184,13 +161,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
         request_id: str,
         request: Request,
         background_tasks: BackgroundTasks,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> BenchmarkDatasetImportReceipt:
-        require_administrator(runtime.authorize_administrator(authorization))
         try:
             import_status = runtime.get_import(request_id)
         except BenchmarkTransportNotFoundError as exc:
@@ -207,13 +178,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
     )
     def get_benchmark_report(
         report_id: str,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> BenchmarkReport:
-        require_administrator(runtime.authorize_administrator(authorization))
         try:
             return runtime.get_report(report_id)
         except BenchmarkTransportNotFoundError as exc:
@@ -226,13 +191,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
     )
     def run_parser_benchmark(
         benchmark_request: BenchmarkRunRequest | None = None,
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> BenchmarkReport:
-        require_administrator(runtime.authorize_administrator(authorization))
         try:
             return runtime.run(benchmark_request)
         except BenchmarkInputError as exc:

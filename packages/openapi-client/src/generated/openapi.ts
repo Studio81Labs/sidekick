@@ -1109,15 +1109,6 @@ export interface operations {
           "application/zip": string;
         };
       };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
-        };
-      };
     };
   };
   admin_ocr_backups_restore: {
@@ -1695,15 +1686,6 @@ export interface operations {
         };
         content: {
           "application/json": components["schemas"]["AdminOcrTestSession"];
-        };
-      };
-      /** @description Validation Error */
-      422: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          "application/json": components["schemas"]["HTTPValidationError"];
         };
       };
     };

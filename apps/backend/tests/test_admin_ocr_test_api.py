@@ -279,6 +279,46 @@ def test_every_current_admin_data_route_rejects_before_data_access(tmp_path: Pat
     assert not (tmp_path / "jobs").exists() or not any((tmp_path / "jobs").iterdir())
 
 
+def test_every_current_admin_data_route_authorizes_before_request_validation(
+    tmp_path: Path,
+) -> None:
+    """Malformed input must not bypass the administrator denial response."""
+
+    client = make_transport_client(tmp_path)
+    job_id = "a" * 32
+    requests = (
+        lambda: client.get("/api/admin/ocr/jobs", params={"limit": 101}),
+        lambda: client.post("/api/admin/ocr/jobs"),
+        lambda: client.put(f"/api/admin/ocr/jobs/{job_id}/metadata", json={}),
+        lambda: client.post(f"/api/admin/ocr/jobs/{job_id}/approve", json={}),
+        lambda: client.get("/api/admin/ocr/history", params={"limit": 101}),
+        lambda: client.put("/api/admin/ocr/history", json={"job_ids": [job_id, job_id]}),
+        lambda: client.put(f"/api/admin/ocr/jobs/{job_id}/benchmark", json={}),
+        lambda: client.get(
+            "/api/admin/ocr/benchmarks",
+            params={"parser_provider": "invalid-provider"},
+        ),
+        lambda: client.post("/api/admin/ocr/benchmarks/import"),
+        lambda: client.post(
+            "/api/admin/ocr/benchmarks/import",
+            content=b"not a multipart body",
+            headers={"Content-Type": "multipart/form-data; boundary=broken"},
+        ),
+        lambda: client.post("/api/admin/ocr/benchmarks/run", json={"limit": 1}),
+        lambda: client.post("/api/admin/ocr/backups/restore"),
+        lambda: client.post(
+            "/api/admin/ocr/backups/restore",
+            content=b"not a multipart body",
+            headers={"Content-Type": "multipart/form-data; boundary=broken"},
+        ),
+    )
+
+    for request in requests:
+        response = request()
+        assert response.status_code == 401
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+
+
 def _dataset_archive(tmp_path: Path) -> bytes:
     source = make_client(tmp_path / "dataset-source")
     job_id = upload_job(source).json()["id"]

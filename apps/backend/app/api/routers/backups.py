@@ -1,10 +1,10 @@
 """Application backup transport endpoints."""
 
-from fastapi import APIRouter, File, Header, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from app.api.administrative_access import require_administrator
+from app.api.administrative_access import administrator_access_route
 from app.api.dependencies import ApplicationBackupTransportError
 from app.api.response_contracts import ZIP_RESPONSE_CONTENT
 from app.application.backups import BackupService
@@ -14,7 +14,9 @@ from app.domain.backups import ApplicationBackupRestoreResult
 def create_backups_router(runtime: BackupService) -> APIRouter:
     """Build the application backup router with application-owned operations."""
 
-    router = APIRouter()
+    router = APIRouter(
+        route_class=administrator_access_route(runtime.authorize_administrator)
+    )
 
     @router.get(
         "/api/admin/ocr/backups/export",
@@ -22,14 +24,7 @@ def create_backups_router(runtime: BackupService) -> APIRouter:
         response_class=StreamingResponse,
         responses={"200": {"content": ZIP_RESPONSE_CONTENT}},
     )
-    async def export_application_backup(
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
-    ) -> StreamingResponse:
-        require_administrator(runtime.authorize_administrator(authorization))
+    async def export_application_backup() -> StreamingResponse:
         try:
             export = await runtime.export_backup()
         except ApplicationBackupTransportError as exc:
@@ -52,13 +47,7 @@ def create_backups_router(runtime: BackupService) -> APIRouter:
     )
     async def restore_backup(
         file: UploadFile = File(...),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> ApplicationBackupRestoreResult:
-        require_administrator(runtime.authorize_administrator(authorization))
 
         archive_bytes = await file.read(runtime.max_upload_bytes + 1)
         if len(archive_bytes) > runtime.max_upload_bytes:

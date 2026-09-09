@@ -89,7 +89,6 @@ export default function AnalyzerPage({
         <AdministrativeAccessDialog
           busy={false}
           externalValidation={accessError}
-          onClose={() => undefined}
           onLock={lockAdministrator}
           onUnlock={unlockAdministrator}
           unlocked={false}

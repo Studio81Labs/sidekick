@@ -7,9 +7,15 @@ missing or rejected bearer answers 401, and any decision this transport does
 not recognize denies with 403 instead of opening the surface.
 """
 
-from fastapi import HTTPException
+from collections.abc import Awaitable, Callable
 
-from app.application.admin_ocr_test import AdminOcrTestAccessDecision
+from fastapi import HTTPException, Request, Response
+from fastapi.routing import APIRoute
+
+from app.application.admin_ocr_test import (
+    AdminOcrTestAccessDecision,
+    AuthorizeAdministrator,
+)
 
 # Denials answer a presented credential, so no shared cache may replay them.
 _NO_STORE = {"Cache-Control": "no-store"}
@@ -39,4 +45,24 @@ def require_administrator(decision: AdminOcrTestAccessDecision) -> None:
     )
 
 
-__all__ = ["require_administrator"]
+def administrator_access_route(
+    authorize_administrator: AuthorizeAdministrator,
+) -> type[APIRoute]:
+    """Build routes that check the administrator gate before request parsing."""
+
+    class AdministratorAccessRoute(APIRoute):
+        def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
+            handle_request = super().get_route_handler()
+
+            async def handle_administrator_request(request: Request) -> Response:
+                require_administrator(
+                    authorize_administrator(request.headers.get("Authorization"))
+                )
+                return await handle_request(request)
+
+            return handle_administrator_request
+
+    return AdministratorAccessRoute
+
+
+__all__ = ["administrator_access_route", "require_administrator"]
