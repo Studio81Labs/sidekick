@@ -460,9 +460,16 @@ export function useAnalyzerWorkspaceController({
         : null,
   };
   const lockAdministrator = useCallback(
-    (reason?: string) => {
-      if (workspaceDraftRef.current) {
-        onPreserveDraft?.(workspaceDraftRef.current);
+    (reason?: string, preservedFiles?: readonly File[]) => {
+      const workspaceDraft = workspaceDraftRef.current;
+      if (workspaceDraft) {
+        onPreserveDraft?.({
+          ...workspaceDraft,
+          // A batch may have produced jobs before a later request loses
+          // access. Retain only that denied request and unstarted files, so
+          // reauthentication cannot submit completed queue items again.
+          files: [...(preservedFiles ?? workspaceDraft.files)],
+        });
       }
       onStopScreenShare();
       onLockAdministrator(reason);
@@ -2449,7 +2456,10 @@ export function useAnalyzerWorkspaceController({
           updateExpectedUpload(expectedUploadIndex, "failed");
           administrativeDenialMessage =
             administrativeAccessDenialMessage(denial);
-          lockAdministrator(administrativeDenialMessage);
+          lockAdministrator(
+            administrativeDenialMessage,
+            selectedFiles.slice(index),
+          );
           skippedCount = selectedFiles.length - completedCount;
           discardUnstartedUploads(index);
           break;
