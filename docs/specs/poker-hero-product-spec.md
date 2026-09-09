@@ -12,6 +12,17 @@ The durable player/operator, persistence, and migration boundary is recorded in
 
 ---
 
+## Unreleased cutover policy
+
+V1 was never published to production. Breaking changes are permitted, and old
+application fallbacks and compatibility-only code must be removed. Current
+capabilities below describe product requirements, not a requirement to preserve
+V1 implementations, APIs or stored development artifacts.
+[ADR 0079](../decisions/0079-adopt-an-unreleased-current-only-cutover.md) defines
+the current-only persistence, native grading and operator application cutover.
+Current V2 review, provenance, security and lifecycle invariants still apply;
+unsupported development data is rejected without automatic deletion.
+
 ## 0. Why V2 exists
 
 V1 is a capable pile of review analytics. It tracks accuracy by street and by
@@ -157,7 +168,7 @@ personal leak, update mastery, or contribute to proof-of-learning metrics.
   against a genuine reference (solved chart or solved tree). Heuristic guesses
   never move a player's mastery.
 
-**Keep (V1 did these well)**
+**Keep these capabilities in the current implementation**
 
 - Config-driven parser and recommendation registries with a mock provider.
 - The parser benchmark harness with an explicit ground-truth corpus and
@@ -277,8 +288,9 @@ shape includes at minimum:
   supplied currency denomination, never tournament chips or hand rake. A
   blind-level label does not establish tournament stage or ICM readiness.
   [ADR 0077](../decisions/0077-retain-tournament-entry-and-level-source-facts.md)
-  defines this optional source-fact extension and its compatibility prerequisite;
-  implementation remains tracked in #409. Missing economic fields
+  defines this optional source-fact extension; ADR 0079 supersedes its pre-release
+  compatibility prerequisite. Source behavior remains tracked in #409;
+  the current-only cutover is #517. Missing economic fields
   remain explicitly unknown rather than inferred. Tournament seat
   `remaining_stacks` entries used for current-hand extraction are the same
   hand-start stack snapshot as the seats' `starting_stack` values. Both use
@@ -481,12 +493,11 @@ client layouts:
 - Test data is visibly marked, separately retained, and excluded from player
   exports, learning analytics, and proof-of-learning metrics.
 
-Legacy V1 screenshot jobs and training answers remain audit-only. They cannot be
-converted into canonical V2 hands or learning evidence because they do not
-contain the imported ordered action stream and real table action required by
-§3.3. A historical hand can enter V2 only through a new qualifying
-hand-history import; the V1 screenshot, recommendation, or pre-reveal answer is
-never reinterpreted as played-hand provenance.
+V1 screenshot jobs, recommendations and training answers have no compatibility
+or migration requirement. They cannot be converted into canonical V2 hands or
+learning evidence. A historical hand enters V2 through a qualifying hand-history
+import with its own ordered action stream and provenance. The current operator
+OCR corpus remains separate from player evidence.
 
 This boundary preserves recognition development without exposing a workflow
 that could be used as real-time poker assistance. Authorization must be enforced
@@ -509,13 +520,13 @@ The browser does not send player records through the deployed Cloudflare Worker
 or a centrally hosted FastAPI store. A remotely hosted static shell is not a
 player-data proxy.
 
-The current Worker → hosted FastAPI topology remains the deployed V1/admin
-architecture while migration is implemented. It may expose legacy data for
-read-only audit/export and the isolated administrative parser-test surface, but
-it cannot accept V2 player imports or learning state. Phase 1 is blocked until
-packaging/setup, local-origin routing, persistence/backup/restore, upgrade, and
-direct-network tests prove that no player record reaches the hosted path. The
-only permitted V2 player-data egress is the separately consented, minimized
+The Worker → hosted FastAPI topology serves only the explicit administrative
+parser-test capability after the cutover; it is not an old player application or
+an audit/export bridge for V1. It cannot accept V2 player imports or learning
+state. Phase 1 is blocked until packaging/setup, local-origin routing,
+current-format persistence/backup/restore and direct-network tests prove the
+local boundary. Old development stores fail closed rather than being upgraded.
+The only permitted V2 player-data egress is the separately consented, minimized
 remote solved lookup in §5.3; revoking it returns to fully local operation.
 
 ---
@@ -898,14 +909,14 @@ chronology cannot prove that learning occurred after a drill.
 
 ### 6.8 What V1 analytics become
 
-V1's street/position/certainty breakdowns are not deleted — they are demoted to
-_diagnostic detail underneath a concept_. Mastery over the skill tree is the
-primary model; the breakdowns are drill-downs for a curious user, not the
+Street/position/certainty breakdowns are current V2 diagnostic requirements
+underneath a concept; the old analytics application and contracts are removed.
+Mastery over the skill tree is the primary model; the breakdowns are drill-downs for a curious user, not the
 organizing principle.
 
 ---
 
-## 7. Kept infrastructure (from V1, retained)
+## 7. Current infrastructure capabilities
 
 - **Config-driven parser & recommendation registries**, mock providers,
   field-level confidence gating, immutable catalog descriptors.
@@ -915,7 +926,9 @@ organizing principle.
 - **Recommendation benchmark**: evaluation against trusted strategy references.
   In V2 this is elevated: it is the instrument that proves `solved` grading is
   actually correct, and therefore that the mastery model is measuring something
-  real. It requires a trusted reference corpus (which is the same sourcing
+  real. Its implementation uses native V2 decisions and declared EV units; old
+  screenshot recommendation schemas/runners are removed under ADR 0079. It
+  requires a trusted reference corpus (which is the same sourcing
   question as §5.3 — the benchmark measures grading quality but does not create
   the references).
 - **Evidence transparency**, **backup/restore with checksums**, **failure

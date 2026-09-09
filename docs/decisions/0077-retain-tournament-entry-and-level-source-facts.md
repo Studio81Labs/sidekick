@@ -2,6 +2,11 @@
 
 Status: accepted; P1a0 compatibility implementation in PR #500; P1a parser mapping pending under issue #409
 
+The V1 retention and pre-release compatibility requirements below are superseded
+by [ADR 0079](0079-adopt-an-unreleased-current-only-cutover.md). Domain, current
+V2 provenance/lifecycle and security requirements remain in force. Earlier
+implementation details are retained as decision history.
+
 Date: 2026-09-08
 
 Resolves the architectural decision in issue #498 under Epic #405. PR #500
