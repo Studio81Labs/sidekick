@@ -5,12 +5,8 @@ import pytest
 from api_test_support import make_client, upload_job_with_pipeline
 
 
-def test_health_reports_active_local_solver_engine(tmp_path: Path) -> None:
-    client = make_client(
-        tmp_path,
-        recommendation_provider="local_solver",
-        local_solver_engine="postflop_solver",
-    )
+def test_health_reports_active_parser(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
 
     response = client.get("/api/health")
 
@@ -19,26 +15,7 @@ def test_health_reports_active_local_solver_engine(tmp_path: Path) -> None:
         "status": "ok",
         "environment": "local",
         "parser_provider": "mock",
-        "recommendation_provider": "local_solver",
-        "recommendation_engine": "postflop_solver",
     }
-
-
-@pytest.mark.parametrize("engine", ["", "   "])
-def test_health_preserves_invalid_blank_local_solver_engine(
-    tmp_path: Path,
-    engine: str,
-) -> None:
-    client = make_client(
-        tmp_path,
-        recommendation_provider="local_solver",
-        local_solver_engine=engine,
-    )
-
-    response = client.get("/api/health")
-
-    assert response.status_code == 200
-    assert response.json()["recommendation_engine"] == ""
 
 
 def test_pipeline_endpoint_reports_runtime_choices(tmp_path: Path) -> None:
@@ -86,8 +63,6 @@ def test_pipeline_endpoint_reports_fallbacks_for_unavailable_defaults(
     }
     assert payload["parser_providers"][1]["id"] == "mock"
     assert payload["parser_providers"][1]["available"] is True
-    assert "recommendation_providers" not in payload
-    assert "recommendation_engines" not in payload
 
 
 def test_upload_persists_explicit_pipeline_selection(tmp_path: Path) -> None:
@@ -106,8 +81,6 @@ def test_upload_persists_explicit_pipeline_selection(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["parser_provider"] == "mock"
     assert payload["parser_layout_profile"] == "pokerstars"
-    assert "recommendation_provider" not in payload
-    assert "recommendation_engine" not in payload
 
 
 def test_upload_rejects_pipeline_plugin_not_enabled_by_deployment(

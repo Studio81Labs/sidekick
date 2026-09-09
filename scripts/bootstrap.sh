@@ -3,12 +3,9 @@ set -eu
 
 ROOT_DIR=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 BACKEND_DIR="$ROOT_DIR/apps/backend"
-POSTFLOP_SOLVER_DIR="$ROOT_DIR/solver-plugins/postflop"
-POSTFLOP_SOLVER_BIN="$POSTFLOP_SOLVER_DIR/target/release/poker-postflop-solver"
 
 command -v node >/dev/null 2>&1 || { echo "Node.js 24+ is required" >&2; exit 1; }
 command -v pnpm >/dev/null 2>&1 || { echo "pnpm 11+ is required" >&2; exit 1; }
-command -v cargo >/dev/null 2>&1 || { echo "Rust 1.85+ with Cargo is required" >&2; exit 1; }
 
 PYTHON_BIN=""
 check_python_candidate() {
@@ -50,12 +47,6 @@ fi
   --no-build-isolation \
   "$BACKEND_DIR"
 "$BACKEND_DIR/.venv/bin/python" -m pip check
-
-cargo build --locked --release --manifest-path "$POSTFLOP_SOLVER_DIR/Cargo.toml"
-if [ ! -x "$POSTFLOP_SOLVER_BIN" ]; then
-  echo "Postflop solver build did not produce $POSTFLOP_SOLVER_BIN" >&2
-  exit 1
-fi
 
 if [ ! -f "$BACKEND_DIR/.env" ]; then
   cp "$BACKEND_DIR/.env.example" "$BACKEND_DIR/.env"

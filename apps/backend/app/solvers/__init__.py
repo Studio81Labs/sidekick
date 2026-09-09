@@ -1,1 +1,0 @@
-"""Bundled local solver adapters."""

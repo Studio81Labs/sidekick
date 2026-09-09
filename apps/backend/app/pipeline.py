@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from app.config import (
-    Settings,
-)
+from app.config import Settings
 from app.domain.pipeline import (
     AdministrativeOcrTestCapability,
     PipelineCapabilities,
@@ -63,18 +61,6 @@ def _require_compatible_layout(parser_provider: str, layout_profile: str) -> Non
 def _parser_availability(settings: Settings, value: str) -> str | None:
     plugin = PARSER_PLUGINS.get(value)
     return plugin.unavailable_reason(settings) if plugin is not None else None
-
-
-def configured_local_solver_engine(settings: Settings) -> str:
-    if (settings.local_solver_command or "").strip():
-        return "custom_local"
-    return settings.local_solver_engine.strip().lower()
-
-
-def configured_recommendation_engine(settings: Settings) -> str | None:
-    if settings.recommendation_provider.strip().lower() != "local_solver":
-        return None
-    return configured_local_solver_engine(settings)
 
 
 def resolve_pipeline_selection(

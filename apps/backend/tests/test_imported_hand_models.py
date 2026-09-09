@@ -841,7 +841,6 @@ def test_import_boundary_rejects_legacy_screenshot_provenance() -> None:
         original_filename="table.png",
         image_filename="original.png",
         parser_provider="mock",
-        recommendation_provider="mock",
     )
     assert legacy.approved_state is None
 

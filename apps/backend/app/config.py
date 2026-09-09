@@ -23,12 +23,6 @@ PIPELINE_ID_PATTERN = re.compile(r"^[a-z0-9_]+$")
 KNOWN_PARSER_PROVIDERS = frozenset({"mock", "llm_vision", "ocr_cv", "auto"})
 OCR_CV_LAYOUT_PROFILES = OCR_CV_LAYOUT_PROFILE_IDS
 
-DEFAULT_POSTFLOP_OOP_RANGE = "66+,A8s+,A5s-A4s,AJo+,K9s+,KQo,QTs+,JTs,96s+,85s+,75s+,65s,54s"
-DEFAULT_POSTFLOP_IP_RANGE = (
-    "QQ-22,AQs-A2s,ATo+,K5s+,KJo+,Q8s+,J8s+,T7s+,96s+,86s+,75s+,64s+,53s+"
-)
-
-
 def _looks_like_browser_ipv4(hostname: str) -> bool:
     parts = hostname.split(".")
     if parts[-1] == "":
@@ -149,29 +143,9 @@ class Settings(BaseSettings):
             "street": 0.99,
         }
     )
-    recommendation_provider: str = Field(default="rule_based")
     external_parser_url: str | None = Field(default=None)
     external_parser_bearer_token: SecretStr | None = Field(default=None)
-    external_provider_url: str | None = Field(default=None)
-    external_provider_bearer_token: SecretStr | None = Field(default=None)
-    llm_advice_url: str | None = Field(default=None)
-    llm_advice_bearer_token: SecretStr | None = Field(default=None)
     external_request_timeout_seconds: float = Field(default=60.0, gt=0)
-    local_solver_command: str | None = Field(default=None)
-    local_solver_engine: str = Field(default="postflop_solver")
-    local_solver_timeout_seconds: float = Field(default=120.0, gt=0)
-    postflop_solver_command: str = Field(default="poker-postflop-solver")
-    postflop_solver_fallback_enabled: bool = Field(default=True)
-    postflop_solver_max_iterations: int = Field(default=400, gt=0)
-    postflop_solver_target_exploitability: float = Field(default=0.01, gt=0, le=1)
-    postflop_solver_max_memory_mb: int = Field(default=768, gt=0)
-    postflop_solver_bet_sizes: str = Field(default="70%")
-    postflop_solver_raise_sizes: str = Field(default="2.5x")
-    postflop_solver_rake_rate: float = Field(default=0, ge=0, le=1)
-    postflop_solver_rake_cap: float = Field(default=0, ge=0)
-    postflop_solver_range_mode: Literal["contextual", "configured"] = "contextual"
-    postflop_solver_oop_range: str = Field(default=DEFAULT_POSTFLOP_OOP_RANGE)
-    postflop_solver_ip_range: str = Field(default=DEFAULT_POSTFLOP_IP_RANGE)
     max_upload_bytes: int = Field(default=10 * 1024 * 1024, gt=0)
     max_dataset_upload_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
     max_backup_upload_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
@@ -251,8 +225,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "external_parser_bearer_token",
-        "external_provider_bearer_token",
-        "llm_advice_bearer_token",
         "proxy_shared_secret",
         "admin_ocr_test_token",
         "sentry_dsn",
@@ -267,8 +239,6 @@ class Settings(BaseSettings):
 
     @field_validator(
         "external_parser_bearer_token",
-        "external_provider_bearer_token",
-        "llm_advice_bearer_token",
         "admin_ocr_test_token",
     )
     @classmethod
@@ -348,16 +318,6 @@ class Settings(BaseSettings):
                 "POKER_EXTERNAL_PARSER_URL",
                 self.external_parser_url,
                 self.external_parser_bearer_token,
-            ),
-            (
-                "POKER_EXTERNAL_PROVIDER_URL",
-                self.external_provider_url,
-                self.external_provider_bearer_token,
-            ),
-            (
-                "POKER_LLM_ADVICE_URL",
-                self.llm_advice_url,
-                self.llm_advice_bearer_token,
             ),
         )
         for field_name, url, token in authenticated_urls:

@@ -1405,27 +1405,13 @@
             "title": "Parser Provider",
             "type": "string"
           },
-          "recommendation_engine": {
-            "title": "Recommendation Engine",
-            "type": "string"
-          },
-          "recommendation_provider": {
-            "title": "Recommendation Provider",
-            "type": "string"
-          },
           "status": {
             "const": "ok",
             "title": "Status",
             "type": "string"
           }
         },
-        "required": [
-          "status",
-          "environment",
-          "parser_provider",
-          "recommendation_provider",
-          "recommendation_engine"
-        ],
+        "required": ["status", "environment", "parser_provider"],
         "title": "HealthResponse",
         "type": "object"
       },

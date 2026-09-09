@@ -442,7 +442,7 @@ POKER_JOB_LAYOUTS = {
     ".github/workflows/backend-ci.yml": {
         "python": {
             "prepare-openapi": "contract: openapi spec",
-            "test": "backend: tests and solver",
+            "test": "backend: tests",
             "image": "backend: immutable image",
         },
         "node": {"build": "backend: lint, typecheck, test & build"},
@@ -4328,7 +4328,7 @@ def self_test() -> int:
     poker_backend = {
         JOB_WF: jobs_yaml(
             ("prepare-openapi", "contract: openapi spec"),
-            ("test", "backend: tests and solver"),
+            ("test", "backend: tests"),
             ("image", "backend: immutable image"),
         ),
         "apps/backend/pyproject.toml": "[project]\nname = 'fixture'\n",
@@ -4349,7 +4349,7 @@ def self_test() -> int:
         **poker_backend,
         JOB_WF: jobs_yaml(
             ("prepare-openapi", "contract: openapi spec"),
-            ("test", "backend: tests and solver"),
+            ("test", "backend: tests"),
         ),
     }
     found = [
@@ -4371,7 +4371,7 @@ def self_test() -> int:
         for f in compare(repo(**poker_renamed_test).get, repo(**node_backend).get)
         if f["kind"] == "jobname" and f["name"] == JOB_WF
     ]
-    assert len(found) == 1 and "expected `backend: tests and solver`" in found[0]["detail"], found
+    assert len(found) == 1 and "expected `backend: tests`" in found[0]["detail"], found
     POKER_OPENAPI_WF = ".github/workflows/openapi-check.yml"
     poker_openapi = {
         POKER_OPENAPI_WF: jobs_yaml(

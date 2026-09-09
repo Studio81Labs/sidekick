@@ -8,8 +8,6 @@ def test_health_response_validates_literal_status_and_payload_shape() -> None:
         status="ok",
         environment="production",
         parser_provider="ocr_cv",
-        recommendation_provider="local_solver",
-        recommendation_engine="local_solver",
     )
 
     assert health.status == "ok"
@@ -18,8 +16,6 @@ def test_health_response_validates_literal_status_and_payload_shape() -> None:
         "status": "ok",
         "environment": "production",
         "parser_provider": "ocr_cv",
-        "recommendation_provider": "local_solver",
-        "recommendation_engine": "local_solver",
     }
 
 
@@ -29,8 +25,6 @@ def test_health_response_rejects_invalid_status_and_environment() -> None:
             status="up",
             environment="production",
             parser_provider="ocr_cv",
-            recommendation_provider="rule_based",
-            recommendation_engine="engine",
         )
 
     with pytest.raises(ValidationError):
@@ -38,8 +32,6 @@ def test_health_response_rejects_invalid_status_and_environment() -> None:
             status="ok",
             environment="qa",  # type: ignore[arg-type]
             parser_provider="ocr_cv",
-            recommendation_provider="rule_based",
-            recommendation_engine="engine",
         )
 
 

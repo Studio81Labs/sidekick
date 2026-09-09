@@ -68,11 +68,12 @@ readiness inventory does not change architecture, so it creates no new ADR.
 
 - Synthetic parser fixtures and a passing current-subset assessment validate
   contracts and tooling, not the representative corpus or 99% import gate.
-- The retained V1 preflop chart and current postflop providers are heuristic.
-  They cannot be relabeled `solved`, move mastery, or generate drills.
-- A schema-v5 benchmark with synthetic qualified fixtures proves fail-closed
-  validation behavior, not source rights, solver correctness, real coverage, or
-  acceptable cost.
+- The V1 preflop chart, postflop providers, and screenshot benchmark were
+  removed under ADR 0079. Their removal neither qualifies a native source nor
+  permits mastery or drill generation.
+- A future native certification harness must prove its own fail-closed
+  validation behavior; it cannot reuse the retired screenshot schema as source
+  evidence.
 - Empty install-local reference and learning-content catalogs prove safe default
   behavior, not production readiness.
 - A retained `ReferenceActivatedGrade` and the player grade-audit response are
