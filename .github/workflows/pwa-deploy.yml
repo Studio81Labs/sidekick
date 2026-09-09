@@ -300,9 +300,9 @@ jobs:
             const backend = new URL(process.env.BACKEND_URL);
             const basePath = backend.pathname.replace(/\/+$/, "");
             backend.pathname = basePath.endsWith("/api")
-              ? `${basePath}/admin/ocr/jobs`
-              : `${basePath}/api/admin/ocr/jobs`;
-            backend.search = "?limit=1";
+              ? `${basePath}/pipeline`
+              : `${basePath}/api/pipeline`;
+            backend.search = "";
             backend.hash = "";
             process.stdout.write(backend.href);
           ')
