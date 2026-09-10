@@ -25,9 +25,9 @@ defined by
 The V2 target player/operator boundary, import-first persistence lifecycle, and
 capture-first migration are defined by
 [ADR 0046](../decisions/0046-adopt-import-first-learning-boundary.md). This
-reference describes the current repository while the ADR 0079 cutover is
-implemented. In particular, the Worker proxy
-and hosted file-backed API below are not an approved V2 player-data path: Phase 1
+reference describes the repository after the completed ADR 0079 cutover. The
+Worker proxy and hosted file-backed API below are not an approved V2 player-data
+path: Phase 1
 requires the ADR's loopback-only, authenticated co-located player runtime and
 local writable system of record.
 [ADR 0050](../decisions/0050-establish-local-player-runtime-security-substrate.md)
