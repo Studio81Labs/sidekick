@@ -1,6 +1,8 @@
 # ADR 0079: Adopt an Unreleased Current-Only Cutover
 
-Status: accepted by the product owner; implementation pending in #517 under Epic #405
+Status: accepted by the product owner; implemented in #517 via merged #519, #520
+and #521 under Epic #405. Completion checkpoint: 2026-09-10 at
+`ad3be0184b2606e4b8d6e04ad05cdb777db77ed6`.
 
 Date: 2026-09-09
 
@@ -13,11 +15,12 @@ and development artifacts as compatibility obligations. PR #500 consequently
 added old workspace/backup readers; the Phase 0 plan also retained the V1
 recommendation benchmark and hosted audit surface.
 
-At `578c8ed3b87f86d0685ca485696079c9b4a088bb` (#516), the code still reads
-workspace layouts 1–5 and player backups 1–3, adapts benchmark schemas 1–5 through
-the screenshot recommendation model, and builds the hosted analyzer alongside
-the local player UI. This decision changes that target; it does not claim those
-paths have already been removed.
+Before implementation, at `578c8ed3b87f86d0685ca485696079c9b4a088bb` (#516), the
+code read
+workspace layouts 1–5 and player backups 1–3, adapted benchmark schemas 1–5 through
+the screenshot recommendation model, and built the hosted analyzer alongside
+the local player UI. This is the historical decision context; the completed
+cutover removes those paths as specified below.
 
 This ADR supersedes V1 retention/fallback and pre-release compatibility
 requirements in ADRs 0046, 0047, 0059 and 0077 and the Epic plan. It preserves
@@ -108,15 +111,15 @@ reserved player-namespace denial and local PlayerApp/loopback composition.
 
 ### Execution and escalation
 
-Execute serially after the decision documentation:
+Completed serial sequence after the decision documentation:
 
-1. **C1:** current-only persistence, serialization and rejection/recovery tests.
-2. **C2:** remove legacy recommendation execution and its exclusive consumers;
+1. **C1 (#519):** current-only persistence, serialization and rejection/recovery tests.
+2. **C2 (#520):** remove legacy recommendation execution and its exclusive consumers;
    keep native unavailable/qualification boundaries.
-3. **C3:** explicit operator application/API cutover and final removal inventory.
+3. **C3 (#521):** explicit operator application/API cutover and final removal inventory.
 
-Each PR must pass its relevant checks and merge before the next. This cleanup
-is independent of the missing #409/#412 source evidence and can proceed now.
+All three PRs are merged and #517 is closed. This completed cleanup was
+independent of the missing #409/#412 source evidence; it does not qualify it.
 The existing evidence-dependent parser/reference work resumes when its inputs
 qualify; #414 validates the final candidate including this cutover.
 
