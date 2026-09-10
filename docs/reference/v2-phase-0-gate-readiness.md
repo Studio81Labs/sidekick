@@ -111,8 +111,9 @@ readiness inventory does not change architecture, so it creates no new ADR.
 
 1. Obtain an authorized or sanitized representative corpus under private
    custody and author labels independently of parser output.
-2. Preserve the completed bounded tournament/automatic/status mappings; extend
-   missing action-origin semantics only from new reviewed, versioned sources.
+2. Preserve the completed bounded tournament/automatic/status mappings;
+   implement remaining required tournament variants and missing action-origin
+   semantics only from new reviewed, versioned sources.
 3. Add verified coverage gates for every currently unsupported required
    category.
 4. Run the complete assessment with approximately 1,000 cases, the 99% floor,
