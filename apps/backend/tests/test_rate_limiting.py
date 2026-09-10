@@ -40,7 +40,7 @@ def make_client(tmp_path: Path, **overrides: object) -> TestClient:
 
 def upload(client: TestClient, *, headers: dict[str, str] | None = None):
     return client.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         headers={**ADMIN_OCR_TEST_HEADERS, **(headers or {})},
     )
@@ -198,17 +198,21 @@ def test_limiter_requires_a_complete_positive_policy() -> None:
 @pytest.mark.parametrize(
     ("method", "path", "expected"),
     [
-        ("POST", "/api/jobs", "uploads"),
-        ("GET", "/api/admin/ocr-test/session", "uploads"),
-        ("POST", "/api/benchmarks/run", "benchmarks"),
-        ("GET", "/api/backups/export", "data_transfers"),
-        ("POST", "/api/backups/restore", "data_transfers"),
-        ("GET", "/api/benchmarks/export", "data_transfers"),
-        ("POST", "/api/benchmarks/import", "data_transfers"),
-        ("GET", "/api/benchmarks/imports/import-1", "data_transfers"),
+        ("POST", "/api/admin/ocr/jobs", "uploads"),
+        ("GET", "/api/admin/ocr/session", "uploads"),
+        ("POST", "/api/admin/ocr/benchmarks/run", "benchmarks"),
+        ("GET", "/api/admin/ocr/backups/export", "data_transfers"),
+        ("POST", "/api/admin/ocr/backups/restore", "data_transfers"),
+        ("GET", "/api/admin/ocr/benchmarks/export", "data_transfers"),
+        ("POST", "/api/admin/ocr/benchmarks/import", "data_transfers"),
+        (
+            "GET",
+            "/api/admin/ocr/benchmarks/imports/import-1",
+            "data_transfers",
+        ),
         ("GET", "/api/health", None),
-        ("POST", "/api/jobs/job-1/approve", None),
-        ("POST", "/api/jobs/job-1/approve/extra", None),
+        ("POST", "/api/admin/ocr/jobs/job-1/approve", None),
+        ("POST", "/api/admin/ocr/jobs/job-1/approve/extra", None),
     ],
 )
 def test_rate_limit_category_matches_only_expensive_routes(
@@ -239,7 +243,7 @@ def test_upload_rate_limit_returns_retry_metadata_and_cors_headers(
 
     first = upload(client)
     rejected = client.post(
-        "/api/jobs",
+        "/api/admin/ocr/jobs",
         files={"file": ("table.png", VALID_PNG, "image/png")},
         headers={**ADMIN_OCR_TEST_HEADERS, "Origin": "http://localhost:5173"},
     )
@@ -298,7 +302,10 @@ def test_import_recovery_get_consumes_the_data_transfer_budget(
         api_rate_limit_data_transfers_per_minute=1,
     )
 
-    missing = client.get("/api/benchmarks/imports/missing-import")
+    missing = client.get(
+        "/api/admin/ocr/benchmarks/imports/missing-import",
+        headers=ADMIN_OCR_TEST_HEADERS,
+    )
     request_id = "pending-import"
     benchmark_store = FileBenchmarkStore(tmp_path)
     benchmark_store.begin_import(request_id, b"pending archive")
@@ -314,7 +321,10 @@ def test_import_recovery_get_consumes_the_data_transfer_budget(
         track_parse,
     )
 
-    limited = client.get(f"/api/benchmarks/imports/{request_id}")
+    limited = client.get(
+        f"/api/admin/ocr/benchmarks/imports/{request_id}",
+        headers=ADMIN_OCR_TEST_HEADERS,
+    )
 
     assert missing.status_code == 404
     assert limited.status_code == 429

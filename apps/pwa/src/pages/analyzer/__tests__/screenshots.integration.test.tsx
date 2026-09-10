@@ -79,7 +79,7 @@ describe("Analyzer screenshot management", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${cachedJob.id}/metadata`,
+        `http://localhost:8000/api/admin/ocr/jobs/${cachedJob.id}/metadata`,
         expect.objectContaining({
           method: "PUT",
           body: JSON.stringify({
@@ -151,8 +151,8 @@ describe("Analyzer screenshot management", () => {
       screen.queryByRole("dialog", { name: "Screenshot details" }),
     ).not.toBeInTheDocument();
     expect(fetchMock()).toHaveBeenCalledWith(
-      "http://localhost:8000/api/history",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 
@@ -197,8 +197,8 @@ describe("Analyzer screenshot management", () => {
       screen.getByText("No screenshots uploaded or captured yet"),
     ).toBeInTheDocument();
     expect(fetchMock()).toHaveBeenCalledWith(
-      `http://localhost:8000/api/jobs/${failedJob.id}`,
-      { method: "DELETE", credentials: "include" },
+      `http://localhost:8000/api/admin/ocr/jobs/${failedJob.id}`,
+      expect.objectContaining({ method: "DELETE", credentials: "include" }),
     );
   });
 
@@ -233,16 +233,17 @@ describe("Analyzer screenshot management", () => {
       }
       fetchMock().mockImplementation((url, options) => {
         if (
-          url === `http://localhost:8000/api/jobs/${missingJob.id}/metadata`
+          url ===
+          `http://localhost:8000/api/admin/ocr/jobs/${missingJob.id}/metadata`
         ) {
           return Promise.resolve(
             jsonResponse({ detail: "Job not found" }, 404),
           );
         }
-        if (url === "http://localhost:8000/api/jobs") {
+        if (url === "http://localhost:8000/api/admin/ocr/jobs") {
           return Promise.resolve(processingQueueResponse([]));
         }
-        if (url === "http://localhost:8000/api/history") {
+        if (url === "http://localhost:8000/api/admin/ocr/history") {
           return Promise.resolve(
             jsonResponse({
               total: 0,
@@ -284,14 +285,14 @@ describe("Analyzer screenshot management", () => {
       );
       await waitFor(() =>
         expect(fetchMock()).toHaveBeenCalledWith(
-          "http://localhost:8000/api/jobs",
-          { credentials: "include" },
+          "http://localhost:8000/api/admin/ocr/jobs",
+          expect.objectContaining({ credentials: "include" }),
         ),
       );
       await waitFor(() =>
         expect(fetchMock()).toHaveBeenCalledWith(
-          "http://localhost:8000/api/history",
-          { credentials: "include" },
+          "http://localhost:8000/api/admin/ocr/history",
+          expect.objectContaining({ credentials: "include" }),
         ),
       );
       expect(
@@ -313,7 +314,7 @@ describe("Analyzer screenshot management", () => {
     let persistedDeleted = false;
     fetchMock().mockImplementation((url, options) => {
       if (
-        url === "http://localhost:8000/api/jobs" &&
+        url === "http://localhost:8000/api/admin/ocr/jobs" &&
         options?.method === "POST"
       ) {
         uploadRequestId = String(
@@ -321,19 +322,19 @@ describe("Analyzer screenshot management", () => {
         );
         return Promise.reject(new TypeError("Connection lost after upload"));
       }
-      if (url === "http://localhost:8000/api/jobs") {
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
         return persistedDeleted
           ? Promise.resolve(processingQueueResponse([]))
           : pendingQueue.promise;
       }
       if (
-        url === `http://localhost:8000/api/jobs/${persistedJob.id}` &&
+        url === `http://localhost:8000/api/admin/ocr/jobs/${persistedJob.id}` &&
         options?.method === "DELETE"
       ) {
         persistedDeleted = true;
         return Promise.resolve(new Response(null, { status: 204 }));
       }
-      if (url === "http://localhost:8000/api/history") {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
         return Promise.resolve(
           jsonResponse({
             total: 0,
@@ -411,8 +412,8 @@ describe("Analyzer screenshot management", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        `http://localhost:8000/api/jobs/${persistedJob.id}`,
-        { method: "DELETE", credentials: "include" },
+        `http://localhost:8000/api/admin/ocr/jobs/${persistedJob.id}`,
+        expect.objectContaining({ method: "DELETE", credentials: "include" }),
       ),
     );
     expect(
@@ -448,12 +449,12 @@ describe("Analyzer screenshot management", () => {
     window.localStorage.setItem("poker-training-history-total-v1", "1");
     fetchMock().mockImplementation((url, options) => {
       if (
-        url === `http://localhost:8000/api/jobs/${jobId}` &&
+        url === `http://localhost:8000/api/admin/ocr/jobs/${jobId}` &&
         options?.method === "DELETE"
       ) {
         return Promise.resolve(new Response(null, { status: 204 }));
       }
-      if (url === "http://localhost:8000/api/history") {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
         return Promise.resolve(
           jsonResponse({
             total: 0,
@@ -462,7 +463,7 @@ describe("Analyzer screenshot management", () => {
           }),
         );
       }
-      if (url === "http://localhost:8000/api/jobs") {
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
         return Promise.resolve(processingQueueResponse([]));
       }
       throw new Error(`Unexpected request: ${String(url)}`);
@@ -485,8 +486,8 @@ describe("Analyzer screenshot management", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/history",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/history",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     await waitFor(() =>
@@ -522,7 +523,7 @@ describe("Analyzer screenshot management", () => {
     const deletedIds = new Set<string>();
     let benchmarkReads = 0;
     fetchMock().mockImplementation((url, options) => {
-      if (url === "http://localhost:8000/api/benchmarks") {
+      if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
         benchmarkReads += 1;
         if (benchmarkReads === 1) {
           return Promise.resolve(
@@ -538,20 +539,21 @@ describe("Analyzer screenshot management", () => {
           : secondDeletionOverview.promise;
       }
       const deletedJob = benchmarkJobs.find(
-        (candidate) => url === `http://localhost:8000/api/jobs/${candidate.id}`,
+        (candidate) =>
+          url === `http://localhost:8000/api/admin/ocr/jobs/${candidate.id}`,
       );
       if (deletedJob && options?.method === "DELETE") {
         deletedIds.add(deletedJob.id);
         return Promise.resolve(new Response(null, { status: 204 }));
       }
-      if (url === "http://localhost:8000/api/jobs") {
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
         return Promise.resolve(
           processingQueueResponse(
             benchmarkJobs.filter((candidate) => !deletedIds.has(candidate.id)),
           ),
         );
       }
-      if (url === "http://localhost:8000/api/history") {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
         return Promise.resolve(
           jsonResponse({
             total: 0,
@@ -650,12 +652,12 @@ describe("Analyzer screenshot management", () => {
     const deletionOverview = deferredResponse();
     const selectedOverview = deferredResponse();
     fetchMock().mockImplementation((url, options) => {
-      if (url === "http://localhost:8000/api/benchmarks") {
+      if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
         return deletionOverview.promise;
       }
       if (
         url ===
-        "http://localhost:8000/api/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna"
+        "http://localhost:8000/api/admin/ocr/benchmarks?parser_provider=ocr_cv&parser_layout_profile=fortuna"
       ) {
         return selectedOverview.promise;
       }
@@ -703,15 +705,16 @@ describe("Analyzer screenshot management", () => {
         );
       }
       if (
-        url === `http://localhost:8000/api/jobs/${staleBenchmarkJob.id}` &&
+        url ===
+          `http://localhost:8000/api/admin/ocr/jobs/${staleBenchmarkJob.id}` &&
         options?.method === "DELETE"
       ) {
         return Promise.resolve(new Response(null, { status: 204 }));
       }
-      if (url === "http://localhost:8000/api/jobs") {
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
         return Promise.resolve(processingQueueResponse([]));
       }
-      if (url === "http://localhost:8000/api/history") {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
         return Promise.resolve(
           jsonResponse({
             total: 0,
@@ -745,8 +748,8 @@ describe("Analyzer screenshot management", () => {
     );
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/benchmarks",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/benchmarks",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
 

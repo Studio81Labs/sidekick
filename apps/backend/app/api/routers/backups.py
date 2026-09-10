@@ -1,10 +1,10 @@
 """Application backup transport endpoints."""
 
-from fastapi import APIRouter, File, Header, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from app.api.administrative_access import require_administrator
+from app.api.administrative_access import administrator_access_router
 from app.api.dependencies import ApplicationBackupTransportError
 from app.api.response_contracts import ZIP_RESPONSE_CONTENT
 from app.application.backups import BackupService
@@ -14,11 +14,11 @@ from app.domain.backups import ApplicationBackupRestoreResult
 def create_backups_router(runtime: BackupService) -> APIRouter:
     """Build the application backup router with application-owned operations."""
 
-    router = APIRouter()
+    router = administrator_access_router(runtime.authorize_administrator)
 
     @router.get(
-        "/api/backups/export",
-        operation_id="backups_export",
+        "/api/admin/ocr/backups/export",
+        operation_id="admin_ocr_backups_export",
         response_class=StreamingResponse,
         responses={"200": {"content": ZIP_RESPONSE_CONTENT}},
     )
@@ -39,19 +39,13 @@ def create_backups_router(runtime: BackupService) -> APIRouter:
         )
 
     @router.post(
-        "/api/backups/restore",
-        operation_id="backups_restore",
+        "/api/admin/ocr/backups/restore",
+        operation_id="admin_ocr_backups_restore",
         response_model=ApplicationBackupRestoreResult,
     )
     async def restore_backup(
         file: UploadFile = File(...),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> ApplicationBackupRestoreResult:
-        require_administrator(runtime.authorize_administrator(authorization))
 
         archive_bytes = await file.read(runtime.max_upload_bytes + 1)
         if len(archive_bytes) > runtime.max_upload_bytes:

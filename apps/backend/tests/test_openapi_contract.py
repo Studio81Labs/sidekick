@@ -5,32 +5,40 @@ from app.config import Settings
 
 
 EXPECTED_OPERATION_IDS = {
-    ("DELETE", "/api/jobs/{job_id}"): "job_delete",
+    ("DELETE", "/api/admin/ocr/jobs/{job_id}"): "admin_ocr_job_delete",
     ("DELETE", "/api/mcp/principals/{principal_id}"): "mcp_principal_revoke",
-    ("GET", "/api/admin/ocr-test/session"): "admin_ocr_test_session_get",
-    ("GET", "/api/backups/export"): "backups_export",
-    ("GET", "/api/benchmarks"): "benchmarks_get",
-    ("GET", "/api/benchmarks/export"): "benchmarks_export",
-    ("GET", "/api/benchmarks/imports/{request_id}"): "benchmark_import_get",
-    ("GET", "/api/benchmarks/{report_id}"): "benchmark_report_get",
+    ("GET", "/api/admin/ocr/backups/export"): "admin_ocr_backups_export",
+    ("GET", "/api/admin/ocr/benchmarks"): "admin_ocr_benchmarks_get",
+    ("GET", "/api/admin/ocr/benchmarks/export"): "admin_ocr_benchmarks_export",
+    ("GET", "/api/admin/ocr/benchmarks/imports/{request_id}"): (
+        "admin_ocr_benchmark_import_get"
+    ),
+    ("GET", "/api/admin/ocr/benchmarks/{report_id}"): (
+        "admin_ocr_benchmark_report_get"
+    ),
+    ("GET", "/api/admin/ocr/history"): "admin_ocr_history_get",
+    ("GET", "/api/admin/ocr/jobs"): "admin_ocr_jobs_list",
+    ("GET", "/api/admin/ocr/jobs/{job_id}"): "admin_ocr_job_get",
+    ("GET", "/api/admin/ocr/jobs/{job_id}/image"): "admin_ocr_job_image_get",
+    ("GET", "/api/admin/ocr/session"): "admin_ocr_session_get",
     ("GET", "/api/health"): "health_get",
-    ("GET", "/api/history"): "history_get",
-    ("GET", "/api/jobs"): "jobs_list",
-    ("GET", "/api/jobs/{job_id}"): "job_get",
-    ("GET", "/api/jobs/{job_id}/image"): "job_image_get",
     ("GET", "/api/mcp/config"): "mcp_config_get",
     ("GET", "/api/mcp/principals"): "mcp_principals_list",
     ("GET", "/api/pipeline"): "pipeline_get",
-    ("POST", "/api/backups/restore"): "backups_restore",
-    ("POST", "/api/benchmarks/import"): "benchmarks_import",
-    ("POST", "/api/benchmarks/run"): "benchmarks_run",
-    ("POST", "/api/jobs"): "jobs_create",
-    ("POST", "/api/jobs/{job_id}/approve"): "job_approve",
+    ("POST", "/api/admin/ocr/backups/restore"): "admin_ocr_backups_restore",
+    ("POST", "/api/admin/ocr/benchmarks/import"): "admin_ocr_benchmarks_import",
+    ("POST", "/api/admin/ocr/benchmarks/run"): "admin_ocr_benchmarks_run",
+    ("POST", "/api/admin/ocr/jobs"): "admin_ocr_jobs_create",
+    ("POST", "/api/admin/ocr/jobs/{job_id}/approve"): "admin_ocr_job_approve",
     ("POST", "/api/mcp/principals"): "mcp_principals_create",
     ("POST", "/api/mcp/principals/{principal_id}/rotate"): "mcp_principal_rotate",
-    ("PUT", "/api/history"): "history_archive",
-    ("PUT", "/api/jobs/{job_id}/benchmark"): "job_benchmark_update",
-    ("PUT", "/api/jobs/{job_id}/metadata"): "job_metadata_update",
+    ("PUT", "/api/admin/ocr/history"): "admin_ocr_history_archive",
+    ("PUT", "/api/admin/ocr/jobs/{job_id}/benchmark"): (
+        "admin_ocr_job_benchmark_update"
+    ),
+    ("PUT", "/api/admin/ocr/jobs/{job_id}/metadata"): (
+        "admin_ocr_job_metadata_update"
+    ),
 }
 
 
@@ -80,12 +88,12 @@ def test_binary_and_markdown_response_contracts_are_explicit(tmp_path: Path) -> 
 
     binary_schema = {"schema": {"type": "string", "format": "binary"}}
     expected_content = {
-        ("/api/jobs/{job_id}/image", "image/gif"): binary_schema,
-        ("/api/jobs/{job_id}/image", "image/jpeg"): binary_schema,
-        ("/api/jobs/{job_id}/image", "image/png"): binary_schema,
-        ("/api/jobs/{job_id}/image", "image/webp"): binary_schema,
-        ("/api/backups/export", "application/zip"): binary_schema,
-        ("/api/benchmarks/export", "application/zip"): binary_schema,
+        ("/api/admin/ocr/jobs/{job_id}/image", "image/gif"): binary_schema,
+        ("/api/admin/ocr/jobs/{job_id}/image", "image/jpeg"): binary_schema,
+        ("/api/admin/ocr/jobs/{job_id}/image", "image/png"): binary_schema,
+        ("/api/admin/ocr/jobs/{job_id}/image", "image/webp"): binary_schema,
+        ("/api/admin/ocr/backups/export", "application/zip"): binary_schema,
+        ("/api/admin/ocr/benchmarks/export", "application/zip"): binary_schema,
     }
 
     actual_content = {
@@ -93,9 +101,9 @@ def test_binary_and_markdown_response_contracts_are_explicit(tmp_path: Path) -> 
         for path, content_type, schema in (
             (path, content_type, schema)
             for path in (
-                "/api/jobs/{job_id}/image",
-                "/api/backups/export",
-                "/api/benchmarks/export",
+                "/api/admin/ocr/jobs/{job_id}/image",
+                "/api/admin/ocr/backups/export",
+                "/api/admin/ocr/benchmarks/export",
             )
             for content_type, schema in document["paths"][path]["get"]["responses"][
                 "200"
@@ -104,3 +112,26 @@ def test_binary_and_markdown_response_contracts_are_explicit(tmp_path: Path) -> 
     }
 
     assert actual_content == expected_content
+
+
+def test_administrative_operations_declare_bearer_access(tmp_path: Path) -> None:
+    document = openapi_document(tmp_path)
+
+    assert document["components"]["securitySchemes"]["AdministratorBearer"] == {
+        "scheme": "bearer",
+        "type": "http",
+    }
+
+    for path, path_item in document["paths"].items():
+        if not path.startswith("/api/admin/ocr/"):
+            continue
+        for operation in path_item.values():
+            assert operation["security"] == [{"AdministratorBearer": []}]
+            assert operation["responses"]["401"] == {
+                "description": "Administrative OCR test authorization is required"
+            }
+            assert operation["responses"]["403"] == {
+                "description": (
+                    "Administrative OCR test mode is disabled or authorization was refused"
+                )
+            }

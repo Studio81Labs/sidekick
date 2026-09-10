@@ -58,7 +58,7 @@ describe("import benchmark dataset command", () => {
     expect(queryClient.getQueryState(overviewKey)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(reportKey)?.isInvalidated).toBe(false);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/benchmarks/import",
+      "http://localhost:8000/api/admin/ocr/benchmarks/import",
       expect.objectContaining({
         headers: {
           Authorization: "Bearer administrator-token",

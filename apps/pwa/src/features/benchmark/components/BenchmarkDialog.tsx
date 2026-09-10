@@ -36,6 +36,7 @@ export interface BenchmarkDialogProps {
   loading: boolean;
   onClose: () => void;
   onChooseDatasetImport: () => void;
+  onDatasetExport: () => void | Promise<void>;
   onDatasetImport: (
     event: ChangeEvent<HTMLInputElement>,
   ) => void | Promise<void>;
@@ -76,6 +77,7 @@ export function BenchmarkDialog({
   loading,
   onClose,
   onChooseDatasetImport,
+  onDatasetExport,
   onDatasetImport,
   onReviewCase,
   onRun,
@@ -198,6 +200,7 @@ export function BenchmarkDialog({
         includedCases={includedCases}
         onChooseDatasetImport={onChooseDatasetImport}
         onClose={onClose}
+        onDatasetExport={onDatasetExport}
         onDatasetImport={onDatasetImport}
         onRun={onRun}
         operationsLocked={operationsLocked}

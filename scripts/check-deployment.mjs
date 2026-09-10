@@ -213,21 +213,23 @@ async function checkOnce(baseUrl, headers, timeoutMs) {
     throw new Error("API health response did not report status ok");
   }
 
-  const queue = parseJson(
-    await fetchText(
-      baseUrl,
-      "/api/jobs?limit=1",
-      "Protected API proxy",
-      headers,
-      timeoutMs,
-    ),
-    "Protected API proxy",
+  await expectStatus(
+    baseUrl,
+    "/api/jobs?limit=1",
+    "Retired operator API route",
+    headers,
+    timeoutMs,
+    404,
   );
-  if (!Array.isArray(queue?.jobs)) {
-    throw new Error(
-      "Protected API proxy response did not contain a jobs array",
-    );
-  }
+
+  await expectStatus(
+    baseUrl,
+    "/api/admin/ocr/jobs?limit=1",
+    "Administrator OCR API boundary",
+    headers,
+    timeoutMs,
+    [401, 403],
+  );
 
   const mcpConfig = parseJson(
     await fetchText(

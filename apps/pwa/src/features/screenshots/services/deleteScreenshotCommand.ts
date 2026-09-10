@@ -4,6 +4,8 @@ import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { deleteJob } from "../../../domains/jobs/api/jobsApi";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
   supersedeLatestQueryResults,
   supersedeLatestQueryWrites,
 } from "../../../shared/api/queryCache";
@@ -11,14 +13,17 @@ import {
 export async function deleteScreenshotCommand(
   queryClient: QueryClient,
   jobId: string,
+  administratorToken: string,
 ) {
-  await deleteJob(jobId);
+  const accessGeneration = captureQueryAccessGeneration(queryClient);
+  await deleteJob(jobId, administratorToken);
   const cache = {
     removed: jobQueryKeys.detail(jobId),
     invalidated: [jobQueryKeys.processing(), historyQueryKeys.all] as const,
   };
   const superseded = [cache.removed, ...cache.invalidated] as const;
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   supersedeLatestQueryWrites(queryClient, cache.removed);
   for (const queryKey of superseded) {
     supersedeLatestQueryResults(queryClient, queryKey);
@@ -30,6 +35,7 @@ export async function deleteScreenshotCommand(
     ),
   ]);
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   queryClient.removeQueries({ queryKey: cache.removed, exact: true });
   await Promise.all(
     cache.invalidated.map((queryKey) =>

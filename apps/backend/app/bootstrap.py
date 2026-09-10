@@ -490,7 +490,7 @@ class DataMutationLockMiddleware:
     """Coordinate API mutations with consistent cross-process snapshots."""
 
     MUTATING_METHODS = frozenset({"DELETE", "PATCH", "POST", "PUT"})
-    MUTATING_GET_PATH_PREFIXES = ("/api/benchmarks/imports/",)
+    MUTATING_GET_PATH_PREFIXES = ("/api/admin/ocr/benchmarks/imports/",)
 
     def __init__(self, app: ASGIApp, data_lock: InterprocessDataLock) -> None:
         self.app = app
@@ -917,7 +917,6 @@ def create_app(
             endpoint=(
                 active_settings.mcp_public_url if active_settings.mcp_enabled else None
             ),
-            writes_enabled=active_settings.mcp_allow_writes,
         )
 
     async def list_mcp_principals() -> McpPrincipalList:
@@ -930,18 +929,9 @@ def create_app(
         request: CreateMcpPrincipalRequest,
     ) -> McpIssuedPrincipal:
         store_for_mcp = require_mcp_principal_store(mcp_principal_store)
-        if (
-            active_settings.deployment_environment != "staging"
-            and "write" in request.scopes
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="MCP write credentials can only be issued in staging",
-            )
         return await run_in_threadpool(
             store_for_mcp.create,
             name=request.name,
-            scopes=request.scopes,
             expires_at=request.expires_at,
         )
 
@@ -1065,10 +1055,19 @@ def create_app(
     app.include_router(create_admin_ocr_test_router(admin_ocr_test_runtime))
     app.include_router(create_mcp_admin_router(mcp_admin_runtime))
 
-    app.include_router(create_history_router(history_runtime))
-    app.include_router(create_jobs_router(jobs_read_runtime))
+    app.include_router(
+        create_history_router(history_runtime, admin_ocr_test_policy.authorize)
+    )
+    app.include_router(
+        create_jobs_router(jobs_read_runtime, admin_ocr_test_policy.authorize)
+    )
     app.include_router(create_job_upload_router(jobs_upload_runtime))
-    app.include_router(create_job_mutations_router(jobs_mutation_runtime))
+    app.include_router(
+        create_job_mutations_router(
+            jobs_mutation_runtime,
+            admin_ocr_test_policy.authorize,
+        )
+    )
 
     def set_benchmark_inclusion(
         job_id: str,

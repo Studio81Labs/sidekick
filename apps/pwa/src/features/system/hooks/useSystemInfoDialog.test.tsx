@@ -13,7 +13,7 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 describe("useSystemInfoDialog", () => {
-  it("keeps the dialog mounted while MCP close is blocked", () => {
+  it("keeps the dialog mounted while another operation blocks closing", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue(
@@ -28,12 +28,10 @@ describe("useSystemInfoDialog", () => {
 
     act(() => {
       result.current.openDialog();
-      result.current.setMcpCloseBlocked(true);
     });
-    act(() => result.current.closeDialog());
+    act(() => result.current.closeDialog(true));
     expect(result.current.dialogOpen).toBe(true);
 
-    act(() => result.current.setMcpCloseBlocked(false));
     act(() => result.current.closeDialog());
     expect(result.current.dialogOpen).toBe(false);
   });

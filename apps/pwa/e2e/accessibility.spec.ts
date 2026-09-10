@@ -8,7 +8,7 @@ test("analyzer route has no blocking WCAG accessibility violations", async ({
 }) => {
   await page.goto("/");
   await expect(
-    page.getByRole("region", { name: "Analyzer controls" }),
+    page.getByRole("dialog", { name: "Administrator tools" }),
   ).toBeVisible();
 
   const audit = await new AxeBuilder({ page })

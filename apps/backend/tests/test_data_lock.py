@@ -108,7 +108,7 @@ def test_get_triggered_import_resume_joins_active_mutations(
     request_thread = _run_request(
         middleware,
         method="GET",
-        path="/api/benchmarks/imports/import-request-1",
+        path="/api/admin/ocr/benchmarks/imports/import-request-1",
     )
     assert request_entered.wait(timeout=5)
     snapshot_thread = Thread(target=acquire_snapshot)

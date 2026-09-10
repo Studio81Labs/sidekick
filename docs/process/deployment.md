@@ -61,21 +61,23 @@ Screenshot upload and live capture are disabled for players. To test parsers
 against representative screenshots, set `POKER_ADMIN_OCR_TEST_ENABLED=true` and
 a dedicated `POKER_ADMIN_OCR_TEST_TOKEN` (`openssl rand -hex 32`; at least 32
 printable ASCII characters, never equal to `POKER_PROXY_SHARED_SECRET`). The
-backend requires that token as `Authorization: Bearer ...` on every upload,
-every benchmark dataset import, and every backup restore. Enter the token
-only in the PWA **Administrator tools** dialog; it stays in browser memory
-until locked or reloaded. The PWA verifies the token with the backend
-through `GET /api/admin/ocr-test/session` before it unlocks any capture control.
-Disable the mode with `POKER_ADMIN_OCR_TEST_ENABLED=false`. No setting enables a
-player capture path or a retired V1 recommendation runtime.
+hosted operator console is `/admin/ocr`. It requires the token as
+`Authorization: Bearer ...` on every administrator OCR read and mutation:
+jobs and images, history, parser benchmarks, and backups. Enter the token only
+at that console's access gate; it stays in browser memory until locked or
+reloaded. The PWA verifies it through `GET /api/admin/ocr/session` before it
+shows any workspace data. Disable the mode with
+`POKER_ADMIN_OCR_TEST_ENABLED=false`. No setting enables hosted player data,
+player capture, or a retired V1 recommendation runtime.
 
 After deployment, verify:
 
 ```bash
 curl --fail https://<backend-origin>/api/health
 test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  https://<backend-origin>/api/jobs)" = "401"
-curl --fail https://<worker-origin>/api/jobs?limit=1
+  https://<backend-origin>/api/admin/ocr/jobs)" = "401"
+test "$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  https://<worker-origin>/api/jobs?limit=1)" = "404"
 ```
 
 Every backend API response includes an `X-Request-ID`. The backend preserves a
@@ -95,21 +97,18 @@ deployment diagnosis; the default `INFO` threshold suppresses them.
 
 Use one local stdio MCP process per target environment. Start from
 `apps/backend/mcp.env.example`, supply the variables through the MCP client's
-secret/environment configuration, and run `pnpm backend:mcp`. Production
-rejects `POKER_MCP_ALLOW_WRITES=true`; staging requires that explicit opt-in
-before mutation tools are registered.
+secret/environment configuration, and run `pnpm backend:mcp`. The retained
+gateway exposes environment status only; it has no operator-data or mutation
+tool.
 
 Prefer Cloudflare Access service credentials when the gateway calls the public
 Worker. Store `POKER_MCP_CF_ACCESS_CLIENT_ID` and
-`POKER_MCP_CF_ACCESS_CLIENT_SECRET` outside the repository. Direct backend
-access can use `POKER_MCP_API_PROXY_SECRET` only from a trusted gateway process;
-the value matches `POKER_PROXY_SHARED_SECRET` but remains an internal service
-credential, not agent identity. All credential-bearing targets require HTTPS.
+`POKER_MCP_CF_ACCESS_CLIENT_SECRET` outside the repository. All
+credential-bearing targets require HTTPS.
 
-The gateway's only staging write tool approves a reviewed hand's canonical
-state (`approve_hand_state`); screenshots must be uploaded through the app.
-The gateway deliberately does not expose backup restore, dataset import,
-benchmark execution, or bulk archive operations.
+The gateway does not expose uploads, jobs, images, history, approval, backup,
+dataset, benchmark, or archive operations. Use the explicit `/admin/ocr`
+operator surface for those actions.
 
 ## Hosted Agent MCP Access
 
@@ -121,8 +120,7 @@ surface, and add the URL plus `bearer_token_env_var` to Codex.
 
 For the current rollout, configure staging only. Keep production
 `POKER_MCP_ENABLED=false` until production read access is explicitly approved.
-Staging writes require `POKER_MCP_ALLOW_WRITES=true` as well as a credential
-with write scope. Production configuration rejects that write flag.
+The retained MCP capability is read-only environment status.
 
 The Cloudflare Worker proxies the exact `/mcp` path as well as `/api/*` and
 preserves the caller's bearer header. If the MCP public URL is the Worker URL,
@@ -135,7 +133,9 @@ deployment environment and in any other environment before enabling its MCP
 endpoint. The Worker requires it on `/api/mcp/principals` and descendant routes,
 compares it without forwarding it, and fails closed when the secret is missing.
 Enter it only into the **Agent access** unlock field; the PWA keeps it in
-memory until the dialog is closed, reloaded, or locked. Do not reuse an agent
+memory until the page is closed, reloaded, or locked. The credential-management
+page is `/admin/ocr/mcp` and remains available while OCR test mode is disabled.
+Do not reuse an agent
 credential or `API_PROXY_SECRET` for this purpose. The value must contain at
 least 32 printable ASCII characters without spaces; deployment rejects weak,
 malformed, or reused values.
@@ -443,13 +443,13 @@ The hourly interval keeps the private staging monitor within a practical GitHub
 Actions budget alongside ordinary CI. Use manual dispatch for an immediate
 post-maintenance check.
 
-The probe validates all three deployment boundaries with bounded one-MiB
+The probe validates the public shell and retirement boundary with bounded one-MiB
 responses, a 20-second attempt timeout, and three attempts:
 
 - the SPA returns the stable `application-name` metadata marker for Poker Hero;
 - same-origin `/api/health` returns JSON with `status: "ok"`;
-- same-origin `/api/jobs?limit=1` returns a queue-shaped response, proving the
-  Worker proxy and its backend credential are operational.
+- the retired same-origin `/api/jobs?limit=1` route returns `404`; current
+  administrator OCR data is never exposed to the unauthenticated monitor.
 
 If Cloudflare Access protects the hostname, configure both
 `CLOUDFLARE_ACCESS_CLIENT_ID` and `CLOUDFLARE_ACCESS_CLIENT_SECRET` as

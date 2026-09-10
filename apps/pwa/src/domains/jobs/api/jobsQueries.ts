@@ -16,42 +16,65 @@ export const jobQueryKeys = {
     [...jobQueryKeys.processing(), { offset }] as const,
 };
 
-export function jobQueryOptions(jobId: string) {
+export function jobQueryOptions(jobId: string, administratorToken: string) {
   return queryOptions({
-    queryFn: ({ signal }) => getJob(jobId, signal),
+    queryFn: ({ signal }) => getJob(jobId, administratorToken, signal),
     queryKey: jobQueryKeys.detail(jobId),
     staleTime: 0,
   });
 }
 
-export function processingJobsQueryOptions(offset = 0) {
+export function processingJobsQueryOptions(
+  administratorToken: string,
+  offset = 0,
+) {
   return queryOptions({
-    queryFn: ({ signal }) => getProcessingJobs(offset, signal),
+    queryFn: ({ signal }) =>
+      getProcessingJobs(offset, administratorToken, signal),
     queryKey: jobQueryKeys.processingPage(offset),
     staleTime: 0,
   });
 }
 
-export function fetchJobQuery(queryClient: QueryClient, jobId: string) {
+export function fetchJobQuery(
+  queryClient: QueryClient,
+  jobId: string,
+  administratorToken: string,
+) {
   return cacheLatestQueryResult(
     queryClient,
     jobQueryKeys.detail(jobId),
-    getJob(jobId),
+    getJob(jobId, administratorToken),
   );
 }
 
-export function fetchProcessingJobsQuery(queryClient: QueryClient, offset = 0) {
+export function fetchProcessingJobsQuery(
+  queryClient: QueryClient,
+  administratorToken: string,
+  offset = 0,
+) {
   return cacheLatestQueryResult(
     queryClient,
     jobQueryKeys.processingPage(offset),
-    getProcessingJobs(offset),
+    getProcessingJobs(offset, administratorToken),
   );
 }
 
-export function useJobQuery(jobId: string, enabled: boolean) {
-  return useQuery({ ...jobQueryOptions(jobId), enabled });
+export function useJobQuery(
+  jobId: string,
+  administratorToken: string,
+  enabled: boolean,
+) {
+  return useQuery({ ...jobQueryOptions(jobId, administratorToken), enabled });
 }
 
-export function useProcessingJobsQuery(offset = 0, enabled = true) {
-  return useQuery({ ...processingJobsQueryOptions(offset), enabled });
+export function useProcessingJobsQuery(
+  administratorToken: string,
+  offset = 0,
+  enabled = true,
+) {
+  return useQuery({
+    ...processingJobsQueryOptions(administratorToken, offset),
+    enabled,
+  });
 }

@@ -27,7 +27,7 @@ describe("administrative OCR test API adapter", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/admin/ocr-test/session",
+      "http://localhost:8000/api/admin/ocr/session",
       expect.objectContaining({
         cache: "no-store",
         credentials: "include",

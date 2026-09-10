@@ -31,7 +31,11 @@ from app.domain.benchmarks import (
 from app.domain.hands import JobRecord
 from app.domain.health import HealthResponse
 from app.domain.pipeline import PipelineCapabilities, PipelineSelection
-from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
+from api_test_support import (
+    ADMIN_OCR_TEST_HEADERS,
+    ADMIN_OCR_TEST_TOKEN,
+    CurrentAdminOcrTestClient,
+)
 
 
 ADMIN_OCR_TEST_POLICY = AdminOcrTestAccessPolicy.for_token(ADMIN_OCR_TEST_TOKEN)
@@ -107,6 +111,12 @@ def default_runtime() -> BenchmarksRuntime:
 
 
 def make_client(runtime: BenchmarksRuntime | None = None) -> TestClient:
+    app = FastAPI()
+    app.include_router(create_benchmarks_router(runtime or default_runtime()))
+    return CurrentAdminOcrTestClient(app)
+
+
+def make_transport_client(runtime: BenchmarksRuntime | None = None) -> TestClient:
     app = FastAPI()
     app.include_router(create_benchmarks_router(runtime or default_runtime()))
     return TestClient(app)
@@ -191,7 +201,7 @@ def test_benchmarks_router_delegates_validated_requests_and_streams_exports() ->
                 },
             ),
             client.post(
-                "/api/benchmarks/import",
+                "/api/admin/ocr/benchmarks/import",
                 files={"file": ("dataset.zip", b"dataset", "application/zip")},
                 headers={
                     **ADMIN_OCR_TEST_HEADERS,
@@ -261,7 +271,7 @@ def test_benchmarks_router_preserves_request_validation_and_upload_bounds() -> N
                 params={"parser_layout_profile": "invalid-profile"},
             ),
             client.post(
-                "/api/benchmarks/import",
+                "/api/admin/ocr/benchmarks/import",
                 files={"file": ("dataset.zip", b"zip", "application/zip")},
                 headers={
                     **ADMIN_OCR_TEST_HEADERS,
@@ -269,7 +279,7 @@ def test_benchmarks_router_preserves_request_validation_and_upload_bounds() -> N
                 },
             ),
             client.post(
-                "/api/benchmarks/import",
+                "/api/admin/ocr/benchmarks/import",
                 files={"file": ("dataset.zip", b"four", "application/zip")},
                 headers=ADMIN_OCR_TEST_HEADERS,
             ),
@@ -329,7 +339,7 @@ def test_benchmark_import_runs_application_work_outside_event_loop() -> None:
         ) as client:
             safety_release.start()
             import_task = asyncio.create_task(client.post(
-                "/api/benchmarks/import",
+                "/api/admin/ocr/benchmarks/import",
                 files={"file": ("dataset.zip", b"zip", "application/zip")},
                 headers=ADMIN_OCR_TEST_HEADERS,
             ))
@@ -446,21 +456,21 @@ def test_benchmarks_router_refuses_import_without_the_administrator_credential()
             authorize_administrator=lambda _authorization_header: decision,
         )
 
-    with make_client(runtime_deciding("disabled")) as client:
+    with make_transport_client(runtime_deciding("disabled")) as client:
         disabled = client.post(
-            "/api/benchmarks/import",
+            "/api/admin/ocr/benchmarks/import",
             files={"file": ("dataset.zip", b"dataset", "application/zip")},
             headers=ADMIN_OCR_TEST_HEADERS,
         )
     authorizing = replace(default_runtime(), import_dataset=should_not_import)
-    with make_client(authorizing) as client:
+    with make_transport_client(authorizing) as client:
         missing = client.post(
-            "/api/benchmarks/import",
+            "/api/admin/ocr/benchmarks/import",
             files={"file": ("dataset.zip", b"dataset", "application/zip")},
         )
-    with make_client(runtime_deciding("expired")) as client:
+    with make_transport_client(runtime_deciding("expired")) as client:
         unexpected = client.post(
-            "/api/benchmarks/import",
+            "/api/admin/ocr/benchmarks/import",
             files={"file": ("dataset.zip", b"dataset", "application/zip")},
             headers=ADMIN_OCR_TEST_HEADERS,
         )
@@ -484,9 +494,9 @@ def test_benchmarks_router_refuses_import_without_the_administrator_credential()
 def test_benchmarks_router_denies_before_reading_an_oversize_archive() -> None:
     runtime = replace(default_runtime(), max_dataset_upload_bytes=3)
 
-    with make_client(runtime) as client:
+    with make_transport_client(runtime) as client:
         response = client.post(
-            "/api/benchmarks/import",
+            "/api/admin/ocr/benchmarks/import",
             files={"file": ("dataset.zip", b"far too large", "application/zip")},
         )
 
@@ -497,20 +507,30 @@ def test_benchmarks_router_preserves_public_operation_ids() -> None:
     with make_client() as client:
         paths = client.app.openapi()["paths"]
 
-    assert paths["/api/jobs/{job_id}/benchmark"]["put"]["operationId"] == (
-        "job_benchmark_update"
+    assert paths["/api/admin/ocr/jobs/{job_id}/benchmark"]["put"][
+        "operationId"
+    ] == (
+        "admin_ocr_job_benchmark_update"
     )
-    assert paths["/api/benchmarks"]["get"]["operationId"] == "benchmarks_get"
-    assert paths["/api/benchmarks/export"]["get"]["operationId"] == (
-        "benchmarks_export"
+    assert paths["/api/admin/ocr/benchmarks"]["get"]["operationId"] == (
+        "admin_ocr_benchmarks_get"
     )
-    assert paths["/api/benchmarks/import"]["post"]["operationId"] == (
-        "benchmarks_import"
+    assert paths["/api/admin/ocr/benchmarks/export"]["get"]["operationId"] == (
+        "admin_ocr_benchmarks_export"
     )
-    assert paths["/api/benchmarks/imports/{request_id}"]["get"]["operationId"] == (
-        "benchmark_import_get"
+    assert paths["/api/admin/ocr/benchmarks/import"]["post"]["operationId"] == (
+        "admin_ocr_benchmarks_import"
     )
-    assert paths["/api/benchmarks/{report_id}"]["get"]["operationId"] == (
-        "benchmark_report_get"
+    assert paths["/api/admin/ocr/benchmarks/imports/{request_id}"]["get"][
+        "operationId"
+    ] == (
+        "admin_ocr_benchmark_import_get"
     )
-    assert paths["/api/benchmarks/run"]["post"]["operationId"] == "benchmarks_run"
+    assert paths["/api/admin/ocr/benchmarks/{report_id}"]["get"][
+        "operationId"
+    ] == (
+        "admin_ocr_benchmark_report_get"
+    )
+    assert paths["/api/admin/ocr/benchmarks/run"]["post"]["operationId"] == (
+        "admin_ocr_benchmarks_run"
+    )

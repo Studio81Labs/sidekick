@@ -62,9 +62,7 @@ def build_hosted_mcp_runtime(
     gateway_settings = McpGatewaySettings(
         environment=environment,
         api_base_url=public_origin,
-        allow_writes=settings.mcp_allow_writes,
         request_timeout_seconds=settings.external_request_timeout_seconds,
-        api_proxy_secret=settings.proxy_shared_secret,
     )
     client = httpx.AsyncClient(
         transport=httpx.ASGITransport(app=api_app),
@@ -95,7 +93,6 @@ def build_hosted_mcp_runtime(
                 else None
             ),
             read_calls_per_minute=settings.mcp_read_calls_per_minute,
-            write_calls_per_minute=settings.mcp_write_calls_per_minute,
         ),
         client,
         app,
@@ -112,7 +109,6 @@ class HostedMcpAuthMiddleware:
         allowed_origins: frozenset[str],
         proxy_shared_secret: str | None,
         read_calls_per_minute: int,
-        write_calls_per_minute: int,
     ) -> None:
         self.app = app
         self.principal_store = principal_store
@@ -121,7 +117,6 @@ class HostedMcpAuthMiddleware:
         self.proxy_shared_secret = proxy_shared_secret
         self.rate_limiter = _McpRateLimiter(
             read_calls_per_minute=read_calls_per_minute,
-            write_calls_per_minute=write_calls_per_minute,
         )
         self.body_read_limiter = _McpBodyReadLimiter()
 
@@ -176,7 +171,7 @@ class HostedMcpAuthMiddleware:
             return
         try:
             try:
-                body, replay_receive = await _buffer_request_body(receive)
+                _body, replay_receive = await _buffer_request_body(receive)
             except _McpRequestTooLarge:
                 await _send_json(
                     send,
@@ -186,16 +181,12 @@ class HostedMcpAuthMiddleware:
                 return
         finally:
             self.body_read_limiter.release(principal.id)
-        rate_category = _request_rate_category(body)
-        allowed, retry_after = self.rate_limiter.check(
-            principal.id,
-            rate_category,
-        )
+        allowed, retry_after = self.rate_limiter.check(principal.id)
         if not allowed:
             await _send_json(
                 send,
                 429,
-                {"detail": f"MCP {rate_category} rate limit exceeded"},
+                {"detail": "MCP rate limit exceeded"},
                 extra_headers=[
                     (b"retry-after", str(retry_after).encode("ascii")),
                 ],
@@ -256,7 +247,6 @@ async def _send_json(
     await send({"type": "http.response.body", "body": body})
 
 
-MCP_WRITE_TOOLS = frozenset({"approve_hand_state"})
 MCP_MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024
 MCP_MAX_CONCURRENT_BODY_READS_PER_PRINCIPAL = 4
 
@@ -289,21 +279,6 @@ class _McpBodyReadLimiter:
                 self.active.pop(principal_id, None)
             else:
                 self.active[principal_id] = active - 1
-
-
-def _request_rate_category(body: bytes) -> str:
-    try:
-        payload = json.loads(body)
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return "read"
-    if (
-        isinstance(payload, dict)
-        and payload.get("method") == "tools/call"
-        and isinstance(payload.get("params"), dict)
-        and payload["params"].get("name") in MCP_WRITE_TOOLS
-    ):
-        return "write"
-    return "read"
 
 
 async def _buffer_request_body(receive: Receive) -> tuple[bytes, Receive]:
@@ -339,42 +314,33 @@ async def _buffer_request_body(receive: Receive) -> tuple[bytes, Receive]:
 class _McpRateLimiter:
     MAX_BUCKETS = 4_096
 
-    def __init__(
-        self,
-        *,
-        read_calls_per_minute: int,
-        write_calls_per_minute: int,
-    ) -> None:
-        self.limits = {
-            "read": read_calls_per_minute,
-            "write": write_calls_per_minute,
-        }
-        self.calls: dict[tuple[str, str], deque[float]] = {}
+    def __init__(self, *, read_calls_per_minute: int) -> None:
+        self.limit = read_calls_per_minute
+        self.calls: dict[str, deque[float]] = {}
         self.lock = Lock()
 
-    def check(self, principal_id: str, category: str) -> tuple[bool, int]:
+    def check(self, principal_id: str) -> tuple[bool, int]:
         now = monotonic()
         cutoff = now - 60
-        key = (principal_id, category)
         with self.lock:
-            if key not in self.calls and len(self.calls) >= self.MAX_BUCKETS:
+            if principal_id not in self.calls and len(self.calls) >= self.MAX_BUCKETS:
                 inactive = [
-                    candidate_key
-                    for candidate_key, candidate_calls in self.calls.items()
+                    candidate_id
+                    for candidate_id, candidate_calls in self.calls.items()
                     if not candidate_calls or candidate_calls[-1] <= cutoff
                 ]
-                for candidate_key in inactive:
-                    self.calls.pop(candidate_key, None)
+                for candidate_id in inactive:
+                    self.calls.pop(candidate_id, None)
                 if len(self.calls) >= self.MAX_BUCKETS:
-                    oldest_key = min(
+                    oldest_id = min(
                         self.calls,
-                        key=lambda candidate_key: self.calls[candidate_key][-1],
+                        key=lambda candidate_id: self.calls[candidate_id][-1],
                     )
-                    self.calls.pop(oldest_key)
-            calls = self.calls.setdefault(key, deque())
+                    self.calls.pop(oldest_id)
+            calls = self.calls.setdefault(principal_id, deque())
             while calls and calls[0] <= cutoff:
                 calls.popleft()
-            if len(calls) >= self.limits[category]:
+            if len(calls) >= self.limit:
                 retry_after = max(1, int(61 - (now - calls[0])))
                 return False, retry_after
             calls.append(now)

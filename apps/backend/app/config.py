@@ -160,9 +160,7 @@ class Settings(BaseSettings):
     mcp_enabled: bool = Field(default=False)
     mcp_public_url: str | None = Field(default=None)
     mcp_allowed_origins: list[str] = Field(default_factory=list)
-    mcp_allow_writes: bool = Field(default=False)
     mcp_read_calls_per_minute: int = Field(default=60, gt=0, le=10_000)
-    mcp_write_calls_per_minute: int = Field(default=10, gt=0, le=10_000)
     sentry_dsn: SecretStr | None = Field(default=None)
     sentry_environment: str = Field(
         default="local",
@@ -336,8 +334,6 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "POKER_SENTRY_DSN must be a complete HTTPS Sentry DSN"
                 )
-        if self.mcp_allow_writes and self.deployment_environment != "staging":
-            raise ValueError("POKER_MCP_ALLOW_WRITES is supported only in staging")
         if self.mcp_enabled:
             if self.deployment_environment not in {"staging", "production"}:
                 raise ValueError(

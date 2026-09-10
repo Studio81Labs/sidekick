@@ -4,7 +4,6 @@ from fastapi import (
     APIRouter,
     File,
     Form,
-    Header,
     HTTPException,
     Query,
     UploadFile,
@@ -13,7 +12,7 @@ from fastapi import (
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
-from app.api.administrative_access import require_administrator
+from app.api.administrative_access import administrator_access_router
 from app.api.dependencies import (
     JobMutationConflictError,
     JobTransportNotFoundError,
@@ -31,16 +30,24 @@ from app.application.jobs import (
     JobUploadRequest,
     JobUploadService,
 )
+from app.application.admin_ocr_test import AuthorizeAdministrator
 from app.domain.poker import CanonicalState
 from app.domain.hands import JobQueue, JobRecord, ScreenshotMetadataRequest
 
 
-def create_jobs_router(runtime: JobQueryService) -> APIRouter:
+def create_jobs_router(
+    runtime: JobQueryService,
+    authorize_administrator: AuthorizeAdministrator,
+) -> APIRouter:
     """Build the processing job read router with application dependencies."""
 
-    router = APIRouter()
+    router = administrator_access_router(authorize_administrator)
 
-    @router.get("/api/jobs", operation_id="jobs_list", response_model=JobQueue)
+    @router.get(
+        "/api/admin/ocr/jobs",
+        operation_id="admin_ocr_jobs_list",
+        response_model=JobQueue,
+    )
     def get_processing_jobs(
         limit: int = Query(default=100, ge=1, le=100),
         offset: int = Query(default=0, ge=0),
@@ -48,23 +55,27 @@ def create_jobs_router(runtime: JobQueryService) -> APIRouter:
         return runtime.list_jobs(limit, offset)
 
     @router.get(
-        "/api/jobs/{job_id}",
-        operation_id="job_get",
+        "/api/admin/ocr/jobs/{job_id}",
+        operation_id="admin_ocr_job_get",
         response_model=JobRecord,
     )
-    def get_job(job_id: str) -> JobRecord:
+    def get_job(
+        job_id: str,
+    ) -> JobRecord:
         try:
             return runtime.get_job(job_id)
         except JobTransportNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.get(
-        "/api/jobs/{job_id}/image",
-        operation_id="job_image_get",
+        "/api/admin/ocr/jobs/{job_id}/image",
+        operation_id="admin_ocr_job_image_get",
         response_class=Response,
         responses={"200": {"content": SUPPORTED_IMAGE_RESPONSE_CONTENT}},
     )
-    def get_job_image(job_id: str) -> Response:
+    def get_job_image(
+        job_id: str,
+    ) -> Response:
         try:
             image = runtime.get_image(job_id)
         except JobTransportNotFoundError as exc:
@@ -77,11 +88,11 @@ def create_jobs_router(runtime: JobQueryService) -> APIRouter:
 def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
     """Build the multipart processing-job upload router (administrative OCR test surface)."""
 
-    router = APIRouter()
+    router = administrator_access_router(runtime.authorize_administrator)
 
     @router.post(
-        "/api/jobs",
-        operation_id="jobs_create",
+        "/api/admin/ocr/jobs",
+        operation_id="admin_ocr_jobs_create",
         response_model=JobRecord,
         status_code=status.HTTP_201_CREATED,
     )
@@ -105,14 +116,7 @@ def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
             max_length=64,
             pattern=r"^[a-z0-9_]+$",
         ),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> JobRecord:
-        require_administrator(runtime.authorize_administrator(authorization))
-
         pipeline_request = JobUploadPipelineRequest(
             parser_provider=parser_provider,
             parser_layout_profile=parser_layout_profile,
@@ -151,14 +155,17 @@ def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
     return router
 
 
-def create_job_mutations_router(runtime: JobMutationService) -> APIRouter:
+def create_job_mutations_router(
+    runtime: JobMutationService,
+    authorize_administrator: AuthorizeAdministrator,
+) -> APIRouter:
     """Build the processing job mutation router with application dependencies."""
 
-    router = APIRouter()
+    router = administrator_access_router(authorize_administrator)
 
     @router.put(
-        "/api/jobs/{job_id}/metadata",
-        operation_id="job_metadata_update",
+        "/api/admin/ocr/jobs/{job_id}/metadata",
+        operation_id="admin_ocr_job_metadata_update",
         response_model=JobRecord,
     )
     def update_job_metadata(
@@ -171,12 +178,14 @@ def create_job_mutations_router(runtime: JobMutationService) -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.delete(
-        "/api/jobs/{job_id}",
-        operation_id="job_delete",
+        "/api/admin/ocr/jobs/{job_id}",
+        operation_id="admin_ocr_job_delete",
         status_code=status.HTTP_204_NO_CONTENT,
         response_class=Response,
     )
-    def delete_job(job_id: str) -> Response:
+    def delete_job(
+        job_id: str,
+    ) -> Response:
         try:
             runtime.delete_job(job_id)
         except JobTransportNotFoundError as exc:
@@ -186,11 +195,14 @@ def create_job_mutations_router(runtime: JobMutationService) -> APIRouter:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @router.post(
-        "/api/jobs/{job_id}/approve",
-        operation_id="job_approve",
+        "/api/admin/ocr/jobs/{job_id}/approve",
+        operation_id="admin_ocr_job_approve",
         response_model=JobRecord,
     )
-    def approve_job(job_id: str, state: CanonicalState) -> JobRecord:
+    def approve_job(
+        job_id: str,
+        state: CanonicalState,
+    ) -> JobRecord:
         try:
             return runtime.approve_job(job_id, state)
         except JobTransportNotFoundError as exc:

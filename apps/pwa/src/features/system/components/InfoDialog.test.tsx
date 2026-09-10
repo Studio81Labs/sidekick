@@ -4,18 +4,6 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { InfoDialog, type InfoDialogProps } from "./InfoDialog";
 
-vi.mock("./McpAccessPanel", () => ({
-  McpAccessPanel: ({
-    onCloseBlockedChange,
-  }: {
-    onCloseBlockedChange?: (blocked: boolean) => void;
-  }) => (
-    <button type="button" onClick={() => onCloseBlockedChange?.(true)}>
-      Simulate blocked close
-    </button>
-  ),
-}));
-
 afterEach(cleanup);
 
 function dialogProps(
@@ -23,12 +11,10 @@ function dialogProps(
 ): InfoDialogProps {
   return {
     administrativeUnlocked: true,
-    backupDownloadUrl: "http://localhost:8000/api/backups/export",
     backupRestoring: false,
     busy: false,
-    mcpCloseBlocked: false,
     onClose: vi.fn(),
-    onMcpCloseBlockedChange: vi.fn(),
+    onDownloadBackup: vi.fn(),
     onRestoreBackup: vi.fn(),
     providers: {
       recognition: "External vision model",
@@ -41,11 +27,11 @@ function dialogProps(
 }
 
 describe("InfoDialog", () => {
-  it("renders active providers and delegates backup and MCP interactions", async () => {
+  it("renders active providers and delegates backup interactions", async () => {
     const props = dialogProps();
     render(<InfoDialog {...props} />);
     const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+      name: "About Poker Hero",
     });
 
     expect(
@@ -59,16 +45,22 @@ describe("InfoDialog", () => {
     expect(
       within(dialog).queryByText("Recommendation"),
     ).not.toBeInTheDocument();
+    expect(within(dialog).queryByText("Agent access")).not.toBeInTheDocument();
     expect(
       within(dialog).getByText(
         "Back up screenshots, approved ground truth, and benchmark reports in one portable ZIP.",
       ),
     ).toBeInTheDocument();
     expect(
-      within(dialog).getByRole("link", {
+      within(dialog).getByRole("button", {
         name: "Download application backup",
       }),
-    ).toHaveAttribute("href", props.backupDownloadUrl);
+    ).toBeEnabled();
+    await userEvent.click(
+      within(dialog).getByRole("button", {
+        name: "Download application backup",
+      }),
+    );
 
     const backup = new File(["backup"], "poker-hero-backup.zip", {
       type: "application/zip",
@@ -76,16 +68,13 @@ describe("InfoDialog", () => {
     const input = within(dialog).getByLabelText("Application backup ZIP");
     await userEvent.upload(input, backup);
     await userEvent.click(
-      within(dialog).getByRole("button", { name: "Simulate blocked close" }),
-    );
-    await userEvent.click(
       within(dialog).getByRole("button", { name: "Close app information" }),
     );
     await userEvent.click(within(dialog).getByRole("button", { name: "Done" }));
 
     expect(props.onRestoreBackup).toHaveBeenCalledWith(backup);
+    expect(props.onDownloadBackup).toHaveBeenCalledOnce();
     expect(input).toHaveValue("");
-    expect(props.onMcpCloseBlockedChange).toHaveBeenCalledWith(true);
     expect(props.onClose).toHaveBeenCalledTimes(2);
     expect(
       within(dialog).queryByText(
@@ -105,8 +94,8 @@ describe("InfoDialog", () => {
       screen.getByText("Unlock administrator tools to restore a backup."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("link", { name: "Download application backup" }),
-    ).toHaveAttribute("aria-disabled", "false");
+      screen.getByRole("button", { name: "Download application backup" }),
+    ).toBeEnabled();
   });
 
   it("distinguishes loading from unavailable provider details", () => {
@@ -137,7 +126,6 @@ describe("InfoDialog", () => {
         {...dialogProps({
           backupRestoring: true,
           busy: true,
-          mcpCloseBlocked: true,
         })}
       />,
     );
@@ -150,8 +138,8 @@ describe("InfoDialog", () => {
       screen.getByRole("button", { name: "Restore application backup" }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("link", { name: "Download application backup" }),
-    ).toHaveAttribute("aria-disabled", "true");
+      screen.getByRole("button", { name: "Download application backup" }),
+    ).toBeDisabled();
     expect(screen.getByText("Restoring...")).toBeInTheDocument();
   });
 });

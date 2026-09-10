@@ -1,11 +1,9 @@
 import type { ChangeEvent, Ref } from "react";
 import { Download, Play, Upload } from "lucide-react";
 
-import { benchmarkDatasetUrl } from "../../../domains/benchmarks/api/benchmarksApi";
 import { DialogFooter } from "../../../shared/components/DialogFooter";
 import {
   ButtonControl,
-  DownloadLinkControl,
   FileInputControl,
 } from "../../../shared/components/FormControls";
 import type { PipelineSelection } from "../../../shared/types/pipeline";
@@ -19,6 +17,7 @@ export interface BenchmarkDialogActionsProps {
   includedCases: number;
   onChooseDatasetImport: () => void;
   onClose: () => void;
+  onDatasetExport: () => void | Promise<void>;
   onDatasetImport: (
     event: ChangeEvent<HTMLInputElement>,
   ) => void | Promise<void>;
@@ -38,6 +37,7 @@ export function BenchmarkDialogActions({
   includedCases,
   onChooseDatasetImport,
   onClose,
+  onDatasetExport,
   onDatasetImport,
   onRun,
   operationsLocked,
@@ -74,17 +74,16 @@ export function BenchmarkDialogActions({
         disabled={datasetImportDisabled}
         onChange={(event) => void onDatasetImport(event)}
       />
-      <DownloadLinkControl
+      <ButtonControl
         className="secondary-button benchmark-dataset-action benchmark-export-button"
-        href={benchmarkDatasetUrl(pipelineSelection ?? undefined)}
-        download
+        onClick={() => void onDatasetExport()}
         aria-label="Export dataset"
         title="Export dataset"
         disabled={datasetExportDisabled}
       >
         <Download size={14} aria-hidden="true" />
         <span>Export dataset</span>
-      </DownloadLinkControl>
+      </ButtonControl>
       <ButtonControl
         onClick={() => void onRun()}
         disabled={operationsLocked || includedCases === 0}

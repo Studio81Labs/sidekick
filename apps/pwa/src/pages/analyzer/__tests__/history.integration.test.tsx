@@ -230,8 +230,8 @@ describe("Analyzer history", () => {
       within(screen.getByLabelText("Session status")).getByText("3"),
     ).toBeInTheDocument();
     expect(fetchMock()).toHaveBeenCalledWith(
-      "http://localhost:8000/api/history",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history",
+      expect.objectContaining({ credentials: "include" }),
     );
     expect(
       JSON.parse(
@@ -322,8 +322,8 @@ describe("Analyzer history", () => {
     ).not.toBeInTheDocument();
     expect(fetchMock()).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:8000/api/history?offset=24",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?offset=24",
+      expect.objectContaining({ credentials: "include" }),
     );
     expect(
       JSON.parse(
@@ -428,13 +428,13 @@ describe("Analyzer history", () => {
     expect(await within(historyPanel).findByText("7♦")).toBeInTheDocument();
     expect(fetchMock()).toHaveBeenNthCalledWith(
       1,
-      "http://localhost:8000/api/history?query=turn+bluff",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?query=turn+bluff",
+      expect.objectContaining({ credentials: "include" }),
     );
     expect(fetchMock()).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:8000/api/history?offset=1&query=turn+bluff",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?offset=1&query=turn+bluff",
+      expect.objectContaining({ credentials: "include" }),
     );
     expect(
       within(screen.getByLabelText("Session status")).getByText("1"),
@@ -548,11 +548,11 @@ describe("Analyzer history", () => {
     );
     await waitFor(() =>
       expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-        "http://localhost:8000/api/history?query=older+target",
-        `http://localhost:8000/api/jobs/${targetJob.id}/approve`,
-        `http://localhost:8000/api/jobs/${targetJob.id}`,
-        `http://localhost:8000/api/jobs/${targetJob.id}`,
-        "http://localhost:8000/api/history",
+        "http://localhost:8000/api/admin/ocr/history?query=older+target",
+        `http://localhost:8000/api/admin/ocr/jobs/${targetJob.id}/approve`,
+        `http://localhost:8000/api/admin/ocr/jobs/${targetJob.id}`,
+        `http://localhost:8000/api/admin/ocr/jobs/${targetJob.id}`,
+        "http://localhost:8000/api/admin/ocr/history",
       ]),
     );
     expect(
@@ -625,8 +625,8 @@ describe("Analyzer history", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/history",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/history",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     await user.click(
@@ -641,8 +641,8 @@ describe("Analyzer history", () => {
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         3,
-        `http://localhost:8000/api/jobs/${targetJob.id}`,
-        { credentials: "include" },
+        `http://localhost:8000/api/admin/ocr/jobs/${targetJob.id}`,
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
 
@@ -668,8 +668,8 @@ describe("Analyzer history", () => {
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         4,
-        "http://localhost:8000/api/history",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/history",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     await waitFor(() =>
@@ -689,10 +689,10 @@ describe("Analyzer history", () => {
       screen.getByRole("button", { name: "Approve state" }),
     ).toBeDisabled();
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/history",
-      `http://localhost:8000/api/jobs/${targetJob.id}/approve`,
-      `http://localhost:8000/api/jobs/${targetJob.id}`,
-      "http://localhost:8000/api/history",
+      "http://localhost:8000/api/admin/ocr/history",
+      `http://localhost:8000/api/admin/ocr/jobs/${targetJob.id}/approve`,
+      `http://localhost:8000/api/admin/ocr/jobs/${targetJob.id}`,
+      "http://localhost:8000/api/admin/ocr/history",
     ]);
   });
 
@@ -768,8 +768,8 @@ describe("Analyzer history", () => {
     expect(within(historyPanel).getByText(/0 matches/)).toBeInTheDocument();
     expect(fetchMock()).toHaveBeenNthCalledWith(
       3,
-      "http://localhost:8000/api/history?query=raise&limit=24",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?query=raise&limit=24",
+      expect.objectContaining({ credentials: "include" }),
     );
     const reviewedStat = within(screen.getByLabelText("Session status"))
       .getByText("reviewed")
@@ -864,8 +864,8 @@ describe("Analyzer history", () => {
     ).not.toBeInTheDocument();
     expect(fetchMock()).toHaveBeenNthCalledWith(
       4,
-      "http://localhost:8000/api/history?query=flop&limit=25",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?query=flop&limit=25",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 
@@ -963,8 +963,8 @@ describe("Analyzer history", () => {
     ).not.toBeInTheDocument();
     expect(fetchMock()).toHaveBeenNthCalledWith(
       4,
-      "http://localhost:8000/api/history?query=flop&limit=51",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?query=flop&limit=51",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 
@@ -1052,13 +1052,13 @@ describe("Analyzer history", () => {
     expect(fetchMock()).toHaveBeenCalledTimes(3);
     expect(fetchMock()).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:8000/api/history?offset=24&query=flop",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?offset=24&query=flop",
+      expect.objectContaining({ credentials: "include" }),
     );
     expect(fetchMock()).toHaveBeenNthCalledWith(
       3,
-      "http://localhost:8000/api/history?query=flop&limit=48",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?query=flop&limit=48",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 
@@ -1120,8 +1120,8 @@ describe("Analyzer history", () => {
     expect(fetchMock()).toHaveBeenCalledTimes(2);
     expect(fetchMock()).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:8000/api/history?offset=24&query=flop",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?offset=24&query=flop",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 
@@ -1181,13 +1181,13 @@ describe("Analyzer history", () => {
     await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(3));
     expect(fetchMock()).toHaveBeenNthCalledWith(
       2,
-      "http://localhost:8000/api/history?offset=24",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?offset=24",
+      expect.objectContaining({ credentials: "include" }),
     );
     expect(fetchMock()).toHaveBeenNthCalledWith(
       3,
-      "http://localhost:8000/api/history",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history",
+      expect.objectContaining({ credentials: "include" }),
     );
     expect(
       screen.getByRole("button", {
@@ -1213,8 +1213,8 @@ describe("Analyzer history", () => {
     ).not.toBeInTheDocument();
     expect(fetchMock()).toHaveBeenNthCalledWith(
       4,
-      "http://localhost:8000/api/history?offset=24",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?offset=24",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 
@@ -1300,8 +1300,8 @@ describe("Analyzer history", () => {
         }),
       ).toBeInTheDocument();
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/history",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/history",
+        expect.objectContaining({ credentials: "include" }),
       );
     },
   );
@@ -1332,8 +1332,8 @@ describe("Analyzer history", () => {
       }),
     ).toBeInTheDocument();
     expect(fetchMock()).toHaveBeenCalledWith(
-      "http://localhost:8000/api/history",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history",
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 
@@ -1375,7 +1375,7 @@ describe("Analyzer history", () => {
 
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenCalledWith(
-        "http://localhost:8000/api/history",
+        "http://localhost:8000/api/admin/ocr/history",
         expect.objectContaining({
           method: "PUT",
           body: JSON.stringify({ job_ids: [jobId] }),
@@ -1398,8 +1398,8 @@ describe("Analyzer history", () => {
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         2,
-        "http://localhost:8000/api/jobs",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/jobs",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(

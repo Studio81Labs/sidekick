@@ -9,7 +9,10 @@ from app.api.dependencies import (
 from app.api.routers.backups import create_backups_router
 from app.application.admin_ocr_test import AdminOcrTestAccessPolicy
 from app.domain.backups import ApplicationBackupRestoreResult
-from api_test_support import ADMIN_OCR_TEST_HEADERS, ADMIN_OCR_TEST_TOKEN
+from api_test_support import (
+    ADMIN_OCR_TEST_HEADERS,
+    ADMIN_OCR_TEST_TOKEN,
+)
 
 
 ADMIN_OCR_TEST_POLICY = AdminOcrTestAccessPolicy.for_token(ADMIN_OCR_TEST_TOKEN)
@@ -72,9 +75,11 @@ def test_backups_router_streams_export_and_restores_uploaded_bytes() -> None:
         authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     with make_client(runtime) as client:
-        exported = client.get("/api/backups/export")
+        exported = client.get(
+            "/api/admin/ocr/backups/export", headers=ADMIN_OCR_TEST_HEADERS
+        )
         restored = client.post(
-            "/api/backups/restore",
+            "/api/admin/ocr/backups/restore",
             files={"file": ("backup.zip", b"restore archive", "application/zip")},
             headers=ADMIN_OCR_TEST_HEADERS,
         )
@@ -106,7 +111,7 @@ def test_backups_router_rejects_oversize_upload_without_restoring() -> None:
 
     with make_client(runtime) as client:
         response = client.post(
-            "/api/backups/restore",
+            "/api/admin/ocr/backups/restore",
             files={"file": ("backup.zip", b"four", "application/zip")},
             headers=ADMIN_OCR_TEST_HEADERS,
         )
@@ -134,7 +139,7 @@ def test_backups_router_accepts_upload_at_exact_size_limit() -> None:
 
     with make_client(runtime) as client:
         response = client.post(
-            "/api/backups/restore",
+            "/api/admin/ocr/backups/restore",
             files={"file": ("backup.zip", b"four", "application/zip")},
             headers=ADMIN_OCR_TEST_HEADERS,
         )
@@ -157,9 +162,11 @@ def test_backups_router_maps_typed_transport_errors() -> None:
         authorize_administrator=ADMIN_OCR_TEST_POLICY.authorize,
     )
     with make_client(runtime) as client:
-        export_response = client.get("/api/backups/export")
+        export_response = client.get(
+            "/api/admin/ocr/backups/export", headers=ADMIN_OCR_TEST_HEADERS
+        )
         restore_response = client.post(
-            "/api/backups/restore",
+            "/api/admin/ocr/backups/restore",
             files={"file": ("backup.zip", b"invalid", "application/zip")},
             headers=ADMIN_OCR_TEST_HEADERS,
         )
@@ -191,18 +198,18 @@ def test_backups_router_refuses_restore_without_the_administrator_credential() -
 
     with make_client(runtime_deciding("disabled")) as client:
         disabled = client.post(
-            "/api/backups/restore",
+            "/api/admin/ocr/backups/restore",
             files={"file": ("backup.zip", b"restore archive", "application/zip")},
             headers=ADMIN_OCR_TEST_HEADERS,
         )
     with make_client() as client:
         missing = client.post(
-            "/api/backups/restore",
+            "/api/admin/ocr/backups/restore",
             files={"file": ("backup.zip", b"restore archive", "application/zip")},
         )
     with make_client(runtime_deciding("expired")) as client:
         unexpected = client.post(
-            "/api/backups/restore",
+            "/api/admin/ocr/backups/restore",
             files={"file": ("backup.zip", b"restore archive", "application/zip")},
             headers=ADMIN_OCR_TEST_HEADERS,
         )
@@ -233,7 +240,7 @@ def test_backups_router_denies_before_reading_an_oversize_archive() -> None:
 
     with make_client(runtime) as client:
         response = client.post(
-            "/api/backups/restore",
+            "/api/admin/ocr/backups/restore",
             files={"file": ("backup.zip", b"far too large", "application/zip")},
         )
 
@@ -244,14 +251,14 @@ def test_backups_router_preserves_public_openapi_contract() -> None:
     with make_client() as client:
         document = client.app.openapi()
 
-    export_operation = document["paths"]["/api/backups/export"]["get"]
-    restore_operation = document["paths"]["/api/backups/restore"]["post"]
+    export_operation = document["paths"]["/api/admin/ocr/backups/export"]["get"]
+    restore_operation = document["paths"]["/api/admin/ocr/backups/restore"]["post"]
 
-    assert export_operation["operationId"] == "backups_export"
+    assert export_operation["operationId"] == "admin_ocr_backups_export"
     assert export_operation["responses"]["200"]["content"] == {
         "application/zip": {"schema": {"type": "string", "format": "binary"}}
     }
-    assert restore_operation["operationId"] == "backups_restore"
+    assert restore_operation["operationId"] == "admin_ocr_backups_restore"
     assert restore_operation["responses"]["200"]["content"]["application/json"][
         "schema"
     ] == {"$ref": "#/components/schemas/ApplicationBackupRestoreResult"}

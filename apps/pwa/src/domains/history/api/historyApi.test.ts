@@ -11,6 +11,7 @@ const historyResponse = {
   jobs: [],
   snapshot_version: "history-snapshot",
 } satisfies JobHistoryResponse;
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 afterEach(resetApiMocks);
 
@@ -25,10 +26,15 @@ describe("history API adapter", () => {
       .mockResolvedValueOnce(jsonResponse(historyResponse));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(getHistory()).resolves.toEqual(historyResponse);
+    await expect(getHistory(ADMINISTRATOR_TOKEN)).resolves.toEqual(
+      historyResponse,
+    );
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/history",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history",
+      {
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      },
     );
   });
 
@@ -38,11 +44,14 @@ describe("history API adapter", () => {
       .mockResolvedValueOnce(jsonResponse(historyResponse));
     vi.stubGlobal("fetch", fetchMock);
 
-    await getHistory(24, "  turn bluff  ", 48);
+    await getHistory(ADMINISTRATOR_TOKEN, 24, "  turn bluff  ", 48);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:8000/api/history?offset=24&query=turn+bluff&limit=48",
-      { credentials: "include" },
+      "http://localhost:8000/api/admin/ocr/history?offset=24&query=turn+bluff&limit=48",
+      {
+        credentials: "include",
+        headers: { Authorization: "Bearer administrator-token" },
+      },
     );
   });
 
@@ -55,7 +64,11 @@ describe("history API adapter", () => {
       .mockResolvedValueOnce(jsonResponse({ ...historyResponse, total: 205 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(archiveJobs(jobIds)).resolves.toMatchObject({ total: 205 });
+    await expect(
+      archiveJobs(jobIds, ADMINISTRATOR_TOKEN),
+    ).resolves.toMatchObject({
+      total: 205,
+    });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(
       fetchMock.mock.calls.map(
@@ -72,7 +85,7 @@ describe("history API adapter", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
 
-    await expect(archiveJobs([])).rejects.toThrow(
+    await expect(archiveJobs([], ADMINISTRATOR_TOKEN)).rejects.toThrow(
       "At least one job is required to archive history",
     );
     expect(fetchMock).not.toHaveBeenCalled();

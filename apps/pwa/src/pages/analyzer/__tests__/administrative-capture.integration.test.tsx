@@ -1,15 +1,22 @@
 import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+import AnalyzerPage from "../AnalyzerPage";
+import type { AnalyzerRouteNavigation } from "../analyzerRouteState";
+import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
+import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import type { DetectedState } from "../../../shared/types/poker";
 import type { JobRecord } from "../../../shared/types/jobs";
 import { ApiResponseError } from "../../../shared/api/core";
 import {
   ADMINISTRATOR_TOKEN,
   AnalyzerTestApp as App,
+  UnverifiedAnalyzerTestApp,
   administratorVerificationMock,
   approvedJob,
+  benchmarkOverviewForJob,
   canonicalState,
   deferredResponse,
   detectedState,
@@ -26,13 +33,22 @@ import {
   uploadScreenshot,
 } from "../../../test/analyzerHarness";
 
-describe("Analyzer administrative capture", () => {
-  it("keeps the player workspace import-first until an administrator unlocks", async () => {
-    render(<App />);
+function QueryClientCapture({
+  onCapture,
+}: {
+  onCapture: (queryClient: QueryClient) => void;
+}) {
+  onCapture(useQueryClient());
+  return null;
+}
 
-    expect(screen.getByRole("region", { name: "Input" })).toHaveTextContent(
-      "administrator-only parser test tools",
-    );
+describe("Analyzer administrative capture", () => {
+  it("keeps the operator workspace behind administrator verification", async () => {
+    render(<UnverifiedAnalyzerTestApp />);
+
+    expect(
+      screen.getByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByLabelText("Choose screenshots"),
     ).not.toBeInTheDocument();
@@ -46,7 +62,7 @@ describe("Analyzer administrative capture", () => {
   });
 
   it("shows the administrative banner and capture controls only while unlocked", async () => {
-    render(<App />);
+    render(<UnverifiedAnalyzerTestApp />);
     const user = await unlockAdministrativeAccess();
 
     expect(
@@ -64,6 +80,879 @@ describe("Analyzer administrative capture", () => {
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("group", { name: "Input mode" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("fences an in-flight history read when the administrator locks", async () => {
+    const pendingHistory = deferredResponse();
+    let queryClient: QueryClient | null = null;
+    fetchMock().mockReturnValueOnce(pendingHistory.promise);
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <QueryClientCapture
+          onCapture={(capturedQueryClient) => {
+            queryClient = capturedQueryClient;
+          }}
+        />
+        <AnalyzerPage />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+    expect(queryClient).not.toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    );
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ total: 1, jobs: [approvedJob()] }));
+    });
+
+    await waitFor(() =>
+      expect(
+        queryClient?.getQueryData(historyQueryKeys.page()),
+      ).toBeUndefined(),
+    );
+  });
+
+  it("ignores a delayed denial from a prior administrator session", async () => {
+    const pendingHistory = deferredResponse();
+    fetchMock().mockReturnValueOnce(pendingHistory.promise);
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    );
+    await unlockAdministrativeAccess(user);
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("note", { name: "Administrative OCR test mode" }),
+      ).toBeInTheDocument(),
+    );
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeInTheDocument();
+  });
+
+  it("fences processing recovery when the administrator locks", async () => {
+    const pendingQueue = deferredResponse();
+    let queryClient: QueryClient | null = null;
+    window.sessionStorage.removeItem("poker-training-processing-synced");
+    fetchMock().mockReturnValueOnce(pendingQueue.promise);
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <QueryClientCapture
+          onCapture={(capturedQueryClient) => {
+            queryClient = capturedQueryClient;
+          }}
+        />
+        <AnalyzerPage />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+    expect(queryClient).not.toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    );
+    await act(async () => {
+      pendingQueue.resolve(processingQueueResponse([]));
+    });
+
+    await waitFor(() =>
+      expect(
+        queryClient?.getQueryData(jobQueryKeys.processingPage(0)),
+      ).toBeUndefined(),
+    );
+  });
+
+  it("fences a completed mutation when a concurrent protected read locks the administrator", async () => {
+    const currentJob = jobRecord({
+      id: "d".repeat(32),
+      original_filename: "fenced-metadata.png",
+    });
+    const pendingMetadata = deferredResponse();
+    let queryClient: QueryClient | null = null;
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockImplementation((url) => {
+      if (
+        url ===
+        `http://localhost:8000/api/admin/ocr/jobs/${currentJob.id}/metadata`
+      ) {
+        return pendingMetadata.promise;
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return Promise.resolve(jsonResponse({ detail: "denied" }, 401));
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <QueryClientCapture
+          onCapture={(capturedQueryClient) => {
+            queryClient = capturedQueryClient;
+          }}
+        />
+        <AnalyzerPage />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Manage screenshot 1: fenced-metadata.png",
+      }),
+    );
+    const details = screen.getByRole("dialog", { name: "Screenshot details" });
+    await user.type(within(details).getByLabelText("Title"), "Fenced");
+    await user.click(
+      within(details).getByRole("button", { name: "Save details" }),
+    );
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      pendingMetadata.resolve(jsonResponse({ ...currentJob, title: "Fenced" }));
+    });
+
+    expect(queryClient).not.toBeNull();
+    await waitFor(() =>
+      expect(
+        queryClient?.getQueryData(jobQueryKeys.detail(currentJob.id)),
+      ).toBeUndefined(),
+    );
+  });
+
+  it.each([
+    [
+      401,
+      "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    ],
+    [403, "Administrative OCR test mode is disabled on this deployment."],
+  ])(
+    "locks when a protected history refresh returns %i",
+    async (status, message) => {
+      fetchMock().mockResolvedValueOnce(
+        jsonResponse({ detail: "denied" }, status),
+      );
+      render(<UnverifiedAnalyzerTestApp />);
+      const user = await unlockAdministrativeAccess();
+
+      await user.click(
+        screen.getByRole("button", { name: "Refresh saved history" }),
+      );
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("locks when protected processing recovery rejects the administrator", async () => {
+    const pendingQueue = deferredResponse();
+    window.sessionStorage.removeItem("poker-training-processing-synced");
+    fetchMock().mockReturnValueOnce(pendingQueue.promise);
+    render(<UnverifiedAnalyzerTestApp />);
+
+    await unlockAdministrativeAccess();
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      pendingQueue.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("restores unsaved administrator drafts after a protected read relocks", async () => {
+    const currentJob = jobRecord({
+      id: "d".repeat(32),
+      original_filename: "retained-draft.png",
+    });
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockResolvedValueOnce(jsonResponse({ detail: "denied" }, 401));
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    const currentBet = screen.getByLabelText(/Current bet/);
+    await user.clear(currentBet);
+    await user.type(currentBet, "3");
+    await switchToUploadMode(user);
+    await user.upload(
+      screen.getByLabelText("Choose screenshots"),
+      new File(["draft"], "retained-upload.png", { type: "image/png" }),
+    );
+    await user.click(
+      screen.getByRole("button", {
+        name: "Manage screenshot 1: retained-draft.png",
+      }),
+    );
+    const details = screen.getByRole("dialog", { name: "Screenshot details" });
+    await user.type(within(details).getByLabelText("Title"), "Keep this");
+    expect(within(details).getByLabelText("Title")).toHaveValue("Keep this");
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+    await switchToUploadMode(user);
+    expect(screen.getByText("retained-upload.png")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Upload and parse" }),
+    ).toBeEnabled();
+    expect(
+      within(
+        screen.getByRole("dialog", { name: "Screenshot details" }),
+      ).getByLabelText("Title"),
+    ).toHaveValue("Keep this");
+  });
+
+  it("keeps a restored draft while an uncached archived route reloads", async () => {
+    const archivedJob = jobRecord({
+      archived_at: "2026-08-10T00:00:00Z",
+      id: "a".repeat(32),
+      original_filename: "archived-route-draft.png",
+    });
+    const pendingReload = deferredResponse();
+    let jobRequests = 0;
+    fetchMock().mockImplementation((url) => {
+      if (
+        url === `http://localhost:8000/api/admin/ocr/jobs/${archivedJob.id}`
+      ) {
+        jobRequests += 1;
+        return jobRequests === 1
+          ? Promise.resolve(jsonResponse(archivedJob))
+          : pendingReload.promise.then((response) => response.clone());
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return Promise.resolve(jsonResponse({ detail: "denied" }, 401));
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <AnalyzerPage route={{ jobId: archivedJob.id, surface: "job" }} />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    await screen.findByRole("button", {
+      name: "Manage screenshot 1: archived-route-draft.png",
+    });
+    const currentBet = screen.getByLabelText(/Current bet/);
+    await user.clear(currentBet);
+    await user.type(currentBet, "3");
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await waitFor(() => expect(jobRequests).toBe(2));
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator tools" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await waitFor(() => expect(jobRequests).toBe(3));
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+
+    await act(async () => {
+      pendingReload.resolve(jsonResponse(archivedJob));
+      await pendingReload.promise;
+    });
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+  });
+
+  it("does not navigate from a benchmark hand read superseded by relocking", async () => {
+    const currentJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "retained-workspace-draft.png",
+    });
+    const benchmarkJob = jobRecord({
+      id: "b".repeat(32),
+      original_filename: "stale-benchmark-hand.png",
+    });
+    const pendingHistory = deferredResponse();
+    const pendingBenchmarkJob = deferredResponse();
+    const navigation: AnalyzerRouteNavigation = {
+      closeSurface: vi.fn(),
+      managed: true,
+      openBenchmarks: vi.fn(),
+      openJob: vi.fn(),
+      openWorkspace: vi.fn(),
+    };
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockImplementation((url) => {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return pendingHistory.promise;
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
+        return Promise.resolve(
+          jsonResponse(
+            benchmarkOverviewForJob(
+              benchmarkJob.id,
+              benchmarkJob.original_filename,
+            ),
+          ),
+        );
+      }
+      if (
+        url === `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJob.id}`
+      ) {
+        return pendingBenchmarkJob.promise;
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <AnalyzerPage navigation={navigation} />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    const currentBet = screen.getByLabelText(/Current bet/);
+    await user.clear(currentBet);
+    await user.type(currentBet, "3");
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Parser benchmark",
+    });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Toggle stale-benchmark-hand.png benchmark details",
+      }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Review hand" }),
+    );
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJob.id}`,
+        expect.anything(),
+      ),
+    );
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+    await act(async () => {
+      pendingBenchmarkJob.resolve(jsonResponse(benchmarkJob));
+      await pendingBenchmarkJob.promise;
+    });
+
+    expect(navigation.openJob).not.toHaveBeenCalled();
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+  });
+
+  it("retries only denied and unstarted uploads after a batch relocks", async () => {
+    const firstJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "first.png",
+    });
+    const secondJob = jobRecord({
+      id: "b".repeat(32),
+      original_filename: "second.png",
+    });
+    const thirdJob = jobRecord({
+      id: "c".repeat(32),
+      original_filename: "third.png",
+    });
+    const uploadResponses = [
+      jsonResponse(firstJob, 201),
+      jsonResponse({ detail: "denied" }, 401),
+      jsonResponse(secondJob, 201),
+      jsonResponse(thirdJob, 201),
+    ];
+    fetchMock().mockImplementation((url, options) => {
+      if (
+        url === "http://localhost:8000/api/admin/ocr/jobs" &&
+        options?.method === "POST"
+      ) {
+        return Promise.resolve(
+          uploadResponses.shift() ??
+            jsonResponse({ detail: "Unexpected upload" }, 500),
+        );
+      }
+      return Promise.resolve(
+        processingQueueResponse([firstJob, secondJob, thirdJob]),
+      );
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+    await switchToUploadMode(user);
+    await user.upload(screen.getByLabelText("Choose screenshots"), [
+      new File(["first"], "first.png", { type: "image/png" }),
+      new File(["second"], "second.png", { type: "image/png" }),
+      new File(["third"], "third.png", { type: "image/png" }),
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await switchToUploadMode(user);
+    expect(screen.getByText("2 screenshots selected")).toBeInTheDocument();
+    expect(screen.getByText("2 selected for upload")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
+
+    await waitFor(() => expect(uploadCalls()).toHaveLength(4));
+    expect(
+      uploadCalls().map(([, options]) =>
+        (options?.body as FormData).get("file"),
+      ),
+    ).toEqual([
+      expect.objectContaining({ name: "first.png" }),
+      expect.objectContaining({ name: "second.png" }),
+      expect.objectContaining({ name: "second.png" }),
+      expect.objectContaining({ name: "third.png" }),
+    ]);
+
+    function uploadCalls() {
+      return fetchMock().mock.calls.filter(
+        ([url, options]) =>
+          url === "http://localhost:8000/api/admin/ocr/jobs" &&
+          options?.method === "POST",
+      );
+    }
+  });
+
+  it("retains only pending uploads when another protected request relocks", async () => {
+    const firstJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "first.png",
+    });
+    const pendingHistory = deferredResponse();
+    const pendingSecondUpload = deferredResponse();
+    const uploadResponses = [
+      jsonResponse(firstJob, 201),
+      pendingSecondUpload.promise,
+    ];
+    fetchMock().mockImplementation((url, options) => {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return pendingHistory.promise;
+      }
+      if (
+        url === "http://localhost:8000/api/admin/ocr/jobs" &&
+        options?.method === "POST"
+      ) {
+        return Promise.resolve(
+          uploadResponses.shift() ??
+            jsonResponse({ detail: "Unexpected upload" }, 500),
+        );
+      }
+      return Promise.resolve(processingQueueResponse([firstJob]));
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await switchToUploadMode(user);
+    await user.upload(screen.getByLabelText("Choose screenshots"), [
+      new File(["first"], "first.png", { type: "image/png" }),
+      new File(["second"], "second.png", { type: "image/png" }),
+      new File(["third"], "third.png", { type: "image/png" }),
+    ]);
+    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
+    await waitFor(() => expect(uploadCalls()).toHaveLength(2));
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await switchToUploadMode(user);
+    expect(screen.getByText("2 screenshots selected")).toBeInTheDocument();
+    expect(screen.getByText("2 selected for upload")).toBeInTheDocument();
+
+    function uploadCalls() {
+      return fetchMock().mock.calls.filter(
+        ([url, options]) =>
+          url === "http://localhost:8000/api/admin/ocr/jobs" &&
+          options?.method === "POST",
+      );
+    }
+  });
+
+  it("reuses a pending upload request ID after its completion is superseded", async () => {
+    const pendingHistory = deferredResponse();
+    let historyRequests = 0;
+    let committedJob: JobRecord | null = null;
+    let committedRequestId: string | null = null;
+    fetchMock().mockImplementation((url, options) => {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        historyRequests += 1;
+        return historyRequests === 1
+          ? pendingHistory.promise
+          : Promise.resolve(
+              jsonResponse({
+                total: 0,
+                jobs: [],
+                snapshot_version: "restored-history",
+              }),
+            );
+      }
+      if (
+        url === "http://localhost:8000/api/admin/ocr/jobs" &&
+        options?.method === "POST"
+      ) {
+        const requestId = String(
+          (options.body as FormData).get("upload_request_id"),
+        );
+        if (committedJob === null) {
+          committedRequestId = requestId;
+          committedJob = jobRecord({
+            id: "a".repeat(32),
+            original_filename: "committed-before-lock.png",
+            upload_request_id: requestId,
+          });
+          pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+        }
+        return Promise.resolve(jsonResponse(committedJob, 201));
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
+        return Promise.resolve(
+          processingQueueResponse(committedJob ? [committedJob] : []),
+        );
+      }
+      return Promise.reject(new Error(`Unexpected request: ${String(url)}`));
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await waitFor(() => expect(historyRequests).toBe(1));
+    await switchToUploadMode(user);
+    await user.upload(
+      screen.getByLabelText("Choose screenshots"),
+      new File(["screenshot"], "committed-before-lock.png", {
+        type: "image/png",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
+    expect(
+      await screen.findByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await switchToUploadMode(user);
+    expect(screen.getByText("1 selected for upload")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
+      ).toBeNull(),
+    );
+    await user.click(screen.getByRole("button", { name: "Upload and parse" }));
+    await waitFor(() => expect(uploadCalls()).toHaveLength(2));
+    expect(
+      uploadCalls().map(([, options]) =>
+        (options?.body as FormData).get("upload_request_id"),
+      ),
+    ).toEqual([committedRequestId, committedRequestId]);
+    expect(
+      screen.getAllByRole("button", {
+        name: /Open screenshot \d+: committed-before-lock\.png/,
+      }),
+    ).toHaveLength(1);
+
+    function uploadCalls() {
+      return fetchMock().mock.calls.filter(
+        ([url, options]) =>
+          url === "http://localhost:8000/api/admin/ocr/jobs" &&
+          options?.method === "POST",
+      );
+    }
+  });
+
+  it("disables both administrator lock controls during screenshot metadata saves and locks on denial", async () => {
+    const currentJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "metadata-lock.png",
+    });
+    const pendingMetadata = deferredResponse();
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockReturnValueOnce(pendingMetadata.promise);
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Manage screenshot 1: metadata-lock.png",
+      }),
+    );
+    const details = screen.getByRole("dialog", { name: "Screenshot details" });
+    await user.type(within(details).getByLabelText("Title"), "Reviewed");
+    await user.click(
+      within(details).getByRole("button", { name: "Save details" }),
+    );
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Lock administrator tools" }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      pendingMetadata.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables both administrator lock controls during benchmark inclusion and locks on denial", async () => {
+    const currentJob = approvedJob();
+    currentJob.id = "b".repeat(32);
+    currentJob.original_filename = "benchmark-lock.png";
+    currentJob.benchmark_included = false;
+    const pendingInclusion = deferredResponse();
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockImplementation((url) => {
+      if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
+        return Promise.resolve(
+          jsonResponse(
+            benchmarkOverviewForJob(
+              currentJob.id,
+              currentJob.original_filename,
+            ),
+          ),
+        );
+      }
+      if (
+        url ===
+        `http://localhost:8000/api/admin/ocr/jobs/${currentJob.id}/benchmark`
+      ) {
+        return pendingInclusion.promise;
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/jobs") {
+        return Promise.resolve(processingQueueResponse([currentJob]));
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return Promise.resolve(
+          jsonResponse({ total: 0, jobs: [], snapshot_version: "history" }),
+        );
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
+    const benchmarkDialog = await screen.findByRole("dialog", {
+      name: "Parser benchmark",
+    });
+    await user.click(
+      await within(benchmarkDialog).findByRole("switch", {
+        name: /Use current hand as ground truth/,
+      }),
+    );
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        `http://localhost:8000/api/admin/ocr/jobs/${currentJob.id}/benchmark`,
+        expect.objectContaining({ method: "PUT" }),
+      ),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Lock administrator tools" }),
+    ).toBeDisabled();
+
+    await act(async () => {
+      pendingInclusion.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      401,
+      "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    ],
+    [403, "Administrative OCR test mode is disabled on this deployment."],
+  ])(
+    "locks when an uncached routed job returns %i",
+    async (status, message) => {
+      const pendingJob = deferredResponse();
+      fetchMock().mockReturnValueOnce(pendingJob.promise);
+      render(
+        <UnverifiedAnalyzerTestApp>
+          <AnalyzerPage route={{ jobId: "c".repeat(32), surface: "job" }} />
+        </UnverifiedAnalyzerTestApp>,
+      );
+
+      await unlockAdministrativeAccess();
+      await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        pendingJob.resolve(jsonResponse({ detail: "denied" }, status));
+      });
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it.each([
+    [
+      401,
+      "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+    ],
+    [403, "Administrative OCR test mode is disabled on this deployment."],
+  ])(
+    "locks when a protected benchmark overview returns %i",
+    async (status, message) => {
+      fetchMock().mockResolvedValueOnce(
+        jsonResponse({ detail: "denied" }, status),
+      );
+      render(<UnverifiedAnalyzerTestApp />);
+      const user = await unlockAdministrativeAccess();
+
+      await user.click(
+        screen.getByRole("button", { name: "Parser benchmark" }),
+      );
+
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+      ).not.toBeInTheDocument();
+    },
+  );
+
+  it("locks when approval loses administrator authorization", async () => {
+    const created = jobRecord();
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(processingQueueResponse([created]))
+      .mockResolvedValueOnce(jsonResponse({ detail: "denied" }, 401));
+    render(<UnverifiedAnalyzerTestApp />);
+
+    const user = await uploadScreenshot();
+    await user.click(
+      await screen.findByRole("button", { name: "Approve state" }),
+    );
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
     ).not.toBeInTheDocument();
   });
 
@@ -92,7 +981,7 @@ describe("Analyzer administrative capture", () => {
     fetchMock()
       .mockResolvedValueOnce(jsonResponse({ detail: "denied" }, status))
       .mockResolvedValue(processingQueueResponse([]));
-    render(<App />);
+    render(<UnverifiedAnalyzerTestApp />);
 
     await uploadScreenshot();
 
@@ -102,14 +991,49 @@ describe("Analyzer administrative capture", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("locks tools when the active screenshot image rejects the administrator", async () => {
+    const created = jobRecord();
+    const image = deferredResponse();
+    const existingFetch = globalThis.fetch;
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(`/jobs/${created.id}/image`)) {
+        return image.promise;
+      }
+      return existingFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetch);
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(processingQueueResponse([created]));
+    render(<UnverifiedAnalyzerTestApp />);
+
+    await uploadScreenshot();
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.some(([input]) =>
+          String(input).endsWith(`/jobs/${created.id}/image`),
+        ),
+      ).toBe(true),
+    );
+    await act(async () => {
+      image.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("verifies the typed token with the server before showing any control", async () => {
     const verification = administratorVerificationMock();
-    render(<App />);
+    render(<UnverifiedAnalyzerTestApp />);
     const user = userEvent.setup();
 
-    await user.click(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    );
     await user.type(
       screen.getByLabelText("Administrative OCR test token"),
       `  ${ADMINISTRATOR_TOKEN}  `,
@@ -147,12 +1071,9 @@ describe("Analyzer administrative capture", () => {
     ],
   ])("refuses to unlock on %s", async (_label, failure, message) => {
     mockAdministratorVerification(failure);
-    render(<App />);
+    render(<UnverifiedAnalyzerTestApp />);
     const user = userEvent.setup();
 
-    await user.click(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    );
     await user.type(
       screen.getByLabelText("Administrative OCR test token"),
       "wrong-token",
@@ -173,7 +1094,7 @@ describe("Analyzer administrative capture", () => {
     expect(fetchMock()).not.toHaveBeenCalled();
   });
 
-  it("renders the import-first workspace and unlocks capture on demand", async () => {
+  it("renders the administrator OCR workspace after access is verified", async () => {
     fetchMock().mockResolvedValueOnce(
       jsonResponse({
         status: "ok",
@@ -184,14 +1105,12 @@ describe("Analyzer administrative capture", () => {
     const user = userEvent.setup();
 
     expect(
-      screen.getByRole("heading", { name: "Poker Training Analyzer" }),
+      screen.getByRole("heading", { name: "Poker Hero" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Share window" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    ).toHaveAttribute("aria-pressed", "false");
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toHaveClass("active");
+    expect(screen.getByRole("button", { name: "Share window" })).toBeEnabled();
     expect(screen.getByLabelText("Screenshots queue")).toBeInTheDocument();
     expect(
       screen.getByText("No screenshots uploaded or captured yet"),
@@ -199,7 +1118,7 @@ describe("Analyzer administrative capture", () => {
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
     expect(
-      screen.getByRole("dialog", { name: "About Poker Training Analyzer" }),
+      screen.getByRole("dialog", { name: "About Poker Hero" }),
     ).toBeInTheDocument();
     expect(
       await screen.findByText("OCR + computer vision"),
@@ -219,15 +1138,8 @@ describe("Analyzer administrative capture", () => {
       screen.getByRole("button", { name: "Close app information" }),
     );
     expect(
-      screen.queryByRole("dialog", { name: "About Poker Training Analyzer" }),
+      screen.queryByRole("dialog", { name: "About Poker Hero" }),
     ).not.toBeInTheDocument();
-
-    await unlockAdministrativeAccess(user);
-
-    expect(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    ).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("button", { name: "Share window" })).toBeEnabled();
 
     await switchToUploadMode(user);
 
@@ -395,7 +1307,6 @@ describe("Analyzer administrative capture", () => {
             enabled: false,
             environment: "staging",
             endpoint: "http://localhost:8000/mcp",
-            writes_enabled: false,
           }),
         );
       }
@@ -406,7 +1317,7 @@ describe("Analyzer administrative capture", () => {
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
     const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+      name: "About Poker Hero",
     });
 
     expect(
@@ -445,7 +1356,6 @@ describe("Analyzer administrative capture", () => {
             enabled: false,
             environment: "staging",
             endpoint: "http://localhost:8000/mcp",
-            writes_enabled: false,
           }),
         );
       }
@@ -456,128 +1366,13 @@ describe("Analyzer administrative capture", () => {
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
     const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+      name: "About Poker Hero",
     });
 
     expect(
       await within(dialog).findByText("OCR + computer vision"),
     ).toBeInTheDocument();
     expect(within(dialog).queryByText("Demo engine")).not.toBeInTheDocument();
-  });
-
-  it("keeps the information dialog open until a one-time MCP token is stored", async () => {
-    const issuance = deferredResponse();
-    fetchMock().mockImplementation(
-      (input: RequestInfo | URL, init?: RequestInit) => {
-        const url = String(input);
-        if (url.endsWith("/api/health")) {
-          return Promise.resolve(
-            jsonResponse({
-              status: "ok",
-              environment: "staging",
-              parser_provider: "ocr_cv",
-            }),
-          );
-        }
-        if (url.endsWith("/api/mcp/config")) {
-          return Promise.resolve(
-            jsonResponse({
-              enabled: true,
-              environment: "staging",
-              endpoint: "https://poker-staging.example/mcp",
-              writes_enabled: true,
-            }),
-          );
-        }
-        if (url.endsWith("/api/mcp/principals") && init?.method === "POST") {
-          return issuance.promise;
-        }
-        if (url.endsWith("/api/mcp/principals")) {
-          return Promise.resolve(jsonResponse({ principals: [] }));
-        }
-        return Promise.reject(
-          new Error(`Unexpected request: ${url} ${init?.method ?? "GET"}`),
-        );
-      },
-    );
-    render(<App />);
-    const user = userEvent.setup();
-
-    await user.click(screen.getByRole("button", { name: "About this app" }));
-    const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
-    });
-    await user.type(
-      await within(dialog).findByLabelText("Agent access admin token"),
-      "admin-secret",
-    );
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "Unlock credential management",
-      }),
-    );
-    await user.type(
-      await within(dialog).findByLabelText("Credential name"),
-      "Codex staging",
-    );
-    await user.click(
-      within(dialog).getByRole("button", {
-        name: "Create credential",
-      }),
-    );
-
-    expect(
-      within(dialog).getByRole("button", {
-        name: "Close app information",
-      }),
-    ).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
-
-    issuance.resolve(
-      jsonResponse({
-        principal: {
-          id: "mcp_00000000000000000000000000000001",
-          name: "Codex staging",
-          environment: "staging",
-          token_prefix: "abcdefghijkl",
-          scopes: ["read"],
-          status: "active",
-          created_at: "2026-08-07T10:00:00Z",
-          updated_at: "2026-08-07T10:00:00Z",
-          expires_at: null,
-          revoked_at: null,
-          last_used_at: null,
-        },
-        token: "phmcp_one-time-token",
-      }),
-    );
-
-    expect(
-      await within(dialog).findByText("phmcp_one-time-token"),
-    ).toBeInTheDocument();
-    expect(
-      within(dialog).getByRole("button", {
-        name: "Close app information",
-      }),
-    ).toBeDisabled();
-    expect(within(dialog).getByRole("button", { name: "Done" })).toBeDisabled();
-
-    await user.click(
-      within(dialog).getByRole("button", { name: "I stored it" }),
-    );
-
-    expect(
-      within(dialog).getByRole("button", {
-        name: "Close app information",
-      }),
-    ).toBeEnabled();
-    expect(within(dialog).getByRole("button", { name: "Done" })).toBeEnabled();
-    await user.click(within(dialog).getByRole("button", { name: "Done" }));
-    expect(
-      screen.queryByRole("dialog", {
-        name: "About Poker Training Analyzer",
-      }),
-    ).not.toBeInTheDocument();
   });
 
   it("downloads and restores full application backups from the info dialog", async () => {
@@ -593,7 +1388,7 @@ describe("Analyzer administrative capture", () => {
             }),
           );
         }
-        if (url.endsWith("/api/backups/restore")) {
+        if (url.endsWith("/api/admin/ocr/backups/restore")) {
           return Promise.resolve(
             jsonResponse({
               imported_jobs: 1,
@@ -605,10 +1400,10 @@ describe("Analyzer administrative capture", () => {
             }),
           );
         }
-        if (url.endsWith("/api/jobs")) {
+        if (url.endsWith("/api/admin/ocr/jobs")) {
           return Promise.resolve(processingQueueResponse([restoredJob]));
         }
-        if (url.endsWith("/api/history")) {
+        if (url.endsWith("/api/admin/ocr/history")) {
           return Promise.resolve(
             jsonResponse({
               total: 0,
@@ -626,40 +1421,32 @@ describe("Analyzer administrative capture", () => {
     const user = userEvent.setup();
 
     await user.click(screen.getByRole("button", { name: "About this app" }));
-    const lockedDialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
+    const dialog = screen.getByRole("dialog", {
+      name: "About Poker Hero",
     });
     expect(
-      within(lockedDialog).getByRole("button", {
+      within(dialog).getByRole("button", {
         name: "Restore application backup",
       }),
-    ).toBeDisabled();
+    ).toBeEnabled();
     expect(
-      within(lockedDialog).getByText(
-        "Unlock administrator tools to restore a backup.",
-      ),
-    ).toBeInTheDocument();
-    await user.click(
-      within(lockedDialog).getByRole("button", {
-        name: "Close app information",
-      }),
-    );
-
-    await unlockAdministrativeAccess(user);
-    await user.click(screen.getByRole("button", { name: "About this app" }));
-    const dialog = screen.getByRole("dialog", {
-      name: "About Poker Training Analyzer",
-    });
-    expect(
-      within(dialog).getByRole("link", {
+      within(dialog).getByRole("button", {
         name: "Download application backup",
       }),
-    ).toHaveAttribute("href", "http://localhost:8000/api/backups/export");
-    expect(
-      within(dialog).queryByText(
-        "Unlock administrator tools to restore a backup.",
+    ).toBeEnabled();
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Download application backup",
+      }),
+    );
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        "http://localhost:8000/api/admin/ocr/backups/export",
+        expect.objectContaining({
+          headers: { Authorization: `Bearer ${ADMINISTRATOR_TOKEN}` },
+        }),
       ),
-    ).not.toBeInTheDocument();
+    );
 
     const file = new File(["backup"], "poker-hero-backup.zip", {
       type: "application/zip",
@@ -682,7 +1469,7 @@ describe("Analyzer administrative capture", () => {
       ).toBeInTheDocument(),
     );
     const restoreCall = fetchMock().mock.calls.find(([input]) =>
-      String(input).endsWith("/api/backups/restore"),
+      String(input).endsWith("/api/admin/ocr/backups/restore"),
     );
     expect(restoreCall).toBeDefined();
     expect(restoreCall?.[1]?.method).toBe("POST");
@@ -693,9 +1480,166 @@ describe("Analyzer administrative capture", () => {
     expect((restoreCall?.[1]?.body as FormData).get("file")).toBe(file);
     expect(
       fetchMock().mock.calls.some(([input]) =>
-        String(input).endsWith("/api/history"),
+        String(input).endsWith("/api/admin/ocr/history"),
       ),
     ).toBe(true);
+  });
+
+  it("reconciles projections when a committed backup restore is superseded", async () => {
+    const cachedJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "cached-before-restore.png",
+    });
+    const restoredJob = jobRecord({
+      id: "b".repeat(32),
+      original_filename: "restored-after-lock.png",
+    });
+    const pendingHistory = deferredResponse();
+    const pendingRestore = deferredResponse();
+    let historyRequests = 0;
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([cachedJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) {
+        return Promise.resolve(jsonResponse({ status: "ok" }));
+      }
+      if (url.endsWith("/api/admin/ocr/backups/restore")) {
+        return pendingRestore.promise;
+      }
+      if (url.endsWith("/api/admin/ocr/history")) {
+        historyRequests += 1;
+        return historyRequests === 1
+          ? pendingHistory.promise
+          : Promise.resolve(
+              jsonResponse({
+                total: 0,
+                jobs: [],
+                snapshot_version: "restored-history",
+              }),
+            );
+      }
+      if (url.endsWith("/api/admin/ocr/jobs")) {
+        return Promise.resolve(processingQueueResponse([restoredJob]));
+      }
+      return Promise.reject(new Error(`Unexpected request: ${url}`));
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await waitFor(() => expect(historyRequests).toBe(1));
+    await user.click(screen.getByRole("button", { name: "About this app" }));
+    const dialog = screen.getByRole("dialog", {
+      name: "About Poker Hero",
+    });
+    await user.upload(
+      within(dialog).getByLabelText("Application backup ZIP"),
+      new File(["backup"], "poker-hero-backup.zip", {
+        type: "application/zip",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        fetchMock().mock.calls.some(([input]) =>
+          String(input).endsWith("/api/admin/ocr/backups/restore"),
+        ),
+      ).toBe(true),
+    );
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+      pendingRestore.resolve(
+        jsonResponse({
+          imported_jobs: 1,
+          reused_jobs: 0,
+          imported_benchmark_reports: 0,
+          reused_benchmark_reports: 0,
+          total_jobs: 1,
+          total_benchmark_reports: 0,
+        }),
+      );
+    });
+    expect(
+      await screen.findByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
+    expect(
+      window.sessionStorage.getItem("poker-training-processing-synced"),
+    ).toBeNull();
+    expect(
+      window.sessionStorage.getItem("poker-training-history-synced"),
+    ).toBeNull();
+
+    await unlockAdministrativeAccess(user);
+    expect(
+      await screen.findByRole("button", {
+        name: "Open screenshot 1: restored-after-lock.png",
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("fences a slow archive download when another request locks the session", async () => {
+    const pendingArchive = deferredResponse();
+    const createObjectURL = vi.fn(() => "blob:archive");
+    const revokeObjectURL = vi.fn();
+    vi.stubGlobal("URL", { createObjectURL, revokeObjectURL });
+    fetchMock().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/health")) {
+        return Promise.resolve(jsonResponse({ status: "ok" }));
+      }
+      if (url.endsWith("/api/admin/ocr/backups/export")) {
+        return pendingArchive.promise;
+      }
+      if (url.endsWith("/api/admin/ocr/history")) {
+        return Promise.resolve(jsonResponse({ detail: "denied" }, 401));
+      }
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(screen.getByRole("button", { name: "About this app" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "About Poker Hero",
+    });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Download application backup",
+      }),
+    );
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        "http://localhost:8000/api/admin/ocr/backups/export",
+        expect.anything(),
+      ),
+    );
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
+
+    await user.click(
+      within(dialog).getByRole("button", { name: "Close app information" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      pendingArchive.resolve(new Response("archive"));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(createObjectURL).not.toHaveBeenCalled();
+    expect(revokeObjectURL).not.toHaveBeenCalled();
   });
 
   it("uploads a screenshot, populates parser state, and enables approval", async () => {
@@ -834,7 +1778,7 @@ describe("Analyzer administrative capture", () => {
 
     const payload = JSON.parse(String(fetchMock().mock.calls[2][1]?.body));
     expect(fetchMock().mock.calls[2][0]).toBe(
-      "http://localhost:8000/api/jobs/job-123/approve",
+      "http://localhost:8000/api/admin/ocr/jobs/job-123/approve",
     );
     expect(payload.opponents_at_current_bet).toBe(2);
     expect(payload.opponent_wager).toBe(2.5);
@@ -1296,7 +2240,7 @@ describe("Analyzer administrative capture", () => {
     await user.click(approveButton);
 
     expect(fetchMock().mock.calls[2][0]).toBe(
-      "http://localhost:8000/api/jobs/imported-job/approve",
+      "http://localhost:8000/api/admin/ocr/jobs/imported-job/approve",
     );
     const payload = JSON.parse(String(fetchMock().mock.calls[2][1]?.body));
     expect(payload.pot_size).toBe(20);
@@ -1412,7 +2356,7 @@ describe("Analyzer administrative capture", () => {
   it("shows processing progress and aborts unprocessed screenshots", async () => {
     fetchMock().mockImplementation((url, options) => {
       if (
-        url === "http://localhost:8000/api/jobs" &&
+        url === "http://localhost:8000/api/admin/ocr/jobs" &&
         options?.method !== "POST"
       ) {
         return Promise.resolve(processingQueueResponse([]));
@@ -1484,6 +2428,50 @@ describe("Analyzer administrative capture", () => {
     ).toBeInTheDocument();
   });
 
+  it("stops a pending shared stream after an administrator denial relocks", async () => {
+    let resolveDisplayMedia!: (stream: MediaStream) => void;
+    const getDisplayMedia = vi.fn(
+      () =>
+        new Promise<MediaStream>((resolve) => {
+          resolveDisplayMedia = resolve;
+        }),
+    );
+    const stop = vi.fn();
+    Object.defineProperty(navigator, "mediaDevices", {
+      configurable: true,
+      value: { getDisplayMedia },
+    });
+    fetchMock().mockResolvedValueOnce(jsonResponse({ detail: "denied" }, 401));
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(screen.getByRole("button", { name: "Share window" }));
+    expect(getDisplayMedia).toHaveBeenCalledTimes(1);
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveDisplayMedia({
+        getTracks: () => [{ stop }],
+        getVideoTracks: () => [
+          { getSettings: () => ({ displaySurface: "window" }) },
+        ],
+      } as unknown as MediaStream);
+    });
+
+    await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByRole("note", { name: "Administrative OCR test mode" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("captures a shared screen frame and uploads it for parsing", async () => {
     const { addEventListener, getDisplayMedia } = stubDisplayMedia("browser");
     stubCanvasCapture();
@@ -1540,6 +2528,70 @@ describe("Analyzer administrative capture", () => {
     expect(screen.getByAltText("Uploaded poker table screenshot")).toHaveClass(
       "hidden",
     );
+  });
+
+  it("does not upload a screen capture encoded after administrator relocking", async () => {
+    const pendingHistory = deferredResponse();
+    const { getDisplayMedia } = stubDisplayMedia("window");
+    const drawImage = vi.fn();
+    let resolveEncodedCapture!: () => void;
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage,
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
+      (callback) => {
+        resolveEncodedCapture = () =>
+          callback(new Blob(["capture"], { type: "image/png" }));
+      },
+    );
+    fetchMock().mockImplementation((url) => {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return pendingHistory.promise;
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(screen.getByRole("button", { name: "Window" }));
+    await user.click(screen.getByRole("button", { name: "Share window" }));
+    expect(
+      await screen.findByText("Window sharing active"),
+    ).toBeInTheDocument();
+    setSharedPreviewSize();
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Capture and parse" }));
+    await waitFor(() => expect(drawImage).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await act(async () => {
+      resolveEncodedCapture();
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        fetchMock().mock.calls.filter(
+          ([url, options]) =>
+            url === "http://localhost:8000/api/admin/ocr/jobs" &&
+            options?.method === "POST",
+        ),
+      ).toHaveLength(0),
+    );
+    expect(
+      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
+    ).toBeNull();
+    expect(getDisplayMedia).toHaveBeenCalledOnce();
   });
 
   it("invalidates an older history restore while clearing reviewed jobs", async () => {
@@ -1609,8 +2661,8 @@ describe("Analyzer administrative capture", () => {
     await waitFor(() =>
       expect(fetchMock()).toHaveBeenNthCalledWith(
         4,
-        "http://localhost:8000/api/history",
-        { credentials: "include" },
+        "http://localhost:8000/api/admin/ocr/history",
+        expect.objectContaining({ credentials: "include" }),
       ),
     );
     expect(
@@ -1627,10 +2679,10 @@ describe("Analyzer administrative capture", () => {
       "true",
     );
     expect(fetchMock().mock.calls.map(([url]) => url)).toEqual([
-      "http://localhost:8000/api/history",
-      "http://localhost:8000/api/history",
-      "http://localhost:8000/api/jobs",
-      "http://localhost:8000/api/history",
+      "http://localhost:8000/api/admin/ocr/history",
+      "http://localhost:8000/api/admin/ocr/history",
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "http://localhost:8000/api/admin/ocr/history",
     ]);
     expect(fetchMock().mock.calls[1][1]?.method).toBe("PUT");
   });
@@ -1710,7 +2762,7 @@ describe("Analyzer administrative capture", () => {
       (input: RequestInfo | URL, init?: RequestInit) => {
         const url = String(input);
         if (
-          url === "http://localhost:8000/api/history" &&
+          url === "http://localhost:8000/api/admin/ocr/history" &&
           init?.method === "PUT"
         ) {
           return Promise.resolve(
@@ -1722,7 +2774,7 @@ describe("Analyzer administrative capture", () => {
             ),
           );
         }
-        if (url === "http://localhost:8000/api/history") {
+        if (url === "http://localhost:8000/api/admin/ocr/history") {
           return Promise.resolve(
             jsonResponse({
               total: 0,
@@ -1731,7 +2783,7 @@ describe("Analyzer administrative capture", () => {
             }),
           );
         }
-        if (url === "http://localhost:8000/api/jobs") {
+        if (url === "http://localhost:8000/api/admin/ocr/jobs") {
           return Promise.resolve(
             processingQueueResponse(
               [competingAttempt],
@@ -1860,17 +2912,20 @@ describe("Analyzer administrative capture", () => {
           ? [index]
           : [],
       );
-    const queueReads = callIndexes("http://localhost:8000/api/jobs", "GET");
+    const queueReads = callIndexes(
+      "http://localhost:8000/api/admin/ocr/jobs",
+      "GET",
+    );
     const nextQueuePage = callIndexes(
-      "http://localhost:8000/api/jobs?offset=100",
+      "http://localhost:8000/api/admin/ocr/jobs?offset=100",
       "GET",
     );
     const archiveAttempts = callIndexes(
-      "http://localhost:8000/api/history",
+      "http://localhost:8000/api/admin/ocr/history",
       "PUT",
     );
     const historyRefreshes = callIndexes(
-      "http://localhost:8000/api/history",
+      "http://localhost:8000/api/admin/ocr/history",
       "GET",
     );
 
@@ -1883,9 +2938,9 @@ describe("Analyzer administrative capture", () => {
     expect(archiveAttempts[0]).toBeLessThan(archiveAttempts[1]);
     expect(archiveAttempts[1]).toBeLessThan(historyRefreshes[0]);
     expect(queueReads.some((index) => index > historyRefreshes[0])).toBe(true);
-    expect(calls[historyRefreshes[0]][1]).toEqual({
-      credentials: "include",
-    });
+    expect(calls[historyRefreshes[0]][1]).toEqual(
+      expect.objectContaining({ credentials: "include" }),
+    );
   });
 
   it("clears persisted jobs when the bounded browser history cache is unavailable", async () => {

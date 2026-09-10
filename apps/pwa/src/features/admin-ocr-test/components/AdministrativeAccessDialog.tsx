@@ -14,7 +14,8 @@ import { unlockFailureMessage } from "../lib/administrativeAccess";
 
 export interface AdministrativeAccessDialogProps {
   busy: boolean;
-  onClose: () => void;
+  externalValidation?: string | null;
+  onClose?: () => void;
   onLock: () => void;
   onUnlock: (token: string) => Promise<AdministrativeUnlockResult>;
   unlocked: boolean;
@@ -23,6 +24,7 @@ export interface AdministrativeAccessDialogProps {
 
 export function AdministrativeAccessDialog({
   busy,
+  externalValidation = null,
   onClose,
   onLock,
   onUnlock,
@@ -45,13 +47,22 @@ export function AdministrativeAccessDialog({
 
   return (
     <DialogFrame titleId="administrative-access-dialog-title">
-      <DialogHeader
-        titleId="administrative-access-dialog-title"
-        title="Administrator tools"
-        subtitle="Parser testing with screenshot upload and live capture"
-        closeLabel="Close administrator tools"
-        onClose={onClose}
-      />
+      {onClose ? (
+        <DialogHeader
+          titleId="administrative-access-dialog-title"
+          title="Administrator tools"
+          subtitle="Parser testing with screenshot upload and live capture"
+          closeLabel="Close administrator tools"
+          onClose={onClose}
+        />
+      ) : (
+        <div className="automation-dialog-header">
+          <div>
+            <h2 id="administrative-access-dialog-title">Administrator tools</h2>
+            <p>Parser testing with screenshot upload and live capture</p>
+          </div>
+        </div>
+      )}
 
       <div className="administrative-access-body">
         <p>
@@ -90,9 +101,9 @@ export function AdministrativeAccessDialog({
                 value={draft}
               />
             </FormField>
-            {validation ? (
+            {(validation ?? externalValidation) ? (
               <p className="administrative-access-validation" role="alert">
-                {validation}
+                {validation ?? externalValidation}
               </p>
             ) : null}
             <ButtonControl type="submit" disabled={verifying}>
@@ -102,11 +113,13 @@ export function AdministrativeAccessDialog({
         )}
       </div>
 
-      <DialogFooter>
-        <ButtonControl variant="secondary" onClick={onClose}>
-          Close
-        </ButtonControl>
-      </DialogFooter>
+      {onClose ? (
+        <DialogFooter>
+          <ButtonControl variant="secondary" onClick={onClose}>
+            Close
+          </ButtonControl>
+        </DialogFooter>
+      ) : null}
     </DialogFrame>
   );
 }

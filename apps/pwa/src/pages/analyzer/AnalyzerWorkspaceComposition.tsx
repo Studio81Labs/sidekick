@@ -1,4 +1,3 @@
-import { AdministrativeAccessDialog } from "../../features/admin-ocr-test/components/AdministrativeAccessDialog";
 import { BenchmarkDialog } from "../../features/benchmark/components/BenchmarkDialog";
 import { AdministrativeTestBanner } from "../../features/capture/components/AdministrativeTestBanner";
 import { ImportFirstNotice } from "../../features/capture/components/ImportFirstNotice";
@@ -54,9 +53,6 @@ export function AnalyzerWorkspaceComposition(
         ) : null}
         {view.dialogs.screenshotDetails ? (
           <ScreenshotDetailsDialog {...view.dialogs.screenshotDetails} />
-        ) : null}
-        {view.dialogs.administrativeAccess ? (
-          <AdministrativeAccessDialog {...view.dialogs.administrativeAccess} />
         ) : null}
         {view.dialogs.pipeline ? (
           <PipelineDialog {...view.dialogs.pipeline} />

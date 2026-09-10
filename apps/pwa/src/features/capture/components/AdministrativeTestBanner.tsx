@@ -4,12 +4,12 @@ import "./AdministrativeTestBanner.css";
 import { ButtonControl } from "../../../shared/components/FormControls";
 
 export interface AdministrativeTestBannerProps {
-  busy: boolean;
+  lockDisabled: boolean;
   onLock: () => void;
 }
 
 export function AdministrativeTestBanner({
-  busy,
+  lockDisabled,
   onLock,
 }: AdministrativeTestBannerProps) {
   return (
@@ -29,7 +29,7 @@ export function AdministrativeTestBanner({
       <ButtonControl
         variant="secondary"
         onClick={onLock}
-        disabled={busy}
+        disabled={lockDisabled}
         aria-label="Lock administrator tools"
       >
         Lock

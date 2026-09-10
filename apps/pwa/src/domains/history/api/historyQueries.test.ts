@@ -11,6 +11,7 @@ import {
 } from "./historyQueries";
 
 afterEach(resetApiMocks);
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 function wrapper({ children }: PropsWithChildren) {
   return createElement(AppProviders, null, children);
@@ -23,7 +24,7 @@ describe("history query adapter", () => {
       "page",
       { offset: 24, query: "turn bluff", limit: 48 },
     ]);
-    expect(historyPageQueryOptions().queryKey).toEqual([
+    expect(historyPageQueryOptions(ADMINISTRATOR_TOKEN).queryKey).toEqual([
       "history",
       "page",
       { offset: 0, query: "", limit: null },
@@ -43,9 +44,10 @@ describe("history query adapter", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const { unmount } = renderHook(() => useHistoryPageQuery(24, "river", 24), {
-      wrapper,
-    });
+    const { unmount } = renderHook(
+      () => useHistoryPageQuery(ADMINISTRATOR_TOKEN, 24, "river", 24),
+      { wrapper },
+    );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
 
     unmount();

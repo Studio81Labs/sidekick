@@ -48,15 +48,15 @@ describe("AnalyzerRoute", () => {
       <>
         <Routes>
           <Route
-            path="/analyzer"
+            path="/admin/ocr"
             element={<AnalyzerRoute surface="workspace" />}
           />
           <Route
-            path="/analyzer/jobs/:jobId"
+            path="/admin/ocr/jobs/:jobId"
             element={<AnalyzerRoute surface="job" />}
           />
           <Route
-            path="/analyzer/benchmarks"
+            path="/admin/ocr/benchmarks"
             element={<AnalyzerRoute surface="benchmarks" />}
           />
         </Routes>
@@ -68,10 +68,10 @@ describe("AnalyzerRoute", () => {
 
   it("passes durable job identity into the analyzer", () => {
     render(
-      <MemoryRouter initialEntries={["/analyzer/jobs/job-123"]}>
+      <MemoryRouter initialEntries={["/admin/ocr/jobs/job-123"]}>
         <Routes>
           <Route
-            path="/analyzer/jobs/:jobId"
+            path="/admin/ocr/jobs/:jobId"
             element={<AnalyzerRoute surface="job" />}
           />
         </Routes>
@@ -86,10 +86,10 @@ describe("AnalyzerRoute", () => {
 
   it("passes a durable non-job surface without job identity", () => {
     render(
-      <MemoryRouter initialEntries={["/analyzer/benchmarks"]}>
+      <MemoryRouter initialEntries={["/admin/ocr/benchmarks"]}>
         <Routes>
           <Route
-            path="/analyzer/benchmarks"
+            path="/admin/ocr/benchmarks"
             element={<AnalyzerRoute surface="benchmarks" />}
           />
         </Routes>
@@ -101,7 +101,7 @@ describe("AnalyzerRoute", () => {
 
   it("routes analyzer UI commands through durable URLs", () => {
     render(
-      <MemoryRouter initialEntries={["/analyzer"]}>
+      <MemoryRouter initialEntries={["/admin/ocr"]}>
         <RouteHarness />
       </MemoryRouter>,
     );
@@ -109,7 +109,7 @@ describe("AnalyzerRoute", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open benchmarks" }));
     expect(screen.getByText("benchmarks:none")).toBeInTheDocument();
     expect(screen.getByLabelText("Current path")).toHaveTextContent(
-      "/analyzer/benchmarks",
+      "/admin/ocr/benchmarks",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Close surface" }));
@@ -118,7 +118,7 @@ describe("AnalyzerRoute", () => {
     fireEvent.click(screen.getByRole("button", { name: "Open job" }));
     expect(screen.getByText("job:next-job")).toBeInTheDocument();
     expect(screen.getByLabelText("Current path")).toHaveTextContent(
-      "/analyzer/jobs/next-job",
+      "/admin/ocr/jobs/next-job",
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Open job" }));
@@ -137,7 +137,7 @@ describe("AnalyzerRoute", () => {
   it("returns a closed surface to its origin without duplicating it", () => {
     render(
       <MemoryRouter
-        initialEntries={["/analyzer/jobs/prior-job", "/analyzer"]}
+        initialEntries={["/admin/ocr/jobs/prior-job", "/admin/ocr"]}
         initialIndex={1}
       >
         <RouteHarness />

@@ -6,6 +6,7 @@ import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import { systemQueryKeys } from "../../../domains/system/api/systemQueries";
 import { jsonResponse, resetApiMocks } from "../../../test/api";
+import { supersedeQueryAccessGeneration } from "../../../shared/api/queryCache";
 import { restoreApplicationBackupCommand } from "./restoreApplicationBackupCommand";
 
 afterEach(resetApiMocks);
@@ -98,6 +99,36 @@ describe("restore application backup command", () => {
     ).resolves.toMatchObject({ result: restoreResult });
     seeded.affected.forEach((queryKey) =>
       expect(seeded.queryClient.getQueryState(queryKey)).toBeUndefined(),
+    );
+  });
+
+  it("does not cancel current-session queries after a stale restore completes", async () => {
+    const seeded = seedWorkspaceCaches();
+    let resolveRestore!: (response: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveRestore = resolve;
+          }),
+      ),
+    );
+    const cancelQueries = vi.spyOn(seeded.queryClient, "cancelQueries");
+
+    const restoring = restoreApplicationBackupCommand(seeded.queryClient, {
+      administratorToken: "administrator-token",
+      file: new File(["backup"], "backup.zip"),
+    });
+    supersedeQueryAccessGeneration(seeded.queryClient);
+    resolveRestore(jsonResponse(restoreResult));
+
+    await expect(restoring).rejects.toThrow(
+      "Administrator access changed before this operation completed",
+    );
+    expect(cancelQueries).not.toHaveBeenCalled();
+    seeded.affected.forEach((queryKey) =>
+      expect(seeded.queryClient.getQueryData(queryKey)).toEqual({}),
     );
   });
 });

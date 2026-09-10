@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import asyncio
 import json
-import logging
 from pathlib import Path
 
 import pytest
@@ -17,7 +16,6 @@ def test_principal_store_issues_once_rotates_and_revokes(tmp_path: Path) -> None
     store = McpPrincipalStore(tmp_path, "staging")
     issued = store.create(
         name="Codex staging read",
-        scopes=["read"],
         expires_at=datetime.now(timezone.utc) + timedelta(days=7),
     )
 
@@ -45,13 +43,45 @@ def test_principal_store_binds_credentials_to_environment(tmp_path: Path) -> Non
     production = McpPrincipalStore(tmp_path, "production")
     issued = staging.create(
         name="Codex staging",
-        scopes=["read"],
         expires_at=None,
     )
 
     assert staging.authenticate(issued.token) is not None
     assert production.authenticate(issued.token) is None
     assert production.list() == []
+
+
+@pytest.mark.parametrize(
+    "retired_scopes",
+    [
+        ["read", "write"],
+        ["write"],
+        ["read", "read"],
+    ],
+)
+def test_principal_store_rejects_unsupported_persisted_scopes_without_mutation(
+    tmp_path: Path,
+    retired_scopes: list[str],
+) -> None:
+    store = McpPrincipalStore(tmp_path, "staging")
+    issued = store.create(name="Current-only check", expires_at=None)
+    principal_path = tmp_path / "mcp" / "principals.json"
+    persisted = json.loads(principal_path.read_text(encoding="utf-8"))
+    persisted["principals"][0]["scopes"] = retired_scopes
+    principal_path.write_text(json.dumps(persisted), encoding="utf-8")
+    unchanged = principal_path.read_text(encoding="utf-8")
+
+    for operation in (
+        store.list,
+        lambda: store.authenticate(issued.token),
+        lambda: store.record_usage(issued.token),
+        lambda: store.create(name="Must not rewrite", expires_at=None),
+        lambda: store.rotate(issued.principal.id),
+        lambda: store.revoke(issued.principal.id),
+    ):
+        with pytest.raises(ValueError, match="scopes"):
+            operation()
+    assert principal_path.read_text(encoding="utf-8") == unchanged
 
 
 def test_hosted_mcp_is_dark_by_default(tmp_path: Path) -> None:
@@ -71,16 +101,15 @@ def test_hosted_mcp_is_dark_by_default(tmp_path: Path) -> None:
         "enabled": False,
         "environment": "staging",
         "endpoint": None,
-        "writes_enabled": False,
     }
 
 
-def test_production_rejects_write_credentials(tmp_path: Path) -> None:
+def test_principal_issuance_rejects_retired_write_scope(tmp_path: Path) -> None:
     client = TestClient(
         create_app(
             Settings(
                 data_dir=tmp_path,
-                deployment_environment="production",
+                deployment_environment="staging",
                 api_rate_limit_enabled=False,
             )
         ),
@@ -90,16 +119,13 @@ def test_production_rejects_write_credentials(tmp_path: Path) -> None:
     rejected = client.post(
         "/api/mcp/principals",
         json={
-            "name": "Codex production",
+            "name": "Codex staging",
             "scopes": ["read", "write"],
             "expires_at": None,
         },
     )
 
-    assert rejected.status_code == 400
-    assert rejected.json()["detail"] == (
-        "MCP write credentials can only be issued in staging"
-    )
+    assert rejected.status_code == 422
 
 
 def test_hosted_mcp_requires_an_environment_token(tmp_path: Path) -> None:
@@ -144,7 +170,7 @@ def test_hosted_mcp_requires_an_environment_token(tmp_path: Path) -> None:
 
         issued = client.post(
             "/api/mcp/principals",
-            json={"name": "Codex staging", "scopes": ["read"], "expires_at": None},
+            json={"name": "Codex staging", "expires_at": None},
         )
         assert issued.status_code == 201
         token = issued.json()["token"]
@@ -178,10 +204,6 @@ def test_hosted_mcp_requires_an_environment_token(tmp_path: Path) -> None:
         assert tools.status_code == 200
         assert {tool["name"] for tool in tools.json()["result"]["tools"]} == {
             "get_environment_status",
-            "list_processing_jobs",
-            "get_job",
-            "search_history",
-            "list_benchmarks",
         }
 
         revoked = client.delete(
@@ -213,7 +235,7 @@ def test_hosted_mcp_accepts_worker_canonical_ipv6_authority(
         token = client.post(
             "/api/mcp/principals",
             headers={"X-Poker-Proxy-Secret": proxy_secret},
-            json={"name": "IPv6 Codex", "scopes": ["read"], "expires_at": None},
+            json={"name": "IPv6 Codex", "expires_at": None},
         ).json()["token"]
         initialized = client.post(
             "/mcp",
@@ -229,19 +251,18 @@ def test_hosted_mcp_accepts_worker_canonical_ipv6_authority(
         assert initialized.status_code == 200
 
 
-def test_hosted_mcp_requires_write_scope_for_approval(tmp_path: Path) -> None:
+def test_hosted_mcp_exposes_only_the_current_read_only_tool(tmp_path: Path) -> None:
     settings = Settings(
         data_dir=tmp_path,
         deployment_environment="staging",
         mcp_enabled=True,
         mcp_public_url="https://poker.test/mcp",
-        mcp_allow_writes=True,
         api_rate_limit_enabled=False,
     )
     with TestClient(create_app(settings), base_url="https://poker.test") as client:
         issued = client.post(
             "/api/mcp/principals",
-            json={"name": "Read-only Codex", "scopes": ["read"], "expires_at": None},
+            json={"name": "Read-only Codex", "expires_at": None},
         ).json()
         token = issued["token"]
         headers = {
@@ -254,79 +275,7 @@ def test_hosted_mcp_requires_write_scope_for_approval(tmp_path: Path) -> None:
             json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
         ).json()["result"]["tools"]
         names = {tool["name"] for tool in tools}
-        assert "approve_hand_state" in names
-        assert "submit_screenshot" not in names
-
-        denied = client.post(
-            "/mcp",
-            headers=headers,
-            json={
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "approve_hand_state",
-                    "arguments": {"job_id": "0" * 32, "state": {}},
-                },
-            },
-        )
-        assert denied.status_code == 200
-        assert denied.json()["result"]["isError"] is True
-        assert "does not grant write access" in denied.json()["result"]["content"][0]["text"]
-
-
-def test_hosted_mcp_preserves_internal_api_failure_request_id(
-    tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    settings = Settings(
-        data_dir=tmp_path,
-        deployment_environment="staging",
-        mcp_enabled=True,
-        mcp_public_url="https://poker.test/mcp",
-        api_rate_limit_enabled=False,
-    )
-    with TestClient(create_app(settings), base_url="https://poker.test") as client:
-        token = client.post(
-            "/api/mcp/principals",
-            json={"name": "Codex staging", "scopes": ["read"], "expires_at": None},
-        ).json()["token"]
-        with caplog.at_level(logging.INFO, logger="poker.access"):
-            failed = client.post(
-                "/mcp",
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Accept": "application/json, text/event-stream",
-                },
-                json={
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "method": "tools/call",
-                    "params": {
-                        "name": "get_job",
-                        "arguments": {"job_id": "0" * 32},
-                    },
-                },
-            )
-
-    assert failed.status_code == 200
-    assert failed.json()["result"]["isError"] is True
-    tool_error_text = failed.json()["result"]["content"][0]["text"]
-    tool_error = json.loads(tool_error_text[tool_error_text.index("{") :])
-    assert tool_error["status_code"] == 404
-    assert tool_error["request_id"]
-    access_events = [
-        json.loads(record.message)
-        for record in caplog.records
-        if record.name == "poker.access"
-    ]
-    internal_failure = next(
-        event
-        for event in access_events
-        if event["path"] == f"/api/jobs/{'0' * 32}"
-    )
-    assert internal_failure["status_code"] == 404
-    assert internal_failure["request_id"] == tool_error["request_id"]
+        assert names == {"get_environment_status"}
 
 
 def test_hosted_mcp_rate_limits_each_principal_before_recording_usage(
@@ -352,7 +301,7 @@ def test_hosted_mcp_rate_limits_each_principal_before_recording_usage(
     with TestClient(create_app(settings), base_url="https://poker.test") as client:
         token = client.post(
             "/api/mcp/principals",
-            json={"name": "Limited Codex", "scopes": ["read"], "expires_at": None},
+            json={"name": "Limited Codex", "expires_at": None},
         ).json()["token"]
         headers = {
             "Authorization": f"Bearer {token}",
@@ -373,7 +322,7 @@ def test_hosted_mcp_limits_concurrent_body_reads_before_buffering(
     tmp_path: Path,
 ) -> None:
     store = McpPrincipalStore(tmp_path, "staging")
-    issued = store.create(name="Concurrent Codex", scopes=["read"], expires_at=None)
+    issued = store.create(name="Concurrent Codex", expires_at=None)
     first_body_started = asyncio.Event()
     release_first_body = asyncio.Event()
     second_receive_called = False
@@ -390,7 +339,6 @@ def test_hosted_mcp_limits_concurrent_body_reads_before_buffering(
         allowed_origins=frozenset(),
         proxy_shared_secret=None,
         read_calls_per_minute=60,
-        write_calls_per_minute=10,
     )
     middleware.body_read_limiter = _McpBodyReadLimiter(maximum_per_principal=1)
     scope = {

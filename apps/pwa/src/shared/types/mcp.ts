@@ -1,10 +1,7 @@
-export type McpScope = "read" | "write";
-
 export interface McpAccessConfig {
   enabled: boolean;
   environment: "local" | "staging" | "production";
   endpoint: string | null;
-  writes_enabled: boolean;
 }
 
 export interface McpPrincipal {
@@ -12,7 +9,6 @@ export interface McpPrincipal {
   name: string;
   environment: "staging" | "production";
   token_prefix: string;
-  scopes: McpScope[];
   status: "active" | "expired" | "revoked";
   created_at: string;
   updated_at: string;

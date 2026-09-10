@@ -9,7 +9,7 @@ afterEach(cleanup);
 describe("AdministrativeTestBanner", () => {
   it("marks the capture surface as administrative and can lock it", async () => {
     const onLock = vi.fn();
-    render(<AdministrativeTestBanner busy={false} onLock={onLock} />);
+    render(<AdministrativeTestBanner lockDisabled={false} onLock={onLock} />);
 
     expect(
       screen.getByRole("note", { name: "Administrative OCR test mode" }),
@@ -24,7 +24,7 @@ describe("AdministrativeTestBanner", () => {
   });
 
   it("disables locking while an upload is running", () => {
-    render(<AdministrativeTestBanner busy onLock={vi.fn()} />);
+    render(<AdministrativeTestBanner lockDisabled onLock={vi.fn()} />);
 
     expect(
       screen.getByRole("button", { name: "Lock administrator tools" }),

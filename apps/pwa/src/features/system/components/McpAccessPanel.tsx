@@ -1,10 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./McpAccessPanel.css";
 
 import {
   ButtonControl,
   FormField,
-  SelectControl,
   TextInput,
 } from "../../../shared/components/FormControls";
 import {
@@ -20,21 +19,15 @@ import type {
   McpAccessConfig,
   McpIssuedPrincipal,
   McpPrincipal,
-  McpScope,
 } from "../../../shared/types/mcp";
 import { useMcpUpdateSafety } from "../hooks/useMcpUpdateSafety";
 
-export function McpAccessPanel({
-  onCloseBlockedChange,
-}: {
-  onCloseBlockedChange?: (blocked: boolean) => void;
-}) {
+export function McpAccessPanel() {
   const [config, setConfig] = useState<McpAccessConfig | null>(null);
   const [principals, setPrincipals] = useState<McpPrincipal[]>([]);
   const [adminToken, setAdminToken] = useState("");
   const [adminUnlocked, setAdminUnlocked] = useState(false);
   const [name, setName] = useState("");
-  const [access, setAccess] = useState<"read" | "write">("read");
   const [expiry, setExpiry] = useState("");
   const [issued, setIssued] = useState<McpIssuedPrincipal | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,24 +35,19 @@ export function McpAccessPanel({
   const [tokenRequestPending, setTokenRequestPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tokenPending = issued !== null || tokenRequestPending;
-  const closeBlocked = tokenPending || busyId !== null;
   const mcpDirtyVersion = useMemo(
     () => ({}),
-    [access, adminToken, expiry, issued, name],
+    [adminToken, expiry, issued, name],
   );
   useMcpUpdateSafety(
     {
       administratorSession: adminToken !== "",
-      credentialDraft: name !== "" || access !== "read" || expiry !== "",
+      credentialDraft: name !== "" || expiry !== "",
       operation: busyId !== null || tokenRequestPending,
       unacknowledgedCredential: issued !== null,
     },
     mcpDirtyVersion,
   );
-
-  useLayoutEffect(() => {
-    onCloseBlockedChange?.(closeBlocked);
-  }, [closeBlocked, onCloseBlockedChange]);
 
   useEffect(() => {
     let active = true;
@@ -118,13 +106,10 @@ export function McpAccessPanel({
     setBusyId("create");
     setError(null);
     try {
-      const scopes: McpScope[] =
-        access === "write" ? ["read", "write"] : ["read"];
       const result = await createMcpPrincipalCommand({
         adminToken,
         input: {
           name: normalizedName,
-          scopes,
           expires_at: expiry ? new Date(expiry).toISOString() : null,
         },
       });
@@ -222,7 +207,7 @@ export function McpAccessPanel({
         {" · "}
         {config.enabled ? config.endpoint : "Endpoint disabled"}
         {" · "}
-        {config.writes_enabled ? "staging writes enabled" : "read-only server"}
+        Read-only environment status
       </p>
 
       {!config.enabled ? (
@@ -304,19 +289,6 @@ export function McpAccessPanel({
                 placeholder="Developer or agent purpose"
               />
             </FormField>
-            <FormField label="Access">
-              <SelectControl
-                value={access}
-                onChange={(event) =>
-                  setAccess(event.target.value as "read" | "write")
-                }
-              >
-                <option value="read">Read only</option>
-                <option value="write" disabled={!config.writes_enabled}>
-                  Read and write
-                </option>
-              </SelectControl>
-            </FormField>
             <FormField label="Expires (optional)">
               <TextInput
                 type="datetime-local"
@@ -342,8 +314,7 @@ export function McpAccessPanel({
                   <div>
                     <strong>{principal.name}</strong>
                     <small>
-                      {principal.status} · {principal.scopes.join(" + ")} ·
-                      phmcp_
+                      {principal.status} · read-only · phmcp_
                       {principal.token_prefix}…
                       {principal.last_used_at
                         ? ` · used ${formatDate(principal.last_used_at)}`

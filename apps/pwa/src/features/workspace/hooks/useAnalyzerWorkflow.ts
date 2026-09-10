@@ -256,18 +256,21 @@ const AnalyzerWorkflowContext = createContext<AnalyzerWorkflowStore | null>(
 );
 
 type AnalyzerWorkflowProviderProps = PropsWithChildren<{
+  initialActiveJobId?: string | null;
   initialMutationLeases?: AnalyzerMutationLeases;
   mutationOwnerId?: string;
   projections?: AnalyzerWorkflowProjectionAdapters;
 }>;
 
 type AnalyzerWorkflowInitialization = {
+  initialActiveJobId?: string | null;
   initialMutationLeases?: AnalyzerMutationLeases;
   mutationOwnerId?: string;
   projections: AnalyzerWorkflowProjectionAdapters;
 };
 
 function initializeAnalyzerWorkflowState({
+  initialActiveJobId,
   initialMutationLeases,
   mutationOwnerId,
   projections,
@@ -289,19 +292,21 @@ function initializeAnalyzerWorkflowState({
 
   return {
     ...initialAnalyzerWorkflowState,
+    activeJobId: initialActiveJobId ?? null,
     mutationLeases,
   };
 }
 
 export function AnalyzerWorkflowProvider({
   children,
+  initialActiveJobId,
   initialMutationLeases,
   mutationOwnerId,
   projections = browserAnalyzerWorkflowProjections,
 }: AnalyzerWorkflowProviderProps) {
   const [state, dispatch] = useReducer(
     analyzerWorkflowReducer,
-    { initialMutationLeases, mutationOwnerId, projections },
+    { initialActiveJobId, initialMutationLeases, mutationOwnerId, projections },
     initializeAnalyzerWorkflowState,
   );
   const store = useMemo(

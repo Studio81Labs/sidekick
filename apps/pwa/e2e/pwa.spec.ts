@@ -2,6 +2,9 @@ import { expect, test, type Page } from "@playwright/test";
 
 const BACKEND_URL = "http://127.0.0.1:8010";
 const ADMINISTRATOR_TOKEN = "e2e-administrative-ocr-test-token-0123456789";
+const ADMINISTRATOR_HEADERS = {
+  Authorization: `Bearer ${ADMINISTRATOR_TOKEN}`,
+};
 const VALID_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ" +
     "AAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==",
@@ -17,21 +20,20 @@ async function unlockAdministrativeAccess(page: Page): Promise<void> {
   if (await banner.isVisible()) {
     return;
   }
-  await page.getByRole("button", { name: "Administrator tools" }).click();
   const dialog = page.getByRole("dialog", { name: "Administrator tools" });
   await dialog
     .getByLabel("Administrative OCR test token")
     .fill(ADMINISTRATOR_TOKEN);
   await dialog.getByRole("button", { name: "Unlock" }).click();
-  // The deployment verifies the credential before any capture control appears,
-  // so the dialog only reports the unlocked state once that round trip lands.
-  await expect(
-    dialog.getByRole("button", { name: "Lock administrator tools" }),
-  ).toBeVisible();
-  await dialog
-    .getByRole("button", { name: "Close administrator tools" })
-    .click();
+  await expect(dialog).toHaveCount(0);
   await expect(banner).toBeVisible();
+}
+
+async function expectOperatorWorkspace(page: Page): Promise<void> {
+  await unlockAdministrativeAccess(page);
+  await expect(
+    page.getByRole("region", { name: "Administrator OCR controls" }),
+  ).toBeVisible();
 }
 
 async function openControlledApp(page: Page): Promise<string> {
@@ -222,9 +224,9 @@ test("opens the cached shell offline without caching private routes", async ({
 
   await context.setOffline(true);
   try {
-    await page.goto("/offline-shell-proof");
+    await page.goto("/admin/ocr");
     await expect(
-      page.getByRole("region", { name: "Analyzer controls" }),
+      page.getByRole("dialog", { name: "Administrator tools" }),
     ).toBeVisible();
     await page.evaluate(() => window.dispatchEvent(new Event("offline")));
     await expect(page.getByText(/Offline — the shell/i)).toBeVisible();
@@ -272,9 +274,7 @@ test("keeps uploads network-only and retryable", async ({ context, page }) => {
   }
   await expireUncertainProcessingRecovery(page);
   await page.reload();
-  await expect(
-    page.getByRole("region", { name: "Analyzer controls" }),
-  ).toBeVisible();
+  await expectOperatorWorkspace(page);
   await expectProcessingRecoverySettled(page);
 
   await unlockAdministrativeAccess(page);
@@ -282,16 +282,14 @@ test("keeps uploads network-only and retryable", async ({ context, page }) => {
   await page.getByLabel("Choose screenshots").setInputFiles(file);
   const uploaded = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/jobs` &&
       response.request().method() === "POST" &&
       response.ok(),
   );
   await page.getByRole("button", { name: "Upload and parse" }).click();
   const uploadedJob = (await (await uploaded).json()) as { id: string };
-  await page.goto(`/analyzer/jobs/${uploadedJob.id}`);
-  await expect(
-    page.getByRole("region", { name: "Analyzer controls" }),
-  ).toBeVisible();
+  await page.goto(`/admin/ocr/jobs/${uploadedJob.id}`);
+  await expectOperatorWorkspace(page);
   await expect(
     page.getByRole("button", { name: "Approve state" }),
   ).toBeEnabled();
@@ -299,7 +297,8 @@ test("keeps uploads network-only and retryable", async ({ context, page }) => {
   await expect
     .poll(async () => {
       const response = await page.request.get(
-        `${BACKEND_URL}/api/jobs/${uploadedJob.id}`,
+        `${BACKEND_URL}/api/admin/ocr/jobs/${uploadedJob.id}`,
+        { headers: ADMINISTRATOR_HEADERS },
       );
       if (!response.ok()) {
         return null;
@@ -323,7 +322,7 @@ test("keeps a waiting update blocked while an upload is active", async ({
   const uploadGate = new Promise<void>((resolve) => {
     releaseUpload = resolve;
   });
-  await page.route(`${BACKEND_URL}/api/jobs`, async (route) => {
+  await page.route(`${BACKEND_URL}/api/admin/ocr/jobs`, async (route) => {
     if (route.request().method() === "POST") await uploadGate;
     await route.continue();
   });
@@ -336,7 +335,7 @@ test("keeps a waiting update blocked while an upload is active", async ({
   });
   const uploaded = page.waitForResponse(
     (response) =>
-      response.url() === `${BACKEND_URL}/api/jobs` &&
+      response.url() === `${BACKEND_URL}/api/admin/ocr/jobs` &&
       response.request().method() === "POST" &&
       response.ok(),
   );
@@ -402,7 +401,7 @@ test("requires fresh confirmation when a draft changes during activation", async
 
   await page.getByRole("button", { name: "Discard and reload" }).click();
 
-  await expect(page).toHaveURL(/\/analyzer$/);
+  await expect(page).toHaveURL(/\/admin\/ocr$/);
   await unlockAdministrativeAccess(page);
   await page.getByRole("button", { name: "Upload", exact: true }).click();
   await expect(page.getByLabel("Choose screenshots")).toHaveValue("");

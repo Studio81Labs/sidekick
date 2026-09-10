@@ -13,6 +13,7 @@ import {
 } from "./benchmarksQueries";
 
 afterEach(resetApiMocks);
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 function wrapper({ children }: PropsWithChildren) {
   return createElement(AppProviders, null, children);
@@ -24,32 +25,43 @@ describe("benchmark query adapter", () => {
       parser_provider: "ocr_cv",
       parser_layout_profile: "fortuna_nations",
     };
-    expect(benchmarkOverviewQueryOptions(pipeline).queryKey).toEqual(
-      benchmarkQueryKeys.overview(pipeline),
-    );
-    expect(benchmarkReportQueryOptions("report-1").queryKey).toEqual([
-      "benchmarks",
-      "report",
-      "report-1",
-    ]);
-    expect(benchmarkImportReceiptQueryOptions("request-1").queryKey).toEqual([
-      "benchmarks",
-      "import",
-      "request-1",
-    ]);
+    expect(
+      benchmarkOverviewQueryOptions(ADMINISTRATOR_TOKEN, pipeline).queryKey,
+    ).toEqual(benchmarkQueryKeys.overview(pipeline));
+    expect(
+      benchmarkReportQueryOptions("report-1", ADMINISTRATOR_TOKEN).queryKey,
+    ).toEqual(["benchmarks", "report", "report-1"]);
+    expect(
+      benchmarkImportReceiptQueryOptions("request-1", ADMINISTRATOR_TOKEN)
+        .queryKey,
+    ).toEqual(["benchmarks", "import", "request-1"]);
   });
 
   it("keeps configured retries for hooks and disables them for compatibility reads", () => {
-    expect(benchmarkOverviewQueryOptions().retry).toBeUndefined();
-    expect(benchmarkOverviewQueryOptions(undefined, false).retry).toBe(false);
-    expect(benchmarkReportQueryOptions("report-1").retry).toBeUndefined();
-    expect(benchmarkReportQueryOptions("report-1", false).retry).toBe(false);
     expect(
-      benchmarkImportReceiptQueryOptions("request-1").retry,
+      benchmarkOverviewQueryOptions(ADMINISTRATOR_TOKEN, undefined).retry,
     ).toBeUndefined();
-    expect(benchmarkImportReceiptQueryOptions("request-1", false).retry).toBe(
-      false,
-    );
+    expect(
+      benchmarkOverviewQueryOptions(ADMINISTRATOR_TOKEN, undefined, false)
+        .retry,
+    ).toBe(false);
+    expect(
+      benchmarkReportQueryOptions("report-1", ADMINISTRATOR_TOKEN).retry,
+    ).toBeUndefined();
+    expect(
+      benchmarkReportQueryOptions("report-1", ADMINISTRATOR_TOKEN, false).retry,
+    ).toBe(false);
+    expect(
+      benchmarkImportReceiptQueryOptions("request-1", ADMINISTRATOR_TOKEN)
+        .retry,
+    ).toBeUndefined();
+    expect(
+      benchmarkImportReceiptQueryOptions(
+        "request-1",
+        ADMINISTRATOR_TOKEN,
+        false,
+      ).retry,
+    ).toBe(false);
   });
 
   it("aborts the transport request when its hook unmounts", async () => {
@@ -65,9 +77,10 @@ describe("benchmark query adapter", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    const { unmount } = renderHook(() => useBenchmarkReportQuery("report-1"), {
-      wrapper,
-    });
+    const { unmount } = renderHook(
+      () => useBenchmarkReportQuery("report-1", ADMINISTRATOR_TOKEN),
+      { wrapper },
+    );
     await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
 
     unmount();

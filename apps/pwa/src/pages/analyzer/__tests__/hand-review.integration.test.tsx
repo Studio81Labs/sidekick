@@ -1,5 +1,5 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 
 import type { DetectedState } from "../../../shared/types/poker";
 import {
@@ -16,6 +16,47 @@ import {
 } from "../../../test/analyzerHarness";
 
 describe("Analyzer hand review", () => {
+  it("does not approve an image-backed job until its matching screenshot loads", async () => {
+    const created = jobRecord();
+    const image = deferredResponse();
+    const existingFetch = globalThis.fetch;
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith(`/jobs/${created.id}/image`)) {
+        return image.promise;
+      }
+      return existingFetch(input, init);
+    });
+    vi.stubGlobal("fetch", fetch);
+    fetchMock()
+      .mockResolvedValueOnce(jsonResponse(created, 201))
+      .mockResolvedValueOnce(processingQueueResponse([created]))
+      .mockResolvedValueOnce(jsonResponse(approvedJob()));
+    render(<App />);
+
+    const user = await uploadScreenshot();
+    const approve = await screen.findByRole("button", {
+      name: "Approve state",
+    });
+    await waitFor(() =>
+      expect(
+        fetch.mock.calls.some(([input]) =>
+          String(input).endsWith(`/jobs/${created.id}/image`),
+        ),
+      ).toBe(true),
+    );
+
+    expect(approve).toBeDisabled();
+    expect(fetchMock()).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      image.resolve(new Response("table image"));
+    });
+    await waitFor(() => expect(approve).toBeEnabled());
+
+    await user.click(approve);
+    await waitFor(() => expect(fetchMock()).toHaveBeenCalledTimes(3));
+  });
+
   it("displays backend upload errors as queue attention items", async () => {
     const validJob = jobRecord({ original_filename: "valid.png" });
     fetchMock()
@@ -81,7 +122,7 @@ describe("Analyzer hand review", () => {
     const payload = JSON.parse(String(approveOptions?.body));
 
     expect(fetchMock().mock.calls[2][0]).toBe(
-      "http://localhost:8000/api/jobs/job-123/approve",
+      "http://localhost:8000/api/admin/ocr/jobs/job-123/approve",
     );
     expect(payload.current_bet).toBe(3.5);
     expect(payload.opponent_wager).toBeNull();

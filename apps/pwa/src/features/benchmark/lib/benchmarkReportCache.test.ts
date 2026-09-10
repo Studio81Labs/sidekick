@@ -9,6 +9,8 @@ import {
   loadCachedBenchmarkReport,
 } from "./benchmarkReportCache";
 
+const ADMINISTRATOR_TOKEN = "administrator-token";
+
 function report(id: string): BenchmarkReport {
   return {
     id,
@@ -40,6 +42,7 @@ describe("benchmark report cache", () => {
     await expect(
       loadCachedBenchmarkReport(
         "report-1",
+        ADMINISTRATOR_TOKEN,
         cache,
         new Map(),
         createQueryClient(),
@@ -77,6 +80,7 @@ describe("benchmark report cache", () => {
     expect(
       loadCachedBenchmarkReport(
         "pending",
+        ADMINISTRATOR_TOKEN,
         new Map(),
         pendingRequests,
         createQueryClient(),

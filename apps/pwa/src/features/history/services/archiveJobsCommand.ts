@@ -3,13 +3,19 @@ import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { archiveJobs } from "../../../domains/history/api/historyApi";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
-import { supersedeLatestQueryResults } from "../../../shared/api/queryCache";
+import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
+  supersedeLatestQueryResults,
+} from "../../../shared/api/queryCache";
 
 export async function archiveJobsCommand(
   queryClient: QueryClient,
   jobIds: string[],
+  administratorToken: string,
 ) {
-  const history = await archiveJobs(jobIds);
+  const accessGeneration = captureQueryAccessGeneration(queryClient);
+  const history = await archiveJobs(jobIds, administratorToken);
   const detailKeys = jobIds.map((jobId) => jobQueryKeys.detail(jobId));
   const projectionKeys = [
     jobQueryKeys.processing(),
@@ -17,6 +23,7 @@ export async function archiveJobsCommand(
   ] as const;
   const invalidated: QueryKey[] = [...detailKeys, ...projectionKeys];
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   for (const queryKey of invalidated) {
     supersedeLatestQueryResults(queryClient, queryKey);
   }
@@ -28,6 +35,7 @@ export async function archiveJobsCommand(
       }),
     ),
   );
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   await Promise.all(
     invalidated.map((queryKey, index) =>
       queryClient.invalidateQueries({
@@ -38,6 +46,7 @@ export async function archiveJobsCommand(
     ),
   );
 
+  assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
   const updated = history.jobs.map((job) => jobQueryKeys.detail(job.id));
   for (const job of history.jobs) {
     queryClient.setQueryData(jobQueryKeys.detail(job.id), job);

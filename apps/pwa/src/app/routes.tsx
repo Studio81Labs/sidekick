@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import AnalyzerRoute from "../pages/analyzer/AnalyzerRoute";
+import McpAdministrationPage from "../pages/mcp/McpAdministrationPage";
 import {
   analyzerJobPath,
   analyzerPaths,
@@ -25,7 +26,11 @@ export function AppRoutes() {
         path={appPaths.analyzerBenchmarks}
         element={<AnalyzerRoute surface="benchmarks" />}
       />
-      <Route path="*" element={<Navigate to={appPaths.analyzer} replace />} />
+      <Route
+        path={appPaths.mcpAdministration}
+        element={<McpAdministrationPage />}
+      />
+      <Route path="*" element={<main>Page not found</main>} />
     </Routes>
   );
 }

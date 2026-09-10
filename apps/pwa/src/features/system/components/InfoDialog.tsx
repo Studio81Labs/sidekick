@@ -7,10 +7,8 @@ import { DialogFrame } from "../../../shared/components/DialogFrame";
 import { DialogHeader } from "../../../shared/components/DialogHeader";
 import {
   ButtonControl,
-  DownloadLinkControl,
   FileInputControl,
 } from "../../../shared/components/FormControls";
-import { McpAccessPanel } from "./McpAccessPanel";
 
 export interface InfoProviderSummary {
   recognition: string;
@@ -20,12 +18,10 @@ export interface InfoProviderSummary {
 
 export interface InfoDialogProps {
   administrativeUnlocked: boolean;
-  backupDownloadUrl: string;
   backupRestoring: boolean;
   busy: boolean;
-  mcpCloseBlocked: boolean;
   onClose: () => void;
-  onMcpCloseBlockedChange: (blocked: boolean) => void;
+  onDownloadBackup: () => void;
   onRestoreBackup: (file: File) => void;
   providers: InfoProviderSummary | null;
   systemInfoLoading: boolean;
@@ -33,18 +29,16 @@ export interface InfoDialogProps {
 
 export function InfoDialog({
   administrativeUnlocked,
-  backupDownloadUrl,
   backupRestoring,
   busy,
-  mcpCloseBlocked,
   onClose,
-  onMcpCloseBlockedChange,
+  onDownloadBackup,
   onRestoreBackup,
   providers,
   systemInfoLoading,
 }: InfoDialogProps) {
   const backupInputRef = useRef<HTMLInputElement | null>(null);
-  const closeDisabled = backupRestoring || mcpCloseBlocked;
+  const closeDisabled = backupRestoring;
   // Restoring a backup mints jobs, so the server requires the same
   // administrator credential the upload path uses.
   const restoreDisabled = busy || backupRestoring || !administrativeUnlocked;
@@ -53,7 +47,7 @@ export function InfoDialog({
     <DialogFrame className="info-dialog" titleId="info-dialog-title">
       <DialogHeader
         titleId="info-dialog-title"
-        title="About Poker Training Analyzer"
+        title="About Poker Hero"
         subtitle="Administrator OCR test console"
         closeLabel="Close app information"
         closeDisabled={closeDisabled}
@@ -101,15 +95,6 @@ export function InfoDialog({
             directly with a poker client.
           </p>
         </section>
-        <section className="info-dialog-section">
-          <h3>Agent access</h3>
-          <p>
-            Create environment-bound bearer credentials for trusted developer
-            agents. Store each token when it is shown; only its hash remains on
-            the server.
-          </p>
-          <McpAccessPanel onCloseBlockedChange={onMcpCloseBlockedChange} />
-        </section>
         <section className="info-dialog-section data-recovery-section">
           <h3>Data and recovery</h3>
           <p>
@@ -117,16 +102,15 @@ export function InfoDialog({
             one portable ZIP.
           </p>
           <div className="data-recovery-actions">
-            <DownloadLinkControl
+            <ButtonControl
               className="secondary-button"
-              href={backupDownloadUrl}
-              download
+              onClick={onDownloadBackup}
               aria-label="Download application backup"
               disabled={busy}
             >
               <Download size={14} aria-hidden="true" />
               Download backup
-            </DownloadLinkControl>
+            </ButtonControl>
             <ButtonControl
               variant="secondary"
               onClick={() => backupInputRef.current?.click()}

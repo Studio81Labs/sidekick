@@ -2,16 +2,25 @@
 
 from fastapi import APIRouter, Query
 
+from app.api.administrative_access import administrator_access_router
+from app.application.admin_ocr_test import AuthorizeAdministrator
 from app.application.jobs import JobHistoryService
 from app.domain.hands import ArchiveJobsRequest, JobHistory
 
 
-def create_history_router(runtime: JobHistoryService) -> APIRouter:
+def create_history_router(
+    runtime: JobHistoryService,
+    authorize_administrator: AuthorizeAdministrator,
+) -> APIRouter:
     """Build the history router with its application-owned dependencies."""
 
-    router = APIRouter()
+    router = administrator_access_router(authorize_administrator)
 
-    @router.get("/api/history", operation_id="history_get", response_model=JobHistory)
+    @router.get(
+        "/api/admin/ocr/history",
+        operation_id="admin_ocr_history_get",
+        response_model=JobHistory,
+    )
     def get_history(
         limit: int = Query(default=24, ge=1, le=100),
         offset: int = Query(default=0, ge=0),
@@ -20,8 +29,8 @@ def create_history_router(runtime: JobHistoryService) -> APIRouter:
         return runtime.list_history(limit, offset, query)
 
     @router.put(
-        "/api/history",
-        operation_id="history_archive",
+        "/api/admin/ocr/history",
+        operation_id="admin_ocr_history_archive",
         response_model=JobHistory,
     )
     def archive_jobs(

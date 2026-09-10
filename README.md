@@ -31,7 +31,7 @@ The hosted PWA is available at `http://localhost:5173` and the API at
 | ------------------------------------------------ | ---------------------------------------------------------------- |
 | `pnpm bootstrap`                                 | Install workspace and backend dependencies                       |
 | `pnpm backend:dev`                               | Start FastAPI with reload on port 8000                           |
-| `pnpm backend:mcp`                               | Start the environment-fixed local MCP gateway over stdio         |
+| `pnpm backend:mcp`                               | Start the environment-status local MCP gateway over stdio        |
 | `pnpm backend:benchmark <dataset.zip>`           | Benchmark a parser against an exported labeled dataset           |
 | `pnpm backend:pokerstars-corpus <manifest.json>` | Assess PokerStars imports against private ground truth           |
 | `pnpm backend:backup <command>`                  | Initialize, export, verify, or restore-drill application backups |

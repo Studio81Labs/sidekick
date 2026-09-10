@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.application.benchmarks import BenchmarkService
-from app.api.administrative_access import require_administrator
+from app.api.administrative_access import administrator_access_router
 from app.api.dependencies import (
     BACKGROUND_TASK_STATE_KEY,
     BenchmarkConfigurationError,
@@ -39,11 +39,11 @@ from app.domain.hands import JobRecord
 def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
     """Build the parser benchmark router with application-owned operations."""
 
-    router = APIRouter()
+    router = administrator_access_router(runtime.authorize_administrator)
 
     @router.put(
-        "/api/jobs/{job_id}/benchmark",
-        operation_id="job_benchmark_update",
+        "/api/admin/ocr/jobs/{job_id}/benchmark",
+        operation_id="admin_ocr_job_benchmark_update",
         response_model=JobRecord,
     )
     def set_benchmark_inclusion(
@@ -58,8 +58,8 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.get(
-        "/api/benchmarks",
-        operation_id="benchmarks_get",
+        "/api/admin/ocr/benchmarks",
+        operation_id="admin_ocr_benchmarks_get",
         response_model=BenchmarkOverview,
     )
     def get_benchmark_overview(
@@ -82,8 +82,8 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @router.get(
-        "/api/benchmarks/export",
-        operation_id="benchmarks_export",
+        "/api/admin/ocr/benchmarks/export",
+        operation_id="admin_ocr_benchmarks_export",
         response_class=StreamingResponse,
         responses={"200": {"content": ZIP_RESPONSE_CONTENT}},
     )
@@ -116,8 +116,8 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
         )
 
     @router.post(
-        "/api/benchmarks/import",
-        operation_id="benchmarks_import",
+        "/api/admin/ocr/benchmarks/import",
+        operation_id="admin_ocr_benchmarks_import",
         response_model=BenchmarkDatasetImportResult,
     )
     async def import_benchmark_dataset(
@@ -129,14 +129,7 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             max_length=128,
             pattern=BENCHMARK_IMPORT_REQUEST_ID_PATTERN,
         ),
-        authorization: str | None = Header(
-            default=None,
-            alias="Authorization",
-            include_in_schema=False,
-        ),
     ) -> BenchmarkDatasetImportResult:
-        require_administrator(runtime.authorize_administrator(authorization))
-
         archive_bytes = await file.read(runtime.max_dataset_upload_bytes + 1)
         if len(archive_bytes) > runtime.max_dataset_upload_bytes:
             raise HTTPException(
@@ -158,8 +151,8 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
             ) from exc
 
     @router.get(
-        "/api/benchmarks/imports/{request_id}",
-        operation_id="benchmark_import_get",
+        "/api/admin/ocr/benchmarks/imports/{request_id}",
+        operation_id="admin_ocr_benchmark_import_get",
         response_model=BenchmarkDatasetImportReceipt,
     )
     def get_benchmark_dataset_import(
@@ -177,19 +170,21 @@ def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
         return import_status.receipt
 
     @router.get(
-        "/api/benchmarks/{report_id}",
-        operation_id="benchmark_report_get",
+        "/api/admin/ocr/benchmarks/{report_id}",
+        operation_id="admin_ocr_benchmark_report_get",
         response_model=BenchmarkReport,
     )
-    def get_benchmark_report(report_id: str) -> BenchmarkReport:
+    def get_benchmark_report(
+        report_id: str,
+    ) -> BenchmarkReport:
         try:
             return runtime.get_report(report_id)
         except BenchmarkTransportNotFoundError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     @router.post(
-        "/api/benchmarks/run",
-        operation_id="benchmarks_run",
+        "/api/admin/ocr/benchmarks/run",
+        operation_id="admin_ocr_benchmarks_run",
         response_model=BenchmarkReport,
     )
     def run_parser_benchmark(

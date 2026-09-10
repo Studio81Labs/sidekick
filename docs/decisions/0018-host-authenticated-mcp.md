@@ -1,6 +1,12 @@
 # ADR 0018: Host an Authenticated MCP Endpoint
 
-Status: accepted
+Status: superseded in part by ADR 0080
+
+The hosted transport, per-environment principal identity, opaque-token storage,
+independent administration boundary, and disabled-by-default deployment gate
+remain current. ADR 0080 replaces this ADR's `read + write` principal scope,
+write-enable setting, separate write-rate-limit, and data-tool decisions with
+the current permanent read-only environment-status capability.
 
 ## Context
 

@@ -9,6 +9,7 @@ import { supersedeLatestQueryWrites } from "../../../shared/api/queryCache";
 import { approveStateCommand } from "./handWorkflowCommands";
 
 afterEach(resetApiMocks);
+const ADMINISTRATOR_TOKEN = "administrator-token";
 
 function seedCaches(jobId: string) {
   const queryClient = createQueryClient();
@@ -32,6 +33,7 @@ describe("hand workflow commands", () => {
     );
 
     const outcome = await approveStateCommand(seeded.queryClient, {
+      administratorToken: ADMINISTRATOR_TOKEN,
       jobId: seeded.job.id,
       state,
     });
@@ -80,6 +82,7 @@ describe("hand workflow commands", () => {
     );
 
     const outcome = await approveStateCommand(seeded.queryClient, {
+      administratorToken: ADMINISTRATOR_TOKEN,
       jobId: seeded.job.id,
       state: canonicalState(),
     });
@@ -116,6 +119,7 @@ describe("hand workflow commands", () => {
     );
 
     const approval = approveStateCommand(seeded.queryClient, {
+      administratorToken: ADMINISTRATOR_TOKEN,
       jobId: seeded.job.id,
       state: canonicalState(),
     });
@@ -138,6 +142,7 @@ describe("hand workflow commands", () => {
 
     await expect(
       approveStateCommand(seeded.queryClient, {
+        administratorToken: ADMINISTRATOR_TOKEN,
         jobId: seeded.job.id,
         state: { ...canonicalState(), user_approved: false },
       }),

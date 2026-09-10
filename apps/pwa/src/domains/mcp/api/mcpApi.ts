@@ -3,12 +3,10 @@ import type {
   McpAccessConfig,
   McpIssuedPrincipal,
   McpPrincipal,
-  McpScope,
 } from "../../../shared/types/mcp";
 
 export type CreateMcpPrincipalInput = {
   name: string;
-  scopes: McpScope[];
   expires_at: string | null;
 };
 

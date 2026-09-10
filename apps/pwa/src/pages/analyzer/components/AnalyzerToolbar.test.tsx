@@ -10,11 +10,11 @@ function toolbarProps(
   overrides: Partial<AnalyzerToolbarProps> = {},
 ): AnalyzerToolbarProps {
   return {
-    administrativeUnlocked: false,
     busy: false,
     historyTotal: 7,
+    lockDisabled: false,
     onConfigurePipeline: vi.fn(),
-    onOpenAdministrativeTools: vi.fn(),
+    onLockAdministrator: vi.fn(),
     onOpenBenchmark: vi.fn(),
     onOpenHelp: vi.fn(),
     onOpenInfo: vi.fn(),
@@ -29,7 +29,7 @@ describe("AnalyzerToolbar", () => {
     const { container } = render(<AnalyzerToolbar {...props} />);
 
     expect(
-      screen.getByRole("heading", { name: "Poker Training Analyzer" }),
+      screen.getByRole("heading", { name: "Poker Hero" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -43,11 +43,11 @@ describe("AnalyzerToolbar", () => {
       screen.queryByRole("button", { name: /Automation/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    ).toHaveAttribute("aria-pressed", "false");
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toHaveClass("active");
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Administrator tools" }),
+      screen.getByRole("button", { name: "Lock administrator session" }),
     );
     await userEvent.click(
       screen.getByRole("button", { name: "Configure analysis plugins" }),
@@ -64,7 +64,7 @@ describe("AnalyzerToolbar", () => {
       screen.getByRole("button", { name: "Parser benchmark" }),
     );
 
-    expect(props.onOpenAdministrativeTools).toHaveBeenCalledOnce();
+    expect(props.onLockAdministrator).toHaveBeenCalledOnce();
     expect(props.onConfigurePipeline).toHaveBeenCalledOnce();
     expect(props.onOpenHelp).toHaveBeenCalledOnce();
     expect(props.onOpenInfo).toHaveBeenCalledOnce();
@@ -74,18 +74,10 @@ describe("AnalyzerToolbar", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("marks the administrator tools button while the session is unlocked", () => {
-    render(
-      <AnalyzerToolbar {...toolbarProps({ administrativeUnlocked: true })} />,
-    );
-
-    const button = screen.getByRole("button", { name: "Administrator tools" });
-    expect(button).toHaveAttribute("aria-pressed", "true");
-    expect(button).toHaveClass("active");
-  });
-
   it("renders inactive states and locks commands that depend on backend work", () => {
-    render(<AnalyzerToolbar {...toolbarProps({ busy: true })} />);
+    render(
+      <AnalyzerToolbar {...toolbarProps({ busy: true, lockDisabled: true })} />,
+    );
 
     expect(
       screen.getByRole("button", { name: "Configure analysis plugins" }),
@@ -94,8 +86,8 @@ describe("AnalyzerToolbar", () => {
       screen.getByRole("button", { name: "Parser benchmark" }),
     ).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Administrator tools" }),
-    ).toBeEnabled();
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
     expect(
       screen.getByRole("button", {
         name: "How to use Poker Training Analyzer",
@@ -103,6 +95,17 @@ describe("AnalyzerToolbar", () => {
     ).toBeEnabled();
     expect(
       screen.getByRole("button", { name: "About this app" }),
+    ).toBeEnabled();
+  });
+
+  it("can disable only the lock command for an active non-busy mutation", () => {
+    render(<AnalyzerToolbar {...toolbarProps({ lockDisabled: true })} />);
+
+    expect(
+      screen.getByRole("button", { name: "Lock administrator session" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Configure analysis plugins" }),
     ).toBeEnabled();
   });
 });

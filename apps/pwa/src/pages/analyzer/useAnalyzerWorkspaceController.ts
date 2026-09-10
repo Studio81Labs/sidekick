@@ -1,11 +1,12 @@
 import { type ChangeEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
   AnalyzerRouteNavigation,
   AnalyzerRouteState,
 } from "./analyzerRouteState";
+import type { AnalyzerWorkspaceDraft } from "./analyzerWorkspaceDraft";
 import { useAnalyzerRouteRestore } from "./useAnalyzerRouteRestore";
 import { selectedFilesLabel } from "../../features/capture/components/InputSourcePanel";
 import { shareModeLabel } from "../../features/capture/lib/captureSource";
@@ -17,15 +18,13 @@ import {
 import { screenshotLabel } from "../../shared/lib/screenshotPresentation";
 import { PERSISTED_JOB_ID_PATTERN } from "../../shared/lib/jobIdentity";
 import { useBenchmarkController } from "../../features/benchmark/hooks/useBenchmarkController";
-import {
-  applicationBackupUrl,
-  restoreApplicationBackupCommand,
-} from "../../features/backups/services/restoreApplicationBackupCommand";
+import { downloadApplicationBackupCommand } from "../../features/backups/services/downloadApplicationBackupCommand";
+import { downloadBenchmarkDatasetCommand } from "../../features/benchmark/services/downloadBenchmarkDatasetCommand";
+import { restoreApplicationBackupCommand } from "../../features/backups/services/restoreApplicationBackupCommand";
 import {
   administrativeAccessDenial,
   administrativeAccessDenialMessage,
 } from "../../features/admin-ocr-test/lib/administrativeAccess";
-import { useAdministrativeAccess } from "../../features/admin-ocr-test/hooks/useAdministrativeAccess";
 import { useCaptureSource } from "../../features/capture/hooks/useCaptureSource";
 import { uploadScreenshotCommand } from "../../features/capture/services/uploadScreenshotCommand";
 import { useHandReviewState } from "../../features/hand-review/hooks/useHandReviewState";
@@ -55,6 +54,11 @@ import {
   getProcessingQueueExtent,
 } from "../../features/workspace/lib/queryReads";
 import { ApiResponseError, humanReadableMessage } from "../../shared/api/core";
+import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
+  isQueryAccessGenerationSuperseded,
+} from "../../shared/api/queryCache";
 import {
   ERROR_TOAST_ID,
   isAbortError,
@@ -119,14 +123,22 @@ type JobNavigationMode = "push" | "replace" | false;
 const NO_JOB_ATTENTION: Readonly<Record<string, string | undefined>> = {};
 
 export type AnalyzerWorkspaceControllerProps = {
+  administratorToken: string;
+  initialDraft?: AnalyzerWorkspaceDraft | null;
   mutationOwnerId: string;
   navigation: AnalyzerRouteNavigation;
+  onLockAdministrator: (reason?: string) => void;
+  onPreserveDraft?: (draft: AnalyzerWorkspaceDraft) => void;
   route: AnalyzerRouteState;
 };
 
 export function useAnalyzerWorkspaceController({
+  administratorToken,
+  initialDraft = null,
   mutationOwnerId,
   navigation,
+  onLockAdministrator,
+  onPreserveDraft,
   route,
 }: AnalyzerWorkspaceControllerProps) {
   const queryClient = useQueryClient();
@@ -199,6 +211,7 @@ export function useAnalyzerWorkspaceController({
     () => readProcessingQueue() ?? [],
   );
   const [helpDialogOpen, setHelpDialogOpen] = useState(false);
+  const [archiveDownloading, setArchiveDownloading] = useState(false);
   const [backupRestoring, setBackupRestoring] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>(
     () => readHistory() ?? [],
@@ -239,6 +252,10 @@ export function useAnalyzerWorkspaceController({
     removePostflopAction,
     removePreflopAction,
     resetToParser,
+    retryScreenshot,
+    screenshotError,
+    screenshotReadyForApproval,
+    screenshotStatus,
     screenshotUrl,
     setActiveJobId,
     setApprovedStateKey,
@@ -252,8 +269,14 @@ export function useAnalyzerWorkspaceController({
     warnings,
   } = useHandReviewState({
     activeJobId,
+    administratorToken,
+    initialDraft:
+      initialDraft?.handReview?.jobId === activeJobId
+        ? initialDraft.handReview
+        : null,
     jobs,
     onActiveJobChange: selectActiveJob,
+    onAdministrativeDenial: reportAdministrativeDenial,
     onError: setError,
   });
   const {
@@ -285,17 +308,15 @@ export function useAnalyzerWorkspaceController({
     startShare: onStartScreenShare,
     stopShare: onStopScreenShare,
     videoRef,
-  } = useCaptureSource({ onError: setError });
-  const administrativeAccess = useAdministrativeAccess({
-    onLock: onStopScreenShare,
+  } = useCaptureSource({
+    initialFiles: initialDraft?.files,
+    onError: setError,
   });
   const {
     closeDialog: closeInfoDialog,
     dialogOpen: infoDialogOpen,
     loading: systemInfoLoading,
-    mcpCloseBlocked,
     openDialog: openInfoDialog,
-    setMcpCloseBlocked,
     systemInfo,
   } = useSystemInfoDialog();
   const {
@@ -320,10 +341,23 @@ export function useAnalyzerWorkspaceController({
   } = useScreenshotDetails({
     history,
     historySearchResults,
+    initialDraft: initialDraft?.screenshotMetadata,
     jobs,
     onError: setError,
   });
+  const pendingUploadRequestIdsRef = useRef(
+    new Map(
+      initialDraft?.pendingUploadRequestIds.map(({ file, requestId }) => [
+        file,
+        requestId,
+      ]) ?? [],
+    ),
+  );
   const benchmarkDatasetInputRef = useRef<HTMLInputElement | null>(null);
+  const archiveDownloadInFlightRef = useRef(false);
+  const restoredRoutedDraftJobIdRef = useRef(
+    initialDraft?.handReview?.jobId ?? null,
+  );
   const jobsRef = useRef(jobs);
   const processingCacheInitializedRef = useRef(false);
   const processingMembershipGenerationRef = useRef(0);
@@ -384,10 +418,12 @@ export function useAnalyzerWorkspaceController({
     targetLayoutProfile: benchmarkTargetLayoutProfile,
     updating: benchmarkUpdating,
   } = useBenchmarkController({
+    administratorToken,
     busy,
     importRecoveryPending: benchmarkImportRecoveryPending,
     mutationRecoveryPending: () =>
       mutationRecoveryPending(["processing", "history"]),
+    onAdministrativeDenial: reportAdministrativeDenial,
     onError: setError,
     onOpenJob: upsertAndActivateJob,
     pipelineCapabilities,
@@ -412,6 +448,97 @@ export function useAnalyzerWorkspaceController({
       JSON.stringify(parsedScreenshotTags) !==
         JSON.stringify(screenshotTags(managedJob))),
   );
+  const handReviewDraft =
+    formDirtyRef.current && job
+      ? {
+          baseline: formBaselineRef.current,
+          form,
+          jobId: job.id,
+        }
+      : job === null &&
+          restoredRoutedDraftJobIdRef.current !== null &&
+          restoredRoutedDraftJobIdRef.current === activeJobId
+        ? (initialDraft?.handReview ?? null)
+        : null;
+  const workspaceDraftRef = useRef<AnalyzerWorkspaceDraft | null>(null);
+  workspaceDraftRef.current = {
+    activeJobId,
+    files: [...files],
+    handReview: handReviewDraft,
+    pendingUploadRequestIds: pendingUploadRequestIdsFor(files),
+    screenshotMetadata:
+      screenshotMetadataDraft && managedJob
+        ? {
+            jobId: managedJob.id,
+            notes: screenshotNotes,
+            tagInput: screenshotTagInput,
+            title: screenshotTitle,
+          }
+        : null,
+  };
+  const lockAdministrator = useCallback(
+    (reason?: string, preservedFiles?: readonly File[]) => {
+      const workspaceDraft = workspaceDraftRef.current;
+      if (workspaceDraft) {
+        const retainedFiles = [...(preservedFiles ?? workspaceDraft.files)];
+        onPreserveDraft?.({
+          ...workspaceDraft,
+          // A batch may have produced jobs before a later request loses
+          // access. Retain only that denied request and unstarted files, so
+          // reauthentication cannot submit completed queue items again.
+          files: retainedFiles,
+          pendingUploadRequestIds:
+            workspaceDraft.pendingUploadRequestIds.filter(({ file }) =>
+              retainedFiles.includes(file),
+            ),
+        });
+      }
+      onStopScreenShare();
+      onLockAdministrator(reason);
+    },
+    [onLockAdministrator, onPreserveDraft, onStopScreenShare],
+  );
+
+  function pendingUploadRequestIdsFor(selectedFiles: readonly File[]) {
+    return selectedFiles.flatMap((file) => {
+      const requestId = pendingUploadRequestIdsRef.current.get(file);
+      return requestId ? [{ file, requestId }] : [];
+    });
+  }
+
+  function updateWorkspaceDraftFiles(selectedFiles: readonly File[]) {
+    const workspaceDraft = workspaceDraftRef.current;
+    if (!workspaceDraft) {
+      return;
+    }
+    workspaceDraftRef.current = {
+      ...workspaceDraft,
+      files: [...selectedFiles],
+      pendingUploadRequestIds: pendingUploadRequestIdsFor(selectedFiles),
+    };
+  }
+
+  function setSelectedFiles(selectedFiles: readonly File[]) {
+    const nextFiles = [...selectedFiles];
+    const requestIds = pendingUploadRequestIdsRef.current;
+    pendingUploadRequestIdsRef.current = new Map(
+      nextFiles.flatMap((file) => {
+        const requestId = requestIds.get(file);
+        return requestId ? [[file, requestId] as const] : [];
+      }),
+    );
+    updateWorkspaceDraftFiles(nextFiles);
+    setFiles(nextFiles);
+  }
+
+  const administratorLockDisabled =
+    busy ||
+    archiveDownloading ||
+    screenshotMetadataSaving ||
+    screenshotDeleting ||
+    benchmarkImporting ||
+    benchmarkRunning ||
+    benchmarkUpdating;
   const analyzerDirtyVersion = useMemo(
     () => ({}),
     [files, form, screenshotNotes, screenshotTagInput, screenshotTitle],
@@ -433,24 +560,42 @@ export function useAnalyzerWorkspaceController({
   );
 
   useAnalyzerRouteRestore({
-    activateJob: (nextJob) => upsertAndActivateJob(nextJob, false),
+    activateJob: (nextJob) => {
+      if (shouldRetainRoutedReviewDraft(nextJob.id)) {
+        upsertJob(nextJob);
+        restoredRoutedDraftJobIdRef.current = null;
+        return;
+      }
+      upsertAndActivateJob(nextJob, false);
+    },
     activeJobId,
     benchmarksOpen: benchmarkDialogOpen,
     closeBenchmarks: closeBenchmarkDialog,
     jobs,
-    loadJob: (jobId) => fetchJobQuery(queryClient, jobId),
-    onError: (routeError) =>
-      setError(
-        messageFromError(
-          routeError,
-          "The requested analyzer job could not load",
-        ),
-      ),
+    loadJob: (jobId) => fetchJobQuery(queryClient, jobId, administratorToken),
+    onError: (routeError) => {
+      if (!reportAdministrativeDenial(routeError)) {
+        setError(
+          messageFromError(
+            routeError,
+            "The requested analyzer job could not load",
+          ),
+        );
+      }
+    },
     onJobLoading: (jobId) => {
+      // An access relock remounts the workspace with the current route and
+      // its unsaved review draft. Archived jobs are not in the processing
+      // cache, so route restoration must fetch them before it can activate
+      // the job. Keep that matching draft visible while the fetch is pending.
+      if (shouldRetainRoutedReviewDraft(jobId)) {
+        return;
+      }
       alignWorkspaceToJob(null);
       selectActiveJob(jobId);
     },
     onJobUnavailable: () => {
+      restoredRoutedDraftJobIdRef.current = null;
       alignWorkspaceToJob(null);
       navigation.openWorkspace({ replace: true });
     },
@@ -565,6 +710,7 @@ export function useAnalyzerWorkspaceController({
         const recovery = fetchBenchmarkImportReceiptQuery(
           queryClient,
           benchmarkImportRequestId,
+          administratorToken,
         )
           .then(async (receipt) => {
             benchmarkImportRetryNotBefore = 0;
@@ -620,6 +766,9 @@ export function useAnalyzerWorkspaceController({
             void requestHistoryRestore(null, true);
           })
           .catch((recoveryError) => {
+            if (reportAdministrativeDenial(recoveryError)) {
+              return;
+            }
             if (
               recoveryError instanceof ApiResponseError &&
               recoveryError.status === 429 &&
@@ -1244,7 +1393,9 @@ export function useAnalyzerWorkspaceController({
     historyJobRestoreActiveIdsRef.current = new Set(requestedJobIds);
     const restoreGeneration = historyMutationGenerationRef.current;
     const restore = Promise.all(
-      requestedJobIds.map((jobId) => fetchJobQuery(queryClient, jobId)),
+      requestedJobIds.map((jobId) =>
+        fetchJobQuery(queryClient, jobId, administratorToken),
+      ),
     )
       .then((incomingJobs) => {
         if (
@@ -1260,7 +1411,10 @@ export function useAnalyzerWorkspaceController({
         }
         applyHistoryJobUpdates(incomingJobs);
       })
-      .catch(() => {
+      .catch((restoreError) => {
+        if (reportAdministrativeDenial(restoreError)) {
+          return;
+        }
         for (const jobId of requestedJobIds) {
           historyJobRestoreIdsRef.current.add(jobId);
         }
@@ -1508,13 +1662,20 @@ export function useAnalyzerWorkspaceController({
           "Could not migrate legacy history before restoring processing",
         );
       }
-      const queue = await getProcessingQueueExtent(queryClient);
+      const queue = await getProcessingQueueExtent(
+        queryClient,
+        administratorToken,
+      );
       const lease = processingMutationLeaseRef.current;
       if (
         lease?.kind === "job" &&
         !queue.jobs.some((candidate) => candidate.id === lease.jobId)
       ) {
-        const leasedJob = await fetchJobQuery(queryClient, lease.jobId);
+        const leasedJob = await fetchJobQuery(
+          queryClient,
+          lease.jobId,
+          administratorToken,
+        );
         return {
           ...queue,
           revalidatedLeaseJob: leasedJob,
@@ -1525,7 +1686,9 @@ export function useAnalyzerWorkspaceController({
         const confirmationJobs = await Promise.all(
           lease.confirmationJobIds
             .filter((jobId) => !queueIds.has(jobId))
-            .map((jobId) => fetchJobQuery(queryClient, jobId)),
+            .map((jobId) =>
+              fetchJobQuery(queryClient, jobId, administratorToken),
+            ),
         );
         return {
           ...queue,
@@ -1681,6 +1844,9 @@ export function useAnalyzerWorkspaceController({
       })
       .catch((processingError) => {
         if (active) {
+          if (reportAdministrativeDenial(processingError)) {
+            return;
+          }
           setError(
             messageFromError(
               processingError,
@@ -1780,6 +1946,11 @@ export function useAnalyzerWorkspaceController({
     nextJob: JobRecord,
     navigationMode: JobNavigationMode = "push",
   ) {
+    upsertJob(nextJob);
+    activateJob(nextJob, navigationMode);
+  }
+
+  function upsertJob(nextJob: JobRecord) {
     updateJobs((current) => {
       const existing = current.some((candidate) => candidate.id === nextJob.id);
       return existing
@@ -1789,7 +1960,14 @@ export function useAnalyzerWorkspaceController({
         : [nextJob, ...current];
     });
     updateHistoryJob(nextJob, false);
-    activateJob(nextJob, navigationMode);
+  }
+
+  function shouldRetainRoutedReviewDraft(jobId: string): boolean {
+    return (
+      restoredRoutedDraftJobIdRef.current !== null &&
+      restoredRoutedDraftJobIdRef.current === jobId &&
+      activeJobIdRef.current === jobId
+    );
   }
 
   function updateHistoryJob(updatedJob: JobRecord, revalidateSearch = true) {
@@ -2048,7 +2226,12 @@ export function useAnalyzerWorkspaceController({
     setHistoryLoading(true);
     setError(null);
     try {
-      const page = await fetchHistoryPageQuery(queryClient, 0, query);
+      const page = await fetchHistoryPageQuery(
+        queryClient,
+        administratorToken,
+        0,
+        query,
+      );
       if (requestId !== historySearchRequestRef.current) {
         return;
       }
@@ -2056,9 +2239,11 @@ export function useAnalyzerWorkspaceController({
       applyHistorySearchPage(page);
     } catch (historyError) {
       if (requestId === historySearchRequestRef.current) {
-        setError(
-          messageFromError(historyError, "Could not search saved history"),
-        );
+        if (!reportAdministrativeDenial(historyError)) {
+          setError(
+            messageFromError(historyError, "Could not search saved history"),
+          );
+        }
       }
     } finally {
       setHistoryLoading(false);
@@ -2074,6 +2259,7 @@ export function useAnalyzerWorkspaceController({
     try {
       const page = await getHistorySearchExtent(
         queryClient,
+        administratorToken,
         query,
         loadedCount,
       );
@@ -2082,9 +2268,11 @@ export function useAnalyzerWorkspaceController({
       }
     } catch (historyError) {
       if (requestId === historySearchRequestRef.current) {
-        setError(
-          messageFromError(historyError, "Could not refresh history search"),
-        );
+        if (!reportAdministrativeDenial(historyError)) {
+          setError(
+            messageFromError(historyError, "Could not refresh history search"),
+          );
+        }
       }
     }
   }
@@ -2116,6 +2304,7 @@ export function useAnalyzerWorkspaceController({
         const requestId = ++historySearchRequestRef.current;
         const page = await fetchHistoryPageQuery(
           queryClient,
+          administratorToken,
           visibleHistory.length,
           historySearchQuery,
         );
@@ -2135,6 +2324,7 @@ export function useAnalyzerWorkspaceController({
         }
         const rebuiltPage = await getHistorySearchExtent(
           queryClient,
+          administratorToken,
           historySearchQuery,
           Math.min(visibleHistory.length + HISTORY_CACHE_LIMIT, page.total),
         );
@@ -2144,14 +2334,24 @@ export function useAnalyzerWorkspaceController({
         applyHistorySearchPage(rebuiltPage);
         return;
       }
-      const page = await fetchHistoryPageQuery(queryClient, history.length);
+      const page = await fetchHistoryPageQuery(
+        queryClient,
+        administratorToken,
+        history.length,
+      );
       if (page.total !== historyTotal) {
-        applyHistoryPage(await fetchHistoryPageQuery(queryClient));
+        applyHistoryPage(
+          await fetchHistoryPageQuery(queryClient, administratorToken),
+        );
         return;
       }
       applyHistoryPage(page, true);
     } catch (historyError) {
-      setError(messageFromError(historyError, "Could not load older history"));
+      if (!reportAdministrativeDenial(historyError)) {
+        setError(
+          messageFromError(historyError, "Could not load older history"),
+        );
+      }
     } finally {
       setHistoryLoading(false);
     }
@@ -2165,8 +2365,9 @@ export function useAnalyzerWorkspaceController({
     setHistoryLoading(true);
     try {
       const page = jobIds
-        ? (await archiveJobsCommand(queryClient, jobIds)).history
-        : await fetchHistoryPageQuery(queryClient);
+        ? (await archiveJobsCommand(queryClient, jobIds, administratorToken))
+            .history
+        : await fetchHistoryPageQuery(queryClient, administratorToken);
       if (
         historyMutationGenerationRef.current !== restoreGeneration ||
         historyMutationCountRef.current > 0
@@ -2192,6 +2393,7 @@ export function useAnalyzerWorkspaceController({
       }
       return true;
     } catch (historyError) {
+      const administrativeDenied = reportAdministrativeDenial(historyError);
       if (jobIds !== null) {
         if (mutationFailureMayHavePersistedSideEffect(historyError)) {
           scheduleMutationLeaseRevalidation();
@@ -2200,7 +2402,7 @@ export function useAnalyzerWorkspaceController({
           clearOwnedMutationLease("history");
         }
       }
-      if (reportErrors) {
+      if (reportErrors && !administrativeDenied) {
         setError(
           messageFromError(historyError, "Could not load saved history"),
         );
@@ -2212,8 +2414,18 @@ export function useAnalyzerWorkspaceController({
   }
 
   function appendJob(created: JobRecord) {
-    updateJobs((current) => [...current, created]);
-    activateJob(created, "replace");
+    const currentJob = jobsRef.current.find(
+      (candidate) => candidate.id === created.id,
+    );
+    const normalizedJob = preserveUploadRequestId(created, currentJob);
+    updateJobs((current) =>
+      current.some((candidate) => candidate.id === normalizedJob.id)
+        ? current.map((candidate) =>
+            candidate.id === normalizedJob.id ? normalizedJob : candidate,
+          )
+        : [...current, normalizedJob],
+    );
+    activateJob(normalizedJob, "replace");
   }
 
   function applyApprovedJob(
@@ -2262,6 +2474,10 @@ export function useAnalyzerWorkspaceController({
     expectedUploads: ProjectionMutationLease["expectedUploads"],
   ): Promise<JobRecord[]> {
     const selectedFiles = [...files];
+    const retainPendingUploadFiles = (startIndex: number) => {
+      const pendingFiles = selectedFiles.slice(startIndex);
+      setSelectedFiles(pendingFiles);
+    };
     const controller = new AbortController();
     queueAbortControllerRef.current = controller;
     queueAbortRequestedRef.current = false;
@@ -2314,6 +2530,7 @@ export function useAnalyzerWorkspaceController({
           pipeline: pipelineSelection ?? undefined,
         });
         updateExpectedUpload(expectedUploadIndex, "parsed");
+        retainPendingUploadFiles(index + 1);
         appendJob(created);
         completedJobs.push(created);
         completedCount += 1;
@@ -2321,6 +2538,11 @@ export function useAnalyzerWorkspaceController({
         if (isAbortError(uploadError)) {
           skippedCount = selectedFiles.length - completedCount;
           discardUnstartedUploads(index + 1);
+          break;
+        }
+        if (isQueryAccessGenerationSuperseded(uploadError)) {
+          skippedCount = selectedFiles.length - completedCount;
+          discardUnstartedUploads(index);
           break;
         }
         const denial =
@@ -2331,7 +2553,10 @@ export function useAnalyzerWorkspaceController({
           updateExpectedUpload(expectedUploadIndex, "failed");
           administrativeDenialMessage =
             administrativeAccessDenialMessage(denial);
-          administrativeAccess.lock();
+          lockAdministrator(
+            administrativeDenialMessage,
+            selectedFiles.slice(index),
+          );
           skippedCount = selectedFiles.length - completedCount;
           discardUnstartedUploads(index);
           break;
@@ -2349,6 +2574,7 @@ export function useAnalyzerWorkspaceController({
           index,
           expectedUpload.requestId,
         );
+        retainPendingUploadFiles(index + 1);
         appendJob(errorJob);
         completedJobs.push(errorJob);
         attentionMessages.push(`${selectedFile.name}: ${message}`);
@@ -2379,7 +2605,7 @@ export function useAnalyzerWorkspaceController({
         `${attentionMessages.length} screenshot${attentionMessages.length === 1 ? "" : "s"} need attention. Check the failed queue items.`,
       );
     }
-    setFiles([]);
+    setSelectedFiles([]);
     setQueueProgress(null);
     queueAbortControllerRef.current = null;
     queueAbortRequestedRef.current = false;
@@ -2390,20 +2616,22 @@ export function useAnalyzerWorkspaceController({
     if (files.length === 0 || mutationRecoveryPending(["processing"])) {
       return;
     }
-    const administratorToken = administrativeAccess.token;
-    if (administratorToken === null) {
-      setError(
-        "Unlock administrator tools before uploading or capturing screenshots.",
-      );
-      return;
-    }
     setBusy(true);
     setError(null);
     beginProcessingMembershipMutation();
-    const expectedUploads = files.map(() => ({
-      requestId: createMutationRequestId(),
+    const expectedUploads = files.map((file) => ({
+      requestId:
+        pendingUploadRequestIdsRef.current.get(file) ??
+        createMutationRequestId(),
       target: "parsed" as const,
     }));
+    for (const [index, file] of files.entries()) {
+      pendingUploadRequestIdsRef.current.set(
+        file,
+        expectedUploads[index].requestId,
+      );
+    }
+    updateWorkspaceDraftFiles(files);
     installMutationLease(
       "processing",
       startProjectionMutationLease(
@@ -2424,7 +2652,9 @@ export function useAnalyzerWorkspaceController({
       }
     } catch (uploadError) {
       scheduleMutationLeaseRevalidation();
-      setError(messageFromError(uploadError, "Upload failed"));
+      if (!reportAdministrativeDenial(uploadError)) {
+        setError(messageFromError(uploadError, "Upload failed"));
+      }
     } finally {
       endProcessingMembershipMutation();
       setBusy(false);
@@ -2450,13 +2680,7 @@ export function useAnalyzerWorkspaceController({
     if (mutationRecoveryPending(["processing"])) {
       return;
     }
-    const administratorToken = administrativeAccess.token;
-    if (administratorToken === null) {
-      setError(
-        "Unlock administrator tools before uploading or capturing screenshots.",
-      );
-      return;
-    }
+    const accessGeneration = captureQueryAccessGeneration(queryClient);
     setBusy(true);
     setError(null);
     beginProcessingMembershipMutation();
@@ -2464,6 +2688,7 @@ export function useAnalyzerWorkspaceController({
     let capturedJobId: string | null = null;
     try {
       const captureFile = await captureSharedScreenFile();
+      assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
       installMutationLease(
         "processing",
         startProjectionMutationLease(
@@ -2518,8 +2743,9 @@ export function useAnalyzerWorkspaceController({
         scheduleMutationLeaseRevalidation();
       }
       if (denial !== null) {
-        administrativeAccess.lock();
-        setError(administrativeAccessDenialMessage(denial));
+        lockAdministrator(administrativeAccessDenialMessage(denial));
+      } else if (isQueryAccessGenerationSuperseded(captureError)) {
+        // An automatic lock superseded this completion before it could cache.
       } else if (!deletedAfterUpload) {
         setError(messageFromError(captureError, "Screen capture failed"));
       }
@@ -2531,6 +2757,12 @@ export function useAnalyzerWorkspaceController({
 
   async function onApprove() {
     if (!job) {
+      return;
+    }
+    if (!screenshotReadyForApproval) {
+      setError(
+        "Wait for the matching screenshot to load before approving this job.",
+      );
       return;
     }
     if (!validation.state) {
@@ -2560,6 +2792,7 @@ export function useAnalyzerWorkspaceController({
     setError(null);
     try {
       const { job: approved } = await approveStateCommand(queryClient, {
+        administratorToken,
         jobId: job.id,
         state: validation.state,
       });
@@ -2569,7 +2802,9 @@ export function useAnalyzerWorkspaceController({
         markPersistedJobMutationUncertain(mutationScope, job.id);
       }
       restoreAfterMutation = true;
-      setError(messageFromError(approveError, "Approval failed"));
+      if (!reportAdministrativeDenial(approveError)) {
+        setError(messageFromError(approveError, "Approval failed"));
+      }
     } finally {
       endPersistedJobMutation(mutationScope, restoreAfterMutation);
       setBusy(false);
@@ -2578,6 +2813,9 @@ export function useAnalyzerWorkspaceController({
 
   /** Locks the tools on an administrative denial; false for other failures. */
   function reportAdministrativeDenial(failure: unknown): boolean {
+    if (isQueryAccessGenerationSuperseded(failure)) {
+      return true;
+    }
     const denial =
       failure instanceof ApiResponseError
         ? administrativeAccessDenial(failure.status)
@@ -2585,17 +2823,11 @@ export function useAnalyzerWorkspaceController({
     if (denial === null) {
       return false;
     }
-    administrativeAccess.lock();
-    setError(administrativeAccessDenialMessage(denial));
+    lockAdministrator(administrativeAccessDenialMessage(denial));
     return true;
   }
 
   async function onApplicationBackupRestore(backupFile: File) {
-    const administratorToken = administrativeAccess.token;
-    if (administratorToken === null) {
-      setError("Unlock administrator tools before restoring a backup.");
-      return;
-    }
     if (busy || backupRestoring) {
       return;
     }
@@ -2632,6 +2864,14 @@ export function useAnalyzerWorkspaceController({
           : `Backup already present: ${reusedItems} ${reusedItems === 1 ? "record" : "records"} verified`,
       );
     } catch (backupError) {
+      if (isQueryAccessGenerationSuperseded(backupError)) {
+        // The restore may have committed before a concurrent denial locked
+        // this session. Make the next administrator session reload both
+        // projections without touching its replacement QueryClient.
+        markProcessingQueueSessionUnsynced();
+        markHistorySessionUnsynced();
+        return;
+      }
       if (!reportAdministrativeDenial(backupError)) {
         setError(
           messageFromError(backupError, "Could not restore application backup"),
@@ -2641,6 +2881,57 @@ export function useAnalyzerWorkspaceController({
       setBackupRestoring(false);
       setBusy(false);
     }
+  }
+
+  async function downloadArchive(
+    request: () => Promise<Blob>,
+    filename: string,
+    failureMessage: string,
+  ) {
+    if (archiveDownloadInFlightRef.current) {
+      return;
+    }
+
+    archiveDownloadInFlightRef.current = true;
+    setArchiveDownloading(true);
+    const accessGeneration = captureQueryAccessGeneration(queryClient);
+    try {
+      const blob = await request();
+      assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (downloadError) {
+      if (!reportAdministrativeDenial(downloadError)) {
+        setError(messageFromError(downloadError, failureMessage));
+      }
+    } finally {
+      archiveDownloadInFlightRef.current = false;
+      setArchiveDownloading(false);
+    }
+  }
+
+  function onApplicationBackupDownload() {
+    return downloadArchive(
+      () => downloadApplicationBackupCommand(administratorToken),
+      "poker-hero-backup.zip",
+      "Could not download application backup",
+    );
+  }
+
+  function onBenchmarkDatasetDownload() {
+    return downloadArchive(
+      () =>
+        downloadBenchmarkDatasetCommand(
+          administratorToken,
+          pipelineSelection ?? undefined,
+        ),
+      "poker-hero-parser-dataset.zip",
+      "Could not export parser dataset",
+    );
   }
 
   async function applyBenchmarkDatasetImportResult(
@@ -2735,17 +3026,7 @@ export function useAnalyzerWorkspaceController({
   ) {
     const input = event.currentTarget;
     const datasetFile = input.files?.[0];
-    const administratorToken = administrativeAccess.token;
-    if (datasetFile && administratorToken === null) {
-      setError("Unlock administrator tools before importing datasets.");
-      input.value = "";
-      return;
-    }
-    if (
-      !datasetFile ||
-      administratorToken === null ||
-      benchmarkOperationsLocked
-    ) {
+    if (!datasetFile || benchmarkOperationsLocked) {
       input.value = "";
       return;
     }
@@ -2857,6 +3138,7 @@ export function useAnalyzerWorkspaceController({
     setError(null);
     try {
       const { job: updated } = await setBenchmarkInclusionCommand(queryClient, {
+        administratorToken,
         jobId: job.id,
         included,
       });
@@ -2904,12 +3186,14 @@ export function useAnalyzerWorkspaceController({
         markPersistedJobMutationUncertain(mutationScope, job.id);
       }
       restoreAfterMutation = true;
-      setError(
-        messageFromError(
-          benchmarkError,
-          "Could not update benchmark ground truth",
-        ),
-      );
+      if (!reportAdministrativeDenial(benchmarkError)) {
+        setError(
+          messageFromError(
+            benchmarkError,
+            "Could not update benchmark ground truth",
+          ),
+        );
+      }
     } finally {
       endPersistedJobMutation(mutationScope, restoreAfterMutation);
       setBenchmarkUpdating(false);
@@ -2959,6 +3243,7 @@ export function useAnalyzerWorkspaceController({
       const { job: updated } = await updateScreenshotMetadataCommand(
         queryClient,
         {
+          administratorToken,
           jobId: managedJob.id,
           metadata: { title, notes, tags },
         },
@@ -2997,7 +3282,7 @@ export function useAnalyzerWorkspaceController({
       } else if (mutationFailureMayHavePersistedSideEffect(metadataError)) {
         markPersistedJobMutationUncertain(mutationScope, managedJob.id);
       }
-      if (!deletedRemotely) {
+      if (!deletedRemotely && !reportAdministrativeDenial(metadataError)) {
         setError(
           messageFromError(metadataError, "Could not save screenshot details"),
         );
@@ -3115,13 +3400,19 @@ export function useAnalyzerWorkspaceController({
     setError(null);
     let restoreAfterMutation = false;
     try {
-      await deleteScreenshotCommand(queryClient, managedJob.id);
+      await deleteScreenshotCommand(
+        queryClient,
+        managedJob.id,
+        administratorToken,
+      );
       restoreAfterMutation = true;
       reconcileAuthoritativeScreenshotRemoval(managedJob, mutationScope);
       toast.success("Screenshot permanently deleted");
     } catch (deleteError) {
       restoreAfterMutation = true;
-      setError(messageFromError(deleteError, "Could not delete screenshot"));
+      if (!reportAdministrativeDenial(deleteError)) {
+        setError(messageFromError(deleteError, "Could not delete screenshot"));
+      }
     } finally {
       if (mutationScope === "processing") {
         endProcessingMembershipMutation(restoreAfterMutation);
@@ -3184,6 +3475,7 @@ export function useAnalyzerWorkspaceController({
           await archiveJobsCommand(
             queryClient,
             readyJobs.map((candidate) => candidate.id),
+            administratorToken,
           )
         ).history,
       );
@@ -3208,12 +3500,18 @@ export function useAnalyzerWorkspaceController({
         setError(null);
       }
     } catch (historyError) {
+      const administrativeDenied = reportAdministrativeDenial(historyError);
       const archiveErrorMessage = messageFromError(
         historyError,
         "Could not save reviewed hands to history",
       );
       endHistoryMutation();
       historyMutationActive = false;
+      if (administrativeDenied) {
+        clearOwnedMutationLease("processing");
+        clearOwnedMutationLease("history");
+        return;
+      }
       const historyReconciled = await syncHistory(null, false);
       if (historyReconciled && historySearchActive && historySearchQuery) {
         await revalidateHistorySearch(historySearchQuery);
@@ -3238,11 +3536,11 @@ export function useAnalyzerWorkspaceController({
 
   return {
     toolbar: {
-      administrativeUnlocked: administrativeAccess.unlocked,
       busy,
       historyTotal,
+      lockDisabled: administratorLockDisabled,
       onConfigurePipeline: openPipelineDialog,
-      onOpenAdministrativeTools: administrativeAccess.openDialog,
+      onLockAdministrator: lockAdministrator,
       onOpenBenchmark: () => {
         openBenchmarkDialog();
         navigation.openBenchmarks();
@@ -3252,28 +3550,26 @@ export function useAnalyzerWorkspaceController({
       queueCount,
     },
     administrativeBanner: {
-      busy,
-      onLock: administrativeAccess.lock,
+      lockDisabled: administratorLockDisabled,
+      onLock: () => lockAdministrator(),
     },
-    inputSource: administrativeAccess.unlocked
-      ? {
-          busy,
-          files,
-          inputMode,
-          livePreviewVisible,
-          onCapture: onCaptureScreen,
-          onFilesChange: setFiles,
-          onInputModeChange: setInputMode,
-          onShareModeChange: setShareMode,
-          onStartOrViewShare: () =>
-            screenSharing ? setLivePreviewVisible(true) : onStartScreenShare(),
-          onStopShare: onStopScreenShare,
-          onUpload,
-          screenSharing,
-          screenSourceLabel,
-          shareMode,
-        }
-      : null,
+    inputSource: {
+      busy,
+      files,
+      inputMode,
+      livePreviewVisible,
+      onCapture: onCaptureScreen,
+      onFilesChange: setSelectedFiles,
+      onInputModeChange: setInputMode,
+      onShareModeChange: setShareMode,
+      onStartOrViewShare: () =>
+        screenSharing ? setLivePreviewVisible(true) : onStartScreenShare(),
+      onStopShare: onStopScreenShare,
+      onUpload,
+      screenSharing,
+      screenSourceLabel,
+      shareMode,
+    },
     queue: {
       activeJobId: job?.id ?? null,
       attentionByJobId: NO_JOB_ATTENTION,
@@ -3314,6 +3610,9 @@ export function useAnalyzerWorkspaceController({
       ref: videoRef,
       reviewCount: confidenceSummary.reviewCount,
       screenSharing,
+      onRetryScreenshot: retryScreenshot,
+      screenshotError,
+      screenshotStatus,
       screenshotUrl,
     },
     handReview: {
@@ -3367,16 +3666,7 @@ export function useAnalyzerWorkspaceController({
             title: screenshotTitle,
           }
         : null,
-      administrativeAccess: administrativeAccess.dialogOpen
-        ? {
-            busy,
-            onClose: administrativeAccess.closeDialog,
-            onLock: administrativeAccess.lock,
-            onUnlock: administrativeAccess.unlock,
-            unlocked: administrativeAccess.unlocked,
-            verifying: administrativeAccess.verifying,
-          }
-        : null,
+      administrativeAccess: null,
       pipeline: pipelineDialogOpen
         ? {
             capabilities: pipelineCapabilities,
@@ -3392,13 +3682,11 @@ export function useAnalyzerWorkspaceController({
       help: helpDialogOpen ? { onClose: () => setHelpDialogOpen(false) } : null,
       info: infoDialogOpen
         ? {
-            administrativeUnlocked: administrativeAccess.unlocked,
-            backupDownloadUrl: applicationBackupUrl(),
+            administrativeUnlocked: true,
             backupRestoring,
-            busy,
-            mcpCloseBlocked,
+            busy: busy || archiveDownloading,
             onClose: () => closeInfoDialog(backupRestoring),
-            onMcpCloseBlockedChange: setMcpCloseBlocked,
+            onDownloadBackup: () => void onApplicationBackupDownload(),
             onRestoreBackup: (file: File) =>
               void onApplicationBackupRestore(file),
             providers: activeInfoProviders,
@@ -3407,13 +3695,14 @@ export function useAnalyzerWorkspaceController({
         : null,
       benchmark: benchmarkDialogOpen
         ? {
-            administrativeUnlocked: administrativeAccess.unlocked,
+            administrativeUnlocked: true,
             busy,
             comparisonProgress: benchmarkComparisonProgress,
             comparisonReport: benchmarkComparisonReport,
             comparisonReportLoading: benchmarkComparisonReportLoading,
             currentJob: job,
-            datasetExportDisabled: benchmarkDatasetExportDisabled,
+            datasetExportDisabled:
+              benchmarkDatasetExportDisabled || archiveDownloading,
             datasetInputRef: benchmarkDatasetInputRef,
             importInProgress: benchmarkImporting,
             includedCases: benchmarkIncludedCases,
@@ -3425,6 +3714,7 @@ export function useAnalyzerWorkspaceController({
               navigation.closeSurface();
             },
             onDatasetImport: onBenchmarkDatasetImport,
+            onDatasetExport: () => void onBenchmarkDatasetDownload(),
             onReviewCase: reviewBenchmarkCase,
             onRun: onRunBenchmark,
             onRunComparison: onRunBenchmarkComparison,

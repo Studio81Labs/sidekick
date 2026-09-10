@@ -11,6 +11,8 @@ import {
 import type { BenchmarkOverview } from "../../../shared/types/benchmarks";
 import { useBenchmarkReportState } from "./useBenchmarkReportState";
 
+const ADMINISTRATOR_TOKEN = "administrator-token";
+
 function wrapper({ children }: PropsWithChildren) {
   return createElement(AppProviders, null, children);
 }
@@ -31,7 +33,12 @@ describe("benchmark report state", () => {
     fetchMock().mockResolvedValueOnce(jsonResponse(overview("job-1")));
     const onError = vi.fn();
     const { result } = renderHook(
-      () => useBenchmarkReportState({ dialogOpen: false, onError }),
+      () =>
+        useBenchmarkReportState({
+          administratorToken: ADMINISTRATOR_TOKEN,
+          dialogOpen: false,
+          onError,
+        }),
       { wrapper },
     );
 
@@ -43,13 +50,54 @@ describe("benchmark report state", () => {
     expect(onError).not.toHaveBeenCalled();
   });
 
+  it.each(["load", "refresh"] as const)(
+    "routes a denied benchmark overview %s through the administrator lock",
+    async (operation) => {
+      const onAdministrativeDenial = vi.fn().mockReturnValue(true);
+      const onError = vi.fn();
+      fetchMock().mockResolvedValueOnce(
+        jsonResponse({ detail: "denied" }, 401),
+      );
+      const { result } = renderHook(
+        () =>
+          useBenchmarkReportState({
+            administratorToken: ADMINISTRATOR_TOKEN,
+            dialogOpen: false,
+            onAdministrativeDenial,
+            onError,
+          }),
+        { wrapper },
+      );
+
+      if (operation === "load") {
+        act(() => result.current.loadOverview(null));
+        await waitFor(() => expect(result.current.loading).toBe(false));
+      } else {
+        await act(async () => {
+          await result.current.refreshOverview({
+            failureMessage: "Could not refresh parser benchmark",
+            selection: null,
+          });
+        });
+      }
+
+      expect(onAdministrativeDenial).toHaveBeenCalledOnce();
+      expect(onError).not.toHaveBeenCalled();
+    },
+  );
+
   it("ignores an older overview response after a newer request wins", async () => {
     const first = deferredResponse();
     fetchMock()
       .mockImplementationOnce(() => first.promise)
       .mockResolvedValueOnce(jsonResponse(overview("job-2")));
     const { result } = renderHook(
-      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      () =>
+        useBenchmarkReportState({
+          administratorToken: ADMINISTRATOR_TOKEN,
+          dialogOpen: false,
+          onError: vi.fn(),
+        }),
       { wrapper },
     );
 
@@ -72,7 +120,12 @@ describe("benchmark report state", () => {
     const pending = deferredResponse();
     fetchMock().mockImplementationOnce(() => pending.promise);
     const { result } = renderHook(
-      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      () =>
+        useBenchmarkReportState({
+          administratorToken: ADMINISTRATOR_TOKEN,
+          dialogOpen: false,
+          onError: vi.fn(),
+        }),
       { wrapper },
     );
 
@@ -93,7 +146,12 @@ describe("benchmark report state", () => {
     const latestReport = overview("job-1").latest_report;
     expect(latestReport).not.toBeNull();
     const { result } = renderHook(
-      () => useBenchmarkReportState({ dialogOpen: false, onError: vi.fn() }),
+      () =>
+        useBenchmarkReportState({
+          administratorToken: ADMINISTRATOR_TOKEN,
+          dialogOpen: false,
+          onError: vi.fn(),
+        }),
       { wrapper },
     );
 

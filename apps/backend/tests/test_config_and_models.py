@@ -259,18 +259,13 @@ def test_settings_validate_hosted_mcp_configuration() -> None:
             mcp_enabled=True,
             mcp_public_url="https://poker.example:not-a-port/mcp",
         )
-    with pytest.raises(ValidationError, match="supported only in staging"):
-        Settings(deployment_environment="production", mcp_allow_writes=True)
-
     settings = Settings(
         deployment_environment="staging",
         mcp_enabled=True,
         mcp_public_url="https://faß.example:443/mcp",
         mcp_allowed_origins=["https://faß.example:443"],
-        mcp_allow_writes=True,
     )
     assert settings.mcp_enabled is True
-    assert settings.mcp_allow_writes is True
     assert settings.mcp_public_url == "https://xn--fa-hia.example/mcp"
     assert settings.mcp_allowed_origins == ["https://xn--fa-hia.example"]
 
@@ -296,6 +291,54 @@ def test_settings_validate_hosted_mcp_configuration() -> None:
         mcp_public_url="https://poker.example:8443/mcp",
     )
     assert non_default_port.mcp_public_url == "https://poker.example:8443/mcp"
+
+
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        Path("apps/backend/.env.example"),
+        Path("infra/docker/backend.env.example"),
+    ],
+)
+def test_current_environment_examples_omit_retired_mcp_write_settings(
+    relative_path: Path,
+) -> None:
+    repository_root = Path(__file__).parents[3]
+    setting_names = {
+        line.partition("=")[0]
+        for line in (repository_root / relative_path).read_text().splitlines()
+        if "=" in line and not line.startswith("#")
+    }
+
+    assert "POKER_MCP_READ_CALLS_PER_MINUTE" in setting_names
+    assert not {
+        "POKER_MCP_ALLOW_WRITES",
+        "POKER_MCP_WRITE_CALLS_PER_MINUTE",
+    } & setting_names
+
+
+def test_mcp_gateway_guidance_omits_retired_api_credentials() -> None:
+    repository_root = Path(__file__).parents[3]
+    setting_names = {
+        line.partition("=")[0]
+        for line in (
+            repository_root / "apps/backend/mcp.env.example"
+        ).read_text().splitlines()
+        if "=" in line and not line.startswith("#")
+    }
+    deployment_guidance = (
+        repository_root / "docs/process/deployment.md"
+    ).read_text()
+
+    assert {
+        "POKER_MCP_CF_ACCESS_CLIENT_ID",
+        "POKER_MCP_CF_ACCESS_CLIENT_SECRET",
+    } <= setting_names
+    assert not {
+        "POKER_MCP_API_BEARER_TOKEN",
+        "POKER_MCP_API_PROXY_SECRET",
+    } & setting_names
+    assert "POKER_MCP_API_PROXY_SECRET" not in deployment_guidance
 
 
 @pytest.mark.parametrize(

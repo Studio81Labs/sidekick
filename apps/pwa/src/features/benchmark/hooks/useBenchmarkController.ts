@@ -3,6 +3,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { getJob } from "../../../domains/jobs/api/jobsApi";
 import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
+  isQueryAccessGenerationSuperseded,
+} from "../../../shared/api/queryCache";
+import {
   type BenchmarkComparisonProgress,
   benchmarkCorpusIsUnverified,
 } from "../lib/benchmarkReportPresentation";
@@ -21,9 +26,11 @@ import { useBenchmarkReportState } from "./useBenchmarkReportState";
 import { runParserBenchmarkCommand } from "../services/runParserBenchmarkCommand";
 
 interface UseBenchmarkControllerOptions {
+  administratorToken: string;
   busy: boolean;
   importRecoveryPending: boolean;
   mutationRecoveryPending: () => boolean;
+  onAdministrativeDenial: (failure: unknown) => boolean;
   onError: (message: string | null) => void;
   onOpenJob: (job: JobRecord) => void;
   pipelineCapabilities: PipelineCapabilities | null;
@@ -39,9 +46,11 @@ interface RefreshBenchmarkOptions {
 }
 
 export function useBenchmarkController({
+  administratorToken,
   busy,
   importRecoveryPending,
   mutationRecoveryPending,
+  onAdministrativeDenial,
   onError,
   onOpenJob,
   pipelineCapabilities,
@@ -74,7 +83,12 @@ export function useBenchmarkController({
     reset: resetReportState,
     selectReport,
     setOverview,
-  } = useBenchmarkReportState({ dialogOpen, onError });
+  } = useBenchmarkReportState({
+    administratorToken,
+    dialogOpen,
+    onAdministrativeDenial,
+    onError,
+  });
   const reportStale = Boolean(
     report &&
     benchmarkCorpusIsUnverified(
@@ -161,14 +175,19 @@ export function useBenchmarkController({
     try {
       const { report: latestReport } = await runParserBenchmarkCommand(
         queryClient,
-        { pipeline: pipelineSelection ?? undefined },
+        {
+          administratorToken,
+          pipeline: pipelineSelection ?? undefined,
+        },
       );
       applyReport(latestReport, true);
       if (latestReport.corpus_fingerprint) {
         await revalidateAfterRun(pipelineSelection);
       }
     } catch (error) {
-      onError(messageFromError(error, "Parser benchmark failed"));
+      if (!onAdministrativeDenial(error)) {
+        onError(messageFromError(error, "Parser benchmark failed"));
+      }
     } finally {
       setRunning(false);
     }
@@ -202,6 +221,7 @@ export function useBenchmarkController({
           const { report: nextReport } = await runParserBenchmarkCommand(
             queryClient,
             {
+              administratorToken,
               pipeline: {
                 parser_provider: pipeline.parser.id,
                 parser_layout_profile: pipeline.layout_profile,
@@ -212,6 +232,9 @@ export function useBenchmarkController({
           successfulRuns += 1;
           corpusRevalidationRequired ||= Boolean(nextReport.corpus_fingerprint);
         } catch (error) {
+          if (onAdministrativeDenial(error)) {
+            return;
+          }
           failures.push(
             `${pipeline.parser.label}: ${messageFromError(error, "Benchmark failed")}`,
           );
@@ -268,13 +291,21 @@ export function useBenchmarkController({
   }
 
   async function reviewCase(jobId: string) {
+    const accessGeneration = captureQueryAccessGeneration(queryClient);
     setReviewJobId(jobId);
     onError(null);
     try {
-      onOpenJob(await getJob(jobId));
+      const job = await getJob(jobId, administratorToken);
+      assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
+      onOpenJob(job);
       closeDialog();
     } catch (error) {
-      onError(messageFromError(error, "Could not open benchmark hand"));
+      if (
+        !isQueryAccessGenerationSuperseded(error) &&
+        !onAdministrativeDenial(error)
+      ) {
+        onError(messageFromError(error, "Could not open benchmark hand"));
+      }
     } finally {
       setReviewJobId(null);
     }
