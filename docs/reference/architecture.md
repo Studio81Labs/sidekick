@@ -1,12 +1,17 @@
 # Architecture
 
 V1 was never published to production. This reference describes repository
-composition, including pending removal work, not a promise to support an old
+composition after the completed #517 cutover, not a promise to support an old
 release. [ADR 0079](../decisions/0079-adopt-an-unreleased-current-only-cutover.md)
 supersedes compatibility/fallback requirements: the target is one current local
 player application and an explicit operator OCR surface. The #517 C1 cutover
-uses layout 6 and backup schema 4 as the only local persistence formats. The
-old analyzer remains pending C3 replacement work.
+uses layout 6 and backup schema 4 as the only local persistence formats. C2 #520
+removed old recommendation execution; C3 #521 replaced the hosted analyzer
+entry with `/admin/ocr` and authenticated `/api/admin/ocr` data routes. The
+separate `/admin/ocr/mcp` credential surface and status-only gateway follow
+[ADR 0080](../decisions/0080-retire-mcp-data-and-write-principal-operations.md).
+The cleanup is complete; #409/#412 source evidence and the final #414 gate are
+still outstanding.
 
 The repository security, release, dependency-trust, and required-check baseline
 is defined by
