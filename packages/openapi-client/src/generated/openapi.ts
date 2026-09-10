@@ -1109,6 +1109,20 @@ export interface operations {
           "application/zip": string;
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
     };
   };
   admin_ocr_backups_restore: {
@@ -1132,6 +1146,20 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["ApplicationBackupRestoreResult"];
         };
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
@@ -1165,6 +1193,20 @@ export interface operations {
           "application/json": components["schemas"]["BenchmarkOverview"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1196,6 +1238,20 @@ export interface operations {
         content: {
           "application/zip": string;
         };
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
@@ -1232,6 +1288,20 @@ export interface operations {
           "application/json": components["schemas"]["BenchmarkDatasetImportResult"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1262,6 +1332,20 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["BenchmarkDatasetImportReceipt"];
         };
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
@@ -1296,6 +1380,20 @@ export interface operations {
           "application/json": components["schemas"]["BenchmarkReport"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1326,6 +1424,20 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["BenchmarkReport"];
         };
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
@@ -1359,6 +1471,20 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["JobHistory"];
         };
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
@@ -1395,6 +1521,20 @@ export interface operations {
           "application/json": components["schemas"]["JobHistory"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1426,6 +1566,20 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["JobQueue"];
         };
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
@@ -1460,6 +1614,20 @@ export interface operations {
           "application/json": components["schemas"]["JobRecord"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1491,6 +1659,20 @@ export interface operations {
           "application/json": components["schemas"]["JobRecord"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1515,6 +1697,20 @@ export interface operations {
     responses: {
       /** @description Successful Response */
       204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
         headers: {
           [name: string]: unknown;
         };
@@ -1555,6 +1751,20 @@ export interface operations {
           "application/json": components["schemas"]["JobRecord"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1590,6 +1800,20 @@ export interface operations {
           "application/json": components["schemas"]["JobRecord"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1623,6 +1847,20 @@ export interface operations {
           "image/png": string;
           "image/webp": string;
         };
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
       /** @description Validation Error */
       422: {
@@ -1659,6 +1897,20 @@ export interface operations {
           "application/json": components["schemas"]["JobRecord"];
         };
       };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Validation Error */
       422: {
         headers: {
@@ -1687,6 +1939,20 @@ export interface operations {
         content: {
           "application/json": components["schemas"]["AdminOcrTestSession"];
         };
+      };
+      /** @description Administrative OCR test authorization is required */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Administrative OCR test mode is disabled or authorization was refused */
+      403: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

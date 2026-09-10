@@ -354,6 +354,62 @@ describe("Analyzer administrative capture", () => {
     ).toHaveValue("Keep this");
   });
 
+  it("keeps a restored draft while an uncached archived route reloads", async () => {
+    const archivedJob = jobRecord({
+      archived_at: "2026-08-10T00:00:00Z",
+      id: "a".repeat(32),
+      original_filename: "archived-route-draft.png",
+    });
+    const pendingReload = deferredResponse();
+    let jobRequests = 0;
+    fetchMock().mockImplementation((url) => {
+      if (
+        url === `http://localhost:8000/api/admin/ocr/jobs/${archivedJob.id}`
+      ) {
+        jobRequests += 1;
+        return jobRequests === 1
+          ? Promise.resolve(jsonResponse(archivedJob))
+          : pendingReload.promise;
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return Promise.resolve(jsonResponse({ detail: "denied" }, 401));
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <AnalyzerPage route={{ jobId: archivedJob.id, surface: "job" }} />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    await screen.findByRole("button", {
+      name: "Manage screenshot 1: archived-route-draft.png",
+    });
+    const currentBet = screen.getByLabelText(/Current bet/);
+    await user.clear(currentBet);
+    await user.type(currentBet, "3");
+
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await waitFor(() => expect(jobRequests).toBe(2));
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+
+    await act(async () => {
+      pendingReload.resolve(jsonResponse(archivedJob));
+      await pendingReload.promise;
+    });
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+  });
+
   it("retries only denied and unstarted uploads after a batch relocks", async () => {
     const firstJob = jobRecord({
       id: "a".repeat(32),

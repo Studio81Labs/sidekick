@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from app.application.benchmarks import BenchmarkService
-from app.api.administrative_access import administrator_access_route
+from app.api.administrative_access import administrator_access_router
 from app.api.dependencies import (
     BACKGROUND_TASK_STATE_KEY,
     BenchmarkConfigurationError,
@@ -39,9 +39,7 @@ from app.domain.hands import JobRecord
 def create_benchmarks_router(runtime: BenchmarkService) -> APIRouter:
     """Build the parser benchmark router with application-owned operations."""
 
-    router = APIRouter(
-        route_class=administrator_access_route(runtime.authorize_administrator)
-    )
+    router = administrator_access_router(runtime.authorize_administrator)
 
     @router.put(
         "/api/admin/ocr/jobs/{job_id}/benchmark",

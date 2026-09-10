@@ -2021,6 +2021,12 @@
         "title": "ValidationError",
         "type": "object"
       }
+    },
+    "securitySchemes": {
+      "AdministratorBearer": {
+        "scheme": "bearer",
+        "type": "http"
+      }
     }
   },
   "info": {
@@ -2043,8 +2049,19 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Export Application Backup"
       }
     },
@@ -2072,6 +2089,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2083,6 +2106,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Restore Backup"
       }
     },
@@ -2140,6 +2168,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2151,6 +2185,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Get Benchmark Overview"
       }
     },
@@ -2209,6 +2248,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2220,6 +2265,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Export Benchmark Dataset"
       }
     },
@@ -2268,6 +2318,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2279,6 +2335,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Import Benchmark Dataset"
       }
     },
@@ -2307,6 +2368,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2318,6 +2385,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Get Benchmark Dataset Import"
       }
     },
@@ -2352,6 +2424,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2363,6 +2441,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Run Parser Benchmark"
       }
     },
@@ -2391,6 +2474,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2402,6 +2491,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Get Benchmark Report"
       }
     },
@@ -2461,6 +2555,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2472,6 +2572,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Get History"
       },
       "put": {
@@ -2511,6 +2616,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2522,6 +2633,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Archive Jobs"
       }
     },
@@ -2564,6 +2680,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2575,6 +2697,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Get Processing Jobs"
       },
       "post": {
@@ -2600,6 +2727,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2611,6 +2744,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Create Job"
       }
     },
@@ -2632,6 +2770,12 @@
           "204": {
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2643,6 +2787,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Delete Job"
       },
       "get": {
@@ -2669,6 +2818,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2680,6 +2835,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Get Job"
       }
     },
@@ -2718,6 +2878,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2729,6 +2895,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Approve Job"
       }
     },
@@ -2767,6 +2938,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2778,6 +2955,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Set Benchmark Inclusion"
       }
     },
@@ -2825,6 +3007,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2836,6 +3024,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Get Job Image"
       }
     },
@@ -2874,6 +3067,12 @@
             },
             "description": "Successful Response"
           },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -2885,6 +3084,11 @@
             "description": "Validation Error"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Update Job Metadata"
       }
     },
@@ -2901,8 +3105,19 @@
               }
             },
             "description": "Successful Response"
+          },
+          "401": {
+            "description": "Administrative OCR test authorization is required"
+          },
+          "403": {
+            "description": "Administrative OCR test mode is disabled or authorization was refused"
           }
         },
+        "security": [
+          {
+            "AdministratorBearer": []
+          }
+        ],
         "summary": "Get Admin Ocr Test Session"
       }
     },

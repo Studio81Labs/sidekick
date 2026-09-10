@@ -4,7 +4,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
-from app.api.administrative_access import administrator_access_route
+from app.api.administrative_access import administrator_access_router
 from app.api.dependencies import ApplicationBackupTransportError
 from app.api.response_contracts import ZIP_RESPONSE_CONTENT
 from app.application.backups import BackupService
@@ -14,9 +14,7 @@ from app.domain.backups import ApplicationBackupRestoreResult
 def create_backups_router(runtime: BackupService) -> APIRouter:
     """Build the application backup router with application-owned operations."""
 
-    router = APIRouter(
-        route_class=administrator_access_route(runtime.authorize_administrator)
-    )
+    router = administrator_access_router(runtime.authorize_administrator)
 
     @router.get(
         "/api/admin/ocr/backups/export",

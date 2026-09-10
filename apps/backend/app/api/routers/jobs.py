@@ -12,7 +12,7 @@ from fastapi import (
 from fastapi.responses import Response
 from starlette.concurrency import run_in_threadpool
 
-from app.api.administrative_access import administrator_access_route
+from app.api.administrative_access import administrator_access_router
 from app.api.dependencies import (
     JobMutationConflictError,
     JobTransportNotFoundError,
@@ -41,9 +41,7 @@ def create_jobs_router(
 ) -> APIRouter:
     """Build the processing job read router with application dependencies."""
 
-    router = APIRouter(
-        route_class=administrator_access_route(authorize_administrator)
-    )
+    router = administrator_access_router(authorize_administrator)
 
     @router.get(
         "/api/admin/ocr/jobs",
@@ -90,9 +88,7 @@ def create_jobs_router(
 def create_job_upload_router(runtime: JobUploadService) -> APIRouter:
     """Build the multipart processing-job upload router (administrative OCR test surface)."""
 
-    router = APIRouter(
-        route_class=administrator_access_route(runtime.authorize_administrator)
-    )
+    router = administrator_access_router(runtime.authorize_administrator)
 
     @router.post(
         "/api/admin/ocr/jobs",
@@ -165,9 +161,7 @@ def create_job_mutations_router(
 ) -> APIRouter:
     """Build the processing job mutation router with application dependencies."""
 
-    router = APIRouter(
-        route_class=administrator_access_route(authorize_administrator)
-    )
+    router = administrator_access_router(authorize_administrator)
 
     @router.put(
         "/api/admin/ocr/jobs/{job_id}/metadata",

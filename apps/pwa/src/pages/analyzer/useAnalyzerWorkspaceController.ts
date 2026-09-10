@@ -552,7 +552,13 @@ export function useAnalyzerWorkspaceController({
   );
 
   useAnalyzerRouteRestore({
-    activateJob: (nextJob) => upsertAndActivateJob(nextJob, false),
+    activateJob: (nextJob) => {
+      if (shouldRetainRoutedReviewDraft(nextJob.id)) {
+        upsertJob(nextJob);
+        return;
+      }
+      upsertAndActivateJob(nextJob, false);
+    },
     activeJobId,
     benchmarksOpen: benchmarkDialogOpen,
     closeBenchmarks: closeBenchmarkDialog,
@@ -569,6 +575,13 @@ export function useAnalyzerWorkspaceController({
       }
     },
     onJobLoading: (jobId) => {
+      // An access relock remounts the workspace with the current route and
+      // its unsaved review draft. Archived jobs are not in the processing
+      // cache, so route restoration must fetch them before it can activate
+      // the job. Keep that matching draft visible while the fetch is pending.
+      if (shouldRetainRoutedReviewDraft(jobId)) {
+        return;
+      }
       alignWorkspaceToJob(null);
       selectActiveJob(jobId);
     },
@@ -1923,6 +1936,11 @@ export function useAnalyzerWorkspaceController({
     nextJob: JobRecord,
     navigationMode: JobNavigationMode = "push",
   ) {
+    upsertJob(nextJob);
+    activateJob(nextJob, navigationMode);
+  }
+
+  function upsertJob(nextJob: JobRecord) {
     updateJobs((current) => {
       const existing = current.some((candidate) => candidate.id === nextJob.id);
       return existing
@@ -1932,7 +1950,14 @@ export function useAnalyzerWorkspaceController({
         : [nextJob, ...current];
     });
     updateHistoryJob(nextJob, false);
-    activateJob(nextJob, navigationMode);
+  }
+
+  function shouldRetainRoutedReviewDraft(jobId: string): boolean {
+    return (
+      initialDraft?.handReview?.jobId === jobId &&
+      formDirtyRef.current &&
+      activeJobIdRef.current === jobId
+    );
   }
 
   function updateHistoryJob(updatedJob: JobRecord, revalidateSearch = true) {

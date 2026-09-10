@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Query
 
-from app.api.administrative_access import administrator_access_route
+from app.api.administrative_access import administrator_access_router
 from app.application.admin_ocr_test import AuthorizeAdministrator
 from app.application.jobs import JobHistoryService
 from app.domain.hands import ArchiveJobsRequest, JobHistory
@@ -14,9 +14,7 @@ def create_history_router(
 ) -> APIRouter:
     """Build the history router with its application-owned dependencies."""
 
-    router = APIRouter(
-        route_class=administrator_access_route(authorize_administrator)
-    )
+    router = administrator_access_router(authorize_administrator)
 
     @router.get(
         "/api/admin/ocr/history",

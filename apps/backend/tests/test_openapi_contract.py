@@ -112,3 +112,26 @@ def test_binary_and_markdown_response_contracts_are_explicit(tmp_path: Path) -> 
     }
 
     assert actual_content == expected_content
+
+
+def test_administrative_operations_declare_bearer_access(tmp_path: Path) -> None:
+    document = openapi_document(tmp_path)
+
+    assert document["components"]["securitySchemes"]["AdministratorBearer"] == {
+        "scheme": "bearer",
+        "type": "http",
+    }
+
+    for path, path_item in document["paths"].items():
+        if not path.startswith("/api/admin/ocr/"):
+            continue
+        for operation in path_item.values():
+            assert operation["security"] == [{"AdministratorBearer": []}]
+            assert operation["responses"]["401"] == {
+                "description": "Administrative OCR test authorization is required"
+            }
+            assert operation["responses"]["403"] == {
+                "description": (
+                    "Administrative OCR test mode is disabled or authorization was refused"
+                )
+            }
