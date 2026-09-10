@@ -355,6 +355,9 @@ export function useAnalyzerWorkspaceController({
   );
   const benchmarkDatasetInputRef = useRef<HTMLInputElement | null>(null);
   const archiveDownloadInFlightRef = useRef(false);
+  const restoredRoutedDraftJobIdRef = useRef(
+    initialDraft?.handReview?.jobId ?? null,
+  );
   const jobsRef = useRef(jobs);
   const processingCacheInitializedRef = useRef(false);
   const processingMembershipGenerationRef = useRef(0);
@@ -445,18 +448,23 @@ export function useAnalyzerWorkspaceController({
       JSON.stringify(parsedScreenshotTags) !==
         JSON.stringify(screenshotTags(managedJob))),
   );
+  const handReviewDraft =
+    formDirtyRef.current && job
+      ? {
+          baseline: formBaselineRef.current,
+          form,
+          jobId: job.id,
+        }
+      : job === null &&
+          restoredRoutedDraftJobIdRef.current !== null &&
+          restoredRoutedDraftJobIdRef.current === activeJobId
+        ? (initialDraft?.handReview ?? null)
+        : null;
   const workspaceDraftRef = useRef<AnalyzerWorkspaceDraft | null>(null);
   workspaceDraftRef.current = {
     activeJobId,
     files: [...files],
-    handReview:
-      formDirtyRef.current && job
-        ? {
-            baseline: formBaselineRef.current,
-            form,
-            jobId: job.id,
-          }
-        : null,
+    handReview: handReviewDraft,
     pendingUploadRequestIds: pendingUploadRequestIdsFor(files),
     screenshotMetadata:
       screenshotMetadataDraft && managedJob
@@ -555,6 +563,7 @@ export function useAnalyzerWorkspaceController({
     activateJob: (nextJob) => {
       if (shouldRetainRoutedReviewDraft(nextJob.id)) {
         upsertJob(nextJob);
+        restoredRoutedDraftJobIdRef.current = null;
         return;
       }
       upsertAndActivateJob(nextJob, false);
@@ -586,6 +595,7 @@ export function useAnalyzerWorkspaceController({
       selectActiveJob(jobId);
     },
     onJobUnavailable: () => {
+      restoredRoutedDraftJobIdRef.current = null;
       alignWorkspaceToJob(null);
       navigation.openWorkspace({ replace: true });
     },
@@ -1954,8 +1964,8 @@ export function useAnalyzerWorkspaceController({
 
   function shouldRetainRoutedReviewDraft(jobId: string): boolean {
     return (
-      initialDraft?.handReview?.jobId === jobId &&
-      formDirtyRef.current &&
+      restoredRoutedDraftJobIdRef.current !== null &&
+      restoredRoutedDraftJobIdRef.current === jobId &&
       activeJobIdRef.current === jobId
     );
   }
@@ -2670,6 +2680,7 @@ export function useAnalyzerWorkspaceController({
     if (mutationRecoveryPending(["processing"])) {
       return;
     }
+    const accessGeneration = captureQueryAccessGeneration(queryClient);
     setBusy(true);
     setError(null);
     beginProcessingMembershipMutation();
@@ -2677,6 +2688,7 @@ export function useAnalyzerWorkspaceController({
     let capturedJobId: string | null = null;
     try {
       const captureFile = await captureSharedScreenFile();
+      assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
       installMutationLease(
         "processing",
         startProjectionMutationLease(

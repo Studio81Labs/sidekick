@@ -370,7 +370,7 @@ describe("Analyzer administrative capture", () => {
         jobRequests += 1;
         return jobRequests === 1
           ? Promise.resolve(jsonResponse(archivedJob))
-          : pendingReload.promise;
+          : pendingReload.promise.then((response) => response.clone());
       }
       if (url === "http://localhost:8000/api/admin/ocr/history") {
         return Promise.resolve(jsonResponse({ detail: "denied" }, 401));
@@ -402,6 +402,17 @@ describe("Analyzer administrative capture", () => {
 
     await unlockAdministrativeAccess(user);
     await waitFor(() => expect(jobRequests).toBe(2));
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+
+    await user.click(
+      screen.getByRole("button", { name: "Lock administrator tools" }),
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Administrator tools" }),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await waitFor(() => expect(jobRequests).toBe(3));
     expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
 
     await act(async () => {
@@ -2517,6 +2528,70 @@ describe("Analyzer administrative capture", () => {
     expect(screen.getByAltText("Uploaded poker table screenshot")).toHaveClass(
       "hidden",
     );
+  });
+
+  it("does not upload a screen capture encoded after administrator relocking", async () => {
+    const pendingHistory = deferredResponse();
+    const { getDisplayMedia } = stubDisplayMedia("window");
+    const drawImage = vi.fn();
+    let resolveEncodedCapture!: () => void;
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage,
+    } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(
+      (callback) => {
+        resolveEncodedCapture = () =>
+          callback(new Blob(["capture"], { type: "image/png" }));
+      },
+    );
+    fetchMock().mockImplementation((url) => {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return pendingHistory.promise;
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(<UnverifiedAnalyzerTestApp />);
+    const user = await unlockAdministrativeAccess();
+
+    await user.click(screen.getByRole("button", { name: "Window" }));
+    await user.click(screen.getByRole("button", { name: "Share window" }));
+    expect(
+      await screen.findByText("Window sharing active"),
+    ).toBeInTheDocument();
+    setSharedPreviewSize();
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Capture and parse" }));
+    await waitFor(() => expect(drawImage).toHaveBeenCalledOnce());
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    await act(async () => {
+      resolveEncodedCapture();
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(
+        fetchMock().mock.calls.filter(
+          ([url, options]) =>
+            url === "http://localhost:8000/api/admin/ocr/jobs" &&
+            options?.method === "POST",
+        ),
+      ).toHaveLength(0),
+    );
+    expect(
+      window.sessionStorage.getItem("poker-training-processing-mutation-v1"),
+    ).toBeNull();
+    expect(getDisplayMedia).toHaveBeenCalledOnce();
   });
 
   it("invalidates an older history restore while clearing reviewed jobs", async () => {
