@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import AnalyzerPage from "../AnalyzerPage";
+import type { AnalyzerRouteNavigation } from "../analyzerRouteState";
 import { historyQueryKeys } from "../../../domains/history/api/historyQueries";
 import { jobQueryKeys } from "../../../domains/jobs/api/jobsQueries";
 import type { DetectedState } from "../../../shared/types/poker";
@@ -407,6 +408,102 @@ describe("Analyzer administrative capture", () => {
       pendingReload.resolve(jsonResponse(archivedJob));
       await pendingReload.promise;
     });
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+  });
+
+  it("does not navigate from a benchmark hand read superseded by relocking", async () => {
+    const currentJob = jobRecord({
+      id: "a".repeat(32),
+      original_filename: "retained-workspace-draft.png",
+    });
+    const benchmarkJob = jobRecord({
+      id: "b".repeat(32),
+      original_filename: "stale-benchmark-hand.png",
+    });
+    const pendingHistory = deferredResponse();
+    const pendingBenchmarkJob = deferredResponse();
+    const navigation: AnalyzerRouteNavigation = {
+      closeSurface: vi.fn(),
+      managed: true,
+      openBenchmarks: vi.fn(),
+      openJob: vi.fn(),
+      openWorkspace: vi.fn(),
+    };
+    window.localStorage.setItem(
+      "poker-training-processing-v1",
+      JSON.stringify([currentJob]),
+    );
+    window.localStorage.setItem("poker-training-processing-total-v1", "1");
+    fetchMock().mockImplementation((url) => {
+      if (url === "http://localhost:8000/api/admin/ocr/history") {
+        return pendingHistory.promise;
+      }
+      if (url === "http://localhost:8000/api/admin/ocr/benchmarks") {
+        return Promise.resolve(
+          jsonResponse(
+            benchmarkOverviewForJob(
+              benchmarkJob.id,
+              benchmarkJob.original_filename,
+            ),
+          ),
+        );
+      }
+      if (
+        url === `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJob.id}`
+      ) {
+        return pendingBenchmarkJob.promise;
+      }
+      throw new Error(`Unexpected request: ${String(url)}`);
+    });
+    render(
+      <UnverifiedAnalyzerTestApp>
+        <AnalyzerPage navigation={navigation} />
+      </UnverifiedAnalyzerTestApp>,
+    );
+    const user = await unlockAdministrativeAccess();
+
+    const currentBet = screen.getByLabelText(/Current bet/);
+    await user.clear(currentBet);
+    await user.type(currentBet, "3");
+    await user.click(
+      screen.getByRole("button", { name: "Refresh saved history" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Parser benchmark" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: "Parser benchmark",
+    });
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Toggle stale-benchmark-hand.png benchmark details",
+      }),
+    );
+    await user.click(
+      within(dialog).getByRole("button", { name: "Review hand" }),
+    );
+    await waitFor(() =>
+      expect(fetchMock()).toHaveBeenCalledWith(
+        `http://localhost:8000/api/admin/ocr/jobs/${benchmarkJob.id}`,
+        expect.anything(),
+      ),
+    );
+
+    await act(async () => {
+      pendingHistory.resolve(jsonResponse({ detail: "denied" }, 401));
+    });
+    expect(
+      await screen.findByText(
+        "The administrative OCR test token was rejected. Unlock administrator tools again with the deployment's token.",
+      ),
+    ).toBeInTheDocument();
+
+    await unlockAdministrativeAccess(user);
+    expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
+    await act(async () => {
+      pendingBenchmarkJob.resolve(jsonResponse(benchmarkJob));
+      await pendingBenchmarkJob.promise;
+    });
+
+    expect(navigation.openJob).not.toHaveBeenCalled();
     expect(screen.getByLabelText(/Current bet/)).toHaveValue("3");
   });
 

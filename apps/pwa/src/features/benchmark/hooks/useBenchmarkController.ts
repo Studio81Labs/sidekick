@@ -3,6 +3,11 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { getJob } from "../../../domains/jobs/api/jobsApi";
 import {
+  assertQueryAccessGenerationCurrent,
+  captureQueryAccessGeneration,
+  isQueryAccessGenerationSuperseded,
+} from "../../../shared/api/queryCache";
+import {
   type BenchmarkComparisonProgress,
   benchmarkCorpusIsUnverified,
 } from "../lib/benchmarkReportPresentation";
@@ -286,13 +291,19 @@ export function useBenchmarkController({
   }
 
   async function reviewCase(jobId: string) {
+    const accessGeneration = captureQueryAccessGeneration(queryClient);
     setReviewJobId(jobId);
     onError(null);
     try {
-      onOpenJob(await getJob(jobId, administratorToken));
+      const job = await getJob(jobId, administratorToken);
+      assertQueryAccessGenerationCurrent(queryClient, accessGeneration);
+      onOpenJob(job);
       closeDialog();
     } catch (error) {
-      if (!onAdministrativeDenial(error)) {
+      if (
+        !isQueryAccessGenerationSuperseded(error) &&
+        !onAdministrativeDenial(error)
+      ) {
         onError(messageFromError(error, "Could not open benchmark hand"));
       }
     } finally {
