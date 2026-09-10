@@ -21,7 +21,8 @@ full empirical or release-candidate validation run.
 [ADR 0079](../decisions/0079-adopt-an-unreleased-current-only-cutover.md)
 supersedes pre-release compatibility: workspace 6 and backup 4 are current-only,
 old recommendation execution is removed, and hosted OCR is an explicit
-administrator surface. [ADR 0080](../decisions/0080-retire-mcp-data-and-write-principal-operations.md)
+administrator surface. The product specification’s application-upgrade gate
+still applies; rejecting retired data formats does not satisfy it. [ADR 0080](../decisions/0080-retire-mcp-data-and-write-principal-operations.md)
 restricts MCP to environment status and rejects retired principal scopes.
 
 No further production implementation is currently evidence-qualified under
@@ -141,7 +142,16 @@ readiness inventory does not change architecture, so it creates no new ADR.
    0046 without weakening any threshold.
 2. Re-run and attach the release-candidate safety, direct-network,
    local-delivery, current-format backup/restore, unsupported-version rejection,
-   and lifecycle evidence.
+   application-upgrade procedure, and lifecycle evidence. The application
+   upgrade must preserve current player data and security and verify the safe
+   browser-shell handoff on the accepted validation platform. The [runtime
+   procedure](../process/local-player-runtime-foundation.md#browser-shell-updates)
+   currently implements only the browser-shell handoff; the application-file
+   update lifecycle remains unimplemented/unvalidated. Record the accepted
+   release procedure and actual upgrade evidence before `go`; an unsigned
+   bundle or unsupported-schema rejection alone cannot pass this prerequisite.
+   This does not restore old-format readers, V1 fallback or a downgrade path.
+   A new installer/update channel still requires the explicit release decision.
 3. Choose exactly one supported outcome: `go`; a narrower, evidence-backed
    `reshape`; or `stop` based on demonstrated source failure.
 4. Name owners, rollback, unresolved risk, and entry criteria for the chosen
