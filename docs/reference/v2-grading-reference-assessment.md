@@ -305,10 +305,13 @@ audited consistently.
 
 1. `coverage-manifest.json`: the complete inclusion and exclusion matrix above,
    plus a stable node-key specification.
-2. `rights-dossier/`: dated terms snapshots and checksums, purchase/key-specific
-   terms, vendor correspondence granting the actual embedding, redistribution,
-   commercial-use, and update mode, attribution requirements, and reviewer
-   approval.
+2. `rights-dossier/`: dated applicable terms snapshots and checksums,
+   purchase/key-specific conditions, source ownership/licensee evidence,
+   attribution requirements, and reviewer approval mapping granted rights to
+   the actual embedding, redistribution, commercial-use, and update mode.
+   Include vendor correspondence only when needed to resolve a material
+   uncovered or ambiguous use; sufficient applicable published terms do not
+   require a separate letter.
 3. `source-build.json`: solver product/tier, exact version/build, license owner,
    export path, generation host, hardware, date, and operator.
 4. `solve-configs/`: one immutable input configuration per tree, covering the
@@ -454,7 +457,7 @@ quality, useful-coverage, reproducibility, or approved-cost gates. Also stop a
 remote-only proposal that cannot preserve explicit consent, minimization,
 retention/use bounds, revocation, auditability, and a usable local-only mode.
 
-Do not substitute the V1 chart, current bundled solver output, configured ranges,
+Do not substitute the removed V1 chart/solver output, configured ranges,
 or an unauthorized/public benchmark API when a gate fails.
 
 ## Outstanding external work
