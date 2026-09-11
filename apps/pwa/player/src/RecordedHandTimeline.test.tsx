@@ -41,6 +41,14 @@ describe("RecordedHandTimeline", () => {
           },
         ],
       },
+      streets: backendProducedState.streets.map((street) =>
+        street.street === "flop"
+          ? {
+              ...street,
+              board_cards: [{ rank: "Q", suit: "clubs" }],
+            }
+          : street,
+      ),
       seats: backendProducedState.seats.map((seat) =>
         seat.player_id === "villain"
           ? { ...seat, participation: "sitting_out" }
@@ -140,6 +148,11 @@ describe("RecordedHandTimeline", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(/villain · shown · cards not recorded/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /flop · board Q of clubs · incomplete board \(1 of 3 cards\)/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Tournament economics · id tournament-1/),

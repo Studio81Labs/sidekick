@@ -995,6 +995,40 @@ def test_player_hand_review_preview_reports_safe_draft_errors_and_stale_state(
     assert runtime.workspace.imported_hands.get(key) == changed
 
 
+def test_player_hand_review_preview_validates_candidate_record_invariants(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    approved_state = record.detections[0].state.model_dump(mode="json")
+    approved_state["chronology"]["source_file_id"] = "different-retained-source"
+
+    preview = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=hand_review_preview_payload(
+            record,
+            approved_state=approved_state,
+            correction_reason="Corrected source file identity",
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["valid"] is False
+    assert preview.json()["reviewed_state"] is None
+    assert preview.json()["field_errors"] == [
+        {
+            "pointer": "/approved_state",
+            "code": "invalid_value",
+            "message": "This field has an invalid value.",
+        }
+    ]
+    assert runtime.workspace.imported_hands.get(key) == record
+
+
 @pytest.mark.parametrize(
     ("corrected_participation", "reviewed_button_seat", "positions_are_known"),
     [

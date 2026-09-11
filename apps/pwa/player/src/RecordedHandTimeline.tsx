@@ -51,6 +51,26 @@ function cardLabel(card: { rank: string; suit: string }): string {
   return card.rank + " of " + card.suit;
 }
 
+const EXPECTED_BOARD_CARD_COUNTS = {
+  preflop: 0,
+  flop: 3,
+  turn: 4,
+  river: 5,
+} as const;
+
+function boardLabel(street: ImportedHandState["streets"][number]): string {
+  const expectedCount = EXPECTED_BOARD_CARD_COUNTS[street.street];
+  if (street.board_cards.length === 0) {
+    return expectedCount === 0
+      ? "not recorded"
+      : `not recorded · incomplete board (0 of ${expectedCount} cards)`;
+  }
+  const cards = street.board_cards.map(cardLabel).join(", ");
+  return street.board_cards.length < expectedCount
+    ? `${cards} · incomplete board (${street.board_cards.length} of ${expectedCount} cards)`
+    : cards;
+}
+
 function handAmountUnit(state: ImportedHandState): string {
   if (state.game.economics.kind === "tournament") {
     return "chips";
@@ -252,10 +272,7 @@ function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
           {state.streets.map((street) => (
             <section className="recorded-street" key={street.street}>
               <h6>
-                {readable(street.street)} · board{" "}
-                {street.board_cards.length > 0
-                  ? street.board_cards.map(cardLabel).join(", ")
-                  : "not recorded"}
+                {readable(street.street)} · board {boardLabel(street)}
               </h6>
               {street.actions.length === 0 ? (
                 <p>No actions were recorded for this street.</p>

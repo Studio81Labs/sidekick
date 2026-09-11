@@ -1889,6 +1889,7 @@ class PlayerWorkspace:
                                 record.lifecycle.changed_at,
                             ),
                         )
+                        self._reviewed_hand_record_candidate(record, revision)
                     except ValidationError as exc:
                         return PlayerHandReviewPreview(
                             request_id=request.request_id,
@@ -2369,6 +2370,28 @@ class PlayerWorkspace:
             approved_at=approved_at,
             approved_state=reviewed_state,
             correction_reason=correction_reason,
+        )
+
+    @staticmethod
+    def _reviewed_hand_record_candidate(
+        record: ImportedHandRecord,
+        revision: CanonicalHandRevision,
+    ) -> ImportedHandRecord:
+        """Validate the aggregate snapshot approval would publish, without writing."""
+
+        return ImportedHandRecord(
+            identity=record.identity,
+            raw_sources=record.raw_sources,
+            detections=record.detections,
+            conflicts=record.conflicts,
+            canonical_revisions=[*record.canonical_revisions, revision],
+            lifecycle=ImportedHandLifecycle(
+                status="active",
+                active_canonical_revision=revision.revision,
+                deletion_generation=record.lifecycle.deletion_generation,
+                changed_at=revision.approved_at,
+            ),
+            deletion_receipt=record.deletion_receipt,
         )
 
     def _require_final_hand_record(self, record_key: str) -> None:
