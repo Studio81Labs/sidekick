@@ -155,18 +155,23 @@ function RecordedEconomics({
             {economics.payouts.length === 0
               ? "not recorded"
               : economics.payouts
-                  .map(
-                    (payout) =>
+                  .map((payout) => {
+                    const values = [
+                      payout.amount === null
+                        ? null
+                        : amount(payout.amount, monetaryUnit),
+                      payout.share === null ? null : payout.share + " share",
+                    ].filter((value): value is string => value !== null);
+                    return (
                       payout.place_from +
                       "-" +
                       payout.place_to +
                       ": " +
-                      (payout.amount === null
-                        ? payout.share === null
-                          ? "not recorded"
-                          : payout.share + " share"
-                        : amount(payout.amount, monetaryUnit)),
-                  )
+                      (values.length === 0
+                        ? "not recorded"
+                        : values.join(" · "))
+                    );
+                  })
                   .join(", ")}
           </p>
           <p>

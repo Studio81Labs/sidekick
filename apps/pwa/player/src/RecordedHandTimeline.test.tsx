@@ -78,7 +78,9 @@ describe("RecordedHandTimeline", () => {
           currency: "USD",
           paid_places: 2,
           players_remaining: 2,
-          payouts: [{ place_from: 1, place_to: 1, amount: "100", share: null }],
+          payouts: [
+            { place_from: 1, place_to: 1, amount: "100", share: "0.5" },
+          ],
           remaining_stacks: [
             { player_id: "hero", stack: "120" },
             { player_id: "villain", stack: "80" },
@@ -158,7 +160,9 @@ describe("RecordedHandTimeline", () => {
       screen.getByText(/Tournament economics · id tournament-1/),
     ).toBeInTheDocument();
     expect(screen.getByText(/buy-in 20 USD · fee 2 USD/)).toBeInTheDocument();
-    expect(screen.getByText(/payouts 1-1: 100 USD/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/payouts 1-1: 100 USD · 0.5 share/),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Remaining stacks hero: 120 chips, villain: 80 chips/),
     ).toBeInTheDocument();
