@@ -68,6 +68,19 @@ describe("RecordedHandTimeline", () => {
     const approvedTournamentState: ImportedHandState = {
       ...backendProducedState,
       hero_cards: [backendProducedState.hero_cards[0]],
+      results: {
+        stated_pot: backendProducedState.results?.stated_pot ?? null,
+        awards: backendProducedState.results?.awards ?? [],
+        players: backendProducedState.results?.players ?? [],
+        showdown: [
+          {
+            player_id: "hero",
+            cards: [{ rank: "A", suit: "hearts" }],
+            disposition: "shown",
+            evidence: [],
+          },
+        ],
+      },
       chronology: {
         ...backendProducedState.chronology,
         played_at: "2026-09-11T11:00:00Z",
@@ -131,10 +144,10 @@ describe("RecordedHandTimeline", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Hero is not recorded/)).toBeInTheDocument();
     expect(
-      screen.getByText(
+      screen.getAllByText(
         /cards A of hearts · incomplete holding \(1 of 2 cards\)/,
       ),
-    ).toBeInTheDocument();
+    ).toHaveLength(2);
     expect(screen.getByText(/villain · sitting out/)).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -171,6 +184,11 @@ describe("RecordedHandTimeline", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(/villain · shown · cards not recorded/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /hero · shown · cards A of hearts · incomplete holding \(1 of 2 cards\)/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(

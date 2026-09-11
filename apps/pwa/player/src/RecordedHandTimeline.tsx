@@ -397,7 +397,11 @@ function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
                   {playerLabel(state, showdown.player_id)} ·{" "}
                   {readable(showdown.disposition)}
                   {showdown.cards.length > 0
-                    ? " · cards " + showdown.cards.map(cardLabel).join(", ")
+                    ? " · cards " +
+                      showdown.cards.map(cardLabel).join(", ") +
+                      (showdown.cards.length === 1
+                        ? " · incomplete holding (1 of 2 cards)"
+                        : "")
                     : " · cards not recorded"}
                   <ul className="recorded-evidence">
                     {showdown.evidence.map((evidence, evidenceIndex) => (
