@@ -14,10 +14,10 @@ The cleanup is complete. [ADR 0082](../decisions/0082-deliver-a-review-first-loc
 now makes #405 a review-first local MVP. #527 V1's stateless preview and typed
 recorded-hand timeline are implemented; its V2 structured correction/approval
 workflow, #528 application-file lifecycle and the #414 review-pilot gate remain
-outstanding. #409 corpus evidence, #412 and the remaining teaching loop are
-deferred, not release dependencies. Older Phase 1/shared-gate descriptions
-below concern that deferred learning target, not an instruction to resume source
-screening.
+outstanding. #409 corpus evidence remains an active review-release dependency;
+#412 and the remaining teaching loop are deferred, not release dependencies.
+Older Phase 1/shared-gate descriptions below concern that deferred learning
+target, not an instruction to resume source screening.
 
 The implemented V1 contract is a stateless authenticated local
 `POST /api/player/hands/{record_key}/review-preview`, sharing canonical validation
