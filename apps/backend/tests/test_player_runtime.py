@@ -3,6 +3,7 @@ import ctypes
 from datetime import datetime, timedelta
 from decimal import Decimal
 import errno
+from hashlib import sha256
 from ipaddress import ip_address
 import json
 import os
@@ -119,6 +120,7 @@ REIMPORT_REQUEST_ID = "77777777-7777-4777-8777-777777777777"
         "/api/player/imports",
         f"/api/player/hands/{'a' * 64}/reimport",
         f"/api/player/hands/{'a' * 64}/review-preview",
+        f"/api/player/hands/{'a' * 64}/review-source-lines",
     ],
 )
 def test_player_request_body_limit_rejects_a_chunk_before_copying_it(
@@ -315,6 +317,27 @@ def hand_review_preview_payload(
             detection_id=detection_id,
         ),
         "draft_revision": draft_revision,
+    }
+
+
+def hand_review_source_lines_payload(
+    record,
+    *,
+    start_line: int = 1,
+    limit: int = 50,
+    detection_id: str | None = None,
+) -> dict[str, object]:
+    lifecycle = record.lifecycle
+    return {
+        "detection_id": detection_id or record.detections[-1].detection_id,
+        "expected_record_version": player_hand_record_version(record),
+        "expected_lifecycle_status": lifecycle.status,
+        "expected_active_canonical_revision": lifecycle.active_canonical_revision,
+        "expected_canonical_revision_count": len(record.canonical_revisions),
+        "expected_deletion_generation": lifecycle.deletion_generation,
+        "expected_lifecycle_changed_at": lifecycle.changed_at.isoformat(),
+        "start_line": start_line,
+        "limit": limit,
     }
 
 
@@ -806,6 +829,334 @@ def test_player_hand_review_preview_validates_without_writing_or_exposing_excerp
         if path.is_file()
     }
     assert after == before
+
+
+def test_player_review_source_lines_are_bounded_authenticated_and_redacted_elsewhere(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    source_text = (
+        "PokerStars Hand #123456789\n"
+        "   \n"
+        "Hero: checks\n"
+        + "x" * 1001
+        + "\n"
+    )
+    raw = record.raw_sources[0].model_copy(
+        update={
+            "raw_text": source_text,
+            "content_sha256": sha256(source_text.encode()).hexdigest(),
+        }
+    )
+    record = record.model_copy(update={"raw_sources": [raw]})
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    payload = hand_review_source_lines_payload(record, limit=4)
+    before = {
+        path.relative_to(runtime.workspace.imported_hands.records_dir): path.read_bytes()
+        for path in runtime.workspace.imported_hands.records_dir.rglob("*")
+        if path.is_file()
+    }
+
+    unauthorized = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json=payload,
+        headers={"Origin": PLAYER_ORIGIN},
+    )
+    missing_csrf = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {session['session_token']}",
+            "Origin": PLAYER_ORIGIN,
+        },
+    )
+    page = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+    rejected_host = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json=payload,
+        headers={**player_mutation_headers(session), "Host": "attacker.invalid"},
+    )
+    rejected_origin = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json=payload,
+        headers={
+            **player_mutation_headers(session),
+            "Origin": "https://attacker.invalid",
+        },
+    )
+    invalid_page = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json={**payload, "limit": 51},
+        headers=player_mutation_headers(session),
+    )
+    invalid_offset = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json={**payload, "start_line": 5},
+        headers=player_mutation_headers(session),
+    )
+    stale_page = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json={**payload, "expected_record_version": "0" * 64},
+        headers=player_mutation_headers(session),
+    )
+    detail = client.get(
+        f"/api/player/hands/{key}",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+
+    assert unauthorized.status_code == 401
+    assert missing_csrf.status_code == 403
+    assert page.status_code == 200
+    assert rejected_host.status_code == 400
+    assert rejected_origin.status_code == 403
+    assert invalid_page.status_code == 422
+    assert invalid_offset.status_code == 422
+    assert stale_page.status_code == 409
+    assert "Hero: checks" not in invalid_page.text
+    assert "Hero: checks" not in invalid_offset.text
+    assert "Hero: checks" not in stale_page.text
+    assert page.headers["Cache-Control"] == "no-store"
+    assert page.json() == {
+        "schema_version": "player-hand-review-source-lines/v1",
+        "record_key": key,
+        "record_version": player_hand_record_version(record),
+        "detection_id": record.detections[0].detection_id,
+        "raw_source_id": raw.raw_source_id,
+        "total_lines": 4,
+        "start_line": 1,
+        "next_start_line": None,
+        "lines": [
+            {
+                "line_number": 1,
+                "text": "PokerStars Hand #123456789",
+                "truncated": False,
+                "binding": {
+                    "raw_source_id": raw.raw_source_id,
+                    "line_start": 1,
+                    "line_end": 1,
+                    "marker": "review-source-line/v1",
+                },
+                "unavailable_reason": None,
+            },
+            {
+                "line_number": 2,
+                "text": "   ",
+                "truncated": False,
+                "binding": None,
+                "unavailable_reason": "blank",
+            },
+            {
+                "line_number": 3,
+                "text": "Hero: checks",
+                "truncated": False,
+                "binding": {
+                    "raw_source_id": raw.raw_source_id,
+                    "line_start": 3,
+                    "line_end": 3,
+                    "marker": "review-source-line/v1",
+                },
+                "unavailable_reason": None,
+            },
+            {
+                "line_number": 4,
+                "text": "x" * 1000,
+                "truncated": True,
+                "binding": None,
+                "unavailable_reason": "line_too_long",
+            },
+        ],
+    }
+    assert detail.status_code == 200
+    assert "Hero: checks" not in detail.text
+    assert runtime.workspace.imported_hands.get(key) == record
+    after = {
+        path.relative_to(runtime.workspace.imported_hands.records_dir): path.read_bytes()
+        for path in runtime.workspace.imported_hands.records_dir.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_player_review_source_lines_reject_a_no_prior_source_conflict(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    initial = pending_review_record()
+    record_payload = initial.model_dump(mode="python")
+    second_raw = dict(record_payload["raw_sources"][0])
+    conflicting_text = "PokerStars Hand #123456789\nconflicting source\n"
+    second_raw.update(
+        {
+            "raw_source_id": "file-2",
+            "chronology": {
+                **second_raw["chronology"],
+                "source_file_id": "file-2",
+            },
+            "provenance": {
+                **second_raw["provenance"],
+                "import_id": "import-file-2",
+                "source_filename": "HH-conflict.txt",
+            },
+            "content_sha256": sha256(conflicting_text.encode()).hexdigest(),
+            "raw_text": conflicting_text,
+        }
+    )
+    record_payload["raw_sources"].append(second_raw)
+    record_payload["conflicts"] = [
+        {
+            "conflict_id": "conflict-1",
+            "raw_source_ids": ["file-1", "file-2"],
+            "detected_ids": [initial.detections[0].detection_id],
+            "active_canonical_revision_at_creation": None,
+        }
+    ]
+    record = type(initial).model_validate(record_payload)
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json=hand_review_source_lines_payload(record),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 409
+    assert "unresolved source conflict" in response.json()["detail"]
+    assert conflicting_text not in response.text
+
+
+def test_player_review_approves_an_omitted_action_with_server_owned_source_evidence(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    source_text = "PokerStars Hand #123456789\nHero: checks\n"
+    raw = record.raw_sources[0].model_copy(
+        update={
+            "raw_text": source_text,
+            "content_sha256": sha256(source_text.encode()).hexdigest(),
+        }
+    )
+    record = record.model_copy(update={"raw_sources": [raw]})
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    binding = {
+        "raw_source_id": raw.raw_source_id,
+        "line_start": 2,
+        "line_end": 2,
+        "marker": "review-source-line/v1",
+    }
+    approved_state = record.detections[0].state.model_dump(mode="json")
+    approved_state["streets"][0]["actions"] = [
+        {
+            "sequence": 0,
+            "actor_id": "hero",
+            "action_type": "check",
+            "total_committed": "0",
+            "origin": {
+                "kind": "unknown",
+                "basis": "unresolved",
+                "evidence": [binding],
+            },
+            "evidence": [binding],
+        }
+    ]
+    preview_payload = hand_review_preview_payload(
+        record,
+        approved_state=approved_state,
+        correction_reason="Recorded the omitted action from the selected source line",
+        draft_revision=6,
+    )
+    approval_payload = hand_approval_payload(
+        record,
+        approved_state=approved_state,
+        correction_reason="Recorded the omitted action from the selected source line",
+    )
+
+    preview = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=preview_payload,
+        headers=player_mutation_headers(session),
+    )
+    approved = client.post(
+        f"/api/player/hands/{key}/approve",
+        json=approval_payload,
+        headers=player_mutation_headers(session),
+    )
+    retry = client.post(
+        f"/api/player/hands/{key}/approve",
+        json=approval_payload,
+        headers=player_mutation_headers(session),
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["valid"] is True
+    assert approved.status_code == 200
+    assert retry.status_code == 200
+    assert retry.json() == approved.json()
+    assert "Hero: checks" not in approved.text
+    stored = runtime.workspace.imported_hands.get(key)
+    evidence = stored.canonical_revisions[-1].state.streets[0].actions[0].evidence
+    assert evidence[0].excerpt == "Hero: checks"
+    assert evidence[0].marker == "review-source-line/v1"
+    assert stored.raw_sources[0].raw_text == source_text
+    assert type(stored).model_validate_json(stored.model_dump_json()) == stored
+
+    backup = client.get(
+        "/api/player/backups/export",
+        headers={"Authorization": f"Bearer {session['session_token']}"},
+    )
+    restored = client.post(
+        "/api/player/backups/restore",
+        content=backup.content,
+        headers={
+            **player_mutation_headers(session),
+            "Content-Type": "application/zip",
+        },
+    )
+
+    assert backup.status_code == 200
+    assert restored.status_code == 200
+    assert runtime.workspace.imported_hands.get(key) == stored
+
+
+def test_player_review_source_lines_stop_before_the_encoded_response_limit(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    source_text = "PokerStars Hand #123456789\n" + ("\x00" * 1000 + "\n") * 50
+    raw = record.raw_sources[0].model_copy(
+        update={
+            "raw_text": source_text,
+            "content_sha256": sha256(source_text.encode()).hexdigest(),
+        }
+    )
+    record = record.model_copy(update={"raw_sources": [raw]})
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json=hand_review_source_lines_payload(record, start_line=2, limit=50),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 200
+    assert len(response.content) <= 256 * 1024
+    page = response.json()
+    assert 0 < len(page["lines"]) < 50
+    assert page["next_start_line"] == len(page["lines"]) + 2
 
 
 def test_player_review_restores_excerpt_only_evidence_before_validation(
@@ -4321,6 +4672,7 @@ def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
         f"/api/player/hands/{'a' * 64}/reject",
         f"/api/player/hands/{'a' * 64}/approve",
         f"/api/player/hands/{'a' * 64}/review-preview",
+        f"/api/player/hands/{'a' * 64}/review-source-lines",
         f"/api/player/hands/{'a' * 64}/conflicts/conflict-1/resolve",
         f"/api/player/hands/{'a' * 64}/delete",
         "/api%2Fplayer%2Fimports",

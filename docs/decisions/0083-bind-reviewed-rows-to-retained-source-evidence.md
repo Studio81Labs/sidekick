@@ -1,6 +1,6 @@
 # ADR 0083: Bind Reviewed Rows to Retained Source Evidence
 
-Status: accepted; implementation required in #533 before #531 can merge
+Status: accepted; implemented by #533 before #531 can merge
 
 Date: 2026-09-11
 
