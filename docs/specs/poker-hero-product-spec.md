@@ -563,6 +563,17 @@ ceiling on learning quality, so it is treated as first-class.
 
 ### 5.1 Coverage, stated honestly
 
+The current funding constraint is zero mandatory solver-license, dataset,
+subscription or external solve-service fees, including reference regeneration
+and updates. Use freely obtainable licensed solved data or independently
+validated results generated offline with free software on existing hardware.
+Paid solvers and time-limited trials are not prerequisites. Record realistic
+local compute and review capacity before bulk generation. This does not waive
+any source, coverage, rights or learning-quality gate; a narrower product needs
+an explicit decision if the constraint cannot support the current scope.
+[ADR 0081](../decisions/0081-require-no-fee-reference-sourcing.md) records this
+sourcing decision; no free source is yet qualified.
+
 - **Preflop** — tractable and comparatively cheap to solve, but not yet backed by
   a mastery-gradeable reference in the current implementation. ADR 0079 removes
   the V1 chart and fallback rather than retaining heuristic output. Phase 0 must

@@ -128,6 +128,12 @@ input-normalization rule or a positive general status grammar.
 
 ## HRC viewer example
 
+Historical acquisition evidence only. The owner's zero-fee decision in
+[ADR 0081](../decisions/0081-require-no-fee-reference-sourcing.md) removes HRC
+purchase/trial/export delivery as a prerequisite. Continue with the bounded
+[no-fee source screen](../reference/v2-grading-reference-assessment.md#r0a-execution-and-exit);
+this viewer file remains unqualified.
+
 | Field                    | Recorded value                                                                                                                                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Evidence level           | `public format sample`                                                                                                                                                   |
@@ -183,7 +189,8 @@ blockers in place:
 The P1a implementation uses the linked HAND2 mapping and source-authored
 full-state expectations, including unknowns, warnings and retained evidence.
 It does not derive expected labels from its own parser output. P2 still needs a
-private authorized representative corpus and independent labels. R0 remains
-blocked on an actual supported strategy export and rights evidence; no
+representative authorized corpus and independent labels, sourced from free public
+downloads rather than the owner's personal histories. R0a now investigates no-fee
+sources; final R0 needs an actual complete artifact and rights evidence; no
 source-specific normalizer, lookup, certification, production catalog, or
 network transport is authorized by this inventory.
