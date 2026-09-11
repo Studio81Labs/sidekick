@@ -1393,7 +1393,7 @@ def create_player_runtime(
                     "This hand has an interrupted lifecycle write; restart the "
                     "local player runtime so recovery can finish",
                 )
-            except (DataLockError, OSError):
+            except (DataLockError, OSError, ValidationError):
                 return _json_denial(
                     500,
                     "Review preview did not finish safely; refresh the hand "

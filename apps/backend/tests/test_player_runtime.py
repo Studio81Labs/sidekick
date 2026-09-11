@@ -3074,6 +3074,11 @@ def test_player_hand_routes_report_corrupt_records_explicitly(tmp_path: Path) ->
     record = pending_review_record()
     key = imported_hand_record_key(record.identity)
     runtime.workspace.imported_hands.save(key, record)
+    preview_payload = hand_review_preview_payload(
+        record,
+        approved_state=record.detections[0].state.model_dump(mode="json"),
+        correction_reason=None,
+    )
     record_file = runtime.workspace.imported_hands.records_dir / key / "record.json"
     record_file.write_text("{not-json", encoding="utf-8")
     session = exchange_session(client, runtime)
@@ -3081,6 +3086,11 @@ def test_player_hand_routes_report_corrupt_records_explicitly(tmp_path: Path) ->
 
     listing = client.get("/api/player/hands", headers=authorization)
     detail = client.get(f"/api/player/hands/{key}", headers=authorization)
+    preview = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=preview_payload,
+        headers=player_mutation_headers(session),
+    )
 
     assert listing.status_code == 200
     assert listing.json() == {
@@ -3097,6 +3107,11 @@ def test_player_hand_routes_report_corrupt_records_explicitly(tmp_path: Path) ->
     assert detail.json() == {
         "detail": "Stored imported hand record could not be read safely"
     }
+    assert preview.status_code == 500
+    assert preview.json() == {
+        "detail": "Review preview did not finish safely; refresh the hand before retrying"
+    }
+    assert preview.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.anyio
