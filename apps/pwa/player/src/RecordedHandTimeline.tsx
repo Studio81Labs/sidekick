@@ -79,7 +79,7 @@ function boardLabel(street: ImportedHandState["streets"][number]): string {
   const expectedCount = EXPECTED_BOARD_CARD_COUNTS[street.street];
   if (street.board_cards.length === 0) {
     return expectedCount === 0
-      ? "not recorded"
+      ? "no board cards"
       : `not recorded · incomplete board (0 of ${expectedCount} cards)`;
   }
   const cards = street.board_cards.map(cardLabel).join(", ");

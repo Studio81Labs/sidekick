@@ -271,6 +271,9 @@ describe("RecordedHandTimeline", () => {
         /hero · shown · cards A of hearts · incomplete holding \(1 of 2 cards\)/,
       ),
     ).toBeInTheDocument();
+    expect(screen.getAllByText(/preflop · board no board cards/)).toHaveLength(
+      2,
+    );
     expect(
       screen.getByText(/Award to hero · 1 USD · pot 1/),
     ).toBeInTheDocument();
