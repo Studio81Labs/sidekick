@@ -1020,7 +1020,7 @@ export function StructuredHandReviewEditor({
               })
             }
             onRemove={
-              streetIndex === 0
+              streetIndex === 0 || streetIndex !== state.streets.length - 1
                 ? undefined
                 : () =>
                     change((next) => {

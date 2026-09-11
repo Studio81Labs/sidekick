@@ -287,6 +287,36 @@ describe("StructuredHandReviewEditor", () => {
     );
   });
 
+  it("allows removing only the final street", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    state.streets.push(
+      { street: "flop", board_cards: [], actions: [] },
+      { street: "turn", board_cards: [], actions: [] },
+    );
+    render(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    const removeStreet = screen.getByRole("button", { name: "Remove street" });
+    fireEvent.click(removeStreet);
+
+    expect((onChange.mock.lastCall?.[0] as ImportedHandState).streets).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ street: "preflop" }),
+        expect.objectContaining({ street: "flop" }),
+      ]),
+    );
+    expect(
+      (onChange.mock.lastCall?.[0] as ImportedHandState).streets,
+    ).toHaveLength(2);
+  });
+
   it("binds newly added action rows to a retained source locator", () => {
     const onChange = vi.fn();
     const { rerender } = render(
