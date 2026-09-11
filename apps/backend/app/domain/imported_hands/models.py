@@ -3925,6 +3925,18 @@ def _safe_review_list_correspondences(
             correspondences.append((detected_index, reviewed_index))
             used_detected.add(detected_index)
 
+    # A wholly unchanged visible list has one more deterministic mapping: its
+    # matching positions. This retains occurrence-specific excerpts for current
+    # records that intentionally use duplicate public locators with distinct
+    # private excerpts, without extending positional matching to an edit or a
+    # reorder.
+    if _json_values_equal(_without_review_excerpts(detected), reviewed):
+        matched_reviewed = {reviewed_index for _, reviewed_index in correspondences}
+        for index in range(len(detected)):
+            if index not in used_detected and index not in matched_reviewed:
+                correspondences.append((index, index))
+                used_detected.add(index)
+
     # For a same-sized review, a unique public locator also keeps a modified or
     # reordered existing row tied to its own occurrence.  Ambiguous duplicates
     # deliberately fall through to the immutable evidence pool below.

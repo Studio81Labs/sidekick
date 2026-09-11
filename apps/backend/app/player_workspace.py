@@ -2481,6 +2481,16 @@ class PlayerWorkspace:
             raise PlayerHandApprovalInvalid(
                 "A reimport audit-only detection cannot be approved"
             )
+        if any(
+            conflict.status == "unresolved"
+            and conflict.active_canonical_revision_at_creation is None
+            and detection.raw_source_id in conflict.raw_source_ids
+            for conflict in record.conflicts
+        ):
+            raise PlayerHandTransitionConflict(
+                "The selected detection has an unresolved source conflict; "
+                "resolve it before reviewing source evidence"
+            )
         return record, detection
 
     @staticmethod

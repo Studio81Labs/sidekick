@@ -984,6 +984,55 @@ def test_player_review_source_lines_are_bounded_authenticated_and_redacted_elsew
     assert after == before
 
 
+def test_player_review_source_lines_reject_a_no_prior_source_conflict(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    initial = pending_review_record()
+    record_payload = initial.model_dump(mode="python")
+    second_raw = dict(record_payload["raw_sources"][0])
+    conflicting_text = "PokerStars Hand #123456789\nconflicting source\n"
+    second_raw.update(
+        {
+            "raw_source_id": "file-2",
+            "chronology": {
+                **second_raw["chronology"],
+                "source_file_id": "file-2",
+            },
+            "provenance": {
+                **second_raw["provenance"],
+                "import_id": "import-file-2",
+                "source_filename": "HH-conflict.txt",
+            },
+            "content_sha256": sha256(conflicting_text.encode()).hexdigest(),
+            "raw_text": conflicting_text,
+        }
+    )
+    record_payload["raw_sources"].append(second_raw)
+    record_payload["conflicts"] = [
+        {
+            "conflict_id": "conflict-1",
+            "raw_source_ids": ["file-1", "file-2"],
+            "detected_ids": [initial.detections[0].detection_id],
+            "active_canonical_revision_at_creation": None,
+        }
+    ]
+    record = type(initial).model_validate(record_payload)
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        f"/api/player/hands/{key}/review-source-lines",
+        json=hand_review_source_lines_payload(record),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 409
+    assert "unresolved source conflict" in response.json()["detail"]
+    assert conflicting_text not in response.text
+
+
 def test_player_review_approves_an_omitted_action_with_server_owned_source_evidence(
     tmp_path: Path,
 ) -> None:

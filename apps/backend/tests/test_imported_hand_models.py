@@ -14416,6 +14416,63 @@ def test_review_factory_restores_private_source_excerpts_before_validation() -> 
     )
 
 
+def test_review_factory_preserves_positional_duplicate_private_evidence() -> None:
+    source = raw_source(
+        raw_text="PokerStars Hand #123456789\nAlpha then Beta\n",
+    )
+    state_payload = hand_state().model_dump()
+    action = wager_action(0, "hero", "check", total=Decimal(0))
+    duplicate_locator = {
+        "raw_source_id": source.raw_source_id,
+        "line_start": 2,
+    }
+    action["evidence"] = [
+        {**duplicate_locator, "excerpt": "Alpha"},
+        {**duplicate_locator, "excerpt": "Beta"},
+    ]
+    action["origin"]["evidence"] = [
+        {**duplicate_locator, "excerpt": "Alpha"},
+        {**duplicate_locator, "excerpt": "Beta"},
+    ]
+    state_payload["streets"][0]["actions"] = [action]
+    source_state = ImportedHandState.model_validate(state_payload)
+    source_detection = detected(source_state)
+    reviewed = source_state.model_dump(mode="json")
+    for evidence_items in (
+        reviewed["streets"][0]["actions"][0]["evidence"],
+        reviewed["streets"][0]["actions"][0]["origin"]["evidence"],
+    ):
+        for item in evidence_items:
+            item.pop("excerpt")
+
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed,
+        correction_reason=None,
+        raw_source=source,
+    )
+
+    retained = approved.state.streets[0].actions[0]
+    assert [item.excerpt for item in retained.evidence] == ["Alpha", "Beta"]
+    assert [item.excerpt for item in retained.origin.evidence] == ["Alpha", "Beta"]
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[source],
+        detections=[source_detection],
+        canonical_revisions=[approved],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved.approved_at,
+        },
+    )
+
+    assert record.canonical_revisions[0] == approved
+
+
 def test_review_factory_matches_reordered_actions_by_visible_evidence() -> None:
     state_payload = hand_state().model_dump()
     actions = [
