@@ -94,14 +94,34 @@ describe("RecordedHandTimeline", () => {
           },
         ],
       },
-      streets: backendProducedState.streets.map((street) =>
-        street.street === "flop"
+      streets: backendProducedState.streets.map((street) => {
+        if (street.street === "preflop") {
+          return {
+            ...street,
+            actions: street.actions.map((action, index) =>
+              index === 0
+                ? {
+                    ...action,
+                    evidence: [
+                      {
+                        raw_source_id: "file-1",
+                        line_start: null,
+                        line_end: null,
+                        marker: null,
+                      },
+                    ],
+                  }
+                : action,
+            ),
+          };
+        }
+        return street.street === "flop"
           ? {
               ...street,
               board_cards: [{ rank: "Q", suit: "clubs" }],
             }
-          : street,
-      ),
+          : street;
+      }),
       seats: backendProducedState.seats.map((seat) =>
         seat.player_id === "hero"
           ? {
@@ -230,6 +250,11 @@ describe("RecordedHandTimeline", () => {
     expect(
       screen.getAllByText(/client automatic · explicit marker · timeout/),
     ).toHaveLength(4);
+    expect(
+      screen.getByText(
+        /Action evidence: file-1 · source excerpt redacted; no visible locator retained/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getAllByText(/Gross pot: 2 USD/)).toHaveLength(1);
     expect(screen.getAllByText(/Gross pot: 2 chips/)).toHaveLength(1);
     expect(screen.getAllByText(/gross components not recorded/)).toHaveLength(

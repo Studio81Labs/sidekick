@@ -40,7 +40,9 @@ function lineLocation(evidence: {
 }): string {
   const location =
     evidence.line_start === null
-      ? "no line retained"
+      ? evidence.marker === null
+        ? "source excerpt redacted; no visible locator retained"
+        : "no line retained"
       : evidence.line_end === null || evidence.line_end === evidence.line_start
         ? "line " + evidence.line_start
         : "lines " + evidence.line_start + "-" + evidence.line_end;
