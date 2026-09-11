@@ -154,7 +154,8 @@ function RecordedEconomics({
       ) : economics.kind === "tournament" ? (
         <>
           <p>
-            Tournament economics · id{" "}
+            Tournament economics · currency{" "}
+            {economics.currency ?? "not recorded"} · id{" "}
             {economics.tournament_id ?? "not recorded"} · type{" "}
             {economics.tournament_type ?? "not recorded"} · stage{" "}
             {economics.stage ?? "not recorded"} · buy-in{" "}

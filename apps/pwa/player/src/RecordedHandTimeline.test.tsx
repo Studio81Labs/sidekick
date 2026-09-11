@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
 import recordedHandState from "./fixtures/recordedHandState.json";
 import { RecordedHandTimeline } from "./RecordedHandTimeline";
@@ -8,6 +8,56 @@ import type { ImportedHandState, PlayerHandDetail } from "./playerApi";
 const backendProducedState = recordedHandState as ImportedHandState;
 
 describe("RecordedHandTimeline", () => {
+  afterEach(cleanup);
+
+  it("shows known currency for sparse tournament economics", () => {
+    const sparseTournamentState: ImportedHandState = {
+      ...backendProducedState,
+      game: {
+        ...backendProducedState.game,
+        economics: {
+          kind: "tournament",
+          tournament_id: null,
+          tournament_type: null,
+          stage: null,
+          entry_buy_in: null,
+          entry_fee: null,
+          blind_level: null,
+          currency: "EUR",
+          paid_places: null,
+          players_remaining: null,
+          payouts: [],
+          remaining_stacks: [],
+          bounty_format: null,
+          bounties: [],
+          icm_inputs_complete: false,
+        },
+      },
+    };
+    const detail = {
+      detections: [
+        {
+          detection_id: "detection-1",
+          state: backendProducedState,
+        },
+      ],
+      canonical_revisions: [
+        {
+          revision: 1,
+          state: sparseTournamentState,
+        },
+      ],
+    } as PlayerHandDetail;
+
+    render(<RecordedHandTimeline detail={detail} />);
+
+    expect(
+      screen.getByText(
+        /Tournament economics · currency EUR · id not recorded · type not recorded · stage not recorded · buy-in not recorded · fee not recorded/,
+      ),
+    ).toBeInTheDocument();
+  });
+
   it("keeps detected and approved states distinct without coercing decimal strings", () => {
     const detectedState: ImportedHandState = {
       ...backendProducedState,
@@ -196,7 +246,7 @@ describe("RecordedHandTimeline", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Tournament economics · id tournament-1/),
+      screen.getByText(/Tournament economics · currency USD · id tournament-1/),
     ).toBeInTheDocument();
     expect(screen.getByText(/buy-in 20 USD · fee 2 USD/)).toBeInTheDocument();
     expect(
