@@ -1,6 +1,6 @@
 # V2 Grading Reference Source Assessment
 
-Status: Phase 0 research checkpoint; source gate open
+Status: Phase 0 research checkpoint; R0a complete, escalation pending
 
 Initial assessment: 2026-08-27; no-fee sourcing decision: 2026-09-11
 
@@ -80,6 +80,51 @@ limitations, not benchmark results or a claim that all free sources fail.
 | `b-inary/poker-cfr`       | [Revision a534708](https://github.com/b-inary/poker-cfr/tree/a5347082007ba1eda7932ef2fe7fad43cb3be2a1), [README](https://github.com/b-inary/poker-cfr/blob/a5347082007ba1eda7932ef2fe7fad43cb3be2a1/Readme.md), BSD-2-Clause license | Free research candidate for bounded heads-up push/fold; its other preflop model assumes postflop check-down with restricted sizes. Not a drop-in reference for ordinary multi-player poker. Export/EV, convergence and input-data provenance remain unqualified. |
 | `MatthewPDingle/GTOpen`   | [Revision 92c86ed](https://github.com/MatthewPDingle/GTOpen/tree/92c86ed73aa0856df8479b5c7635e1469f48f1e8), [README](https://github.com/MatthewPDingle/GTOpen/blob/92c86ed73aa0856df8479b5c7635e1469f48f1e8/README.md)               | Advertises 2–9-player preflop, but documents approximate continuation, possible card-removal errors and no ICM. No license file was found in the inspected complete revision tree. No reuse/qualification approval; public code alone is insufficient.           |
 | `b-inary/postflop-solver` | [Revision 9d1509f](https://github.com/b-inary/postflop-solver/tree/9d1509fe5077d019825f833eed04b16d342dfda1), AGPL-3.0                                                                                                               | Heads-up postflop cannot supply the preflop floor. Its old Sidekick adapter stays removed. Any future independent use needs verified roots, rights and a separate scoped decision.                                                                               |
+
+### R0a bounded pass result
+
+The one permitted additional three-source screen completed on 2026-09-11. It
+inspected source, committed artifacts, license files, build manifests, and
+commands only; no candidate was built or run, and no repository dependency was
+added. The complete evidence record is [#412 comment
+5631515235](https://github.com/Studio81Labs/sidekick/issues/412#issuecomment-5631515235).
+
+- [`exinori/DCFR-SOLVER`](https://github.com/exinori/DCFR-SOLVER/tree/4ade6a9e15a841c41867afde1258b9d110cd6fb1)
+  is MIT-licensed at commit
+  `4ade6a9e15a841c41867afde1258b9d110cd6fb1` (source archive SHA-256
+  `f4ba863c5992d4795e3379702f6d073e50f6ebdf6ebd9c0a527cd9b37fa25d06`).
+  It has no committed complete policy artifact. Its only preflop game fixes
+  six players, 100 BB and a 2.5/3.5/9/22 BB sizing tree; it has no preflop rake
+  or ante model, applies a synthetic OOP payoff tax, samples terminal boards,
+  and supplies no qualifying native preflop convergence package.
+- [`chirenonhive/poker-solver`](https://github.com/chirenonhive/poker-solver/tree/6d54d3725c50d5e74c8971723a616eb52d664f3c)
+  is MIT-licensed at commit
+  `6d54d3725c50d5e74c8971723a616eb52d664f3c` (source archive SHA-256
+  `0e06ec1f5aead59a0e60ec0eac26ca7727a4d89d536338cb695919db9db5a0e5`).
+  It has no committed complete policy artifact and is heads-up only. Its own
+  roadmap identifies approximate flop-going continuation values, multiway and
+  full-ring support, exact preflop equities, and solution export as unfinished.
+- [`jeet-dekivadia/cfr-edge`](https://github.com/jeet-dekivadia/cfr-edge/tree/5b1e9cbef897c50e528bb31204292b17ae7a2f38)
+  is at commit `5b1e9cbef897c50e528bb31204292b17ae7a2f38` (source archive
+  SHA-256
+  `de9ebbcb1a3a185a677442033046c591b22b4f7bc4d0a300c53751e8443aed15`).
+  Its README expressly says no license file exists, so the committed 100-BB
+  heads-up artifact cannot be reused. That artifact is also a 169-class/eight-
+  bucket abstraction whose Texas Holdem metric is a regret proxy, not qualifying
+  exploitability.
+
+Existing-host capacity was recorded without execution: 10 logical CPUs, 32 GiB
+RAM, and 126 GiB available disk. That permits a later bounded synthetic check
+only after a source clears R0 eligibility; it is neither a solver-capacity nor a
+convergence claim.
+
+No candidate supplies a rights-cleared complete policy artifact, exact
+action/economics/unit mapping, full mixed frequencies and EVs, native
+convergence evidence, reproducible no-fee updates, and an independent
+verification method. The current ordinary-preflop floor therefore cannot proceed
+to R0 or source-specific code. [Escalation #525](https://github.com/Studio81Labs/sidekick/issues/525)
+requests the required owner-reviewed choice; it does not approve any screened
+candidate or a narrower product.
 
 ### R0a execution and exit
 
@@ -508,11 +553,13 @@ or an unauthorized/public benchmark API when a gate fails.
 
 ## Outstanding source work
 
-Resume [R0a](#r0a-execution-and-exit) under #412. A candidate's actual supported
-artifact replaces the HRC-specific JSON prerequisite. Once R0a identifies an
-eligible source, freeze the exact field/unit/convergence mapping, independent
-review method, rights and resource plan. Final route coverage depends on #409.
-Then implement and certify R1 → R2 → R3 → R4 as specified in the Epic.
+R0a is complete with no eligible current-floor source. Do not repeat the bounded
+screen, start R0/R1–R4, or restore a removed provider while [escalation
+#525](https://github.com/Studio81Labs/sidekick/issues/525) awaits an
+owner-reviewed source/product-scope decision. Once that decision identifies an
+eligible route, freeze its exact field/unit/convergence mapping, independent
+review method, rights and resource plan. Final route coverage still depends on
+#409; only then may R0 → R1 → R2 → R3 → R4 proceed.
 
 No paid supplier or trial is pending. Source feasibility, independent poker
 review and full useful-coverage evidence remain unresolved; the zero-fee owner
