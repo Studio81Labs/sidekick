@@ -491,6 +491,54 @@ code {
   background: rgb(255 255 255 / 68%);
 }
 
+.review-source-lines {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgb(23 34 31 / 16%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 68%);
+}
+
+.review-source-lines h5,
+.review-source-lines p,
+.review-source-lines ol {
+  margin: 0;
+}
+
+.review-source-line-list {
+  display: grid;
+  gap: 10px;
+  padding-left: 28px;
+}
+
+.review-source-line-list li {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.review-source-line-number {
+  color: #66746f;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.review-source-line-text {
+  max-height: 8rem;
+  overflow: auto;
+  padding: 8px;
+  border-radius: 8px;
+  background: #f7faf7;
+  color: #2c4940;
+  white-space: pre-wrap;
+}
+
+.review-source-lines .secondary-button {
+  justify-self: start;
+  margin-top: 0;
+}
+
 .review-section h5,
 .review-section h6,
 .review-preview h5,

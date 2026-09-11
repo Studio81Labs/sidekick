@@ -11,10 +11,10 @@ entry with `/admin/ocr` and authenticated `/api/admin/ocr` data routes. The
 separate `/admin/ocr/mcp` credential surface and status-only gateway follow
 [ADR 0080](../decisions/0080-retire-mcp-data-and-write-principal-operations.md).
 The cleanup is complete. [ADR 0082](../decisions/0082-deliver-a-review-first-local-mvp.md)
-now makes #405 a review-first local MVP. #527 V1's stateless preview and typed
-recorded-hand timeline are implemented; its V2 structured correction/approval
-workflow, #528 application-file lifecycle and the #414 review-pilot gate remain
-outstanding. #409 corpus evidence remains an active review-release dependency;
+now makes #405 a review-first local MVP. #527's stateless preview, typed
+recorded-hand timeline, and V2 structured correction/approval workflow are
+implemented; #528 application-file lifecycle and the #414 review-pilot gate
+remain outstanding. #409 corpus evidence remains an active review-release dependency;
 #412 and the remaining teaching loop are deferred, not release dependencies.
 Older Phase 1/shared-gate descriptions below concern that deferred learning
 target, not an instruction to resume source screening.
@@ -24,9 +24,10 @@ The implemented V1 contract is a stateless authenticated local
 and Python structural-position derivation with the existing review domain.
 It returns a sanitized, versioned validation envelope and grants no
 write/approval authority; drafts stay in memory. Typed recorded-state timelines
-keep detected proposals and approved revisions distinct. V2 will replace the
-retained JSON editor with structured correction/approval controls. No storage or
-grading-contract change is planned. Exact request/error, lifecycle and
+keep detected proposals and approved revisions distinct. The V2 structured
+editor replaces the retained JSON editor with typed correction/approval controls,
+immutable detection-bound parser locators, and an explicit source-line panel for
+wholly omitted facts. No storage or grading-contract change is planned. Exact request/error, lifecycle and
 implementation boundaries are in the
 [Epic plan](https://github.com/Studio81Labs/sidekick/issues/405#technical-implementation-plan).
 The initial delivery target is a controlled macOS arm64 pilot, with manual
@@ -126,9 +127,11 @@ implements the same resolver for review preparation and aggregate correction
 reconstruction, including reserved-marker validation against retained raw
 lines. Existing preview/approval DTOs, layout 6 and backup 4 remain unchanged;
 the source-lines read DTO is new. It does not relax detected-action identity for
-`user_confirmed` origins. #527 V2 remains incomplete until #533 and #531's actual
-backend/UI integration pass; implementation status must be updated when those
-PRs land.
+`user_confirmed` origins. #531 integrates this contract into the structured
+editor and real loopback UI validation: it permits add/remove/reorder review
+corrections with explicit retained source association while keeping user-selected
+source lines unresolved and preventing editable drafts from becoming evidence
+authority.
 [ADR 0063](../decisions/0063-expose-local-import-conflict-resolution.md) adds
 stale-safe explicit resolution of retained import conflicts. Keeping the
 preserved source may retain active learning; selecting a source first returns

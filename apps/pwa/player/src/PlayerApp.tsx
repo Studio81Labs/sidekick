@@ -23,7 +23,9 @@ import {
   type PlayerHandList,
   type PlayerHandSummary,
   type ImportedHandState,
+  type ImportedHandSourceEvidence,
   type PlayerHandReviewPreview,
+  type PlayerHandReviewSourceLines,
   type PlayerImportBatchOutcome,
   type PlayerStorageStatus,
   approvePlayerHand,
@@ -35,6 +37,7 @@ import {
   importPokerStarsFiles,
   loadPlayerHand,
   loadPlayerHands,
+  loadPlayerHandReviewSourceLines,
   loadPlayerStorage,
   previewPlayerHandReview,
   reimportPlayerHand,
@@ -57,6 +60,11 @@ import {
 } from "./playerReimportRetry";
 import { unitIntervalPercentage } from "./playerDecimal";
 import { RecordedHandTimeline } from "./RecordedHandTimeline";
+import {
+  selectedDetectionEvidence,
+  sourceEvidenceKey,
+  uniqueSourceEvidence,
+} from "./reviewEvidence";
 import { StructuredHandReviewEditor } from "./StructuredHandReviewEditor";
 
 type BusyAction =
@@ -66,6 +74,7 @@ type BusyAction =
   | "records"
   | "detail"
   | "preview"
+  | "source-lines"
   | "approve"
   | "resolve"
   | "withdraw"
@@ -128,6 +137,48 @@ interface HandApprovalDraft {
   detectionId: string;
   reviewedState: ImportedHandState;
   correctionReason: string;
+}
+
+interface ReviewSourceScope {
+  detectionId: string;
+  recordKey: string;
+  recordVersion: string;
+  sessionToken: string;
+}
+
+interface ReviewSourcePageState {
+  page: PlayerHandReviewSourceLines;
+  scope: ReviewSourceScope;
+}
+
+interface ReviewSourceEvidenceSelection {
+  evidence: ImportedHandSourceEvidence[];
+  scope: ReviewSourceScope;
+}
+
+function sourceScopeFor(
+  credentials: PlayerCredentials,
+  detail: PlayerHandDetail,
+  detectionId: string,
+): ReviewSourceScope {
+  return {
+    detectionId,
+    recordKey: detail.summary.record_key,
+    recordVersion: detail.summary.record_version,
+    sessionToken: credentials.sessionToken,
+  };
+}
+
+function sourceScopesMatch(
+  left: ReviewSourceScope,
+  right: ReviewSourceScope,
+): boolean {
+  return (
+    left.detectionId === right.detectionId &&
+    left.recordKey === right.recordKey &&
+    left.recordVersion === right.recordVersion &&
+    left.sessionToken === right.sessionToken
+  );
 }
 
 function approvalDraftFor(
@@ -293,8 +344,13 @@ interface HandDetailProps {
     selectedRawSourceId: string,
   ) => void;
   onReviewedStateChange: (state: ImportedHandState) => void;
+  onLoadReviewSourceLines: (startLine?: number) => void;
+  onSelectReviewSourceEvidence: (evidence: ImportedHandSourceEvidence) => void;
   reviewPreview: PlayerHandReviewPreview | null;
   reviewPreviewCurrent: boolean;
+  reviewSourceEvidence: readonly ImportedHandSourceEvidence[];
+  reviewSourceLines: PlayerHandReviewSourceLines | null;
+  reviewSourceLinesError: string | null;
 }
 
 function ReviewPreviewSummary({
@@ -403,8 +459,13 @@ function HandDetail({
   onReasonChange,
   onResolveConflict,
   onReviewedStateChange,
+  onLoadReviewSourceLines,
+  onSelectReviewSourceEvidence,
   reviewPreview,
   reviewPreviewCurrent,
+  reviewSourceEvidence,
+  reviewSourceLines,
+  reviewSourceLinesError,
 }: HandDetailProps) {
   const { summary } = detail;
   const recognitionWarnings = detail.detections.flatMap((detection) => [
@@ -439,9 +500,10 @@ function HandDetail({
       )
     : null;
   const reviewEvidenceOptions = reviewedDetection
-    ? Object.values(reviewedDetection.field_evidence).flatMap(
-        (field) => field.evidence,
-      )
+    ? uniqueSourceEvidence([
+        ...selectedDetectionEvidence(reviewedDetection),
+        ...reviewSourceEvidence,
+      ])
     : [];
   return (
     <article className="hand-detail" aria-labelledby="hand-detail-heading">
@@ -566,7 +628,119 @@ function HandDetail({
                 ))}
             </select>
           </label>
+          <section
+            className="review-source-lines"
+            aria-labelledby="review-source-lines-heading"
+          >
+            <h5 id="review-source-lines-heading">Retained source lines</h5>
+            <p className="field-help">
+              Open the selected hand's retained source only when a parser
+              locator does not cover a correction. The text stays in this
+              browser session and is not parser evidence or positive action
+              authority.
+            </p>
+            {reviewSourceLines === null ? (
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={busy !== null}
+                onClick={() => onLoadReviewSourceLines()}
+              >
+                {busy === "source-lines"
+                  ? "Opening retained source…"
+                  : "Open retained source lines"}
+              </button>
+            ) : (
+              <>
+                <p className="field-help">
+                  Lines {reviewSourceLines.start_line}–
+                  {reviewSourceLines.lines[reviewSourceLines.lines.length - 1]
+                    ?.line_number ?? reviewSourceLines.start_line}{" "}
+                  of {reviewSourceLines.total_lines}
+                  from the selected retained hand segment.
+                </p>
+                <ol
+                  className="review-source-line-list"
+                  start={reviewSourceLines.start_line}
+                >
+                  {reviewSourceLines.lines.map((line) => {
+                    const selected =
+                      line.binding !== null &&
+                      reviewSourceEvidence.some(
+                        (evidence) =>
+                          sourceEvidenceKey(evidence) ===
+                          sourceEvidenceKey(line.binding!),
+                      );
+                    return (
+                      <li key={line.line_number}>
+                        <span className="review-source-line-number">
+                          Line {line.line_number}
+                        </span>
+                        <code className="review-source-line-text">
+                          {line.text}
+                        </code>
+                        {line.unavailable_reason === "blank" ? (
+                          <p className="field-help">
+                            Blank lines cannot support a correction.
+                          </p>
+                        ) : line.unavailable_reason === "line_too_long" ? (
+                          <p className="field-help">
+                            This line is truncated for display and cannot
+                            support a correction.
+                          </p>
+                        ) : line.binding ? (
+                          <button
+                            aria-label={
+                              selected
+                                ? `Source line ${line.line_number} selected for review binding`
+                                : `Use source line ${line.line_number} for a correction`
+                            }
+                            className="quiet-button"
+                            type="button"
+                            disabled={busy !== null || selected}
+                            onClick={() =>
+                              onSelectReviewSourceEvidence(line.binding!)
+                            }
+                          >
+                            {selected
+                              ? "Selected for review binding"
+                              : "Use this source line for a correction"}
+                          </button>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ol>
+                {reviewSourceLines.next_start_line ? (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() =>
+                      onLoadReviewSourceLines(
+                        reviewSourceLines.next_start_line ?? undefined,
+                      )
+                    }
+                  >
+                    {busy === "source-lines"
+                      ? "Loading retained source…"
+                      : "Load more retained source lines"}
+                  </button>
+                ) : null}
+              </>
+            )}
+            {reviewSourceLinesError ? (
+              <p className="deletion-failure" role="alert">
+                {reviewSourceLinesError}
+              </p>
+            ) : null}
+          </section>
           <StructuredHandReviewEditor
+            confirmationActionCandidates={
+              reviewedDetection?.state.streets.map(
+                (street) => street.actions,
+              ) ?? []
+            }
             disabled={busy !== null}
             evidenceOptions={reviewEvidenceOptions}
             errors={reviewPreview?.field_errors ?? []}
@@ -1100,6 +1274,7 @@ export default function PlayerApp() {
   const reimportInput = useRef<HTMLInputElement>(null);
   const permitNextUnloadRef = useRef(false);
   const reviewPreviewFenceRef = useRef(0);
+  const reviewSourceFenceRef = useRef(0);
   const draftRevisionRef = useRef(0);
   const [credentials, setCredentials] = useState<PlayerCredentials | null>(
     null,
@@ -1125,6 +1300,13 @@ export default function PlayerApp() {
   );
   const [reviewPreview, setReviewPreview] =
     useState<PlayerHandReviewPreview | null>(null);
+  const [reviewSourcePage, setReviewSourcePage] =
+    useState<ReviewSourcePageState | null>(null);
+  const [reviewSourceEvidence, setReviewSourceEvidence] =
+    useState<ReviewSourceEvidenceSelection | null>(null);
+  const [reviewSourceLinesError, setReviewSourceLinesError] = useState<
+    string | null
+  >(null);
   const [loadingHandKey, setLoadingHandKey] = useState<string | null>(null);
   const [closeReason, setCloseReason] = useState("");
   const [deleteReason, setDeleteReason] = useState("");
@@ -1133,10 +1315,39 @@ export default function PlayerApp() {
   const [busy, setBusy] = useState<BusyAction>(null);
   const [draftRevision, setDraftRevision] = useState(0);
 
+  const reviewSourceScope =
+    credentials && handDetail && approvalDraft
+      ? sourceScopeFor(credentials, handDetail, approvalDraft.detectionId)
+      : null;
+  const reviewSourceScopeKey = reviewSourceScope
+    ? JSON.stringify([
+        reviewSourceScope.sessionToken,
+        reviewSourceScope.recordKey,
+        reviewSourceScope.recordVersion,
+        reviewSourceScope.detectionId,
+      ])
+    : null;
+
   const invalidateReviewPreview = () => {
     reviewPreviewFenceRef.current += 1;
     setReviewPreview(null);
   };
+
+  const invalidateReviewSourceLines = () => {
+    reviewSourceFenceRef.current += 1;
+    setReviewSourcePage(null);
+    setReviewSourceEvidence(null);
+    setReviewSourceLinesError(null);
+  };
+
+  useEffect(() => {
+    // The source text is scoped to this exact authenticated hand/detection
+    // revision. It must not survive a hand, source, version, or session swap.
+    reviewSourceFenceRef.current += 1;
+    setReviewSourcePage(null);
+    setReviewSourceEvidence(null);
+    setReviewSourceLinesError(null);
+  }, [reviewSourceScopeKey]);
 
   const clearReimportSelection = () => {
     setSelectedReimportFile(null);
@@ -1174,6 +1385,7 @@ export default function PlayerApp() {
       setHandDetail(null);
       setApprovalDraft(null);
       invalidateReviewPreview();
+      invalidateReviewSourceLines();
       setCloseReason("");
       setDeleteReason("");
       clearReimportSelection();
@@ -1191,6 +1403,7 @@ export default function PlayerApp() {
     setHandDetail(null);
     setApprovalDraft(null);
     invalidateReviewPreview();
+    invalidateReviewSourceLines();
     setCloseReason("");
     setDeleteReason("");
     clearReimportSelection();
@@ -1283,6 +1496,7 @@ export default function PlayerApp() {
     nextApprovalDraft = approvalDraftFor(detail),
   ) => {
     invalidateReviewPreview();
+    invalidateReviewSourceLines();
     setHandDetail(detail);
     setApprovalDraft(nextApprovalDraft);
     setHandPage((current) =>
@@ -1297,6 +1511,147 @@ export default function PlayerApp() {
           }
         : current,
     );
+  };
+
+  const loadReviewSourceLines = async (startLine = 1) => {
+    if (!credentials || !handDetail || !approvalDraft) return;
+    if (
+      approvalRequiresConflictResolution(handDetail, approvalDraft.detectionId)
+    ) {
+      setReviewSourceLinesError(
+        "Resolve the retained source conflict before opening source lines for this detection.",
+      );
+      return;
+    }
+    if (
+      !["pending_review", "active", "withdrawn", "rejected"].includes(
+        handDetail.summary.lifecycle_status,
+      )
+    ) {
+      setReviewSourceLinesError(
+        "This hand lifecycle state cannot expose retained source lines for review.",
+      );
+      return;
+    }
+
+    const requestedCredentials = credentials;
+    const requestedDetail = handDetail;
+    const requestedDraft = approvalDraft;
+    const requestedScope = sourceScopeFor(
+      requestedCredentials,
+      requestedDetail,
+      requestedDraft.detectionId,
+    );
+    const requestFence = reviewSourceFenceRef.current;
+    setBusy("source-lines");
+    setError(null);
+    setActionNotice(null);
+    setReviewSourceLinesError(null);
+    try {
+      const page = await loadPlayerHandReviewSourceLines(
+        requestedCredentials,
+        requestedDetail.summary.record_key,
+        {
+          detection_id: requestedDraft.detectionId,
+          expected_record_version: requestedDetail.summary.record_version,
+          expected_lifecycle_status: requestedDetail.summary
+            .lifecycle_status as
+            | "pending_review"
+            | "active"
+            | "withdrawn"
+            | "rejected",
+          expected_active_canonical_revision:
+            requestedDetail.summary.active_canonical_revision,
+          expected_canonical_revision_count:
+            requestedDetail.summary.canonical_revision_count,
+          expected_deletion_generation:
+            requestedDetail.summary.deletion_generation,
+          expected_lifecycle_changed_at:
+            requestedDetail.summary.lifecycle_changed_at,
+          start_line: startLine,
+          limit: 50,
+        },
+      );
+      if (reviewSourceFenceRef.current !== requestFence) return;
+      const selectedDetection = requestedDetail.detections.find(
+        (detection) => detection.detection_id === requestedDraft.detectionId,
+      );
+      if (
+        !selectedDetection ||
+        page.schema_version !== "player-hand-review-source-lines/v1" ||
+        page.record_key !== requestedScope.recordKey ||
+        page.record_version !== requestedScope.recordVersion ||
+        page.detection_id !== requestedScope.detectionId ||
+        page.raw_source_id !== selectedDetection.raw_source_id ||
+        page.start_line !== startLine
+      ) {
+        setReviewSourceLinesError(
+          "The local player runtime returned source lines for a different review scope. Reload the hand before trying again.",
+        );
+        return;
+      }
+      setReviewSourcePage((current) => {
+        if (
+          startLine !== 1 &&
+          current !== null &&
+          sourceScopesMatch(current.scope, requestedScope) &&
+          current.page.raw_source_id === page.raw_source_id &&
+          current.page.total_lines === page.total_lines
+        ) {
+          const linesByNumber = new Map(
+            current.page.lines.map((line) => [line.line_number, line]),
+          );
+          for (const line of page.lines) {
+            linesByNumber.set(line.line_number, line);
+          }
+          return {
+            scope: requestedScope,
+            page: {
+              ...page,
+              start_line: current.page.start_line,
+              lines: [...linesByNumber.values()].sort(
+                (left, right) => left.line_number - right.line_number,
+              ),
+            },
+          };
+        }
+        return { page, scope: requestedScope };
+      });
+    } catch (sourceError) {
+      if (sourceError instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(sourceError.message);
+      } else if (
+        sourceError instanceof PlayerApiError &&
+        sourceError.status === 409
+      ) {
+        invalidateReviewSourceLines();
+        setReviewSourceLinesError(
+          "The retained source changed while it was being opened. Reload the hand before trying again.",
+        );
+      } else if (
+        sourceError instanceof PlayerApiError &&
+        sourceError.status === 401
+      ) {
+        handleRequestError(sourceError);
+      } else {
+        setReviewSourceLinesError(friendlyError(sourceError));
+      }
+    } finally {
+      setBusy((current) => (current === "source-lines" ? null : current));
+    }
+  };
+
+  const selectReviewSourceEvidence = (evidence: ImportedHandSourceEvidence) => {
+    if (reviewSourceScope === null) return;
+    setReviewSourceEvidence((current) => ({
+      scope: reviewSourceScope,
+      evidence: uniqueSourceEvidence([
+        ...(current && sourceScopesMatch(current.scope, reviewSourceScope)
+          ? current.evidence
+          : []),
+        structuredClone(evidence),
+      ]),
+    }));
   };
 
   const previewReviewedHand = async () => {
@@ -1927,6 +2282,7 @@ export default function PlayerApp() {
       setHandPage(null);
       setHandDetail(null);
       setApprovalDraft(null);
+      invalidateReviewSourceLines();
       setCloseReason("");
       setDeleteReason("");
       clearReimportSelection();
@@ -2111,6 +2467,18 @@ export default function PlayerApp() {
     reviewPreview.record_key === handDetail.summary.record_key &&
     reviewPreview.record_version === handDetail.summary.record_version &&
     reviewPreview.detection_id === approvalDraft.detectionId;
+  const visibleReviewSourceLines =
+    reviewSourceScope !== null &&
+    reviewSourcePage !== null &&
+    sourceScopesMatch(reviewSourcePage.scope, reviewSourceScope)
+      ? reviewSourcePage.page
+      : null;
+  const visibleReviewSourceEvidence =
+    reviewSourceScope !== null &&
+    reviewSourceEvidence !== null &&
+    sourceScopesMatch(reviewSourceEvidence.scope, reviewSourceScope)
+      ? reviewSourceEvidence.evidence
+      : [];
   const dirtyReasons = playerUpdateDirtyReasons({
     approvalChanged: approvalDraftDirty,
     approvalStateReasonChanged: closeReason !== "",
@@ -2499,8 +2867,17 @@ export default function PlayerApp() {
                     current ? { ...current, reviewedState } : current,
                   );
                 }}
+                onLoadReviewSourceLines={(startLine) =>
+                  void loadReviewSourceLines(startLine)
+                }
+                onSelectReviewSourceEvidence={selectReviewSourceEvidence}
                 reviewPreview={reviewPreview}
                 reviewPreviewCurrent={reviewPreviewCurrent}
+                reviewSourceEvidence={visibleReviewSourceEvidence}
+                reviewSourceLines={visibleReviewSourceLines}
+                reviewSourceLinesError={
+                  reviewSourceScope === null ? null : reviewSourceLinesError
+                }
               />
             ) : null}
           </section>

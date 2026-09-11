@@ -5,6 +5,7 @@ import type {
   ImportedHandSourceEvidence,
   ImportedHandState,
 } from "./playerApi";
+import { sourceEvidenceKey, uniqueSourceEvidence } from "./reviewEvidence";
 
 type Street = ImportedHandState["streets"][number]["street"];
 type Action = ImportedHandState["streets"][number]["actions"][number];
@@ -52,6 +53,7 @@ const FORCED_ACTION_TYPES: readonly Action["action_type"][] = [
   "post_straddle",
   "uncalled_return",
 ];
+const REVIEW_SOURCE_LINE_MARKER = "review-source-line/v1";
 
 function readable(value: string): string {
   return value.replace(/_/g, " ");
@@ -107,6 +109,25 @@ function correctedOriginForActionType(
     automatic_reason: null,
     review_reference: null,
   };
+}
+
+function actionConfirmationKey(streetIndex: number, action: Action): string {
+  return JSON.stringify([
+    streetIndex,
+    action.actor_id,
+    action.action_type,
+    action.amount,
+    action.total_committed,
+    action.all_in,
+    action.evidence.map(sourceEvidenceKey),
+    action.origin.kind,
+    action.origin.basis,
+    action.origin.confidence,
+    action.origin.evidence.map(sourceEvidenceKey),
+    action.origin.semantics_revision,
+    action.origin.automatic_reason,
+    action.origin.review_reference,
+  ]);
 }
 
 function errorFor(errors: readonly ReviewError[], path: string): string | null {
@@ -464,28 +485,9 @@ function ReadOnlyEvidence({
       {label}:{" "}
       {evidence.length === 0
         ? "no retained locator"
-        : evidence
-            .map((item) => {
-              const line =
-                item.line_start === null
-                  ? "no line"
-                  : item.line_end === null || item.line_end === item.line_start
-                    ? `line ${item.line_start}`
-                    : `lines ${item.line_start}-${item.line_end}`;
-              return `${item.raw_source_id} · ${line}${item.marker ? ` · ${item.marker}` : ""}`;
-            })
-            .join("; ")}
+        : evidence.map(evidenceLabel).join("; ")}
     </p>
   );
-}
-
-function evidenceKey(evidence: ImportedHandSourceEvidence): string {
-  return [
-    evidence.raw_source_id,
-    evidence.line_start ?? "",
-    evidence.line_end ?? "",
-    evidence.marker ?? "",
-  ].join("|");
 }
 
 function evidenceLabel(evidence: ImportedHandSourceEvidence): string {
@@ -495,19 +497,11 @@ function evidenceLabel(evidence: ImportedHandSourceEvidence): string {
       : evidence.line_end === null || evidence.line_end === evidence.line_start
         ? `line ${evidence.line_start}`
         : `lines ${evidence.line_start}-${evidence.line_end}`;
-  return `${evidence.raw_source_id} · ${line}${evidence.marker ? ` · ${evidence.marker}` : ""}`;
-}
-
-function uniqueEvidence(
-  evidence: readonly ImportedHandSourceEvidence[],
-): ImportedHandSourceEvidence[] {
-  const seen = new Set<string>();
-  return evidence.filter((item) => {
-    const key = evidenceKey(item);
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+  const provenance =
+    evidence.marker === REVIEW_SOURCE_LINE_MARKER
+      ? "User-selected source line"
+      : "Retained parser locator";
+  return `${provenance} · ${evidence.raw_source_id} · ${line}${evidence.marker ? ` · ${evidence.marker}` : ""}`;
 }
 
 function EvidenceBinding({
@@ -527,7 +521,7 @@ function EvidenceBinding({
   path: string;
   onChange: (evidence: ImportedHandSourceEvidence[]) => void;
 }) {
-  const selected = evidence[0] ? evidenceKey(evidence[0]) : "";
+  const selected = evidence[0] ? sourceEvidenceKey(evidence[0]) : "";
   return (
     <label className="review-field">
       <span>{label}</span>
@@ -538,14 +532,14 @@ function EvidenceBinding({
         value={selected}
         onChange={(event) => {
           const selectedEvidence = options.find(
-            (item) => evidenceKey(item) === event.target.value,
+            (item) => sourceEvidenceKey(item) === event.target.value,
           );
           onChange(selectedEvidence ? [structuredClone(selectedEvidence)] : []);
         }}
       >
         <option value="">No retained locator bound</option>
         {options.map((item) => (
-          <option key={evidenceKey(item)} value={evidenceKey(item)}>
+          <option key={sourceEvidenceKey(item)} value={sourceEvidenceKey(item)}>
             {evidenceLabel(item)}
           </option>
         ))}
@@ -561,19 +555,20 @@ function EvidenceBinding({
 }
 
 function actionStableKey(action: Action, index: number): string {
-  const evidence = action.evidence.map((item) =>
-    [item.raw_source_id, item.line_start, item.line_end, item.marker].join(":"),
-  );
+  const evidence = action.evidence.map(sourceEvidenceKey);
   const semanticIdentity = [
     action.actor_id,
     action.action_type,
     action.amount ?? "unknown-amount",
     action.total_committed ?? "unknown-total",
     action.all_in ? "all-in" : "not-all-in",
-  ].join(":");
+  ];
   return evidence.length === 0
-    ? `unmapped-${semanticIdentity}-${action.sequence}-${index}`
-    : `${evidence.join("|")}-${semanticIdentity}`;
+    ? JSON.stringify(["unmapped", semanticIdentity, action.sequence, index])
+    : JSON.stringify([
+        action.evidence.map(sourceEvidenceKey),
+        semanticIdentity,
+      ]);
 }
 
 function actionDraft(): Action {
@@ -609,6 +604,7 @@ function seatDraft(seats: Seat[]): Seat {
 }
 
 export interface StructuredHandReviewEditorProps {
+  confirmationActionCandidates?: readonly (readonly Action[])[];
   disabled: boolean;
   evidenceOptions?: readonly ImportedHandSourceEvidence[];
   errors: readonly ReviewError[];
@@ -622,6 +618,7 @@ export interface StructuredHandReviewEditorProps {
  * cannot be synthesized or altered by the browser.
  */
 export function StructuredHandReviewEditor({
+  confirmationActionCandidates = [],
   disabled,
   evidenceOptions = [],
   errors,
@@ -648,17 +645,33 @@ export function StructuredHandReviewEditor({
   const players = state.seats
     .map((seat) => seat.player_id)
     .filter((playerId) => playerId !== "");
-  const retainedEvidence = uniqueEvidence([
-    ...evidenceOptions,
-    ...state.streets.flatMap((street) =>
-      street.actions.flatMap((action) => [
-        ...action.evidence,
-        ...action.origin.evidence,
-      ]),
-    ),
-    ...(state.results?.showdown.flatMap((entry) => entry.evidence) ?? []),
-    ...(state.results?.awards.flatMap((award) => award.evidence) ?? []),
-  ]);
+  const retainedEvidence = uniqueSourceEvidence(evidenceOptions);
+  const currentActionKeyCounts = new Map<string, number>();
+  for (const [streetIndex, street] of state.streets.entries()) {
+    for (const action of street.actions) {
+      const key = actionConfirmationKey(streetIndex, action);
+      currentActionKeyCounts.set(
+        key,
+        (currentActionKeyCounts.get(key) ?? 0) + 1,
+      );
+    }
+  }
+  const confirmationCandidateKeyCounts = new Map<string, number>();
+  for (const [streetIndex, actions] of confirmationActionCandidates.entries()) {
+    for (const action of actions) {
+      if (
+        action.origin.kind !== "unknown" ||
+        action.origin.basis !== "unresolved"
+      ) {
+        continue;
+      }
+      const key = actionConfirmationKey(streetIndex, action);
+      confirmationCandidateKeyCounts.set(
+        key,
+        (confirmationCandidateKeyCounts.get(key) ?? 0) + 1,
+      );
+    }
+  }
   return (
     <div className="structured-review-editor">
       <section className="review-section">
@@ -986,12 +999,15 @@ export function StructuredHandReviewEditor({
         {state.streets.map((street, streetIndex) => (
           <StreetEditor
             key={street.street}
+            confirmationCandidateKeyCounts={confirmationCandidateKeyCounts}
+            currentActionKeyCounts={currentActionKeyCounts}
             disabled={disabled}
             evidenceOptions={retainedEvidence}
             errors={errors}
             players={players}
             path={`/streets/${streetIndex}`}
             street={street}
+            streetIndex={streetIndex}
             onChange={(updated) =>
               change((next) => {
                 next.streets[streetIndex] = updated;
@@ -1574,21 +1590,27 @@ function SeatEditor({
 }
 
 function StreetEditor({
+  confirmationCandidateKeyCounts,
+  currentActionKeyCounts,
   disabled,
   evidenceOptions,
   errors,
   players,
   path,
   street,
+  streetIndex,
   onChange,
   onRemove,
 }: {
+  confirmationCandidateKeyCounts: ReadonlyMap<string, number>;
+  currentActionKeyCounts: ReadonlyMap<string, number>;
   disabled: boolean;
   evidenceOptions: readonly ImportedHandSourceEvidence[];
   errors: readonly ReviewError[];
   players: string[];
   path: string;
   street: ImportedHandState["streets"][number];
+  streetIndex: number;
   onChange: (street: ImportedHandState["streets"][number]) => void;
   onRemove?: () => void;
 }) {
@@ -1616,6 +1638,14 @@ function StreetEditor({
           <ActionEditor
             key={actionStableKey(action, index)}
             action={action}
+            canConfirmPlayerSelectedOrigin={
+              currentActionKeyCounts.get(
+                actionConfirmationKey(streetIndex, action),
+              ) === 1 &&
+              confirmationCandidateKeyCounts.get(
+                actionConfirmationKey(streetIndex, action),
+              ) === 1
+            }
             disabled={disabled}
             evidenceOptions={evidenceOptions}
             errors={errors}
@@ -1677,6 +1707,7 @@ function StreetEditor({
 
 function ActionEditor({
   action,
+  canConfirmPlayerSelectedOrigin,
   disabled,
   evidenceOptions,
   errors,
@@ -1687,6 +1718,7 @@ function ActionEditor({
   onRemove,
 }: {
   action: Action;
+  canConfirmPlayerSelectedOrigin: boolean;
   disabled: boolean;
   evidenceOptions: readonly ImportedHandSourceEvidence[];
   errors: readonly ReviewError[];
@@ -1699,11 +1731,18 @@ function ActionEditor({
   const [confirmationReference, setConfirmationReference] = useState("");
   const missingEvidence =
     action.evidence.length === 0 || action.origin.evidence.length === 0;
+  const hasUserSelectedSourceLine = [
+    ...action.evidence,
+    ...action.origin.evidence,
+  ].some((evidence) => evidence.marker === REVIEW_SOURCE_LINE_MARKER);
   const canConfirmUnknownOrigin =
-    action.origin.kind === "unknown" && action.origin.basis === "unresolved";
-  const isUserConfirmedOrigin =
-    action.origin.kind === "player_selected" &&
-    action.origin.basis === "user_confirmed";
+    canConfirmPlayerSelectedOrigin &&
+    !hasUserSelectedSourceLine &&
+    action.origin.kind === "unknown" &&
+    action.origin.basis === "unresolved";
+  const canKeepOriginUnresolved =
+    !FORCED_ACTION_TYPES.includes(action.action_type) &&
+    !(action.origin.kind === "unknown" && action.origin.basis === "unresolved");
   return (
     <article className="review-list-item">
       <h6>Action {action.sequence + 1}</h6>
@@ -1847,7 +1886,7 @@ function ActionEditor({
           </p>
         </div>
       ) : null}
-      {isUserConfirmedOrigin ? (
+      {canKeepOriginUnresolved ? (
         <button
           disabled={disabled}
           type="button"
@@ -1858,6 +1897,9 @@ function ActionEditor({
                 ...action.origin,
                 kind: "unknown",
                 basis: "unresolved",
+                confidence: null,
+                semantics_revision: null,
+                automatic_reason: null,
                 review_reference: null,
               },
             })

@@ -1690,6 +1690,189 @@ describe("PlayerApp", () => {
     });
   });
 
+  it("opens retained source lines only on request and offers their server binding to a new action", async () => {
+    const user = userEvent.setup();
+    sessionStorage.setItem(PLAYER_SESSION_STORAGE_KEY, "player-session");
+    sessionStorage.setItem(PLAYER_CSRF_STORAGE_KEY, "csrf-token");
+    const sourcePage = {
+      schema_version: "player-hand-review-source-lines/v1" as const,
+      record_key: pendingHand.record_key,
+      record_version: pendingHand.record_version,
+      detection_id: "detection-1",
+      raw_source_id: "file-1",
+      total_lines: 4,
+      start_line: 1,
+      next_start_line: 4,
+      lines: [
+        {
+          line_number: 1,
+          text: "PokerStars Hand #123456789",
+          truncated: false,
+          binding: {
+            raw_source_id: "file-1",
+            line_start: 1,
+            line_end: 1,
+            marker: "review-source-line/v1",
+          },
+          unavailable_reason: null,
+        },
+        {
+          line_number: 2,
+          text: "Hero: checks",
+          truncated: false,
+          binding: {
+            raw_source_id: "file-1",
+            line_start: 2,
+            line_end: 2,
+            marker: "review-source-line/v1",
+          },
+          unavailable_reason: null,
+        },
+        {
+          line_number: 3,
+          text: "",
+          truncated: false,
+          binding: null,
+          unavailable_reason: "blank" as const,
+        },
+      ],
+    };
+    const sourcePageSecond = {
+      ...sourcePage,
+      start_line: 4,
+      next_start_line: null,
+      total_lines: 4,
+      lines: [
+        {
+          line_number: 4,
+          text: "Hand summary retained locally",
+          truncated: false,
+          binding: {
+            raw_source_id: "file-1",
+            line_start: 4,
+            line_end: 4,
+            marker: "review-source-line/v1",
+          },
+          unavailable_reason: null,
+        },
+      ],
+    };
+    const fetchMock = vi.fn<typeof fetch>((input, init) => {
+      const path = String(input);
+      if (path === "/api/player/storage") {
+        return Promise.resolve(jsonResponse(readyStorage));
+      }
+      if (path === "/api/player/hands?limit=25") {
+        return Promise.resolve(
+          jsonResponse({
+            items: [pendingHand],
+            unreadable: [],
+            next_cursor: null,
+          }),
+        );
+      }
+      if (path === `/api/player/hands/${pendingHand.record_key}`) {
+        return Promise.resolve(jsonResponse(pendingHandDetail));
+      }
+      if (
+        path ===
+        `/api/player/hands/${pendingHand.record_key}/review-source-lines`
+      ) {
+        const request = JSON.parse(String(init?.body));
+        return Promise.resolve(
+          jsonResponse(
+            request.start_line === 4 ? sourcePageSecond : sourcePage,
+          ),
+        );
+      }
+      return Promise.reject(new Error(`Unexpected player request: ${path}`));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerApp />);
+    await screen.findByText("Ready on this machine");
+    await user.click(screen.getByRole("button", { name: "Load hand records" }));
+    await user.click(
+      await screen.findByRole("button", { name: "View audit detail" }),
+    );
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Detection to review" }),
+      "detection-1",
+    );
+    expect(screen.queryByText("Hero: checks")).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: "Open retained source lines" }),
+    );
+    expect(await screen.findByText("Hero: checks")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Load more retained source lines" }),
+    );
+    expect(
+      await screen.findByText("Hand summary retained locally"),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Use source line 2 for a correction",
+      }),
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Source line 2 selected for review binding",
+      }),
+    ).toBeDisabled();
+
+    await user.click(screen.getByRole("button", { name: "Add action" }));
+    const bindingSelect = screen.getByRole("combobox", {
+      name: "Bind retained source evidence",
+    });
+    const sourceOption = screen.getByRole("option", {
+      name: /review-source-line\/v1/,
+    });
+    await user.selectOptions(bindingSelect, sourceOption);
+    expect(bindingSelect).toHaveValue(sourceOption.getAttribute("value"));
+
+    const sourceRequest = fetchMock.mock.calls.find(
+      ([path]) =>
+        path ===
+        `/api/player/hands/${pendingHand.record_key}/review-source-lines`,
+    );
+    expect(sourceRequest).toBeDefined();
+    expect(JSON.parse(String(sourceRequest?.[1]?.body))).toEqual({
+      detection_id: "detection-1",
+      expected_record_version: pendingHand.record_version,
+      expected_lifecycle_status: "pending_review",
+      expected_active_canonical_revision: null,
+      expected_canonical_revision_count: 0,
+      expected_deletion_generation: 0,
+      expected_lifecycle_changed_at: pendingHand.lifecycle_changed_at,
+      start_line: 1,
+      limit: 50,
+    });
+    expect(
+      fetchMock.mock.calls
+        .filter(
+          ([path]) =>
+            path ===
+            `/api/player/hands/${pendingHand.record_key}/review-source-lines`,
+        )
+        .map(([, init]) => JSON.parse(String(init?.body)).start_line),
+    ).toEqual([1, 4]);
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Detection to review" }),
+      "detection-2",
+    );
+    await waitFor(() => {
+      expect(screen.queryByText("Hero: checks")).toBeNull();
+      expect(
+        screen.queryByRole("button", {
+          name: "Source line 2 selected for review binding",
+        }),
+      ).toBeNull();
+    });
+  });
+
   it("requires a fresh preview after a structured correction or selected detection changes", async () => {
     const user = userEvent.setup();
     const requestId = "44444444-4444-4444-8444-444444444444" as ReturnType<

@@ -2,7 +2,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { StructuredHandReviewEditor } from "./StructuredHandReviewEditor";
-import type { ImportedHandState } from "./playerApi";
+import type {
+  ImportedHandSourceEvidence,
+  ImportedHandState,
+} from "./playerApi";
 
 afterEach(() => cleanup());
 
@@ -110,12 +113,18 @@ function recordedState(): ImportedHandState {
   };
 }
 
+function immutableEvidenceOptions(): ImportedHandSourceEvidence[] {
+  const action = recordedState().streets[0]?.actions[0];
+  return action ? [...action.evidence, ...action.origin.evidence] : [];
+}
+
 describe("StructuredHandReviewEditor", () => {
   it("preserves decimal text and explicit nullable/list result values", () => {
     const onChange = vi.fn();
     render(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={recordedState()}
         onChange={onChange}
@@ -152,6 +161,7 @@ describe("StructuredHandReviewEditor", () => {
     render(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={state}
         onChange={vi.fn()}
@@ -168,6 +178,7 @@ describe("StructuredHandReviewEditor", () => {
     render(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={recordedState()}
         onChange={onChange}
@@ -199,6 +210,7 @@ describe("StructuredHandReviewEditor", () => {
     const { rerender } = render(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={recordedState()}
         onChange={onChange}
@@ -210,6 +222,7 @@ describe("StructuredHandReviewEditor", () => {
     rerender(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={withNewAction}
         onChange={onChange}
@@ -238,6 +251,7 @@ describe("StructuredHandReviewEditor", () => {
     const { rerender } = render(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={recordedState()}
         onChange={onChange}
@@ -249,6 +263,7 @@ describe("StructuredHandReviewEditor", () => {
     rerender(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={reviewedState}
         onChange={onChange}
@@ -264,6 +279,7 @@ describe("StructuredHandReviewEditor", () => {
     rerender(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={reviewedState}
         onChange={onChange}
@@ -274,6 +290,7 @@ describe("StructuredHandReviewEditor", () => {
     rerender(
       <StructuredHandReviewEditor
         disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
         errors={[]}
         state={reviewedState}
         onChange={onChange}
@@ -303,8 +320,12 @@ describe("StructuredHandReviewEditor", () => {
       confidence: null,
       semantics_revision: null,
     };
+    const confirmationActionCandidates = [
+      structuredClone(state.streets[0].actions),
+    ];
     render(
       <StructuredHandReviewEditor
+        confirmationActionCandidates={confirmationActionCandidates}
         disabled={false}
         errors={[]}
         state={state}
@@ -326,6 +347,168 @@ describe("StructuredHandReviewEditor", () => {
       basis: "user_confirmed",
       review_reference: "review-action-1",
       evidence: [expect.objectContaining({ raw_source_id: "source-1" })],
+    });
+  });
+
+  it("does not offer confirmation when the matching detected action is on another street", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    const unresolved = {
+      ...state.streets[0].actions[0],
+      action_type: "check" as const,
+      amount: null,
+      total_committed: "0",
+      origin: {
+        ...state.streets[0].actions[0].origin,
+        kind: "unknown" as const,
+        basis: "unresolved" as const,
+        confidence: null,
+        semantics_revision: null,
+      },
+    };
+    state.streets[0].actions[0] = unresolved;
+    state.streets.push({
+      ...structuredClone(state.streets[0]),
+      street: "flop",
+      board_cards: [],
+      actions: [
+        {
+          ...structuredClone(unresolved),
+          origin: {
+            ...structuredClone(unresolved.origin),
+            kind: "forced_system",
+            basis: "explicit_marker",
+          },
+        },
+      ],
+    });
+    render(
+      <StructuredHandReviewEditor
+        confirmationActionCandidates={[[], [structuredClone(unresolved)]]}
+        disabled={false}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Confirm player-selected origin" }),
+    ).toBeNull();
+  });
+
+  it("never promotes an editable draft locator into a correction option", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    const draftOnlyEvidence = {
+      raw_source_id: "draft-only-source",
+      line_start: 99,
+      line_end: 99,
+      marker: "draft-only-marker",
+    };
+    state.streets[0].actions[0].evidence = [draftOnlyEvidence];
+    state.streets[0].actions[0].origin.evidence = [draftOnlyEvidence];
+    const { rerender } = render(
+      <StructuredHandReviewEditor
+        disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Add action" }));
+    rerender(
+      <StructuredHandReviewEditor
+        disabled={false}
+        evidenceOptions={immutableEvidenceOptions()}
+        errors={[]}
+        state={onChange.mock.lastCall?.[0] as ImportedHandState}
+        onChange={onChange}
+      />,
+    );
+
+    expect(
+      screen.getByRole("option", { name: /source-1/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /draft-only-source/ }),
+    ).toBeNull();
+  });
+
+  it("keeps a user-selected source line unresolved even when a draft resembles a detected action", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    const sourceLineEvidence = {
+      raw_source_id: "source-1",
+      line_start: 4,
+      line_end: 4,
+      marker: "review-source-line/v1",
+    };
+    state.streets[0].actions[0].origin = {
+      ...state.streets[0].actions[0].origin,
+      kind: "unknown",
+      basis: "unresolved",
+      confidence: null,
+      semantics_revision: null,
+      evidence: [sourceLineEvidence],
+    };
+    state.streets[0].actions[0].evidence = [sourceLineEvidence];
+    render(
+      <StructuredHandReviewEditor
+        confirmationActionCandidates={[
+          structuredClone(state.streets[0].actions),
+        ]}
+        disabled={false}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Confirm player-selected origin" }),
+    ).toBeNull();
+  });
+
+  it("lets a reviewer return a non-forced automatic classification to unresolved", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    state.streets[0].actions[0] = {
+      ...state.streets[0].actions[0],
+      action_type: "check",
+      origin: {
+        ...state.streets[0].actions[0].origin,
+        kind: "client_automatic",
+        basis: "explicit_marker",
+        confidence: "1.00",
+        automatic_reason: "timeout",
+        semantics_revision: "pokerstars-timeout/v1",
+      },
+    };
+    render(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Keep origin unresolved" }),
+    );
+    expect(
+      (onChange.mock.lastCall?.[0] as ImportedHandState).streets[0].actions[0]
+        .origin,
+    ).toMatchObject({
+      kind: "unknown",
+      basis: "unresolved",
+      confidence: null,
+      automatic_reason: null,
+      semantics_revision: null,
+      review_reference: null,
     });
   });
 
