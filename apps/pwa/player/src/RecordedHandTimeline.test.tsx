@@ -221,7 +221,9 @@ describe("RecordedHandTimeline", () => {
         /cards A of hearts · incomplete holding \(1 of 2 cards\)/,
       ),
     ).toHaveLength(2);
-    expect(screen.getByText(/villain · sitting out/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/villain \(display name not recorded\) · sitting out/),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
         /BTN\/SB · dealt-in player count 2 · action index 0 · button distance 0/,
@@ -264,21 +266,27 @@ describe("RecordedHandTimeline", () => {
       screen.getByText(/Cash economics · currency USD · rake percentage 5%/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/villain · shown · cards not recorded/),
+      screen.getByText(
+        /villain \(display name not recorded\) · shown · cards not recorded/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /hero · shown · cards A of hearts · incomplete holding \(1 of 2 cards\)/,
+        /hero \(display name not recorded\) · shown · cards A of hearts · incomplete holding \(1 of 2 cards\)/,
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/preflop · board no board cards/)).toHaveLength(
       2,
     );
     expect(
-      screen.getByText(/Award to hero · 1 USD · pot 1/),
+      screen.getByText(
+        /Award to hero \(display name not recorded\) · 1 USD · pot 1/,
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Award to hero · 2 USD · pot not recorded/),
+      screen.getByText(
+        /Award to hero \(display name not recorded\) · 2 USD · pot not recorded/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
@@ -293,11 +301,13 @@ describe("RecordedHandTimeline", () => {
       screen.getByText(/payouts 1-1: 100 USD · 0.5 share/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Remaining stacks hero: 120 chips, villain: 80 chips/),
+      screen.getByText(
+        /Remaining stacks hero \(display name not recorded\): 120 chips, villain \(display name not recorded\): 80 chips/,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Bounty format progressive knockout · bounties hero: 15 USD, villain: not recorded/,
+        /Bounty format progressive knockout · bounties hero \(display name not recorded\): 15 USD, villain \(display name not recorded\): not recorded/,
       ),
     ).toBeInTheDocument();
     expect(screen.getAllByText(/No awards were recorded/)).toHaveLength(1);

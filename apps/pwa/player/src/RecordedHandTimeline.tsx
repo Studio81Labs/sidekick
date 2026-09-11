@@ -12,9 +12,10 @@ function readable(value: string): string {
 
 function playerLabel(state: ImportedHandState, playerId: string): string {
   const seat = state.seats.find((item) => item.player_id === playerId);
-  return seat?.display_name
+  if (seat === undefined) return playerId;
+  return seat.display_name
     ? seat.display_name + " (" + playerId + ")"
-    : playerId;
+    : playerId + " (display name not recorded)";
 }
 
 function positionLabel(
