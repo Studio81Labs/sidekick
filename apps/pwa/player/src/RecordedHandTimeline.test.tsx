@@ -73,7 +73,10 @@ describe("RecordedHandTimeline", () => {
       },
       results: {
         stated_pot: backendProducedState.results?.stated_pot ?? null,
-        awards: backendProducedState.results?.awards ?? [],
+        awards: [
+          { player_id: "hero", amount: "1", pot_index: 1, evidence: [] },
+          { player_id: "hero", amount: "2", pot_index: null, evidence: [] },
+        ],
         players: backendProducedState.results?.players ?? [],
         showdown: [
           {
@@ -244,6 +247,12 @@ describe("RecordedHandTimeline", () => {
       ),
     ).toBeInTheDocument();
     expect(
+      screen.getByText(/Award to hero · 1 USD · pot 1/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Award to hero · 2 USD · pot not recorded/),
+    ).toBeInTheDocument();
+    expect(
       screen.getByText(
         /flop · board Q of clubs · incomplete board \(1 of 3 cards\)/,
       ),
@@ -263,6 +272,6 @@ describe("RecordedHandTimeline", () => {
         /Bounty format progressive knockout · bounties hero: 15 USD, villain: not recorded/,
       ),
     ).toBeInTheDocument();
-    expect(screen.getAllByText(/No awards were recorded/)).toHaveLength(2);
+    expect(screen.getAllByText(/No awards were recorded/)).toHaveLength(1);
   });
 });

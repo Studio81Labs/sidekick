@@ -372,7 +372,7 @@ function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
           ) : (
             <ul>
               {state.results.awards.map((award, index) => (
-                <li key={award.player_id + "-" + (award.pot_index ?? index)}>
+                <li key={award.player_id + "-award-" + index}>
                   Award to {playerLabel(state, award.player_id)} ·{" "}
                   {amount(award.amount, handUnit)} · pot{" "}
                   {award.pot_index ?? "not recorded"}
