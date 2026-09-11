@@ -92,19 +92,58 @@ function handLabel(hand: PlayerHandSummary): string {
     : `Deleted record · generation ${hand.deletion_generation}`;
 }
 
+const DECIMAL_STRING =
+  /^([+-]?)(?:(\d+)(?:\.(\d*))?|\.(\d+))(?:[eE]([+-]?\d+))?$/;
+const MAX_EXPANDED_PERCENTAGE_ZEROS = 1_000n;
+
+function formatDecimalPercentage(digits: string, power: bigint): string {
+  if (power >= 0n) {
+    return power > MAX_EXPANDED_PERCENTAGE_ZEROS
+      ? `${digits}e+${power}`
+      : digits + "0".repeat(Number(power));
+  }
+
+  const decimalIndex = BigInt(digits.length) + power;
+  if (decimalIndex > 0n) {
+    const index = Number(decimalIndex);
+    return digits.slice(0, index) + "." + digits.slice(index);
+  }
+
+  const leadingZeros = -decimalIndex;
+  return leadingZeros > MAX_EXPANDED_PERCENTAGE_ZEROS
+    ? `${digits}e${power}`
+    : "0." + "0".repeat(Number(leadingZeros)) + digits;
+}
+
 function confidenceLabel(confidence: string | null): string {
   if (confidence === null) return "confidence not scored";
-  const match = /^(0|1)(?:\.(\d+))?$/.exec(confidence);
+  const match = DECIMAL_STRING.exec(confidence);
   if (!match) return "confidence unavailable";
-  if (match[1] === "1") {
-    return !match[2] || /^0+$/.test(match[2])
-      ? "100% confidence"
-      : "confidence unavailable";
+
+  const fractionalDigits = match[3] ?? match[4] ?? "";
+  let digits = ((match[2] ?? "") + fractionalDigits).replace(/^0+/, "");
+  if (!digits) return "0% confidence";
+
+  let decimalPower: bigint;
+  try {
+    decimalPower = BigInt(match[5] ?? "0") - BigInt(fractionalDigits.length);
+  } catch {
+    return "confidence unavailable";
   }
-  const shifted = (match[2] ?? "") + "00";
-  const whole = shifted.slice(0, 2).replace(/^0+(?=\d)/, "");
-  const fraction = shifted.slice(2).replace(/0+$/, "");
-  return (fraction ? whole + "." + fraction : whole) + "% confidence";
+  while (digits.endsWith("0")) {
+    digits = digits.slice(0, -1);
+    decimalPower += 1n;
+  }
+
+  const integerDigits = BigInt(digits.length) + decimalPower;
+  if (
+    match[1] === "-" ||
+    (integerDigits === 1n && !(digits === "1" && decimalPower === 0n)) ||
+    integerDigits > 1n
+  ) {
+    return "confidence unavailable";
+  }
+  return formatDecimalPercentage(digits, decimalPower + 2n) + "% confidence";
 }
 
 function evidenceLocation(

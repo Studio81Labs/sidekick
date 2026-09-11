@@ -254,6 +254,18 @@ const pendingHandDetail = {
           ],
           warnings: ["Hero line was absent"],
         },
+        "/streets/0/actions/0": {
+          confidence: "1E-7",
+          evidence: [
+            {
+              raw_source_id: "file-1",
+              line_start: 2,
+              line_end: 2,
+              marker: "action-line",
+            },
+          ],
+          warnings: [],
+        },
       },
       warnings: ["Review hero identity"],
       content_sha256: "d".repeat(64),
@@ -1037,6 +1049,7 @@ describe("PlayerApp", () => {
     expect(screen.getByText("Hero line was absent")).toBeInTheDocument();
     expect(screen.getAllByText("/hero_player_id")).toHaveLength(3);
     expect(screen.getByText(/40% confidence/)).toBeInTheDocument();
+    expect(screen.getByText(/0.00001% confidence/)).toBeInTheDocument();
     expect(screen.getByText(/source file-1 · line 1/)).toBeInTheDocument();
     expect(screen.getByText("Detected proposals")).toBeInTheDocument();
     expect(screen.getAllByText(/"hero_player_id": null/)).toHaveLength(2);
