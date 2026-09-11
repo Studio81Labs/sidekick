@@ -360,13 +360,14 @@ redacted and canonical excerpts stay server-owned. One location can support
 several explicitly
 reviewed associations; new bindings require an unambiguous retained excerpt
 value and an explicit correction reason. The client cannot supply hidden text
-or manufacture locators. Removed proposals remain in raw/detection/prior-revision
+or authorize source provenance; the server validates every proposed locator.
+Removed proposals remain in raw/detection/prior-revision
 audit, without requiring a canonical placeholder. A location association is not
 parser confirmation or solved poker evidence. Added table actions remain unknown
 unless the existing unambiguous detected-unknown action-confirmation invariant
 is satisfied; source reuse never creates positive voluntary-origin authority.
 The same preparation must validate preview, approval and persisted reconstruction.
-No public source endpoint, new storage format or learning scope is implied.
+No hosted source endpoint, new storage format or learning scope is implied.
 
 **Identity and re-import semantics:** `(site, source hand id)` is the stable hand
 identity unless a site adapter documents a stronger versioned namespace for a
