@@ -917,12 +917,17 @@ def test_player_hand_review_preview_reports_safe_draft_errors_and_stale_state(
 
 
 @pytest.mark.parametrize(
-    ("corrected_participation", "positions_are_known"),
-    [("sitting_out", True), ("unknown", False)],
+    ("corrected_participation", "reviewed_button_seat", "positions_are_known"),
+    [
+        ("sitting_out", 2, True),
+        ("unknown", 2, False),
+        ("dealt_in", None, False),
+    ],
 )
 def test_player_review_preview_and_approval_normalize_reviewed_positions(
     tmp_path: Path,
     corrected_participation: str,
+    reviewed_button_seat: int | None,
     positions_are_known: bool,
 ) -> None:
     client, runtime = player_client(tmp_path)
@@ -968,7 +973,7 @@ def test_player_review_preview_and_approval_normalize_reviewed_positions(
     runtime.workspace.imported_hands.save(key, record)
     session = exchange_session(client, runtime)
     reviewed_state = detected_state.model_dump(mode="json")
-    reviewed_state["button_seat"] = 2
+    reviewed_state["button_seat"] = reviewed_button_seat
     reviewed_state["seats"][2]["participation"] = corrected_participation
     reviewed_seats = [
         seat.model_copy(
@@ -980,17 +985,17 @@ def test_player_review_preview_and_approval_normalize_reviewed_positions(
         )
         for seat in detected_state.seats
     ]
-    expected_positions = (
-        {
+    if positions_are_known:
+        assert reviewed_button_seat is not None
+        expected_positions = {
             seat_number: position.model_dump(mode="json")
             for seat_number, position in derive_structural_positions(
                 reviewed_seats,
-                2,
+                reviewed_button_seat,
             ).items()
         }
-        if positions_are_known
-        else {}
-    )
+    else:
+        expected_positions = {}
     expected_positions.update(
         {
             seat.seat_number: None
@@ -1031,6 +1036,41 @@ def test_player_review_preview_and_approval_normalize_reviewed_positions(
         seat["seat_number"]: seat["position"]
         for seat in approval.json()["canonical_revisions"][-1]["state"]["seats"]
     } == expected_positions
+
+
+def test_player_hand_review_preview_uses_json_pointers_for_economics_errors(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    invalid_state = record.detections[0].state.model_dump(mode="json")
+    invalid_state["game"]["economics"] = {
+        "kind": "tournament",
+        "paid_places": "not-an-integer",
+    }
+
+    preview = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=hand_review_preview_payload(
+            record,
+            approved_state=invalid_state,
+            correction_reason="Tournament details reviewed from source evidence",
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["valid"] is False
+    assert preview.json()["field_errors"] == [
+        {
+            "pointer": "/approved_state/game/economics/paid_places",
+            "code": "invalid_type",
+            "message": "This field has an invalid type.",
+        }
+    ]
 
 
 def test_player_hand_review_preview_reports_recovery_without_raw_input(

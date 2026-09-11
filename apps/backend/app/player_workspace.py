@@ -145,10 +145,15 @@ class PlayerHandConflictResolutionInvalid(ValueError):
 def _review_preview_error_pointer(location: tuple[object, ...]) -> str:
     """Build a JSON pointer without reflecting untrusted values or messages."""
 
+    raw_tokens = [str(token) for token in location if token != "__root__"]
     tokens = [
-        str(token).replace("~", "~0").replace("/", "~1")
-        for token in location
-        if token != "__root__"
+        token.replace("~", "~0").replace("/", "~1")
+        for index, token in enumerate(raw_tokens)
+        if not (
+            index > 0
+            and raw_tokens[index - 1] == "economics"
+            and token in {"cash", "tournament", "unknown"}
+        )
     ]
     return "/approved_state" + (
         "" if not tokens else "/" + "/".join(tokens)
@@ -226,10 +231,10 @@ def _review_state_with_derived_structural_positions(
     The submitted review remains the source of every poker fact. This copies it
     before replacing just the derived technical position fields, so a button or
     participation correction cannot retain a stale position. Non-dealt seats
-    never retain a position. An unknown participation clears the entire ring:
-    no remaining position is trustworthy until every seat's participation is
-    known. Partial and dead-button rings otherwise remain untouched for normal
-    canonical validation.
+    never retain a position. An unknown participation or unresolved button
+    clears the entire ring: no remaining position is trustworthy until every
+    seat's participation and the button are known. Partial rings otherwise
+    remain untouched for normal canonical validation.
     """
 
     normalized = cast(
@@ -238,11 +243,14 @@ def _review_state_with_derived_structural_positions(
     )
     raw_seats = normalized.get("seats")
     button_seat = normalized.get("button_seat")
-    if (
-        not isinstance(raw_seats, list)
-        or not all(isinstance(seat, dict) for seat in raw_seats)
-        or type(button_seat) is not int
+    if not isinstance(raw_seats, list) or not all(
+        isinstance(seat, dict) for seat in raw_seats
     ):
+        return normalized
+
+    if type(button_seat) is not int:
+        for raw_seat in raw_seats:
+            raw_seat["position"] = None
         return normalized
 
     for raw_seat in raw_seats:
@@ -266,6 +274,8 @@ def _review_state_with_derived_structural_positions(
     try:
         positions = derive_structural_positions(seats, button_seat)
     except ValueError:
+        for raw_seat in raw_seats:
+            raw_seat["position"] = None
         return normalized
 
     for raw_seat, seat in zip(raw_seats, seats, strict=True):
