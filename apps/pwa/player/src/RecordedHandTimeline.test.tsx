@@ -229,6 +229,9 @@ describe("RecordedHandTimeline", () => {
     ).toHaveLength(4);
     expect(screen.getAllByText(/Gross pot: 2 USD/)).toHaveLength(1);
     expect(screen.getAllByText(/Gross pot: 2 chips/)).toHaveLength(1);
+    expect(screen.getAllByText(/gross components not recorded/)).toHaveLength(
+      2,
+    );
     expect(
       screen.getByText(/Cash economics · currency USD · rake percentage 5%/),
     ).toBeInTheDocument();

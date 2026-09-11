@@ -364,7 +364,7 @@ function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
                   statedPot.gross_pots
                     .map((item) => item + " " + handUnit)
                     .join(", ")
-                : ""}
+                : " · gross components not recorded"}
             </p>
           )}
           {state.results === null || state.results.awards.length === 0 ? (
