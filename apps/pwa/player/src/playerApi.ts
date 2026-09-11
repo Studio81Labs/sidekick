@@ -747,7 +747,7 @@ export async function approvePlayerHand(
   recordKey: string,
   requestId: string,
   detectionId: string,
-  approvedState: Record<string, unknown>,
+  approvedState: ImportedHandState,
   correctionReason: string | null,
   expected: PlayerHandSummary,
 ): Promise<PlayerHandDetail> {
