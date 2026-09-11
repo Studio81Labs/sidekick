@@ -351,6 +351,40 @@ export interface PlayerHandReviewPreview {
   }>;
 }
 
+export interface PlayerHandReviewSourceLinesRequest {
+  detection_id: string;
+  expected_record_version: string;
+  expected_lifecycle_status:
+    | "pending_review"
+    | "active"
+    | "withdrawn"
+    | "rejected";
+  expected_active_canonical_revision: number | null;
+  expected_canonical_revision_count: number;
+  expected_deletion_generation: number;
+  expected_lifecycle_changed_at: string;
+  start_line?: number;
+  limit?: number;
+}
+
+export interface PlayerHandReviewSourceLines {
+  schema_version: "player-hand-review-source-lines/v1";
+  record_key: string;
+  record_version: string;
+  detection_id: string;
+  raw_source_id: string;
+  total_lines: number;
+  start_line: number;
+  next_start_line: number | null;
+  lines: Array<{
+    line_number: number;
+    text: string;
+    truncated: boolean;
+    binding: ImportedHandSourceEvidence | null;
+    unavailable_reason: "blank" | "line_too_long" | null;
+  }>;
+}
+
 export interface PlayerHandDetail {
   summary: PlayerHandSummary;
   lifecycle: {
@@ -784,6 +818,35 @@ export async function previewPlayerHandReview(
     throw error;
   }
   return (await response.json()) as PlayerHandReviewPreview;
+}
+
+/**
+ * Read an explicit, bounded page of the selected hand's retained source. This
+ * is local-only and returns text solely for a user to choose source evidence.
+ */
+export async function loadPlayerHandReviewSourceLines(
+  credentials: PlayerCredentials,
+  recordKey: string,
+  request: PlayerHandReviewSourceLinesRequest,
+): Promise<PlayerHandReviewSourceLines> {
+  let response: Response;
+  try {
+    response = await playerRequest(
+      credentials,
+      `/api/player/hands/${encodeURIComponent(recordKey)}/review-source-lines`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerHandRecoveryRequiredError();
+    }
+    throw error;
+  }
+  return (await response.json()) as PlayerHandReviewSourceLines;
 }
 
 export async function resolvePlayerHandConflict(

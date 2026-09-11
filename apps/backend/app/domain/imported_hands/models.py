@@ -130,6 +130,8 @@ _FORCED_POST_FIELDS = {
     "post_straddle": "straddle",
 }
 _CHIP_ACTIONS = _FORCED_ACTIONS | {"bet", "call", "raise"}
+REVIEW_SOURCE_LINE_MARKER = "review-source-line/v1"
+MAX_REVIEW_SOURCE_LINE_CHARACTERS = 1000
 
 
 class ImportedHandModel(BaseModel):
@@ -2185,6 +2187,7 @@ class DetectedImportedHand(ImportedHandModel):
     @model_validator(mode="after")
     def validate_detected_provenance(self) -> Self:
         _validate_detected_action_origins(self.state)
+        _validate_no_review_source_line_markers(self)
         if self.state.chronology.source_file_id != self.raw_source_id:
             raise ValueError(
                 "detected state source_file_id must equal the detected raw_source_id"
@@ -2570,6 +2573,7 @@ class ImportedHandRecord(ImportedHandModel):
         detection_by_id = {detected.detection_id: detected for detected in self.detections}
         for detected in self.detections:
             _validate_detected_action_origins(detected.state)
+            _validate_no_review_source_line_markers(detected)
             if detected.raw_source_id not in raw_by_occurrence_id:
                 raise ValueError(
                     "detected hand must reference a retained source occurrence"
@@ -2688,7 +2692,11 @@ class ImportedHandRecord(ImportedHandModel):
                     item,
                     raw_by_id[item.raw_source_id],
                 )
-            _validate_corrections_win(detected, revision)
+            _validate_corrections_win(
+                detected,
+                revision,
+                raw_source=raw_by_id[detected.raw_source_id],
+            )
 
         for conflict in self.conflicts:
             preserved_source_id = _conflict_preserved_source_id(
@@ -3730,6 +3738,7 @@ def canonical_revision_from_review(
     approved_at: datetime,
     approved_state: dict[str, JsonValue],
     correction_reason: str | None,
+    raw_source: RawHandHistory | None = None,
 ) -> CanonicalHandRevision:
     """Build an auditable canonical revision from one explicit review.
 
@@ -3745,7 +3754,11 @@ def canonical_revision_from_review(
     )
     if _contains_review_excerpt_field(approved_document):
         raise ValueError("reviewed state cannot supply private source excerpts")
-    _preserve_review_excerpts(detected_document, approved_document)
+    approved_document = _restore_reviewed_source_evidence(
+        detection,
+        approved_document,
+        raw_source=raw_source,
+    )
     approved_state = ImportedHandState.model_validate_json(
         json.dumps(approved_document, ensure_ascii=False, separators=(",", ":"))
     )
@@ -3777,65 +3790,411 @@ def canonical_revision_from_review(
     )
 
 
-def _preserve_review_excerpts(detected: JsonValue, approved: JsonValue) -> None:
-    """Keep raw evidence excerpts hidden from and unchanged by player review."""
+SourceEvidenceKey = tuple[str, int | None, int | None, str | None]
+JsonPath = tuple[str | int, ...]
 
-    if isinstance(detected, dict) and isinstance(approved, dict):
+
+def _restore_reviewed_source_evidence(
+    detection: DetectedImportedHand,
+    reviewed_document: JsonValue,
+    *,
+    raw_source: RawHandHistory | None,
+) -> JsonValue:
+    """Return one review document with only server-owned excerpts restored.
+
+    The browser may submit public locators but never private excerpts.  Existing
+    rows retain an occurrence-specific excerpt only when their correspondence is
+    safe; new or rebound typed evidence sites resolve from the immutable selected
+    detection's pool.  The same function is intentionally reused while an
+    aggregate revalidates a persisted revision.
+    """
+
+    if _contains_review_excerpt_field(reviewed_document):
+        raise ValueError("reviewed state cannot supply private source excerpts")
+
+    restored = json.loads(
+        json.dumps(reviewed_document, ensure_ascii=False, separators=(",", ":"))
+    )
+    detected_document = json.loads(detection.state.model_dump_json())
+    restored_paths: set[JsonPath] = set()
+    _restore_safe_existing_review_excerpts(
+        detected_document,
+        restored,
+        path=(),
+        restored_paths=restored_paths,
+    )
+
+    # Existing excerpt-only locators can only be restored through a safe
+    # occurrence correspondence above.  Parse after that step so valid current
+    # records retain their historical behavior, while a new excerpt-only binding
+    # remains invalid because it still has no public locator.
+    provisional_state = ImportedHandState.model_validate_json(
+        json.dumps(restored, ensure_ascii=False, separators=(",", ":"))
+    )
+    restored = json.loads(provisional_state.model_dump_json())
+
+    if raw_source is not None:
+        _validate_selected_review_raw_source(detection, raw_source)
+    pool = _selected_detection_evidence_pool(detection, raw_source)
+
+    for path, source_document, origin in _typed_review_source_evidence_documents(
+        restored
+    ):
+        source = SourceEvidence.model_validate(source_document)
+        if path in restored_paths:
+            if raw_source is not None:
+                _validate_review_source_evidence_location(source, raw_source)
+            source_document.clear()
+            source_document.update(source.model_dump(mode="json"))
+            continue
+        resolved = _resolve_review_source_evidence(
+            source,
+            pool=pool,
+            raw_source=raw_source,
+        )
+        if origin is not None and resolved.marker == REVIEW_SOURCE_LINE_MARKER:
+            _validate_review_source_line_origin(origin)
+        source_document.clear()
+        source_document.update(resolved.model_dump(mode="json"))
+
+    return restored
+
+
+def _restore_safe_existing_review_excerpts(
+    detected: JsonValue,
+    reviewed: JsonValue,
+    *,
+    path: JsonPath,
+    restored_paths: set[JsonPath],
+) -> None:
+    """Restore only deterministic existing-row excerpts without consuming rows."""
+
+    if isinstance(detected, dict) and isinstance(reviewed, dict):
         for key, detected_value in detected.items():
             if key == "excerpt":
-                approved[key] = detected_value
-            elif key in approved:
-                _preserve_review_excerpts(detected_value, approved[key])
-    elif isinstance(detected, list) and isinstance(approved, list):
-        private_indexes = [
-            index
-            for index, item in enumerate(detected)
-            if _contains_review_excerpt(item)
-        ]
-        if not private_indexes:
-            return
-        used_detected_indexes: set[int] = set()
-        detected_identities = [
-            _review_list_item_identity(item) for item in detected
-        ]
-        for approved_index, approved_item in enumerate(approved):
-            identity = _review_list_item_identity(approved_item)
-            candidates = [
-                index
-                for index in range(len(detected))
-                if index not in used_detected_indexes
-                and detected_identities[index] == identity
-            ]
-            if not candidates:
-                if identity is not None:
-                    raise ValueError(
-                        "reviewed list changes cannot map private source evidence "
-                        "unambiguously"
-                    )
+                reviewed[key] = detected_value
+                restored_paths.add(path)
                 continue
+            if key not in reviewed:
+                continue
+            _restore_safe_existing_review_excerpts(
+                detected_value,
+                reviewed[key],
+                path=(*path, key),
+                restored_paths=restored_paths,
+            )
+        return
+    if not isinstance(detected, list) or not isinstance(reviewed, list):
+        return
+    for detected_index, reviewed_index in _safe_review_list_correspondences(
+        detected,
+        reviewed,
+    ):
+        _restore_safe_existing_review_excerpts(
+            detected[detected_index],
+            reviewed[reviewed_index],
+            path=(*path, reviewed_index),
+            restored_paths=restored_paths,
+        )
+
+
+def _safe_review_list_correspondences(
+    detected: list[JsonValue],
+    reviewed: list[JsonValue],
+) -> list[tuple[int, int]]:
+    """Map only deterministic row correspondences; additions/removals are okay."""
+
+    correspondences: list[tuple[int, int]] = []
+    used_detected: set[int] = set()
+    detected_identities = [_review_list_item_identity(item) for item in detected]
+
+    # An unchanged visible item is always a safe retained correspondence, even
+    # while another proposal was added or removed from the surrounding list.
+    for reviewed_index, reviewed_item in enumerate(reviewed):
+        candidates = [
+            detected_index
+            for detected_index, detected_item in enumerate(detected)
+            if detected_index not in used_detected
+            and _json_values_equal(
+                _without_review_excerpts(detected_item),
+                reviewed_item,
+            )
+        ]
+        if len(candidates) == 1:
+            detected_index = candidates[0]
+            correspondences.append((detected_index, reviewed_index))
+            used_detected.add(detected_index)
+
+    # For a same-sized review, a unique public locator also keeps a modified or
+    # reordered existing row tied to its own occurrence.  Ambiguous duplicates
+    # deliberately fall through to the immutable evidence pool below.
+    if len(detected) == len(reviewed):
+        for reviewed_index, reviewed_item in enumerate(reviewed):
+            if any(index == reviewed_index for _, index in correspondences):
+                continue
+            identity = _review_list_item_identity(reviewed_item)
+            if identity is None:
+                continue
+            candidates = [
+                detected_index
+                for detected_index, detected_identity in enumerate(detected_identities)
+                if detected_index not in used_detected
+                and detected_identity == identity
+            ]
             if len(candidates) == 1:
                 detected_index = candidates[0]
-            elif (
-                approved_index in candidates
-                and _without_review_excerpts(detected[approved_index])
-                == approved_item
-            ):
-                detected_index = approved_index
-            else:
-                raise ValueError(
-                    "reviewed list changes cannot map private source evidence "
-                    "unambiguously"
-                )
-            used_detected_indexes.add(detected_index)
-            _preserve_review_excerpts(
-                detected[detected_index],
-                approved_item,
-            )
-        if any(index not in used_detected_indexes for index in private_indexes):
+                correspondences.append((detected_index, reviewed_index))
+                used_detected.add(detected_index)
+    return correspondences
+
+
+def _selected_detection_evidence_pool(
+    detection: DetectedImportedHand,
+    raw_source: RawHandHistory | None,
+) -> dict[SourceEvidenceKey, list[SourceEvidence]]:
+    """Return immutable parser-linked evidence keyed by exact public locator."""
+
+    if raw_source is not None:
+        _validate_selected_review_raw_source(detection, raw_source)
+    pool: dict[SourceEvidenceKey, list[SourceEvidence]] = {}
+    for evidence in _detected_source_evidence(detection):
+        if evidence.marker == REVIEW_SOURCE_LINE_MARKER:
+            raise ValueError("detected evidence cannot use the review source marker")
+        if raw_source is not None:
+            _validate_review_source_evidence_location(evidence, raw_source)
+        else:
+            _source_evidence_key(evidence)
+        key = _source_evidence_key(evidence)
+        pool.setdefault(key, []).append(evidence.model_copy(deep=True))
+    return pool
+
+
+def _resolve_review_source_evidence(
+    evidence: SourceEvidence,
+    *,
+    pool: dict[SourceEvidenceKey, list[SourceEvidence]],
+    raw_source: RawHandHistory | None,
+) -> SourceEvidence:
+    """Resolve one proposed public locator to an exact server-owned excerpt."""
+
+    if raw_source is not None:
+        _validate_review_source_evidence_location(evidence, raw_source)
+    else:
+        _source_evidence_key(evidence)
+    if evidence.marker == REVIEW_SOURCE_LINE_MARKER:
+        if raw_source is None:
             raise ValueError(
                 "reviewed list changes cannot map private source evidence "
                 "unambiguously"
             )
+        if (
+            evidence.line_start is None
+            or evidence.line_end != evidence.line_start
+        ):
+            raise ValueError("review source line binding must identify one exact line")
+        return review_source_line_evidence(raw_source, evidence.line_start)
+    if evidence.line_start is None and evidence.marker is None:
+        raise ValueError(
+            "reviewed list changes cannot map private source evidence unambiguously"
+        )
+    values = pool.get(_source_evidence_key(evidence))
+    if not values:
+        raise ValueError(
+            "reviewed list changes cannot map private source evidence "
+            "unambiguously"
+        )
+    excerpts = {item.excerpt for item in values}
+    if len(excerpts) != 1:
+        raise ValueError(
+            "reviewed list changes cannot map private source evidence "
+            "unambiguously: ambiguous retained private excerpts"
+        )
+    return values[0].model_copy(deep=True)
+
+
+def review_source_line_evidence(
+    raw_source: RawHandHistory,
+    line_number: int | None,
+) -> SourceEvidence:
+    """Regenerate one user-selected source-line locator from retained raw text."""
+
+    if type(line_number) is not int or line_number < 1:
+        raise ValueError("review source line must be a positive integer")
+    lines = raw_source.raw_text.splitlines()
+    if line_number > len(lines):
+        raise ValueError("review source line is outside the retained raw source")
+    text = lines[line_number - 1]
+    if not text.strip():
+        raise ValueError("review source line is blank and cannot bind evidence")
+    if len(text) > MAX_REVIEW_SOURCE_LINE_CHARACTERS:
+        raise ValueError("review source line is too long to bind evidence")
+    return SourceEvidence(
+        raw_source_id=raw_source.raw_source_id,
+        line_start=line_number,
+        line_end=line_number,
+        marker=REVIEW_SOURCE_LINE_MARKER,
+        excerpt=text,
+    )
+
+
+def _validate_selected_review_raw_source(
+    detection: DetectedImportedHand,
+    raw_source: RawHandHistory,
+) -> None:
+    if raw_source.raw_source_id != detection.raw_source_id:
+        raise ValueError("selected review raw source does not match the detection")
+
+
+def _source_evidence_key(evidence: SourceEvidence) -> SourceEvidenceKey:
+    """Read a locator key without bool/number coercion or delimiter joining."""
+
+    raw_source_id = evidence.raw_source_id
+    line_start = evidence.line_start
+    line_end = evidence.line_end
+    marker = evidence.marker
+    if type(raw_source_id) is not str or not raw_source_id:
+        raise ValueError("reviewed source evidence has an invalid raw source id")
+    for line in (line_start, line_end):
+        if line is not None and (type(line) is not int or line < 1):
+            raise ValueError("reviewed source evidence has an invalid line number")
+    if line_end is not None and line_start is None:
+        raise ValueError("reviewed source evidence has an invalid line range")
+    if line_start is not None and line_end is not None and line_end < line_start:
+        raise ValueError("reviewed source evidence has an invalid line range")
+    if marker is not None and (type(marker) is not str or not marker.strip()):
+        raise ValueError("reviewed source evidence has an invalid marker")
+    return raw_source_id, line_start, line_end, marker
+
+
+def _validate_review_source_evidence_location(
+    evidence: SourceEvidence,
+    raw_source: RawHandHistory,
+) -> None:
+    _source_evidence_key(evidence)
+    if evidence.raw_source_id != raw_source.raw_source_id:
+        raise ValueError("reviewed source evidence must use the selected raw source")
+    _validate_source_evidence_location(evidence, raw_source)
+
+
+def _typed_review_source_evidence_documents(
+    document: JsonValue,
+) -> list[tuple[JsonPath, dict[str, JsonValue], dict[str, JsonValue] | None]]:
+    """Enumerate only canonical action/result evidence sites, never arbitrary JSON."""
+
+    assert isinstance(document, dict)
+    evidence: list[
+        tuple[JsonPath, dict[str, JsonValue], dict[str, JsonValue] | None]
+    ] = []
+    streets = document.get("streets")
+    assert isinstance(streets, list)
+    for street_index, street in enumerate(streets):
+        assert isinstance(street, dict)
+        actions = street.get("actions")
+        assert isinstance(actions, list)
+        for action_index, action in enumerate(actions):
+            assert isinstance(action, dict)
+            for evidence_index, item in enumerate(action["evidence"]):
+                assert isinstance(item, dict)
+                evidence.append(
+                    (
+                        (
+                            "streets",
+                            street_index,
+                            "actions",
+                            action_index,
+                            "evidence",
+                            evidence_index,
+                        ),
+                        item,
+                        None,
+                    )
+                )
+            origin = action["origin"]
+            assert isinstance(origin, dict)
+            for evidence_index, item in enumerate(origin["evidence"]):
+                assert isinstance(item, dict)
+                evidence.append(
+                    (
+                        (
+                            "streets",
+                            street_index,
+                            "actions",
+                            action_index,
+                            "origin",
+                            "evidence",
+                            evidence_index,
+                        ),
+                        item,
+                        origin,
+                    )
+                )
+    results = document.get("results")
+    if results is None:
+        return evidence
+    assert isinstance(results, dict)
+    for result_name in ("showdown", "awards"):
+        entries = results[result_name]
+        assert isinstance(entries, list)
+        for entry_index, entry in enumerate(entries):
+            assert isinstance(entry, dict)
+            for evidence_index, item in enumerate(entry["evidence"]):
+                assert isinstance(item, dict)
+                evidence.append(
+                    (
+                        (
+                            "results",
+                            result_name,
+                            entry_index,
+                            "evidence",
+                            evidence_index,
+                        ),
+                        item,
+                        None,
+                    )
+                )
+    return evidence
+
+
+def _validate_review_source_line_origin(origin: dict[str, JsonValue]) -> None:
+    kind = origin.get("kind")
+    basis = origin.get("basis")
+    if (
+        kind == "unknown"
+        and basis == "unresolved"
+    ) or kind == "forced_system":
+        return
+    raise ValueError(
+        "a user-selected review source line cannot attest a positive action origin"
+    )
+
+
+def _validate_persisted_review_source_line_evidence(
+    state: ImportedHandState,
+    raw_source: RawHandHistory,
+) -> None:
+    """Rebuild reserved review-source markers before accepting any audit path.
+
+    A legacy full-value correction can otherwise match the persisted document
+    before the normal visible-state restoration path runs. Reserved markers are
+    never client-owned, so their complete evidence object must always equal the
+    exact excerpt regenerated from the selected retained source line.
+    """
+
+    document = json.loads(state.model_dump_json())
+    for _, source_document, origin in _typed_review_source_evidence_documents(document):
+        source = SourceEvidence.model_validate(source_document)
+        if source.marker != REVIEW_SOURCE_LINE_MARKER:
+            continue
+        expected = review_source_line_evidence(raw_source, source.line_start)
+        if not _json_values_equal(
+            source.model_dump(mode="json"),
+            expected.model_dump(mode="json"),
+        ):
+            raise ValueError(
+                "review source line evidence must match the retained raw source"
+            )
+        if origin is not None:
+            _validate_review_source_line_origin(origin)
 
 
 def _contains_review_excerpt(value: JsonValue) -> bool:
@@ -5613,8 +5972,11 @@ def _json_values_equal(left: JsonValue, right: JsonValue) -> bool:
 def _validate_corrections_win(
     detected: DetectedImportedHand,
     revision: CanonicalHandRevision,
+    *,
+    raw_source: RawHandHistory,
 ) -> None:
     _validate_correction_timestamps(revision)
+    _validate_persisted_review_source_line_evidence(revision.state, raw_source)
     for correction in revision.corrections:
         if correction.corrected_at < detected.detected_at:
             raise ValueError(
@@ -5684,8 +6046,12 @@ def _validate_corrections_win(
                 )
             )
             try:
-                _preserve_review_excerpts(detected_document, restored)
-            except ValueError:
+                restored = _restore_reviewed_source_evidence(
+                    detected,
+                    restored,
+                    raw_source=raw_source,
+                )
+            except (ValidationError, ValueError):
                 pass
             else:
                 if _json_values_equal(restored, approved_document):
@@ -5704,6 +6070,16 @@ def _validate_detected_action_origins(state: ImportedHandState) -> None:
                     " basis at"
                     f" /streets/{street_index}/actions/{action_index}/origin"
                 )
+
+
+def _validate_no_review_source_line_markers(
+    detected: DetectedImportedHand,
+) -> None:
+    if any(
+        evidence.marker == REVIEW_SOURCE_LINE_MARKER
+        for evidence in _detected_source_evidence(detected)
+    ):
+        raise ValueError("detected evidence cannot use the review source marker")
 
 
 def _validate_user_confirmed_origin_corrections(

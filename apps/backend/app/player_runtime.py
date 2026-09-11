@@ -50,6 +50,7 @@ from app.player_hands import (
     MAX_PLAYER_HAND_PAGE_SIZE,
     PlayerHandApprovalRequest,
     PlayerHandReviewPreviewRequest,
+    PlayerHandReviewSourceLinesRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
     PlayerHandConflictResolutionRequest,
@@ -502,6 +503,11 @@ def _is_player_hand_review_preview_path(path: str) -> bool:
     return path.startswith(prefix) and path.endswith("/review-preview")
 
 
+def _is_player_hand_review_source_lines_path(path: str) -> bool:
+    prefix = f"{PLAYER_API_PREFIX}/hands/"
+    return path.startswith(prefix) and path.endswith("/review-source-lines")
+
+
 class PlayerBodyLimitMiddleware:
     """Bound player request bodies before Starlette buffers or spools them."""
 
@@ -537,6 +543,9 @@ class PlayerBodyLimitMiddleware:
         elif _is_player_hand_review_preview_path(path):
             body_limit = self.review_preview_limit
             too_large_detail = "The review preview body is too large"
+        elif _is_player_hand_review_source_lines_path(path):
+            body_limit = self.review_preview_limit
+            too_large_detail = "The review source-lines body is too large"
         else:
             await self.app(scope, receive, send)
             return
@@ -1398,6 +1407,51 @@ def create_player_runtime(
                     500,
                     "Review preview did not finish safely; refresh the hand "
                     "before retrying",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
+
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/review-source-lines")
+    async def player_hand_review_source_lines(
+        request: Request,
+        record_key: str,
+    ) -> JSONResponse:
+        """Return one bounded raw-source page for an authenticated review."""
+
+        try:
+            body = PlayerHandReviewSourceLinesRequest.model_validate(
+                await request.json()
+            )
+        except (ValueError, ValidationError):
+            return _json_denial(422, "Review source-lines request is invalid")
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.review_source_lines,
+                    record_key,
+                    request=body,
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except PlayerHandApprovalInvalid as exc:
+                return _json_denial(422, str(exc))
+            except PlayerHandTransitionConflict as exc:
+                return _json_denial(409, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (PendingCascadeError, PlayerHandRecoveryRequired):
+                return _json_denial(
+                    503,
+                    "This hand has an interrupted lifecycle write; restart the "
+                    "local player runtime so recovery can finish",
+                )
+            except (DataLockError, OSError, ValidationError):
+                return _json_denial(
+                    500,
+                    "Review source lines could not be read safely; refresh the "
+                    "hand before retrying",
                 )
         return JSONResponse(payload.model_dump(mode="json"))
 

@@ -61,9 +61,12 @@ from app.domain.imported_hands import (
     ImportedHandRecord,
     ImportedSeat,
     ImportedHandState,
+    MAX_REVIEW_SOURCE_LINE_CHARACTERS,
+    RawHandHistory,
     canonical_revision_from_review,
     derive_structural_positions,
     extract_hero_decision_points,
+    review_source_line_evidence,
 )
 from app.domain.remote_references import RemoteReferenceProviderPolicy
 from app.player_decision_evaluations import (
@@ -82,6 +85,9 @@ from app.player_hands import (
     PlayerHandReviewPreview,
     PlayerHandReviewPreviewFieldError,
     PlayerHandReviewPreviewRequest,
+    PlayerHandReviewSourceLine,
+    PlayerHandReviewSourceLines,
+    PlayerHandReviewSourceLinesRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
     PlayerHandConflictResolutionRequest,
@@ -89,6 +95,7 @@ from app.player_hands import (
     PlayerHandDetail,
     PlayerHandList,
     PlayerHandReimportRequest,
+    PlayerSourceEvidenceAudit,
     get_player_hand,
     list_player_hands,
     player_hand_review_warnings,
@@ -140,6 +147,9 @@ class PlayerHandApprovalInvalid(ValueError):
 
 class PlayerHandConflictResolutionInvalid(ValueError):
     """A requested source choice cannot resolve the retained conflict."""
+
+
+PLAYER_HAND_REVIEW_SOURCE_LINES_MAX_RESPONSE_BYTES = 256 * 1024
 
 
 def _review_preview_error_pointer(location: tuple[object, ...]) -> str:
@@ -221,6 +231,111 @@ def _review_preview_value_error(
         code="invalid_value",
         message="The reviewed state is invalid.",
     )
+
+
+def _review_source_line_page(
+    *,
+    record_key: str,
+    record_version: str,
+    detection: DetectedImportedHand,
+    raw_source: RawHandHistory,
+    start_line: int,
+    limit: int,
+) -> PlayerHandReviewSourceLines:
+    """Build a bounded, no-persistence page from one retained raw hand source."""
+
+    lines = raw_source.raw_text.splitlines()
+    total_lines = len(lines)
+    if start_line > total_lines:
+        raise PlayerHandApprovalInvalid(
+            "The requested review source line offset is not retained"
+        )
+
+    page: list[PlayerHandReviewSourceLine] = []
+    next_start_line: int | None = None
+    last_line = min(total_lines, start_line + limit - 1)
+    for line_number in range(start_line, last_line + 1):
+        full_text = lines[line_number - 1]
+        truncated = len(full_text) > MAX_REVIEW_SOURCE_LINE_CHARACTERS
+        text = (
+            full_text[:MAX_REVIEW_SOURCE_LINE_CHARACTERS]
+            if truncated
+            else full_text
+        )
+        if not full_text.strip():
+            line = PlayerHandReviewSourceLine(
+                line_number=line_number,
+                text=text,
+                truncated=truncated,
+                binding=None,
+                unavailable_reason="blank",
+            )
+        elif truncated:
+            line = PlayerHandReviewSourceLine(
+                line_number=line_number,
+                text=text,
+                truncated=True,
+                binding=None,
+                unavailable_reason="line_too_long",
+            )
+        else:
+            binding = review_source_line_evidence(raw_source, line_number)
+            line = PlayerHandReviewSourceLine(
+                line_number=line_number,
+                text=text,
+                truncated=False,
+                binding=PlayerSourceEvidenceAudit(
+                    raw_source_id=binding.raw_source_id,
+                    line_start=binding.line_start,
+                    line_end=binding.line_end,
+                    marker=binding.marker,
+                ),
+                unavailable_reason=None,
+            )
+        candidate_next = (
+            None if line_number == total_lines else line_number + 1
+        )
+        candidate = PlayerHandReviewSourceLines(
+            record_key=record_key,
+            record_version=record_version,
+            detection_id=detection.detection_id,
+            raw_source_id=raw_source.raw_source_id,
+            total_lines=total_lines,
+            start_line=start_line,
+            next_start_line=candidate_next,
+            lines=[*page, line],
+        )
+        encoded = json.dumps(
+            candidate.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if len(encoded) > PLAYER_HAND_REVIEW_SOURCE_LINES_MAX_RESPONSE_BYTES:
+            next_start_line = line_number
+            break
+        page.append(line)
+        next_start_line = candidate_next
+        if candidate_next is None:
+            break
+
+    result = PlayerHandReviewSourceLines(
+        record_key=record_key,
+        record_version=record_version,
+        detection_id=detection.detection_id,
+        raw_source_id=raw_source.raw_source_id,
+        total_lines=total_lines,
+        start_line=start_line,
+        next_start_line=next_start_line,
+        lines=page,
+    )
+    encoded = json.dumps(
+        result.model_dump(mode="json"),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    if len(encoded) > PLAYER_HAND_REVIEW_SOURCE_LINES_MAX_RESPONSE_BYTES:
+        raise PlayerHandApprovalInvalid("The retained review source page is too large")
+    return result
 
 
 def _review_state_with_derived_structural_positions(
@@ -1880,8 +1995,13 @@ class PlayerWorkspace:
                         )
                     warnings = player_hand_review_warnings(detection)
                     try:
+                        raw_source = self._selected_review_raw_source(
+                            record,
+                            detection,
+                        )
                         revision = self._prepare_reviewed_canonical_revision(
                             detection,
+                            raw_source=raw_source,
                             request=request,
                             revision=len(record.canonical_revisions) + 1,
                             approved_at=_advanced_lifecycle_time(
@@ -1926,6 +2046,38 @@ class PlayerWorkspace:
                         field_errors=[],
                     )
 
+    def review_source_lines(
+        self,
+        record_key: str,
+        *,
+        request: PlayerHandReviewSourceLinesRequest,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerHandReviewSourceLines:
+        """Read one bounded retained-source page for an eligible review target."""
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=False,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self.require_current_layout()
+                    self._require_final_hand_record(record_key)
+                    record, detection = self._review_target(record_key, request)
+                    raw_source = self._selected_review_raw_source(record, detection)
+                    return _review_source_line_page(
+                        record_key=record_key,
+                        record_version=player_hand_record_version(record),
+                        detection=detection,
+                        raw_source=raw_source,
+                        start_line=request.start_line,
+                        limit=request.limit,
+                    )
+
     def approve_hand_record(
         self,
         record_key: str,
@@ -1968,6 +2120,10 @@ class PlayerWorkspace:
                             expected = (
                                 self._prepare_reviewed_canonical_revision(
                                     detection,
+                                    raw_source=self._selected_review_raw_source(
+                                        record,
+                                        detection,
+                                    ),
                                     request=request,
                                     revision=latest.revision,
                                     approved_at=latest.approved_at,
@@ -1997,10 +2153,12 @@ class PlayerWorkspace:
                         )
 
                     record, detection = self._review_target(record_key, request)
+                    raw_source = self._selected_review_raw_source(record, detection)
                     approved_at = _advanced_lifecycle_time(at, lifecycle.changed_at)
                     try:
                         revision = self._prepare_reviewed_canonical_revision(
                             detection,
+                            raw_source=raw_source,
                             request=request,
                             revision=len(record.canonical_revisions) + 1,
                             approved_at=approved_at,
@@ -2279,7 +2437,7 @@ class PlayerWorkspace:
     def _review_target(
         self,
         record_key: str,
-        request: PlayerHandApprovalRequest,
+        request: PlayerHandApprovalRequest | PlayerHandReviewSourceLinesRequest,
     ) -> tuple[ImportedHandRecord, DetectedImportedHand]:
         """Load the exact eligible detection selected by review or preview.
 
@@ -2326,9 +2484,29 @@ class PlayerWorkspace:
         return record, detection
 
     @staticmethod
+    def _selected_review_raw_source(
+        record: ImportedHandRecord,
+        detection: DetectedImportedHand,
+    ) -> RawHandHistory:
+        raw_source = next(
+            (
+                raw
+                for raw in record.raw_sources
+                if raw.raw_source_id == detection.raw_source_id
+            ),
+            None,
+        )
+        if raw_source is None:
+            raise PlayerHandApprovalInvalid(
+                "The selected detection has no retained review source"
+            )
+        return raw_source
+
+    @staticmethod
     def _prepare_reviewed_canonical_revision(
         detection: DetectedImportedHand,
         *,
+        raw_source: RawHandHistory,
         request: PlayerHandApprovalRequest,
         revision: int,
         approved_at: datetime,
@@ -2356,6 +2534,7 @@ class PlayerWorkspace:
                 approved_at=approved_at,
                 approved_state=reviewed_state,
                 correction_reason="Structural positions derived from the reviewed ring",
+                raw_source=raw_source,
             )
             if (
                 detection.state != normalized_detection_state
@@ -2370,6 +2549,7 @@ class PlayerWorkspace:
             approved_at=approved_at,
             approved_state=reviewed_state,
             correction_reason=correction_reason,
+            raw_source=raw_source,
         )
 
     @staticmethod

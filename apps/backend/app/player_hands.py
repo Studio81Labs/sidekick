@@ -340,6 +340,60 @@ class PlayerHandReviewPreviewRequest(PlayerHandApprovalRequest):
     draft_revision: int = Field(ge=0, strict=True)
 
 
+class PlayerHandReviewSourceLinesRequest(PlayerHandProjection):
+    """Bounded read precondition for retained source lines of one detection."""
+
+    detection_id: Annotated[
+        str,
+        StringConstraints(
+            strip_whitespace=True,
+            min_length=1,
+            max_length=160,
+            pattern=r"^[A-Za-z0-9][A-Za-z0-9._:@/+\-]*$",
+            strict=True,
+        ),
+    ]
+    expected_record_version: PlayerRecordVersion
+    expected_lifecycle_status: Literal[
+        "pending_review",
+        "active",
+        "withdrawn",
+        "rejected",
+    ]
+    expected_active_canonical_revision: int | None = Field(
+        default=None,
+        ge=1,
+        strict=True,
+    )
+    expected_canonical_revision_count: int = Field(ge=0, strict=True)
+    expected_deletion_generation: int = Field(ge=0, strict=True)
+    expected_lifecycle_changed_at: AwareDatetime
+    start_line: int = Field(default=1, ge=1, strict=True)
+    limit: int = Field(default=50, ge=1, le=50, strict=True)
+
+    @model_validator(mode="after")
+    def validate_revision_precondition(self) -> Self:
+        active_revision = self.expected_active_canonical_revision
+        revision_count = self.expected_canonical_revision_count
+        if self.expected_lifecycle_status == "active":
+            if active_revision is None or active_revision != revision_count:
+                raise ValueError(
+                    "active source-line precondition requires the latest active revision"
+                )
+        elif active_revision is not None:
+            raise ValueError(
+                "inactive source-line precondition cannot select an active revision"
+            )
+        if (
+            self.expected_lifecycle_status in {"withdrawn", "rejected"}
+            and revision_count == 0
+        ):
+            raise ValueError(
+                "withdrawn or rejected source-line precondition requires retained revisions"
+            )
+        return self
+
+
 class PlayerHandReviewPreviewFieldError(PlayerHandProjection):
     """A safe, stable validation problem for one reviewed-state pointer."""
 
@@ -376,6 +430,43 @@ class PlayerHandReviewPreview(PlayerHandProjection):
                 "an invalid review preview requires field errors and no state"
             )
         return self
+
+
+class PlayerHandReviewSourceLine(PlayerHandProjection):
+    """One inert retained-raw line available to the authenticated local owner."""
+
+    line_number: int = Field(ge=1, strict=True)
+    text: Annotated[str, StringConstraints(max_length=1000, strict=True)]
+    truncated: bool = Field(strict=True)
+    binding: PlayerSourceEvidenceAudit | None
+    unavailable_reason: Literal["blank", "line_too_long"] | None
+
+    @model_validator(mode="after")
+    def validate_binding(self) -> Self:
+        if self.unavailable_reason is None:
+            if self.binding is None or self.truncated:
+                raise ValueError("a bindable source line requires its full binding")
+        elif self.binding is not None:
+            raise ValueError("an unavailable source line cannot expose a binding")
+        elif self.unavailable_reason == "line_too_long" and not self.truncated:
+            raise ValueError("an overlong source line must be visibly truncated")
+        return self
+
+
+class PlayerHandReviewSourceLines(PlayerHandProjection):
+    """Versioned bounded retained-source page for structured review only."""
+
+    schema_version: Literal["player-hand-review-source-lines/v1"] = (
+        "player-hand-review-source-lines/v1"
+    )
+    record_key: str
+    record_version: PlayerRecordVersion
+    detection_id: str
+    raw_source_id: str
+    total_lines: int = Field(ge=0, strict=True)
+    start_line: int = Field(ge=1, strict=True)
+    next_start_line: int | None = Field(default=None, ge=1, strict=True)
+    lines: list[PlayerHandReviewSourceLine] = Field(max_length=50)
 
 
 class PlayerHandConflictResolutionRequest(PlayerHandProjection):
