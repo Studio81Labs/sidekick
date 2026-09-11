@@ -21,9 +21,11 @@ from pydantic import (
 )
 
 from app.domain.imported_hands import (
+    DetectedImportedHand,
     DeletionReceipt,
     HandDecisionExtraction,
     ImportConflict,
+    ImportedHandState,
     ImportedHandLifecycle,
     ImportedHandRecord,
     ImportProvenance,
@@ -316,6 +318,66 @@ class PlayerHandApprovalRequest(PlayerHandProjection):
         return self
 
 
+PlayerHandReviewPreviewErrorCode = Literal[
+    "missing_value",
+    "unexpected_field",
+    "invalid_type",
+    "invalid_value",
+    "private_source_excerpt",
+    "correction_reason_required",
+]
+
+
+class PlayerHandReviewPreviewRequest(PlayerHandApprovalRequest):
+    """One stateless review validation request.
+
+    This deliberately carries the same reviewed-state and exact-record
+    precondition as approval. ``draft_revision`` is browser-local ordering
+    information only: the workspace never retains it or creates an idempotency
+    record for preview requests.
+    """
+
+    draft_revision: int = Field(ge=0, strict=True)
+
+
+class PlayerHandReviewPreviewFieldError(PlayerHandProjection):
+    """A safe, stable validation problem for one reviewed-state pointer."""
+
+    pointer: str
+    code: PlayerHandReviewPreviewErrorCode
+    message: str
+
+
+class PlayerHandReviewPreview(PlayerHandProjection):
+    """Sanitized, non-persisted result of preparing a reviewed hand state."""
+
+    schema_version: Literal["player-hand-review-preview/v1"] = (
+        "player-hand-review-preview/v1"
+    )
+    request_id: PlayerRequestId
+    draft_revision: int = Field(ge=0, strict=True)
+    record_key: str
+    record_version: PlayerRecordVersion
+    detection_id: str
+    valid: bool
+    reviewed_state: dict[str, JsonValue] | None
+    warnings: list[str]
+    field_errors: list[PlayerHandReviewPreviewFieldError]
+
+    @model_validator(mode="after")
+    def validate_preview_result(self) -> Self:
+        if self.valid:
+            if self.reviewed_state is None or self.field_errors:
+                raise ValueError(
+                    "a valid review preview requires state and no field errors"
+                )
+        elif self.reviewed_state is not None or not self.field_errors:
+            raise ValueError(
+                "an invalid review preview requires field errors and no state"
+            )
+        return self
+
+
 class PlayerHandConflictResolutionRequest(PlayerHandProjection):
     """Explicit source choice and exact retained-record precondition."""
 
@@ -440,6 +502,37 @@ def _without_evidence_excerpts(value: JsonValue) -> JsonValue:
     if isinstance(value, list):
         return [_without_evidence_excerpts(item) for item in value]
     return value
+
+
+def sanitized_player_hand_state(
+    state: ImportedHandState,
+) -> dict[str, JsonValue]:
+    """Return a player-visible state without retained raw-source excerpts."""
+
+    sanitized = _without_evidence_excerpts(
+        cast(JsonValue, state.model_dump(mode="json"))
+    )
+    if not isinstance(sanitized, dict):  # pragma: no cover - model invariant
+        raise ValueError("imported hand state must serialize as an object")
+    return cast(dict[str, JsonValue], sanitized)
+
+
+def player_hand_review_warnings(detection: DetectedImportedHand) -> list[str]:
+    """Keep the selected detection's existing review warnings visible.
+
+    Warnings are already retained player-visible review metadata. We add their
+    field pointer rather than a source excerpt so a preview can be reconciled
+    with the audit detail without revealing raw hand text.
+    """
+
+    return [
+        *detection.warnings,
+        *(
+            f"{pointer}: {warning}"
+            for pointer, evidence in detection.field_evidence.items()
+            for warning in evidence.warnings
+        ),
+    ]
 
 
 def _sanitized_correction_value(

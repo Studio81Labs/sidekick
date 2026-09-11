@@ -52,6 +52,8 @@ import {
   clearPlayerHandReimportRetry,
   preservePlayerHandReimportRetry,
 } from "./playerReimportRetry";
+import { unitIntervalPercentage } from "./playerDecimal";
+import { RecordedHandTimeline } from "./RecordedHandTimeline";
 
 type BusyAction =
   | "export"
@@ -93,10 +95,10 @@ function handLabel(hand: PlayerHandSummary): string {
 
 function confidenceLabel(confidence: string | null): string {
   if (confidence === null) return "confidence not scored";
-  const value = Number(confidence);
-  return Number.isFinite(value)
-    ? `${Math.round(value * 100)}% confidence`
-    : "confidence unavailable";
+  const percentage = unitIntervalPercentage(confidence);
+  return percentage === null
+    ? "confidence unavailable"
+    : percentage + "% confidence";
 }
 
 function evidenceLocation(
@@ -590,6 +592,7 @@ function HandDetail({
           </div>
         </div>
       ) : null}
+      <RecordedHandTimeline detail={detail} />
       {detail.detections.length > 0 ? (
         <div className="audit-block state-block">
           <h4>Detected proposals</h4>

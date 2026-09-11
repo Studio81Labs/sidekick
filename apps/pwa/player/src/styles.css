@@ -512,6 +512,73 @@ code {
   font-weight: 700;
 }
 
+.recorded-hand-timeline {
+  display: grid;
+  gap: 12px;
+}
+
+.recorded-hand-timeline > * {
+  margin-bottom: 0;
+}
+
+.recorded-state {
+  padding: 14px;
+  border: 1px solid rgb(23 34 31 / 14%);
+  border-radius: 12px;
+  background: rgb(255 255 255 / 70%);
+}
+
+.recorded-state > summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.recorded-state-content {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.recorded-state-content section,
+.recorded-state-content p,
+.recorded-state-content ul,
+.recorded-state-content ol {
+  margin: 0;
+}
+
+.recorded-state-content h6 {
+  margin: 0 0 6px;
+  color: #40534d;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.recorded-street + .recorded-street {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid rgb(23 34 31 / 12%);
+}
+
+.recorded-street ol {
+  display: grid;
+  gap: 10px;
+  padding-left: 22px;
+}
+
+.recorded-street ol > li {
+  display: grid;
+  gap: 4px;
+}
+
+.recorded-evidence {
+  display: grid;
+  gap: 2px;
+  padding-left: 18px;
+  color: #66746f;
+  font-size: 0.8rem;
+}
+
 .state-block pre {
   max-height: 360px;
   overflow: auto;
