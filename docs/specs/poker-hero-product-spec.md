@@ -23,6 +23,36 @@ the current-only persistence, native grading and operator application cutover.
 Current V2 review, provenance, security and lifecycle invariants still apply;
 unsupported development data is rejected without automatic deletion.
 
+## Approved first release: local hand review
+
+The owner approved the review-first reshape on 2026-09-11 in
+[#525](https://github.com/Studio81Labs/sidekick/issues/525), recorded in [ADR 0082](../decisions/0082-deliver-a-review-first-local-mvp.md).
+Epic #405 now delivers a local post-hand review MVP: import, readable recorded
+hands, structured correction, explicit approval, local records and verified
+backup/restore/update/delete. No JSON editing is required of the player.
+
+The concept-mastery vision below remains the **deferred learning target**.
+Sections 4–6, learning-specific target-user validation and learning success
+criteria do not describe promised capabilities of this review release. Automatic
+mistake/EV grading, concept leaks, teaching/drills, mastery and proof of learning
+are deferred under #412/#406. Review does not certify a solver or imply optimal
+play. Finishing #405 does not automatically authorize learning implementation.
+
+Unknown action origin is permitted and visibly retained in review. The named
+`review-mvp/v1` gate keeps the independently labelled, representative real-hand
+≥1,000/≥99% accuracy and composition requirements, but does not require positive
+parsed player-selected/preselection/reconnect/absence semantics. Existing
+voluntary-action requirements still apply to any future learning evidence.
+Public downloads must be authorized and independently labelled; synthetic or
+parser-copied labels do not qualify. No suitable full corpus has been certified.
+
+The first delivery is a controlled local macOS arm64 pilot through the existing
+repository-build channel, not a public signed installer or automatic updater.
+#527 delivers structured review; #528 qualifies manual application-file updates;
+#414 records the exact-candidate review-only `go`, `reshape` or `stop`. All local
+privacy, post-hand, administrative isolation, current-only persistence and
+zero-mandatory-fee constraints remain in force.
+
 ## 0. Why V2 exists
 
 V1 is a capable pile of review analytics. It tracks accuracy by street and by
@@ -955,46 +985,42 @@ single-user learning tool. Their presence in V1 is scope run ahead of proof.
 
 ## 9. Phased build plan (gated)
 
-**Phase 0 — foundations and safety (two parallel spikes, two prerequisites, one
-shared gate)**
+**Phase 0 — review-first local MVP (approved reshape)**
 
-- _Import spike:_ PokerStars adapter → detected hand → user-approved canonical
-  hand → decision extraction. Kill criterion: ≥99% clean parse **with pot
-  reconciliation passing** on ~1,000 real hands; non-pot fields are verified
-  against ground truth, voluntary/automatic action origin is verified, source
-  time/order is preserved, and positions are verified including heads-up and
-  sit-out cases.
-- _Grading spike:_ source and benchmark an independently solved preflop policy;
-  the retained V1 heuristic chart is not eligible. Resolve §5.3 for postflop
-  (precompute / license / defer). Kill criterion: obtain `solved` references
-  you'd stake the product on, at absorbable cost, with rights matching the
-  actual delivery mode (embedding/redistribution for shipped lookups or
-  commercial serving/derived-output rights for server-only feeds), immutable
-  policy revisions, complete mixed-strategy support, and declared
-  table-size/position and cash/tournament economic assumptions. Any server-only
-  feed must also pass the explicit-consent and minimized outbound-data boundary
-  in §5.3 while preserving a local-only mode. If preflop sourcing fails, the
-  teaching loop does not have a trustworthy MVP grading floor.
-- _Safety prerequisite:_ before any Phase 1 user validation, remove screenshot
-  upload, live window/screen/tab capture, and recommendation automation from the
-  player workflow. Preserve capture/upload only in the disabled-by-default,
-  server-authorized administrative OCR test context defined by §3.4. Kill
-  criterion: player UI and direct API attempts cannot invoke capture/upload or
-  transition an administrative test input into recommendation or learning state.
-- _Local-delivery prerequisite:_ package and validate the co-located player PWA,
-  API, persistence, backup/restore, and upgrade path defined by §3.5. Kill
-  criterion: V2 imports and all player/learning records stay on the player
-  machine; the deployed Worker/hosted backend cannot receive them, including by
-  direct network/API attempts. The local service is loopback-only and authenticated;
-  LAN/non-loopback, disallowed Host/Origin, unauthenticated, and forged
-  state-changing requests are denied. The optional minimized remote solver
-  request is tested separately under explicit consent.
+- _Import evidence (#409):_ at least 1,000 distinct real free-download PokerStars
+  hands with authorized custody, independent labels and a frozen representative
+  sampling plan; ≥99% clean parses over every labelled hand, all labels matching,
+  pot reconciliation, full non-pot/origin/chronology/position verification and
+  the `review-mvp/v1` composition floors. Unknown origin is allowed; positive
+  parser proof of player-selected/reconnect/preselection/absence behavior is
+  deferred. Keep reviewed automatic timeout/disconnect support and never guess.
+- _Usable review (#527):_ all recorded streets/actions/cards/amounts and safe
+  provenance, structured correction and a stateless server preview, then separate
+  explicit approval. Unknowns and source-reported awards remain honest. No
+  required JSON editing, solver, inferred advice or eligible learning decision.
+- _Safety:_ retain post-hand-only player inputs, disabled-by-default isolated
+  administrative OCR, loopback/session/Host/Origin/CSRF/LAN denial and hosted
+  rejection of every player data path, including the new preview route.
+- _Local delivery (#528):_ qualify the current macOS arm64 pilot archive,
+  same-machine persistence, backup/restore, manual side-by-side application-file
+  updates, fresh sessions, browser-worker fencing, recovery, application removal
+  and export-before-data removal. No legacy fallback or migration.
+- _Final decision (#414):_ test the exact integrated candidate, have a poker
+  reviewer check recorded facts and another reviewer complete the workflow
+  without JSON/data-model knowledge, and record `go`, `reshape` or `stop` for
+  review only. A missing corpus, reviewer or lifecycle/security pass blocks
+  release, but does not block bounded #527/#528 implementation.
 
-Neither the learning model nor player validation starts until the two viability
-spikes and both prerequisites clear. A failed viability gate kills or reshapes
-the product; a failed safety or local-delivery prerequisite blocks Phase 1.
+#412 R0a is exhausted and source qualification is deferred. No solved reference,
+rights dossier or solver budget is required to ship this ungraded review pilot.
+The zero mandatory solver/data/external-service fee policy remains binding.
 
-**Phase 1 — minimum teaching loop (preflop-first)**
+**Phase 1 — minimum teaching loop (deferred; separate entry decision)**
+
+Do not start automatically after the review release. Re-entry needs an explicit
+owner decision and a qualifying no-fee source route under #412, plus the original
+solved-policy/input/rights/content/coverage and learning-specific import evidence.
+No source is presently qualified.
 
 - Import → review/correction → approved canonical hand → decision points →
   input-verified `solved` grading (independently sourced preflop and eligible HU
@@ -1028,7 +1054,12 @@ the product; a failed safety or local-delivery prerequisite blocks Phase 1.
 
 ## 10. Success criteria (reframed around learning)
 
-Poker Hero V2 is successful when:
+The first review release succeeds only when the Phase 0 criteria above pass and
+a player can accurately read, correct and preserve a local imported hand without
+JSON. It claims no measured learning improvement.
+
+The following are deferred teaching-product success criteria. Poker Hero V2 as a
+learning product is successful when:
 
 - A player can import a session, review/correct detected state, approve canonical
   hands, and get decision points with real actions, with no screenshot upload or

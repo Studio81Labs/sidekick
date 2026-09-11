@@ -7,6 +7,25 @@ The dedicated local player PWA delivery is defined by
 a development checkpoint for the V2 runtime boundary, not the completed V2
 player product.
 
+## Approved next delivery scope
+
+[ADR 0082](../decisions/0082-deliver-a-review-first-local-mvp.md) approves a
+review-first controlled macOS arm64 pilot. #527 owns structured review and the
+stateless local preview contract; #528 owns the missing manual application-file
+update procedure and its verification. These are planned, not implemented by
+the scope decision. #414 qualifies the exact candidate; #409 still needs the
+real public corpus under `review-mvp/v1`. #412 and the remaining teaching loop
+are deferred and no longer block bounded review implementation.
+
+The application-file procedure must verify and stage a separate current bundle,
+finish operations, verify/rehearse a current-format backup, stop the old runtime,
+use the existing exclusive runtime lease, and launch the new bundle against the
+same explicit data root with fresh sessions and a safe browser-shell handoff.
+No migration, legacy fallback, automatic update/rollback, public installer or
+other-platform support is authorized. Exact design and failure cases are in
+[#405](https://github.com/Studio81Labs/sidekick/issues/405#technical-implementation-plan)
+and [#528](https://github.com/Studio81Labs/sidekick/issues/528).
+
 ## Prerequisites
 
 Bootstrap the repository so `apps/backend/.venv` and the pinned dependencies
@@ -162,9 +181,10 @@ or remove player data. Export and remove it through the packaged executable:
 ```
 
 These archives are unsigned release-engineering artifacts. They are not yet a
-supported end-user installer or update channel. The supported platform,
-signing/notarization, publication, application-file installation/removal, and
-browser-PWA removal steps require a separate product and release decision.
+supported end-user installer or update channel. ADR 0082 chooses a controlled
+macOS arm64 pilot; #528/#414 still must qualify
+its installation/update/removal lifecycle. Public signing/notarization,
+publication and additional platform support require a separate decision.
 
 ## Imported-hand backup and restore
 
@@ -335,6 +355,7 @@ workflow, mastery, drill, or learning-proof store. The hosted Worker and V1
 FastAPI deployment deny the player namespace, and the direct-network checkpoint
 verifies that denial without proxying a request body. Do not use the runtime or
 its test command alone as evidence that the shared Phase 1 gate is complete.
-Issue #432's repository delivery scope is complete; the import, grading-source,
-and final-decision gates remain open under #409, #412, and #414, as summarized
-by the [Phase 0 gate-readiness ledger](../reference/v2-phase-0-gate-readiness.md).
+Issue #432's repository delivery scope is complete. The active review-release
+work is #409 corpus evidence, #527 structured review, #528 application-file
+lifecycle and #414 final decision. #412 is deferred, as summarized by the
+[gate-readiness ledger](../reference/v2-phase-0-gate-readiness.md).

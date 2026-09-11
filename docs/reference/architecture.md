@@ -10,8 +10,23 @@ removed old recommendation execution; C3 #521 replaced the hosted analyzer
 entry with `/admin/ocr` and authenticated `/api/admin/ocr` data routes. The
 separate `/admin/ocr/mcp` credential surface and status-only gateway follow
 [ADR 0080](../decisions/0080-retire-mcp-data-and-write-principal-operations.md).
-The cleanup is complete; #409/#412 source evidence and the final #414 gate are
-still outstanding.
+The cleanup is complete. [ADR 0082](../decisions/0082-deliver-a-review-first-local-mvp.md)
+now makes #405 a review-first local MVP. #409 corpus evidence, #527 structured
+review, #528 application-file lifecycle and the #414 review-pilot gate remain
+outstanding; #412 and the remaining teaching loop are deferred, not release
+dependencies. Older Phase 1/shared-gate descriptions below concern that deferred
+learning target, not an instruction to resume source screening.
+
+The approved next contract is a stateless authenticated local
+`POST /api/player/hands/{record_key}/review-preview`, sharing canonical validation
+and Python structural-position derivation with the existing review domain.
+It is **planned, not implemented**. Typed timeline/editor controls replace the
+JSON workflow; preview grants no write/approval authority and drafts stay in
+memory. No storage or grading-contract change is planned. Exact request/error,
+lifecycle and implementation boundaries are in the
+[Epic plan](https://github.com/Studio81Labs/sidekick/issues/405#technical-implementation-plan).
+The initial delivery target is a controlled macOS arm64 pilot, with manual
+application-file replacement still requiring #528 validation.
 
 The repository security, release, dependency-trust, and required-check baseline
 is defined by
