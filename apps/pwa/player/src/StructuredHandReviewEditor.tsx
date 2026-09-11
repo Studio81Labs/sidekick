@@ -558,20 +558,15 @@ function EvidenceBinding({
 }
 
 function actionStableKey(action: Action, index: number): string {
-  const evidence = action.evidence.map(sourceEvidenceKey);
-  const semanticIdentity = [
-    action.actor_id,
-    action.action_type,
-    action.amount ?? "unknown-amount",
-    action.total_committed ?? "unknown-total",
-    action.all_in ? "all-in" : "not-all-in",
-  ];
-  return evidence.length === 0
-    ? JSON.stringify(["unmapped", semanticIdentity, action.sequence, index])
-    : JSON.stringify([
-        action.evidence.map(sourceEvidenceKey),
-        semanticIdentity,
-      ]);
+  // This key deliberately excludes mutable action fields. A controlled text
+  // edit must not remount its row after every keystroke. The row's explicit
+  // evidence is stable while editing, and its current position keeps repeated
+  // locators distinct; moving a row intentionally resets row-local UI state.
+  return JSON.stringify([
+    action.evidence.map(sourceEvidenceKey),
+    action.origin.evidence.map(sourceEvidenceKey),
+    index,
+  ]);
 }
 
 function actionDraft(): Action {

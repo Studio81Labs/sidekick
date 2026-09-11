@@ -255,6 +255,40 @@ describe("StructuredHandReviewEditor", () => {
     expect(updated.seats[0]?.display_name).toBe("Alice Example");
   });
 
+  it("keeps an action amount focused while it is entered", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    const { rerender } = render(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    const amount = screen.getByRole("textbox", { name: "Amount" });
+    amount.focus();
+    fireEvent.change(amount, { target: { value: "1" } });
+    const updated = onChange.mock.lastCall?.[0] as ImportedHandState;
+
+    rerender(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        state={updated}
+        onChange={onChange}
+      />,
+    );
+    const continuedAmount = screen.getByRole("textbox", { name: "Amount" });
+    expect(continuedAmount).toHaveFocus();
+    fireEvent.change(continuedAmount, { target: { value: "12" } });
+    expect(
+      (onChange.mock.lastCall?.[0] as ImportedHandState).streets[0]?.actions[0]
+        ?.amount,
+    ).toBe("12");
+  });
+
   it("clears derived positions when the button seat changes", () => {
     const onChange = vi.fn();
     render(
