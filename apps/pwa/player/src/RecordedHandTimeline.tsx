@@ -265,7 +265,11 @@ function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
         <p>
           Hero: <strong>{hero}</strong>
           {state.hero_cards.length > 0
-            ? " · cards " + state.hero_cards.map(cardLabel).join(", ")
+            ? " · cards " +
+              state.hero_cards.map(cardLabel).join(", ") +
+              (state.hero_cards.length === 1
+                ? " · incomplete holding (1 of 2 cards)"
+                : "")
             : " · cards not recorded"}
         </p>
         <RecordedChronology chronology={state.chronology} />

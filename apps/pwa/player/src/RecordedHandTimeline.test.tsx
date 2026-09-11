@@ -67,6 +67,7 @@ describe("RecordedHandTimeline", () => {
     };
     const approvedTournamentState: ImportedHandState = {
       ...backendProducedState,
+      hero_cards: [backendProducedState.hero_cards[0]],
       chronology: {
         ...backendProducedState.chronology,
         played_at: "2026-09-11T11:00:00Z",
@@ -129,6 +130,11 @@ describe("RecordedHandTimeline", () => {
       screen.getByText("Approved canonical revision 2"),
     ).toBeInTheDocument();
     expect(screen.getByText(/Hero is not recorded/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /cards A of hearts · incomplete holding \(1 of 2 cards\)/,
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/villain · sitting out/)).toBeInTheDocument();
     expect(
       screen.getByText(
