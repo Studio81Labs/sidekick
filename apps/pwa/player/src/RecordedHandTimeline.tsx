@@ -17,6 +17,21 @@ function playerLabel(state: ImportedHandState, playerId: string): string {
     : playerId;
 }
 
+function positionLabel(
+  position: ImportedHandState["seats"][number]["position"],
+): string {
+  if (position === null) return "not recorded";
+  return (
+    position.display_label +
+    " · dealt-in player count " +
+    position.dealt_in_player_count +
+    " · action index " +
+    position.action_index +
+    " · button distance " +
+    position.button_distance
+  );
+}
+
 function lineLocation(evidence: {
   raw_source_id: string;
   line_start: number | null;
@@ -267,7 +282,7 @@ function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
                 Seat {seat.seat_number} · {playerLabel(state, seat.player_id)} ·{" "}
                 {readable(seat.participation)} · stack{" "}
                 {amount(seat.starting_stack, handUnit)} · position{" "}
-                {seat.position?.display_label ?? "not recorded"}
+                {positionLabel(seat.position)}
               </li>
             ))}
           </ul>

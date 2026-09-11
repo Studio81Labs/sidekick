@@ -50,9 +50,19 @@ describe("RecordedHandTimeline", () => {
           : street,
       ),
       seats: backendProducedState.seats.map((seat) =>
-        seat.player_id === "villain"
-          ? { ...seat, participation: "sitting_out" }
-          : seat,
+        seat.player_id === "hero"
+          ? {
+              ...seat,
+              position: {
+                dealt_in_player_count: 2,
+                action_index: 0,
+                button_distance: 0,
+                display_label: "BTN/SB",
+              },
+            }
+          : seat.player_id === "villain"
+            ? { ...seat, participation: "sitting_out" }
+            : seat,
       ),
     };
     const approvedTournamentState: ImportedHandState = {
@@ -120,6 +130,11 @@ describe("RecordedHandTimeline", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Hero is not recorded/)).toBeInTheDocument();
     expect(screen.getByText(/villain · sitting out/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /BTN\/SB · dealt-in player count 2 · action index 0 · button distance 0/,
+      ),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(
         /Played at 2026-09-11T10:00:00Z · source timezone Europe\/Prague · source session detected-session · source file detected-file · hand ordinal 7/,
