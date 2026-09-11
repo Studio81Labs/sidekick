@@ -47,6 +47,12 @@ implementation writer and merge-bound PR at a time.
 
 ### Review and contracts
 
+[ADR 0083](0083-bind-reviewed-rows-to-retained-source-evidence.md) resolves #532's
+added/removed-row provenance gap without reducing the review scope. #533 adds
+server-owned reusable locator restoration before #531 can complete #527 V2.
+The selected-detection authority, private-excerpt and positive-origin boundaries
+remain distinct; no API DTO or storage-format change is planned.
+
 Render detected or approved `ImportedHandState` directly, with every recorded
 street/action, exact Decimal amounts and units, cards, warnings, safe provenance
 and explicit unknowns. Do not require a Hero or extractable voluntary learning
