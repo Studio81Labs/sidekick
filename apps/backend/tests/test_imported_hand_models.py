@@ -14804,6 +14804,80 @@ def test_review_factory_allows_removing_an_optional_results_section() -> None:
     assert record.canonical_revisions[0] == approved
 
 
+def test_review_factory_binds_new_evidence_from_selected_field_evidence() -> None:
+    source = raw_source(
+        raw_text="PokerStars Hand #123456789\nHero: checks\n",
+    )
+    source_state = hand_state()
+    source_detection = detected(source_state)
+    source_detection = source_detection.model_copy(
+        update={
+            "field_evidence": {
+                "/hero_player_id": source_detection.field_evidence[
+                    "/hero_player_id"
+                ].model_copy(
+                    update={
+                        "evidence": [
+                            SourceEvidence(
+                                raw_source_id=source.raw_source_id,
+                                line_start=2,
+                                excerpt="Hero: checks",
+                            )
+                        ]
+                    }
+                )
+            }
+        }
+    )
+    reviewed = _without_evidence_excerpts(source_state.model_dump(mode="json"))
+    assert isinstance(reviewed, dict)
+    locator = {
+        "raw_source_id": source.raw_source_id,
+        "line_start": 2,
+    }
+    reviewed["streets"][0]["actions"] = [
+        {
+            "sequence": 0,
+            "actor_id": "hero",
+            "action_type": "check",
+            "total_committed": "0",
+            "origin": {
+                "kind": "unknown",
+                "basis": "unresolved",
+                "evidence": [locator],
+            },
+            "evidence": [locator],
+        }
+    ]
+
+    approved = canonical_revision_from_review(
+        source_detection,
+        approval_id="33333333-3333-4333-8333-333333333333",
+        revision=1,
+        approved_at=NOW + timedelta(minutes=1),
+        approved_state=reviewed,
+        correction_reason="Bound an omitted action to detected field evidence",
+        raw_source=source,
+    )
+
+    action = approved.state.streets[0].actions[0]
+    assert action.evidence[0].excerpt == "Hero: checks"
+    assert action.origin.evidence[0].excerpt == "Hero: checks"
+    record = ImportedHandRecord(
+        identity=IDENTITY,
+        raw_sources=[source],
+        detections=[source_detection],
+        canonical_revisions=[approved],
+        lifecycle={
+            "status": "active",
+            "active_canonical_revision": 1,
+            "changed_at": approved.approved_at,
+        },
+    )
+
+    assert record.canonical_revisions[0] == approved
+
+
 def test_review_factory_rejects_ambiguous_new_evidence_binding() -> None:
     source = raw_source(
         raw_text="PokerStars Hand #123456789\nAlpha Beta\n",
