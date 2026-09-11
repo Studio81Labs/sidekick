@@ -771,6 +771,14 @@ history is superseded by the current-only layout 6 initialization rule; the
 catalog remains product/reference authority and is excluded from portable player
 backup and restore. ADR 0072 records this boundary.
 
+[ADR 0081](../decisions/0081-require-no-fee-reference-sourcing.md) replaces the
+HRC-first sourcing assumption with zero mandatory source/license/service fees.
+The planned delivery remains an immutable static lookup generated offline from
+qualified freely obtainable results or free software on existing hardware.
+This changes no native model, API or store. Source-specific implementation still
+requires an actual artifact, independent qualification and useful coverage;
+no free solver is selected and no trial is required.
+
 The packaged reference and learning-content catalogs remain empty and no API
 publishes either one. Production composition still does not authorize a solved
 reference or remote provider, consume persisted evidence for mastery,

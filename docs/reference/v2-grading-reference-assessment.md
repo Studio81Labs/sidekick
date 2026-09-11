@@ -2,7 +2,7 @@
 
 Status: Phase 0 research checkpoint; source gate open
 
-Initial assessment: 2026-08-27; HRC evidence/cutover checkpoint: 2026-09-10
+Initial assessment: 2026-08-27; no-fee sourcing decision: 2026-09-11
 
 Tracking issue:
 [#412](https://github.com/Studio81Labs/poker-hero/issues/412)
@@ -14,23 +14,19 @@ and all gates below pass.
 
 ## Recommendation
 
-Proceed with a controlled validation of a **static, locally shipped preflop
-policy derived from authorized HRC Pro exports**. Do not enable a remote solved
-feed in Phase 1. Defer postflop mastery unless a separately sourced policy proves
-its exact root inputs, independent benchmark quality, delivery rights, and
-economics.
+Follow [ADR 0081](../decisions/0081-require-no-fee-reference-sourcing.md):
+qualify a **static, locally shipped preflop policy with zero mandatory solver,
+dataset or external solve-service fees**, including reproduction and updates.
+HRC Pro and other paid workflows are excluded under the owner's current budget.
+A free trial is not a required input or a sustainable sourcing plan. Keep remote
+feeds out of Phase 1 and defer postflop mastery pending separate qualification.
 
-This recommendation is conditional. HRC is the strongest public candidate, but
-Poker Hero does not yet have:
-
-- a reviewed dossier binding applicable written terms to the actual exported
-  results, generating licensee/key and chosen static delivery/update model;
-- a representative HRC export proving that all required actions, exact sizes,
-  mixed frequencies, EVs, EV units, utility model, configuration, and convergence
-  evidence are available;
-- a normalized policy revision or an independently reviewed benchmark corpus;
-- a benchmark run or a real-hand coverage study; or
-- an agreed acquisition, compute, review, and update budget.
+Prefer a complete freely licensed solved artifact or offline generation with
+existing free software on existing hardware. No source is selected. The project
+still needs an actual supported artifact, reviewed input/units/convergence,
+applicable source/data rights, independent verification, useful real-hand
+coverage and a feasible local resource/review plan. The vendor-fee ceiling is
+now explicit; it is not a pending request for a paid subscription budget.
 
 Until those items exist, no native grading route is qualified or
 mastery-eligible. The V1 preflop chart and postflop routes were removed under
@@ -73,7 +69,56 @@ Consequently, a corpus generated from the removed chart/solver cannot satisfy
 issue #412 by being relabeled. The independent reference must exist first; the
 benchmark measures the adapter against it.
 
-## Candidate inventory
+## No-fee source screen
+
+Initial screening on 2026-09-11 inspected upstream documentation, revision trees
+and selected source files without building or running a solver. These are source
+limitations, not benchmark results or a claim that all free sources fail.
+
+| Source                    | Pinned evidence                                                                                                                                                                                                                      | Decision for the current preflop floor                                                                                                                                                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `b-inary/poker-cfr`       | [Revision a534708](https://github.com/b-inary/poker-cfr/tree/a5347082007ba1eda7932ef2fe7fad43cb3be2a1), [README](https://github.com/b-inary/poker-cfr/blob/a5347082007ba1eda7932ef2fe7fad43cb3be2a1/Readme.md), BSD-2-Clause license | Free research candidate for bounded heads-up push/fold; its other preflop model assumes postflop check-down with restricted sizes. Not a drop-in reference for ordinary multi-player poker. Export/EV, convergence and input-data provenance remain unqualified. |
+| `MatthewPDingle/GTOpen`   | [Revision 92c86ed](https://github.com/MatthewPDingle/GTOpen/tree/92c86ed73aa0856df8479b5c7635e1469f48f1e8), [README](https://github.com/MatthewPDingle/GTOpen/blob/92c86ed73aa0856df8479b5c7635e1469f48f1e8/README.md)               | Advertises 2–9-player preflop, but documents approximate continuation, possible card-removal errors and no ICM. No license file was found in the inspected complete revision tree. No reuse/qualification approval; public code alone is insufficient.           |
+| `b-inary/postflop-solver` | [Revision 9d1509f](https://github.com/b-inary/postflop-solver/tree/9d1509fe5077d019825f833eed04b16d342dfda1), AGPL-3.0                                                                                                               | Heads-up postflop cannot supply the preflop floor. Its old Sidekick adapter stays removed. Any future independent use needs verified roots, rights and a separate scoped decision.                                                                               |
+
+### R0a execution and exit
+
+1. Screen at most three additional distinct no-fee preflop sources in one bounded
+   pass. Begin with any genuinely new complete artifact or explicit license
+   evidence; do not repeat the rejected claims above without new evidence.
+   Record pinned bytes/revisions, source/data rights, actual supported games,
+   actions/economics, export/EV completeness, native convergence and ongoing
+   reproduction/update costs. Free-to-view charts without export/data rights or
+   complete mixes/EVs do not satisfy R0.
+2. Before executing candidate software, inspect its build/dependencies and
+   commands. Use an isolated research directory, synthetic configurations and
+   bounded existing-host resources. Record actual resource limits; do not launch
+   broad solves or introduce a repository/runtime dependency. No new solver or
+   guessed source adapter is part of this pass.
+3. For an eligible candidate, obtain one complete supported artifact plus
+   build/settings/units/convergence and rights evidence. Independently inspect
+   source-native policies and use an appropriate free cross-check or analytical
+   reference for the same game. A different game, a screenshot, top-action chart
+   or candidate adapter output relabeled as expected results is not independent
+   proof. Source quality and adapter fidelity remain separate assessments.
+4. Publish one R0a report: eligible source and exact remaining R0 evidence, or
+   explicit candidate failures and the coverage/rights/resource shortfall. A
+   restricted research game may support a proposed scope change, never a current
+   gate pass. If the pass produces no eligible candidate, escalate a concrete
+   narrower-product proposal under #405/#414; do not resume waiting for HRC
+   funds, start Phase 1 or silently lower thresholds.
+
+R0a is evidence work under #412, not a new delivery issue. R0 final mapping,
+rights, economics, coverage and local resource/review capacity precede the
+existing R1 → R2 → R3 → R4 sequence. Final coverage still depends on #409's
+independently reviewed corpus. Public acquisition is acceptable; a dataset's
+size alone does not establish the intended user's opportunity distribution.
+
+## Historical candidate assessment
+
+The following findings are retained as research history. ADR 0081
+supersedes their former preference/reserve/fallback ordering: no purchase,
+subscription, trial dependency or paid vendor comparison is required or approved.
 
 ### HoldemResources Calculator (HRC)
 
@@ -97,7 +142,7 @@ benchmark measures the adapter against it.
 
 **Assessment**
 
-HRC has the best apparent fit for the Phase 1 preflop floor: it can model the
+The earlier assessment preferred HRC for the Phase 1 preflop floor: it can model the
 required cash or tournament economics, construct multi-player preflop trees,
 and export machine-readable strategies and EVs. A human operator can generate a
 bounded dataset through supported product functions, then Poker Hero can ship a
@@ -121,9 +166,9 @@ The rights dossier must still address:
 - publishing replacement policy revisions and migration artifacts; and
 - the intended attribution, repository visibility, and any key-specific terms.
 
-HRC is therefore **preferred for validation, not yet cleared for shipping**.
-Acquisition price appears bounded; solve-generation time, hardware, human
-review, coverage breadth, and recurring update cost are still unknown.
+HRC is **excluded by the current zero-fee decision**, despite its technical fit.
+Its documented export and rights are historical evidence, not a prerequisite
+for the next source assessment. No trial activation is required.
 
 ### PioSOLVER
 
@@ -155,8 +200,8 @@ embedded policy dataset, and they forbid an on-demand result service. Written
 static-embedding permission or a suitable commercial agreement is required.
 The published server license is a material recurring cost and would create a
 network dependency and remote-provider privacy work. PioSOLVER is therefore a
-**possible independent heads-up postflop checker, not the Phase 1 preflop
-source**.
+**historical heads-up postflop candidate, excluded by the current zero-fee
+decision**.
 
 ### MonkerSolver
 
@@ -182,8 +227,8 @@ MonkerSolver is technically plausible for multi-player preflop and possibly
 multiway postflop, but public evidence is weaker than HRC for an auditable,
 machine-readable export pipeline and much weaker for the selected delivery
 rights. Large-tree compute and reproducibility costs may also be substantial.
-It remains a **fallback candidate only after written commercial output and
-embedding rights plus a real export inspection**.
+It is **excluded by the current zero-fee decision**; it is not a replacement
+paid prerequisite if HRC is unavailable.
 
 ### GTO Wizard public benchmarking API
 
@@ -238,13 +283,13 @@ restored as a fallback while #412 is blocked.
 
 ## Comparison matrix
 
-| Candidate                | Potential coverage                                    | Delivery fit                                                | Public rights evidence                                                                                       | Cost evidence                                                       | Network and continuity risk                                                                                 | Phase 0 disposition                                      |
-| ------------------------ | ----------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| HRC Pro                  | Multi-player preflop; cash and tournament models      | Operator-generated static export fits local-first           | Published distribution grant for authorized results; actual source/key/delivery applicability review pending | USD 49.99/month or 359.90/year, plus unknown compute/review cost    | No player runtime network for a static lookup; generation depends on licensed product and vendor continuity | Preferred conditional preflop validation                 |
-| PioSOLVER                | Heads-up postflop; heads-up preflop in Edge           | Static HU corpus is possible; remote compute is undesirable | Personal result sharing allowed, on-demand service forbidden; complete dataset embedding unclear             | EUR 450 Pro, EUR 800 Edge; published server license EUR 5,000/month | Periodic license check; a server feed adds runtime network and privacy dependency                           | Reserve for independent HU postflop evidence             |
-| MonkerSolver             | Any street/player count advertised                    | Static exports may fit, but pipeline is unproven            | No explicit public commercial embedding/update grant found                                                   | EUR 499 plus potentially large hardware/time cost                   | Static lookup avoids player runtime network; vendor/account and long-solve continuity remain                | Fallback only after written rights and export inspection |
-| GTO Wizard benchmark API | 200-BB heads-up agent games, not solver policy access | Does not supply a lookup policy                             | Benchmark-only; extraction/distillation forbidden                                                            | Public benchmark access, not a licensable grading dataset           | Mandatory network, revocable access, public benchmarking data                                               | Reject                                                   |
-| Removed b-inary solver   | Historical heads-up postflop trees only               | Removed in #520                                             | AGPL-3.0; distribution compliance required                                                                   | No license fee; local compute cost                                  | No runtime network; upstream development suspended                                                          | Removed under ADR 0079; no fallback retention            |
+| Candidate                | Potential coverage                                    | Delivery fit                                                | Public rights evidence                                                                                       | Cost evidence                                                       | Network and continuity risk                                                                                 | Phase 0 disposition                           |
+| ------------------------ | ----------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| HRC Pro                  | Multi-player preflop; cash and tournament models      | Operator-generated static export fits local-first           | Published distribution grant for authorized results; actual source/key/delivery applicability review pending | USD 49.99/month or 359.90/year, plus unknown compute/review cost    | No player runtime network for a static lookup; generation depends on licensed product and vendor continuity | Excluded: zero-fee decision                   |
+| PioSOLVER                | Heads-up postflop; heads-up preflop in Edge           | Static HU corpus is possible; remote compute is undesirable | Personal result sharing allowed, on-demand service forbidden; complete dataset embedding unclear             | EUR 450 Pro, EUR 800 Edge; published server license EUR 5,000/month | Periodic license check; a server feed adds runtime network and privacy dependency                           | Excluded: zero-fee decision                   |
+| MonkerSolver             | Any street/player count advertised                    | Static exports may fit, but pipeline is unproven            | No explicit public commercial embedding/update grant found                                                   | EUR 499 plus potentially large hardware/time cost                   | Static lookup avoids player runtime network; vendor/account and long-solve continuity remain                | Excluded: zero-fee decision                   |
+| GTO Wizard benchmark API | 200-BB heads-up agent games, not solver policy access | Does not supply a lookup policy                             | Benchmark-only; extraction/distillation forbidden                                                            | Public benchmark access, not a licensable grading dataset           | Mandatory network, revocable access, public benchmarking data                                               | Reject                                        |
+| Removed b-inary solver   | Historical heads-up postflop trees only               | Removed in #520                                             | AGPL-3.0; distribution compliance required                                                                   | No license fee; local compute cost                                  | No runtime network; upstream development suspended                                                          | Removed under ADR 0079; no fallback retention |
 
 ## Proposed Phase 1 coverage and delivery boundary
 
@@ -273,8 +318,8 @@ A request outside that manifest returns an explicit unsupported result. It is
 never coerced to the nearest position, stack, size, or economic model.
 
 The delivery artifact is a versioned static lookup installed with the local
-application. Policy generation may use a licensed desktop solver, but neither
-the solver binary nor license key is shipped. Phase 1 makes no solved-data
+application. Policy generation uses an eligible no-fee offline source under
+ADR 0081; no solver binary or license key is shipped. Phase 1 makes no solved-data
 request at runtime and therefore adds no player-data egress. A remote feed may
 be reconsidered only in a later decision with explicit commercial serving
 rights, a field allowlist, consent and revocation UX, encrypted transport,
@@ -306,13 +351,13 @@ audited consistently.
 1. `coverage-manifest.json`: the complete inclusion and exclusion matrix above,
    plus a stable node-key specification.
 2. `rights-dossier/`: dated applicable terms snapshots and checksums,
-   purchase/key-specific conditions, source ownership/licensee evidence,
+   applicable code/data/output licenses, source ownership/producer evidence,
    attribution requirements, and reviewer approval mapping granted rights to
    the actual embedding, redistribution, commercial-use, and update mode.
    Include vendor correspondence only when needed to resolve a material
    uncovered or ambiguous use; sufficient applicable published terms do not
    require a separate letter.
-3. `source-build.json`: solver product/tier, exact version/build, license owner,
+3. `source-build.json`: solver/project, exact revision/build, source/rights owner,
    export path, generation host, hardware, date, and operator.
 4. `solve-configs/`: one immutable input configuration per tree, covering the
    full bet tree, stack/table/position map, card and postflop abstraction,
@@ -364,7 +409,7 @@ remain separate requirements.
 
 ## Proposed benchmark gates
 
-These thresholds are requirements for the HRC-derived lookup validation, not
+These thresholds are requirements for any qualified static lookup, not
 claims about a benchmark that has already run.
 
 ### Artifact and route integrity
@@ -407,9 +452,10 @@ claims about a benchmark that has already run.
   lookup must still be 100% correct within its declared coverage. Coverage below
   the floor may `reshape` to a narrower explicitly useful product only with
   poker-player approval; it may never be hidden by coercion.
-- License, generation, review, storage, and update costs fit a written budget
-  approved before bulk generation. A public sticker price alone does not pass
-  this test.
+- Mandatory solver, dataset and external-service fees are zero, including
+  regeneration and updates. Generation, review, storage and maintenance fit a
+  recorded existing-hardware and available-review capacity plan before bulk
+  generation. A free license alone does not pass this feasibility test.
 
 The removed screenshot benchmark's example thresholds are historical V1
 regression defaults, not the native V2 source-certification gates. The stricter
@@ -460,30 +506,16 @@ retention/use bounds, revocation, auditability, and a usable local-only mode.
 Do not substitute the removed V1 chart/solver output, configured ranges,
 or an unauthorized/public benchmark API when a gate fails.
 
-## Outstanding external work
+## Outstanding source work
 
-Issue #412 and the Phase 0 grading gate remain open. The next evidence-producing
-steps are:
+Resume [R0a](#r0a-execution-and-exit) under #412. A candidate's actual supported
+artifact replaces the HRC-specific JSON prerequisite. Once R0a identifies an
+eligible source, freeze the exact field/unit/convergence mapping, independent
+review method, rights and resource plan. Final route coverage depends on #409.
+Then implement and certify R1 → R2 → R3 → R4 as specified in the Epic.
 
-1. Assign an evidence custodian/generating operator and review the applicable
-   terms for the exact static delivery, source ownership, key, attribution and
-   update plan. Retain dated terms/checksums and any needed clarification.
-2. Obtain one complete, authorized `Export Strategies` JSON from a licensed
-   operator, with its actual version/build, setup and convergence metadata.
-   One tree starts export inspection; it does not complete representative
-   coverage. No qualifying downloadable complete export has been verified in
-   the recorded investigation. Configuration-only JSON or a viewer save does
-   not substitute.
-3. Inspect the raw JSON for complete strategies, exact sizes, frequencies, EVs,
-   unit/utility provenance, configuration identity, and convergence evidence.
-4. Select the initial economic and route matrix from the real target-user corpus,
-   then freeze the coverage manifest and solver-quality threshold.
-5. Build the normalizer and V2 benchmark schema, have a poker-qualified reviewer
-   validate configurations, and run the real source, stability, negative-boundary,
-   lookup, and real-hand coverage benchmarks.
-6. Record actual acquisition, compute, review, artifact-size, and update costs,
-   then publish the Phase 0 `go`, `reshape`, or `stop` recommendation.
-
-PioSOLVER or MonkerSolver outreach should begin only if HRC permission, exports,
-or benchmark quality fail, or if independently sourced heads-up postflop coverage
-is pursued. No vendor has been selected by this report.
+No paid supplier or trial is pending. Source feasibility, independent poker
+review and full useful-coverage evidence remain unresolved; the zero-fee owner
+decision supplies a budget ceiling, not a source certificate. #412 supplies its
+recommendation; #414 owns the final gate decision. Do not contact paid vendors or
+restore the old chart/solver as a workaround.
