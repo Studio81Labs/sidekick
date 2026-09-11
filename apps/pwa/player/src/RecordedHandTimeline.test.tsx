@@ -21,6 +21,26 @@ describe("RecordedHandTimeline", () => {
         source_file_id: "detected-file",
         hand_ordinal: 7,
       },
+      results: {
+        stated_pot: backendProducedState.results?.stated_pot ?? null,
+        awards: backendProducedState.results?.awards ?? [],
+        players: backendProducedState.results?.players ?? [],
+        showdown: [
+          {
+            player_id: "villain",
+            cards: [],
+            disposition: "shown",
+            evidence: [
+              {
+                raw_source_id: "file-1",
+                line_start: 1,
+                line_end: 1,
+                marker: null,
+              },
+            ],
+          },
+        ],
+      },
       seats: backendProducedState.seats.map((seat) =>
         seat.player_id === "villain"
           ? { ...seat, participation: "sitting_out" }
@@ -115,9 +135,12 @@ describe("RecordedHandTimeline", () => {
     ).toHaveLength(4);
     expect(screen.getAllByText(/Gross pot: 2 USD/)).toHaveLength(1);
     expect(screen.getAllByText(/Gross pot: 2 chips/)).toHaveLength(1);
-    expect(screen.getAllByText(/Cash economics · currency USD/)).toHaveLength(
-      1,
-    );
+    expect(
+      screen.getByText(/Cash economics · currency USD · rake percentage 5%/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/villain · shown · cards not recorded/),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Tournament economics · id tournament-1/),
     ).toBeInTheDocument();

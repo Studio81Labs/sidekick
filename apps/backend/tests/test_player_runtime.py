@@ -808,6 +808,85 @@ def test_player_hand_review_preview_validates_without_writing_or_exposing_excerp
     assert after == before
 
 
+def test_player_review_restores_excerpt_only_evidence_before_validation(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    state_payload = record.detections[0].state.model_dump()
+    source_locator = {
+        "raw_source_id": record.detections[0].raw_source_id,
+        "excerpt": RAW_TEXT.rstrip("\n"),
+    }
+    state_payload["streets"][0]["actions"] = [
+        {
+            "sequence": 0,
+            "actor_id": "hero",
+            "action_type": "check",
+            "amount": None,
+            "total_committed": Decimal(0),
+            "all_in": False,
+            "origin": {
+                "kind": "player_selected",
+                "basis": "explicit_marker",
+                "evidence": [source_locator],
+            },
+            "evidence": [source_locator],
+        }
+    ]
+    detected_state = ImportedHandState.model_validate(state_payload)
+    detection = record.detections[0].model_copy(
+        update={
+            "state": detected_state,
+            "content_sha256": imported_hand_state_sha256(detected_state),
+        }
+    )
+    record = record.model_copy(update={"detections": [detection]})
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    approved_state = detected_state.model_dump(mode="json")
+    approved_action = approved_state["streets"][0]["actions"][0]
+    approved_action["evidence"][0].pop("excerpt")
+    approved_action["origin"]["evidence"][0].pop("excerpt")
+    preview = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=hand_review_preview_payload(
+            record,
+            approved_state=approved_state,
+            correction_reason=None,
+        ),
+        headers=player_mutation_headers(session),
+    )
+    approval = client.post(
+        f"/api/player/hands/{key}/approve",
+        json=hand_approval_payload(
+            record,
+            approved_state=approved_state,
+            correction_reason=None,
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["valid"] is True
+    assert approval.status_code == 200
+    approved_action = approval.json()["canonical_revisions"][-1]["state"]["streets"][
+        0
+    ]["actions"][0]
+    assert approved_action["evidence"][0] == {
+        "raw_source_id": detection.raw_source_id,
+        "line_start": None,
+        "line_end": None,
+        "marker": None,
+    }
+    assert RAW_TEXT.rstrip("\n") not in approval.text
+    stored = runtime.workspace.imported_hands.get(key)
+    assert stored.canonical_revisions[-1].state.streets[0].actions[0].evidence[
+        0
+    ].excerpt == RAW_TEXT.rstrip("\n")
+
+
 def test_player_hand_review_preview_reports_safe_draft_errors_and_stale_state(
     tmp_path: Path,
 ) -> None:

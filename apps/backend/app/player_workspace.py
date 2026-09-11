@@ -2346,17 +2346,22 @@ class PlayerWorkspace:
         reviewed_state = _review_state_with_derived_structural_positions(
             request.approved_state
         )
-        normalized_reviewed_state = ImportedHandState.model_validate_json(
-            json.dumps(reviewed_state, ensure_ascii=False, separators=(",", ":"))
-        )
         correction_reason = request.correction_reason
-        if (
-            correction_reason is None
-            and detection.state != normalized_detection_state
-            and sanitized_player_hand_state(normalized_detection_state)
-            == sanitized_player_hand_state(normalized_reviewed_state)
-        ):
-            correction_reason = "Structural positions derived from the reviewed ring"
+        if correction_reason is None:
+            restored_review = canonical_revision_from_review(
+                detection,
+                approval_id=request.request_id,
+                revision=revision,
+                approved_at=approved_at,
+                approved_state=reviewed_state,
+                correction_reason="Structural positions derived from the reviewed ring",
+            )
+            if (
+                detection.state != normalized_detection_state
+                and sanitized_player_hand_state(normalized_detection_state)
+                == sanitized_player_hand_state(restored_review.state)
+            ):
+                correction_reason = "Structural positions derived from the reviewed ring"
         return canonical_revision_from_review(
             detection,
             approval_id=request.request_id,

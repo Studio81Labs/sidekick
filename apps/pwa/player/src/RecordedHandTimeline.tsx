@@ -1,4 +1,5 @@
 import type { ImportedHandState, PlayerHandDetail } from "./playerApi";
+import { unitIntervalPercentage } from "./playerDecimal";
 
 interface RecordedState {
   label: string;
@@ -38,6 +39,12 @@ function lineLocation(evidence: {
 
 function amount(value: string | null, unit: string): string {
   return value === null ? "not recorded" : value + " " + unit;
+}
+
+function percentage(value: string | null): string {
+  if (value === null) return "not recorded";
+  const formatted = unitIntervalPercentage(value);
+  return formatted === null ? "unavailable" : formatted + "%";
 }
 
 function cardLabel(card: { rank: string; suit: string }): string {
@@ -102,7 +109,7 @@ function RecordedEconomics({
       {economics.kind === "cash" ? (
         <p>
           Cash economics · currency {economics.currency ?? "not recorded"} ·{" "}
-          rake percentage {economics.rake?.percentage ?? "not recorded"} · cap{" "}
+          rake percentage {percentage(economics.rake?.percentage ?? null)} · cap{" "}
           {amount(economics.rake?.cap ?? null, monetaryUnit)} · fixed drop{" "}
           {amount(economics.rake?.fixed_drop ?? null, monetaryUnit)}
           {economics.rake?.description
@@ -350,7 +357,7 @@ function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
                   {readable(showdown.disposition)}
                   {showdown.cards.length > 0
                     ? " · cards " + showdown.cards.map(cardLabel).join(", ")
-                    : ""}
+                    : " · cards not recorded"}
                   <ul className="recorded-evidence">
                     {showdown.evidence.map((evidence, evidenceIndex) => (
                       <li
