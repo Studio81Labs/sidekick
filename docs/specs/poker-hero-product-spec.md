@@ -599,15 +599,18 @@ and updates. Use freely obtainable licensed solved data or independently
 validated results generated offline with free software on existing hardware.
 Paid solvers and time-limited trials are not prerequisites. Record realistic
 local compute and review capacity before bulk generation. This does not waive
-any source, coverage, rights or learning-quality gate; a narrower product needs
-an explicit decision if the constraint cannot support the current scope.
-[ADR 0081](../decisions/0081-require-no-fee-reference-sourcing.md) records this
-sourcing decision; no free source is yet qualified.
+any source, coverage, rights or learning-quality gate.
+[ADR 0081](../decisions/0081-require-no-fee-reference-sourcing.md) records the
+zero-fee decision. ADR 0082 now explicitly defers learning and permits the
+review-first release; the source gates in this section are future #406/#412
+entry requirements, not #405/#414 review-release dependencies. No free source
+is yet qualified.
 
 - **Preflop** — tractable and comparatively cheap to solve, but not yet backed by
   a mastery-gradeable reference in the current implementation. ADR 0079 removes
-  the V1 chart and fallback rather than retaining heuristic output. Phase 0 must
-  source and benchmark an independently solved position-aware policy (RFI,
+  the V1 chart and fallback rather than retaining heuristic output. Before future
+  learning entry, #412 must source and benchmark an independently solved
+  position-aware policy (RFI,
   vs-RFI, vs-3bet, blind defense, squeeze, cold-call, short-stack) with explicit
   table-size, structural position, stack-depth, sizing, economic, and
   mixed-policy boundaries. Structured history is authoritative: any supplied
