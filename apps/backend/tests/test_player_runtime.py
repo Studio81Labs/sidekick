@@ -30,6 +30,7 @@ from app.data_lock import (
 )
 from app.domain.imported_hands import (
     ImportedHandState,
+    derive_structural_positions,
     extract_hero_decision_points,
     imported_hand_state_sha256,
 )
@@ -53,7 +54,7 @@ from app.player_runtime import (
     PLAYER_SECRET_FILENAME,
     PlayerAssetError,
     PlayerCredentialError,
-    PlayerImportBodyLimitMiddleware,
+    PlayerBodyLimitMiddleware,
     PlayerRuntime,
     PlayerSessionAuthority,
     create_player_runtime,
@@ -64,6 +65,7 @@ from app.player_workspace import (
     PLAYER_WORKSPACE_LAYOUT_VERSION,
     PLAYER_WORKSPACE_MANIFEST_FILENAME,
     PlayerDataDirectoryError,
+    PlayerHandRecoveryRequired,
     PlayerWorkspace,
     _macos_extended_acl_has_entries,
 )
@@ -116,9 +118,10 @@ REIMPORT_REQUEST_ID = "77777777-7777-4777-8777-777777777777"
     [
         "/api/player/imports",
         f"/api/player/hands/{'a' * 64}/reimport",
+        f"/api/player/hands/{'a' * 64}/review-preview",
     ],
 )
-def test_player_import_body_limit_rejects_a_chunk_before_copying_it(
+def test_player_request_body_limit_rejects_a_chunk_before_copying_it(
     path: str,
 ) -> None:
     downstream_called = False
@@ -154,7 +157,11 @@ def test_player_import_body_limit_rejects_a_chunk_before_copying_it(
     }
 
     asyncio.run(
-        PlayerImportBodyLimitMiddleware(downstream, limit=16)(
+        PlayerBodyLimitMiddleware(
+            downstream,
+            limit=16,
+            review_preview_limit=16,
+        )(
             scope,
             receive,
             send,
@@ -164,6 +171,26 @@ def test_player_import_body_limit_rejects_a_chunk_before_copying_it(
     assert downstream_called is False
     assert sent[0]["type"] == "http.response.start"
     assert sent[0]["status"] == 413
+
+
+def test_player_review_preview_body_limit_rejects_content_length_before_parsing(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(
+        tmp_path,
+        max_player_hand_review_preview_bytes=16,
+    )
+    session = exchange_session(client, runtime)
+
+    response = client.post(
+        f"/api/player/hands/{'a' * 64}/review-preview",
+        content=b"x" * 17,
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 413
+    assert response.json() == {"detail": "The review preview body is too large"}
+    assert runtime.workspace.imported_hands.list_keys() == []
 
 
 def test_frozen_player_runtime_uses_embedded_assets(
@@ -267,6 +294,27 @@ def hand_approval_payload(
         "expected_canonical_revision_count": len(record.canonical_revisions),
         "expected_deletion_generation": lifecycle.deletion_generation,
         "expected_lifecycle_changed_at": lifecycle.changed_at.isoformat(),
+    }
+
+
+def hand_review_preview_payload(
+    record,
+    *,
+    approved_state: dict[str, object],
+    correction_reason: str | None,
+    draft_revision: int = 0,
+    request_id: str = APPROVAL_REQUEST_ID,
+    detection_id: str | None = None,
+) -> dict[str, object]:
+    return {
+        **hand_approval_payload(
+            record,
+            approved_state=approved_state,
+            correction_reason=correction_reason,
+            request_id=request_id,
+            detection_id=detection_id,
+        ),
+        "draft_revision": draft_revision,
     }
 
 
@@ -593,6 +641,419 @@ def test_player_hand_approval_publishes_reviewed_state_and_is_idempotent(
     stored = runtime.workspace.imported_hands.get(key)
     assert stored.canonical_revisions[0].approval_id == APPROVAL_REQUEST_ID
     assert runtime.workspace.imported_hands.active_decisions(key) is not None
+
+
+def test_player_hand_review_preview_validates_without_writing_or_exposing_excerpts(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    state_payload = record.detections[0].state.model_dump()
+    source_locator = {
+        "raw_source_id": record.detections[0].raw_source_id,
+        "line_start": 1,
+        "excerpt": RAW_TEXT.rstrip("\n"),
+    }
+    state_payload["streets"][0]["actions"] = [
+        {
+            "sequence": 0,
+            "actor_id": "hero",
+            "action_type": "check",
+            "amount": None,
+            "total_committed": Decimal(0),
+            "all_in": False,
+            "origin": {
+                "kind": "player_selected",
+                "basis": "explicit_marker",
+                "evidence": [source_locator],
+            },
+            "evidence": [source_locator],
+        }
+    ]
+    detected_state = ImportedHandState.model_validate(state_payload)
+    detection = record.detections[0].model_copy(
+        update={
+            "state": detected_state,
+            "content_sha256": imported_hand_state_sha256(detected_state),
+        }
+    )
+    record = record.model_copy(update={"detections": [detection]})
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    approved_state = detected_state.model_dump(mode="json")
+    approved_action = approved_state["streets"][0]["actions"][0]
+    approved_action["evidence"][0].pop("excerpt")
+    approved_action["origin"]["evidence"][0].pop("excerpt")
+    before = {
+        path.relative_to(runtime.workspace.imported_hands.records_dir): path.read_bytes()
+        for path in runtime.workspace.imported_hands.records_dir.rglob("*")
+        if path.is_file()
+    }
+    payload = hand_review_preview_payload(
+        record,
+        approved_state=approved_state,
+        correction_reason=None,
+        draft_revision=4,
+    )
+    unauthorized = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=payload,
+        headers={"Origin": PLAYER_ORIGIN},
+    )
+    missing_csrf = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {session['session_token']}",
+            "Origin": PLAYER_ORIGIN,
+        },
+    )
+
+    first = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+    retry = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=payload,
+        headers=player_mutation_headers(session),
+    )
+    private_evidence = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=hand_review_preview_payload(
+            record,
+            approved_state=detected_state.model_dump(mode="json"),
+            correction_reason=None,
+            draft_revision=5,
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert unauthorized.status_code == 401
+    assert missing_csrf.status_code == 403
+    assert first.status_code == 200
+    assert first.headers["Cache-Control"] == "no-store"
+    assert retry.status_code == 200
+    assert retry.json() == first.json()
+    assert private_evidence.status_code == 200
+    assert private_evidence.json()["valid"] is False
+    assert private_evidence.json()["reviewed_state"] is None
+    assert private_evidence.json()["field_errors"] == [
+        {
+            "pointer": "/approved_state",
+            "code": "private_source_excerpt",
+            "message": "The reviewed state cannot supply private source excerpts.",
+        }
+    ]
+    assert RAW_TEXT.rstrip("\n") not in private_evidence.text
+    preview = first.json()
+    assert preview == {
+        "schema_version": "player-hand-review-preview/v1",
+        "request_id": APPROVAL_REQUEST_ID,
+        "draft_revision": 4,
+        "record_key": key,
+        "record_version": player_hand_record_version(record),
+        "detection_id": detection.detection_id,
+        "valid": True,
+        "reviewed_state": {
+            **approved_state,
+            "streets": [
+                {
+                    **approved_state["streets"][0],
+                    "actions": [
+                        {
+                            **approved_state["streets"][0]["actions"][0],
+                            "origin": {
+                                **approved_state["streets"][0]["actions"][0][
+                                    "origin"
+                                ],
+                                "evidence": [
+                                    {
+                                        "raw_source_id": detection.raw_source_id,
+                                        "line_start": 1,
+                                        "line_end": None,
+                                        "marker": None,
+                                    }
+                                ],
+                            },
+                            "evidence": [
+                                {
+                                    "raw_source_id": detection.raw_source_id,
+                                    "line_start": 1,
+                                    "line_end": None,
+                                    "marker": None,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ],
+        },
+        "warnings": [
+            "Review hero identity",
+            "/hero_player_id: Hero line was absent",
+        ],
+        "field_errors": [],
+    }
+    assert RAW_TEXT.rstrip("\n") not in first.text
+    assert runtime.workspace.imported_hands.get(key) == record
+    assert runtime.workspace.imported_hands.active_decisions(key) is None
+    after = {
+        path.relative_to(runtime.workspace.imported_hands.records_dir): path.read_bytes()
+        for path in runtime.workspace.imported_hands.records_dir.rglob("*")
+        if path.is_file()
+    }
+    assert after == before
+
+
+def test_player_hand_review_preview_reports_safe_draft_errors_and_stale_state(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    headers = player_mutation_headers(session)
+    changed_state = record.detections[0].state.model_dump(mode="json")
+    changed_state["hero_player_id"] = "hero"
+    invalid_state = record.detections[0].state.model_dump(mode="json")
+    invalid_state["game"]["blinds"]["small_blind"] = "-1"
+
+    missing_reason = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=hand_review_preview_payload(
+            record,
+            approved_state=changed_state,
+            correction_reason=None,
+            draft_revision=8,
+        ),
+        headers=headers,
+    )
+    invalid_hand = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=hand_review_preview_payload(
+            record,
+            approved_state=invalid_state,
+            correction_reason="Reviewed source evidence",
+            draft_revision=9,
+        ),
+        headers=headers,
+    )
+    malformed = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json={
+            **hand_review_preview_payload(
+                record,
+                approved_state=changed_state,
+                correction_reason="Reviewed source evidence",
+            ),
+            "draft_revision": "8",
+            "private_excerpt": RAW_TEXT.rstrip("\n"),
+        },
+        headers=headers,
+    )
+    changed = record.model_copy(
+        update={
+            "lifecycle": record.lifecycle.model_copy(
+                update={"reason": "Newer retained review event"}
+            )
+        }
+    )
+    runtime.workspace.imported_hands.save(key, changed)
+    stale = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=hand_review_preview_payload(
+            record,
+            approved_state=changed_state,
+            correction_reason="Reviewed source evidence",
+        ),
+        headers=headers,
+    )
+
+    assert missing_reason.status_code == 200
+    assert missing_reason.json() == {
+        "schema_version": "player-hand-review-preview/v1",
+        "request_id": APPROVAL_REQUEST_ID,
+        "draft_revision": 8,
+        "record_key": key,
+        "record_version": player_hand_record_version(record),
+        "detection_id": "detection-1",
+        "valid": False,
+        "reviewed_state": None,
+        "warnings": [
+            "Review hero identity",
+            "/hero_player_id: Hero line was absent",
+        ],
+        "field_errors": [
+            {
+                "pointer": "/correction_reason",
+                "code": "correction_reason_required",
+                "message": "A correction reason is required for a changed reviewed state.",
+            }
+        ],
+    }
+    assert invalid_hand.status_code == 200
+    assert invalid_hand.json()["valid"] is False
+    assert invalid_hand.json()["reviewed_state"] is None
+    assert {
+        (error["pointer"], error["code"], error["message"])
+        for error in invalid_hand.json()["field_errors"]
+    } == {
+        (
+            "/approved_state/game/blinds/small_blind",
+            "invalid_value",
+            "This field has an invalid value.",
+        )
+    }
+    assert malformed.status_code == 422
+    assert malformed.json() == {"detail": "Review preview request is invalid"}
+    assert RAW_TEXT.rstrip("\n") not in malformed.text
+    assert stale.status_code == 409
+    assert "retained hand changed" in stale.json()["detail"]
+    assert runtime.workspace.imported_hands.get(key) == changed
+
+
+def test_player_review_preview_and_approval_derive_reviewed_positions(
+    tmp_path: Path,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    record = pending_review_record()
+    initial_state = record.detections[0].state.model_dump()
+    initial_state["game"]["table_size"] = 3
+    initial_state["button_seat"] = 1
+    initial_state["game"]["blinds"] = {
+        "small_blind": None,
+        "big_blind": None,
+        "ante": None,
+    }
+    initial_state["seats"].append(
+        {
+            "seat_number": 3,
+            "player_id": "third-player",
+            "starting_stack": Decimal("100"),
+            "participation": "dealt_in",
+        }
+    )
+    detected_state = ImportedHandState.model_validate(initial_state)
+    initial_positions = derive_structural_positions(detected_state.seats, 1)
+    detected_state = ImportedHandState.model_validate(
+        {
+            **detected_state.model_dump(),
+            "seats": [
+                {
+                    **seat.model_dump(),
+                    "position": initial_positions[seat.seat_number].model_dump(),
+                }
+                for seat in detected_state.seats
+            ],
+        }
+    )
+    detection = record.detections[0].model_copy(
+        update={
+            "state": detected_state,
+            "content_sha256": imported_hand_state_sha256(detected_state),
+        }
+    )
+    record = record.model_copy(update={"detections": [detection]})
+    key = imported_hand_record_key(record.identity)
+    runtime.workspace.imported_hands.save(key, record)
+    session = exchange_session(client, runtime)
+    reviewed_state = detected_state.model_dump(mode="json")
+    reviewed_state["button_seat"] = 2
+    reviewed_state["seats"][2]["participation"] = "sitting_out"
+    reviewed_seats = [
+        seat.model_copy(
+            update=(
+                {"participation": "sitting_out", "position": None}
+                if seat.player_id == "third-player"
+                else {}
+            )
+        )
+        for seat in detected_state.seats
+    ]
+    expected_positions = {
+        seat_number: position.model_dump(mode="json")
+        for seat_number, position in derive_structural_positions(
+            reviewed_seats,
+            2,
+        ).items()
+    }
+    expected_positions[3] = None
+    preview_payload = hand_review_preview_payload(
+        record,
+        approved_state=reviewed_state,
+        correction_reason="Button corrected from reviewed source evidence",
+        draft_revision=3,
+    )
+
+    preview = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=preview_payload,
+        headers=player_mutation_headers(session),
+    )
+    approval = client.post(
+        f"/api/player/hands/{key}/approve",
+        json=hand_approval_payload(
+            record,
+            approved_state=reviewed_state,
+            correction_reason="Button corrected from reviewed source evidence",
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert preview.status_code == 200
+    assert preview.json()["valid"] is True
+    assert {
+        seat["seat_number"]: seat["position"]
+        for seat in preview.json()["reviewed_state"]["seats"]
+    } == expected_positions
+    assert approval.status_code == 200
+    assert {
+        seat["seat_number"]: seat["position"]
+        for seat in approval.json()["canonical_revisions"][-1]["state"]["seats"]
+    } == expected_positions
+
+
+def test_player_hand_review_preview_reports_recovery_without_raw_input(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, runtime = player_client(tmp_path)
+    session = exchange_session(client, runtime)
+    record = pending_review_record()
+    key = imported_hand_record_key(record.identity)
+
+    def require_recovery(*_args: object, **_kwargs: object) -> None:
+        raise PlayerHandRecoveryRequired(
+            "private source evidence must not be included in this response"
+        )
+
+    monkeypatch.setattr(
+        PlayerWorkspace,
+        "preview_hand_review",
+        require_recovery,
+    )
+    response = client.post(
+        f"/api/player/hands/{key}/review-preview",
+        json=hand_review_preview_payload(
+            record,
+            approved_state=record.detections[0].state.model_dump(mode="json"),
+            correction_reason=None,
+        ),
+        headers=player_mutation_headers(session),
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": (
+            "This hand has an interrupted lifecycle write; restart the local "
+            "player runtime so recovery can finish"
+        )
+    }
+    assert RAW_TEXT.rstrip("\n") not in response.text
 
 
 @pytest.mark.parametrize("source_status", ["active", "withdrawn", "rejected"])
@@ -3675,6 +4136,7 @@ def test_player_server_accepts_loopback_and_refuses_the_lan_interface(
         "/api/player/imports",
         f"/api/player/hands/{'a' * 64}/reject",
         f"/api/player/hands/{'a' * 64}/approve",
+        f"/api/player/hands/{'a' * 64}/review-preview",
         f"/api/player/hands/{'a' * 64}/conflicts/conflict-1/resolve",
         f"/api/player/hands/{'a' * 64}/delete",
         "/api%2Fplayer%2Fimports",

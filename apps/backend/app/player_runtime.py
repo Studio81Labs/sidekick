@@ -49,6 +49,7 @@ from app.player_hands import (
     DEFAULT_PLAYER_HAND_PAGE_SIZE,
     MAX_PLAYER_HAND_PAGE_SIZE,
     PlayerHandApprovalRequest,
+    PlayerHandReviewPreviewRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
     PlayerHandConflictResolutionRequest,
@@ -109,6 +110,7 @@ PLAYER_AUTHORITY = f"{PLAYER_HOST}:{PLAYER_PORT}"
 PLAYER_ORIGIN = f"http://{PLAYER_AUTHORITY}"
 PLAYER_SECRET_FILENAME = ".player-runtime-key"
 PLAYER_IMPORT_MULTIPART_OVERHEAD_BYTES = 256 * 1024
+PLAYER_HAND_REVIEW_PREVIEW_MAX_BYTES = 1024 * 1024
 
 
 def default_player_assets_dir() -> Path:
@@ -495,8 +497,13 @@ def _is_player_import_upload_path(path: str) -> bool:
     return path.startswith(prefix) and path.endswith("/reimport")
 
 
-class PlayerImportBodyLimitMiddleware:
-    """Bound the raw multipart body before Starlette can spool file parts."""
+def _is_player_hand_review_preview_path(path: str) -> bool:
+    prefix = f"{PLAYER_API_PREFIX}/hands/"
+    return path.startswith(prefix) and path.endswith("/review-preview")
+
+
+class PlayerBodyLimitMiddleware:
+    """Bound player request bodies before Starlette buffers or spools them."""
 
     def __init__(
         self,
@@ -504,10 +511,12 @@ class PlayerImportBodyLimitMiddleware:
         *,
         limit: int,
         reimport_limit: int | None = None,
+        review_preview_limit: int = PLAYER_HAND_REVIEW_PREVIEW_MAX_BYTES,
     ) -> None:
         self.app = app
         self.limit = limit
         self.reimport_limit = reimport_limit if reimport_limit is not None else limit
+        self.review_preview_limit = review_preview_limit
 
     async def __call__(
         self,
@@ -515,19 +524,23 @@ class PlayerImportBodyLimitMiddleware:
         receive: Receive,
         send: Send,
     ) -> None:
-        if not (
-            scope["type"] == "http"
-            and scope.get("method", "").upper() == "POST"
-            and _is_player_import_upload_path(scope.get("path", ""))
-        ):
+        if scope["type"] != "http" or scope.get("method", "").upper() != "POST":
             await self.app(scope, receive, send)
             return
 
-        body_limit = (
-            self.reimport_limit
-            if scope.get("path", "").endswith("/reimport")
-            else self.limit
-        )
+        path = scope.get("path", "")
+        if _is_player_import_upload_path(path):
+            body_limit = (
+                self.reimport_limit if path.endswith("/reimport") else self.limit
+            )
+            too_large_detail = "The player import body is too large"
+        elif _is_player_hand_review_preview_path(path):
+            body_limit = self.review_preview_limit
+            too_large_detail = "The review preview body is too large"
+        else:
+            await self.app(scope, receive, send)
+            return
+
         content_lengths = _header_values(scope, b"content-length")
         if len(content_lengths) > 1:
             await _json_denial(400, "Content-Length must be unambiguous")(
@@ -549,11 +562,7 @@ class PlayerImportBodyLimitMiddleware:
                 )
                 return
             if declared_length > body_limit:
-                await _json_denial(413, "The player import body is too large")(
-                    scope,
-                    receive,
-                    send,
-                )
+                await _json_denial(413, too_large_detail)(scope, receive, send)
                 return
 
         body = bytearray()
@@ -565,11 +574,7 @@ class PlayerImportBodyLimitMiddleware:
                 continue
             chunk = message.get("body", b"")
             if len(chunk) > body_limit - len(body):
-                await _json_denial(413, "The player import body is too large")(
-                    scope,
-                    receive,
-                    send,
-                )
+                await _json_denial(413, too_large_detail)(scope, receive, send)
                 return
             body.extend(chunk)
             if not message.get("more_body", False):
@@ -917,6 +922,7 @@ def create_player_runtime(
     max_player_import_file_bytes: int = MAX_PLAYER_IMPORT_FILE_BYTES,
     max_player_import_batch_bytes: int = MAX_PLAYER_IMPORT_BATCH_BYTES,
     max_player_import_files: int = MAX_PLAYER_IMPORT_FILES,
+    max_player_hand_review_preview_bytes: int = PLAYER_HAND_REVIEW_PREVIEW_MAX_BYTES,
     remote_reference_provider_policy: RemoteReferenceProviderPolicy | None = None,
 ) -> PlayerRuntime:
     player_assets = validate_player_assets(player_assets_dir)
@@ -1351,6 +1357,50 @@ def create_player_runtime(
                 )
         return JSONResponse(payload.model_dump(mode="json"))
 
+    @app.post(f"{PLAYER_API_PREFIX}/hands/{{record_key}}/review-preview")
+    async def preview_player_hand_review(
+        request: Request,
+        record_key: str,
+    ) -> JSONResponse:
+        """Validate a review draft without publishing a canonical revision."""
+
+        try:
+            body = PlayerHandReviewPreviewRequest.model_validate(
+                await request.json()
+            )
+        except (ValueError, ValidationError):
+            return _json_denial(422, "Review preview request is invalid")
+        async with restore_access_gate.operation():
+            if not sessions.authorize(request.state.player_session_token):
+                return _json_denial(401, "Unauthorized")
+            try:
+                payload = await run_in_threadpool(
+                    workspace.preview_hand_review,
+                    record_key,
+                    request=body,
+                    at=datetime.now(timezone.utc),
+                    lock_timeout_seconds=write_lock_timeout_seconds,
+                )
+            except ImportedHandNotFoundError:
+                return _json_denial(404, "Imported hand record not found")
+            except PlayerHandTransitionConflict as exc:
+                return _json_denial(409, str(exc))
+            except DataLockTimeoutError as exc:
+                return _json_denial(409, str(exc))
+            except (PendingCascadeError, PlayerHandRecoveryRequired):
+                return _json_denial(
+                    503,
+                    "This hand has an interrupted lifecycle write; restart the "
+                    "local player runtime so recovery can finish",
+                )
+            except (DataLockError, OSError):
+                return _json_denial(
+                    500,
+                    "Review preview did not finish safely; refresh the hand "
+                    "before retrying",
+                )
+        return JSONResponse(payload.model_dump(mode="json"))
+
     @app.post(
         f"{PLAYER_API_PREFIX}/hands/{{record_key}}/conflicts/"
         "{conflict_id}/resolve"
@@ -1740,7 +1790,7 @@ def create_player_runtime(
     async def player_icon(asset_path: str) -> Response:
         return _player_public_asset_response(player_assets, "icons", asset_path)
 
-    bounded_app: ASGIApp = PlayerImportBodyLimitMiddleware(
+    bounded_app: ASGIApp = PlayerBodyLimitMiddleware(
         app,
         limit=(
             max_player_import_batch_bytes
@@ -1750,6 +1800,7 @@ def create_player_runtime(
             max_player_import_file_bytes
             + PLAYER_IMPORT_MULTIPART_OVERHEAD_BYTES
         ),
+        review_preview_limit=max_player_hand_review_preview_bytes,
     )
     secured_app: ASGIApp = PlayerApiSessionMiddleware(bounded_app, sessions)
     secured_app = PlayerNetworkBoundaryMiddleware(

@@ -14,12 +14,13 @@ from stat import S_ISDIR, S_ISREG
 import sys
 import tempfile
 from threading import Lock
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     ValidationError,
     field_validator,
 )
@@ -52,12 +53,16 @@ from app.data_lock import (
 )
 from app.domain.imported_hands import (
     CanonicalHandRevision,
+    DetectedImportedHand,
     DeletionReceipt,
     HandDecisionExtraction,
     ImportConflict,
     ImportedHandLifecycle,
     ImportedHandRecord,
+    ImportedSeat,
+    ImportedHandState,
     canonical_revision_from_review,
+    derive_structural_positions,
     extract_hero_decision_points,
 )
 from app.domain.remote_references import RemoteReferenceProviderPolicy
@@ -74,6 +79,9 @@ from app.player_grade_audit import (
 from app.player_hands import (
     PlayerActiveHandDecisions,
     PlayerHandApprovalRequest,
+    PlayerHandReviewPreview,
+    PlayerHandReviewPreviewFieldError,
+    PlayerHandReviewPreviewRequest,
     PlayerHandCloseAction,
     PlayerHandCloseRequest,
     PlayerHandConflictResolutionRequest,
@@ -83,8 +91,10 @@ from app.player_hands import (
     PlayerHandReimportRequest,
     get_player_hand,
     list_player_hands,
+    player_hand_review_warnings,
     player_hand_record_version,
     project_player_active_hand_decisions,
+    sanitized_player_hand_state,
 )
 from app.player_remote_references import (
     PlayerRemoteReferenceConsentRequest,
@@ -130,6 +140,135 @@ class PlayerHandApprovalInvalid(ValueError):
 
 class PlayerHandConflictResolutionInvalid(ValueError):
     """A requested source choice cannot resolve the retained conflict."""
+
+
+def _review_preview_error_pointer(location: tuple[object, ...]) -> str:
+    """Build a JSON pointer without reflecting untrusted values or messages."""
+
+    tokens = [
+        str(token).replace("~", "~0").replace("/", "~1")
+        for token in location
+        if token != "__root__"
+    ]
+    return "/approved_state" + (
+        "" if not tokens else "/" + "/".join(tokens)
+    )
+
+
+def _review_preview_validation_errors(
+    error: ValidationError,
+) -> list[PlayerHandReviewPreviewFieldError]:
+    """Project Pydantic errors without returning raw input or parser excerpts."""
+
+    field_errors: list[PlayerHandReviewPreviewFieldError] = []
+    for item in error.errors(include_url=False):
+        error_type = str(item.get("type", ""))
+        if error_type == "missing":
+            code = "missing_value"
+            message = "This required field is missing."
+        elif error_type == "extra_forbidden":
+            code = "unexpected_field"
+            message = "This field is not allowed."
+        elif error_type.endswith("_type"):
+            code = "invalid_type"
+            message = "This field has an invalid type."
+        else:
+            code = "invalid_value"
+            message = "This field has an invalid value."
+        location = item.get("loc", ())
+        field_errors.append(
+            PlayerHandReviewPreviewFieldError(
+                pointer=_review_preview_error_pointer(
+                    location if isinstance(location, tuple) else ()
+                ),
+                code=code,
+                message=message,
+            )
+        )
+    return field_errors or [
+        PlayerHandReviewPreviewFieldError(
+            pointer="/approved_state",
+            code="invalid_value",
+            message="The reviewed state is invalid.",
+        )
+    ]
+
+
+def _review_preview_value_error(
+    error: ValueError,
+) -> PlayerHandReviewPreviewFieldError:
+    """Map review-factory errors to stable, safe preview diagnostics."""
+
+    if str(error) == "reviewed state cannot supply private source excerpts":
+        return PlayerHandReviewPreviewFieldError(
+            pointer="/approved_state",
+            code="private_source_excerpt",
+            message="The reviewed state cannot supply private source excerpts.",
+        )
+    if str(error) == "a changed reviewed state requires a correction reason":
+        return PlayerHandReviewPreviewFieldError(
+            pointer="/correction_reason",
+            code="correction_reason_required",
+            message="A correction reason is required for a changed reviewed state.",
+        )
+    return PlayerHandReviewPreviewFieldError(
+        pointer="/approved_state",
+        code="invalid_value",
+        message="The reviewed state is invalid.",
+    )
+
+
+def _review_state_with_derived_structural_positions(
+    approved_state: dict[str, JsonValue],
+) -> dict[str, JsonValue]:
+    """Fill only positions proven by a complete reviewed dealt-in ring.
+
+    The submitted review remains the source of every poker fact. This copies it
+    before replacing just the derived technical position fields, so a button or
+    participation correction cannot retain a stale position. Non-dealt seats
+    never retain a position; partial, unknown, and dead-button rings otherwise
+    remain untouched for normal canonical validation.
+    """
+
+    normalized = cast(
+        dict[str, JsonValue],
+        json.loads(json.dumps(approved_state, ensure_ascii=False)),
+    )
+    raw_seats = normalized.get("seats")
+    button_seat = normalized.get("button_seat")
+    if (
+        not isinstance(raw_seats, list)
+        or not all(isinstance(seat, dict) for seat in raw_seats)
+        or type(button_seat) is not int
+    ):
+        return normalized
+
+    for raw_seat in raw_seats:
+        if raw_seat.get("participation") != "dealt_in":
+            raw_seat["position"] = None
+
+    try:
+        seats = [
+            ImportedSeat.model_validate_json(
+                json.dumps(seat, ensure_ascii=False, separators=(",", ":"))
+            )
+            for seat in raw_seats
+        ]
+    except ValidationError:
+        return normalized
+    if any(seat.participation == "unknown" for seat in seats):
+        return normalized
+    try:
+        positions = derive_structural_positions(seats, button_seat)
+    except ValueError:
+        return normalized
+
+    for raw_seat, seat in zip(raw_seats, seats, strict=True):
+        if seat.participation == "dealt_in":
+            raw_seat["position"] = positions[seat.seat_number].model_dump(
+                mode="json"
+            )
+    return normalized
 
 
 class PlayerHandReimportInvalid(ValueError):
@@ -1672,6 +1811,105 @@ class PlayerWorkspace:
                     self._require_final_hand_record(record_key)
                     return get_player_hand(self.imported_hands, record_key)
 
+    def preview_hand_review(
+        self,
+        record_key: str,
+        *,
+        request: PlayerHandReviewPreviewRequest,
+        at: datetime,
+        lock_timeout_seconds: int = DEFAULT_DATA_LOCK_WRITE_TIMEOUT_SECONDS,
+    ) -> PlayerHandReviewPreview:
+        """Validate a prospective review without publishing any lifecycle state.
+
+        Preview holds the same per-record and workspace locks as approval, but
+        only in shared mode. Approval still rechecks the complete retained
+        precondition when it later publishes the state, so a preview cannot be
+        mistaken for an authorization to write.
+        """
+
+        lock_index = self.imported_hand_lock_index(record_key)
+        with self.imported_hand_locks[lock_index]:
+            with self.imported_hand_process_locks[lock_index].hold(
+                exclusive=False,
+                timeout_seconds=lock_timeout_seconds,
+            ):
+                with self.data_lock.hold(
+                    exclusive=False,
+                    timeout_seconds=lock_timeout_seconds,
+                ):
+                    self.require_current_layout()
+                    self._require_final_hand_record(record_key)
+                    try:
+                        record, detection = self._review_target(record_key, request)
+                    except PlayerHandApprovalInvalid:
+                        record = self.imported_hands.get(record_key)
+                        return PlayerHandReviewPreview(
+                            request_id=request.request_id,
+                            draft_revision=request.draft_revision,
+                            record_key=record_key,
+                            record_version=player_hand_record_version(record),
+                            detection_id=request.detection_id,
+                            valid=False,
+                            reviewed_state=None,
+                            warnings=[],
+                            field_errors=[
+                                PlayerHandReviewPreviewFieldError(
+                                    pointer="/detection_id",
+                                    code="invalid_value",
+                                    message=(
+                                        "The selected detection is not eligible for "
+                                        "approval."
+                                    ),
+                                )
+                            ],
+                        )
+                    warnings = player_hand_review_warnings(detection)
+                    try:
+                        revision = self._prepare_reviewed_canonical_revision(
+                            detection,
+                            request=request,
+                            revision=len(record.canonical_revisions) + 1,
+                            approved_at=_advanced_lifecycle_time(
+                                at,
+                                record.lifecycle.changed_at,
+                            ),
+                        )
+                    except ValidationError as exc:
+                        return PlayerHandReviewPreview(
+                            request_id=request.request_id,
+                            draft_revision=request.draft_revision,
+                            record_key=record_key,
+                            record_version=player_hand_record_version(record),
+                            detection_id=request.detection_id,
+                            valid=False,
+                            reviewed_state=None,
+                            warnings=warnings,
+                            field_errors=_review_preview_validation_errors(exc),
+                        )
+                    except ValueError as exc:
+                        return PlayerHandReviewPreview(
+                            request_id=request.request_id,
+                            draft_revision=request.draft_revision,
+                            record_key=record_key,
+                            record_version=player_hand_record_version(record),
+                            detection_id=request.detection_id,
+                            valid=False,
+                            reviewed_state=None,
+                            warnings=warnings,
+                            field_errors=[_review_preview_value_error(exc)],
+                        )
+                    return PlayerHandReviewPreview(
+                        request_id=request.request_id,
+                        draft_revision=request.draft_revision,
+                        record_key=record_key,
+                        record_version=player_hand_record_version(record),
+                        detection_id=request.detection_id,
+                        valid=True,
+                        reviewed_state=sanitized_player_hand_state(revision.state),
+                        warnings=warnings,
+                        field_errors=[],
+                    )
+
     def approve_hand_record(
         self,
         record_key: str,
@@ -1712,13 +1950,11 @@ class PlayerWorkspace:
                         )
                         try:
                             expected = (
-                                canonical_revision_from_review(
+                                self._prepare_reviewed_canonical_revision(
                                     detection,
-                                    approval_id=request.request_id,
+                                    request=request,
                                     revision=latest.revision,
                                     approved_at=latest.approved_at,
-                                    approved_state=request.approved_state,
-                                    correction_reason=request.correction_reason,
                                 )
                                 if detection is not None
                                 else None
@@ -1744,51 +1980,14 @@ class PlayerWorkspace:
                             "earlier canonical revision"
                         )
 
-                    if (
-                        player_hand_record_version(record)
-                        != request.expected_record_version
-                        or lifecycle.status != request.expected_lifecycle_status
-                        or lifecycle.active_canonical_revision
-                        != request.expected_active_canonical_revision
-                        or len(record.canonical_revisions)
-                        != request.expected_canonical_revision_count
-                        or lifecycle.deletion_generation
-                        != request.expected_deletion_generation
-                        or lifecycle.changed_at
-                        != request.expected_lifecycle_changed_at
-                    ):
-                        raise PlayerHandTransitionConflict(
-                            "The retained hand changed after this audit detail was "
-                            "loaded; refresh it before approving reviewed state"
-                        )
-
-                    detection = next(
-                        (
-                            item
-                            for item in record.detections
-                            if item.detection_id == request.detection_id
-                        ),
-                        None,
-                    )
-                    if detection is None:
-                        raise PlayerHandTransitionConflict(
-                            "The selected detection is not retained by this hand"
-                        )
-                    if detection.raw_source_id not in {
-                        raw.raw_source_id for raw in record.raw_sources
-                    }:
-                        raise PlayerHandApprovalInvalid(
-                            "A reimport audit-only detection cannot be approved"
-                        )
+                    record, detection = self._review_target(record_key, request)
                     approved_at = _advanced_lifecycle_time(at, lifecycle.changed_at)
                     try:
-                        revision = canonical_revision_from_review(
+                        revision = self._prepare_reviewed_canonical_revision(
                             detection,
-                            approval_id=request.request_id,
+                            request=request,
                             revision=len(record.canonical_revisions) + 1,
                             approved_at=approved_at,
-                            approved_state=request.approved_state,
-                            correction_reason=request.correction_reason,
                         )
                     except ValidationError as exc:
                         raise PlayerHandApprovalInvalid(
@@ -2060,6 +2259,97 @@ class PlayerWorkspace:
                         raise
                     self._require_final_hand_record(record_key)
                     return get_player_hand(self.imported_hands, record_key)
+
+    def _review_target(
+        self,
+        record_key: str,
+        request: PlayerHandApprovalRequest,
+    ) -> tuple[ImportedHandRecord, DetectedImportedHand]:
+        """Load the exact eligible detection selected by review or preview.
+
+        The caller owns the surrounding per-record, process, and workspace
+        locks. Keeping this precondition read shared makes preview and approval
+        evaluate the same retained snapshot; approval's later write remains
+        responsible for rechecking it before publication.
+        """
+
+        record = self.imported_hands.get(record_key)
+        lifecycle = record.lifecycle
+        if (
+            player_hand_record_version(record) != request.expected_record_version
+            or lifecycle.status != request.expected_lifecycle_status
+            or lifecycle.active_canonical_revision
+            != request.expected_active_canonical_revision
+            or len(record.canonical_revisions)
+            != request.expected_canonical_revision_count
+            or lifecycle.deletion_generation != request.expected_deletion_generation
+            or lifecycle.changed_at != request.expected_lifecycle_changed_at
+        ):
+            raise PlayerHandTransitionConflict(
+                "The retained hand changed after this audit detail was loaded; "
+                "refresh it before approving reviewed state"
+            )
+        detection = next(
+            (
+                item
+                for item in record.detections
+                if item.detection_id == request.detection_id
+            ),
+            None,
+        )
+        if detection is None:
+            raise PlayerHandTransitionConflict(
+                "The selected detection is not retained by this hand"
+            )
+        if detection.raw_source_id not in {
+            raw.raw_source_id for raw in record.raw_sources
+        }:
+            raise PlayerHandApprovalInvalid(
+                "A reimport audit-only detection cannot be approved"
+            )
+        return record, detection
+
+    @staticmethod
+    def _prepare_reviewed_canonical_revision(
+        detection: DetectedImportedHand,
+        *,
+        request: PlayerHandApprovalRequest,
+        revision: int,
+        approved_at: datetime,
+    ) -> CanonicalHandRevision:
+        """Use one canonical review factory for preview and publication."""
+
+        normalized_detection_state = ImportedHandState.model_validate_json(
+            json.dumps(
+                _review_state_with_derived_structural_positions(
+                    detection.state.model_dump(mode="json")
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+        reviewed_state = _review_state_with_derived_structural_positions(
+            request.approved_state
+        )
+        normalized_reviewed_state = ImportedHandState.model_validate_json(
+            json.dumps(reviewed_state, ensure_ascii=False, separators=(",", ":"))
+        )
+        correction_reason = request.correction_reason
+        if (
+            correction_reason is None
+            and detection.state != normalized_detection_state
+            and sanitized_player_hand_state(normalized_detection_state)
+            == sanitized_player_hand_state(normalized_reviewed_state)
+        ):
+            correction_reason = "Structural positions derived from the reviewed ring"
+        return canonical_revision_from_review(
+            detection,
+            approval_id=request.request_id,
+            revision=revision,
+            approved_at=approved_at,
+            approved_state=reviewed_state,
+            correction_reason=correction_reason,
+        )
 
     def _require_final_hand_record(self, record_key: str) -> None:
         if self.imported_hands.has_interrupted_write(record_key):

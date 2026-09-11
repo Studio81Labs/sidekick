@@ -1,0 +1,251 @@
+{
+  "button_seat": 1,
+  "chronology": {
+    "hand_ordinal": 1,
+    "played_at": null,
+    "source_file_id": "file-1",
+    "source_session_id": "session-1",
+    "source_timezone": null
+  },
+  "game": {
+    "betting_limit": "no_limit",
+    "blinds": {
+      "ante": "0",
+      "ante_mode": "unknown",
+      "big_blind": "1.00",
+      "small_blind": "0.50",
+      "straddle": null
+    },
+    "economics": {
+      "currency": "USD",
+      "kind": "cash",
+      "rake": {
+        "cap": "3",
+        "description": null,
+        "fixed_drop": "0",
+        "percentage": "0.05"
+      }
+    },
+    "table_size": 2,
+    "variant": "texas_holdem"
+  },
+  "hero_cards": [
+    {
+      "rank": "A",
+      "suit": "hearts"
+    },
+    {
+      "rank": "K",
+      "suit": "diamonds"
+    }
+  ],
+  "hero_player_id": "hero",
+  "identity": {
+    "namespace": "site-hand-id/v1",
+    "site": "pokerstars",
+    "source_hand_id": "123456789"
+  },
+  "results": {
+    "awards": [],
+    "players": [],
+    "showdown": [],
+    "stated_pot": {
+      "gross_pots": [],
+      "gross_total": "2",
+      "net_total": null,
+      "rake": null
+    }
+  },
+  "seats": [
+    {
+      "display_name": null,
+      "participation": "dealt_in",
+      "player_id": "hero",
+      "position": null,
+      "seat_number": 1,
+      "starting_stack": "100"
+    },
+    {
+      "display_name": null,
+      "participation": "dealt_in",
+      "player_id": "villain",
+      "position": null,
+      "seat_number": 2,
+      "starting_stack": "100"
+    }
+  ],
+  "streets": [
+    {
+      "actions": [
+        {
+          "action_type": "post_small_blind",
+          "actor_id": "hero",
+          "all_in": false,
+          "amount": "0.5",
+          "evidence": [
+            {
+              "line_end": null,
+              "line_start": 1,
+              "marker": null,
+              "raw_source_id": "file-1"
+            }
+          ],
+          "origin": {
+            "automatic_reason": null,
+            "basis": "explicit_marker",
+            "confidence": null,
+            "evidence": [
+              {
+                "line_end": null,
+                "line_start": 1,
+                "marker": null,
+                "raw_source_id": "file-1"
+              }
+            ],
+            "kind": "forced_system",
+            "review_reference": null,
+            "semantics_revision": null
+          },
+          "sequence": 0,
+          "total_committed": "0.5"
+        },
+        {
+          "action_type": "post_big_blind",
+          "actor_id": "villain",
+          "all_in": false,
+          "amount": "1",
+          "evidence": [
+            {
+              "line_end": null,
+              "line_start": 1,
+              "marker": null,
+              "raw_source_id": "file-1"
+            }
+          ],
+          "origin": {
+            "automatic_reason": null,
+            "basis": "explicit_marker",
+            "confidence": null,
+            "evidence": [
+              {
+                "line_end": null,
+                "line_start": 1,
+                "marker": null,
+                "raw_source_id": "file-1"
+              }
+            ],
+            "kind": "forced_system",
+            "review_reference": null,
+            "semantics_revision": null
+          },
+          "sequence": 1,
+          "total_committed": "1"
+        },
+        {
+          "action_type": "call",
+          "actor_id": "hero",
+          "all_in": false,
+          "amount": "0.5",
+          "evidence": [
+            {
+              "line_end": null,
+              "line_start": 1,
+              "marker": null,
+              "raw_source_id": "file-1"
+            }
+          ],
+          "origin": {
+            "automatic_reason": null,
+            "basis": "explicit_marker",
+            "confidence": null,
+            "evidence": [
+              {
+                "line_end": null,
+                "line_start": 1,
+                "marker": null,
+                "raw_source_id": "file-1"
+              }
+            ],
+            "kind": "player_selected",
+            "review_reference": null,
+            "semantics_revision": null
+          },
+          "sequence": 2,
+          "total_committed": "1"
+        },
+        {
+          "action_type": "check",
+          "actor_id": "villain",
+          "all_in": false,
+          "amount": null,
+          "evidence": [
+            {
+              "line_end": null,
+              "line_start": 1,
+              "marker": null,
+              "raw_source_id": "file-1"
+            }
+          ],
+          "origin": {
+            "automatic_reason": "timeout",
+            "basis": "explicit_marker",
+            "confidence": null,
+            "evidence": [
+              {
+                "line_end": null,
+                "line_start": 1,
+                "marker": null,
+                "raw_source_id": "file-1"
+              }
+            ],
+            "kind": "client_automatic",
+            "review_reference": null,
+            "semantics_revision": null
+          },
+          "sequence": 3,
+          "total_committed": "1"
+        }
+      ],
+      "board_cards": [],
+      "street": "preflop"
+    },
+    {
+      "actions": [
+        {
+          "action_type": "fold",
+          "actor_id": "villain",
+          "all_in": false,
+          "amount": null,
+          "evidence": [
+            {
+              "line_end": null,
+              "line_start": 1,
+              "marker": null,
+              "raw_source_id": "file-1"
+            }
+          ],
+          "origin": {
+            "automatic_reason": "timeout",
+            "basis": "explicit_marker",
+            "confidence": null,
+            "evidence": [
+              {
+                "line_end": null,
+                "line_start": 1,
+                "marker": null,
+                "raw_source_id": "file-1"
+              }
+            ],
+            "kind": "client_automatic",
+            "review_reference": null,
+            "semantics_revision": null
+          },
+          "sequence": 0,
+          "total_committed": "0"
+        }
+      ],
+      "board_cards": [],
+      "street": "flop"
+    }
+  ]
+}

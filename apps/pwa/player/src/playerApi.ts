@@ -127,6 +127,230 @@ export interface PlayerHandList {
 export type PlayerHandCloseAction = "withdraw" | "reject";
 export type PlayerHandConflictResolution = "keep_active" | "use_source";
 
+/** Decimal values stay lossless JSON strings from the local Python boundary. */
+export type PlayerDecimal = string;
+
+export interface ImportedHandSourceEvidence {
+  raw_source_id: string;
+  line_start: number | null;
+  line_end: number | null;
+  marker: string | null;
+}
+
+export interface ImportedHandCard {
+  rank: string;
+  suit: string;
+}
+
+export interface ImportedHandState {
+  identity: {
+    namespace: string;
+    site: string;
+    source_hand_id: string;
+  };
+  chronology: {
+    played_at: string | null;
+    source_timezone: string | null;
+    source_session_id: string | null;
+    source_file_id: string;
+    hand_ordinal: number | null;
+  };
+  game: {
+    variant: "texas_holdem";
+    betting_limit: "no_limit" | "pot_limit" | "fixed_limit" | "unknown";
+    table_size: number;
+    blinds: {
+      small_blind: PlayerDecimal | null;
+      big_blind: PlayerDecimal | null;
+      ante: PlayerDecimal | null;
+      ante_mode: "per_player" | "big_blind" | "unknown";
+      straddle: PlayerDecimal | null;
+    };
+    economics:
+      | {
+          kind: "cash";
+          currency: string | null;
+          rake: {
+            percentage: PlayerDecimal | null;
+            cap: PlayerDecimal | null;
+            fixed_drop: PlayerDecimal | null;
+            description: string | null;
+          } | null;
+        }
+      | {
+          kind: "tournament";
+          tournament_id: string | null;
+          tournament_type: string | null;
+          stage: string | null;
+          entry_buy_in: PlayerDecimal | null;
+          entry_fee: PlayerDecimal | null;
+          blind_level: string | null;
+          currency: string | null;
+          paid_places: number | null;
+          players_remaining: number | null;
+          payouts: Array<{
+            place_from: number;
+            place_to: number;
+            amount: PlayerDecimal | null;
+            share: PlayerDecimal | null;
+          }>;
+          remaining_stacks: Array<{
+            player_id: string;
+            stack: PlayerDecimal | null;
+          }>;
+          bounty_format: string | null;
+          bounties: Array<{
+            player_id: string;
+            value: PlayerDecimal | null;
+          }>;
+          icm_inputs_complete: boolean;
+        }
+      | { kind: "unknown"; reason: string | null };
+  };
+  button_seat: number | null;
+  seats: Array<{
+    seat_number: number;
+    player_id: string;
+    display_name: string | null;
+    starting_stack: PlayerDecimal | null;
+    participation: "dealt_in" | "sitting_out" | "not_dealt" | "unknown";
+    position: {
+      dealt_in_player_count: number;
+      action_index: number;
+      button_distance: number;
+      display_label:
+        | "BTN/SB"
+        | "BTN"
+        | "SB"
+        | "BB"
+        | "UTG"
+        | "UTG+1"
+        | "UTG+2"
+        | "UTG+3"
+        | "UTG+3/LJ"
+        | "UTG+2/LJ"
+        | "UTG+1/LJ"
+        | "LJ"
+        | "HJ"
+        | "CO";
+    } | null;
+  }>;
+  hero_player_id: string | null;
+  hero_cards: ImportedHandCard[];
+  streets: Array<{
+    street: "preflop" | "flop" | "turn" | "river";
+    board_cards: ImportedHandCard[];
+    actions: Array<{
+      sequence: number;
+      actor_id: string;
+      action_type:
+        | "post_ante"
+        | "post_small_blind"
+        | "post_big_blind"
+        | "post_straddle"
+        | "fold"
+        | "check"
+        | "bet"
+        | "call"
+        | "raise"
+        | "uncalled_return";
+      amount: PlayerDecimal | null;
+      total_committed: PlayerDecimal | null;
+      all_in: boolean;
+      origin: {
+        kind:
+          | "player_selected"
+          | "forced_system"
+          | "client_automatic"
+          | "unknown";
+        basis:
+          | "explicit_marker"
+          | "versioned_absence_semantics"
+          | "user_confirmed"
+          | "unresolved";
+        confidence: PlayerDecimal | null;
+        evidence: ImportedHandSourceEvidence[];
+        semantics_revision: string | null;
+        automatic_reason:
+          | "timeout"
+          | "disconnect"
+          | "automation"
+          | "other"
+          | "unknown"
+          | null;
+        review_reference: string | null;
+      };
+      evidence: ImportedHandSourceEvidence[];
+    }>;
+  }>;
+  results: {
+    stated_pot: {
+      gross_total: PlayerDecimal | null;
+      rake: PlayerDecimal | null;
+      net_total: PlayerDecimal | null;
+      gross_pots: PlayerDecimal[];
+    } | null;
+    showdown: Array<{
+      player_id: string;
+      cards: ImportedHandCard[];
+      disposition: "shown" | "mucked" | "not_shown" | "unknown";
+      evidence: ImportedHandSourceEvidence[];
+    }>;
+    awards: Array<{
+      player_id: string;
+      amount: PlayerDecimal | null;
+      pot_index: number | null;
+      evidence: ImportedHandSourceEvidence[];
+    }>;
+    players: Array<{
+      player_id: string;
+      net_result: PlayerDecimal | null;
+      total_collected: PlayerDecimal | null;
+    }>;
+  } | null;
+}
+
+export interface PlayerHandReviewPreviewRequest {
+  request_id: string;
+  draft_revision: number;
+  detection_id: string;
+  approved_state: ImportedHandState;
+  correction_reason: string | null;
+  expected_record_version: string;
+  expected_lifecycle_status:
+    | "pending_review"
+    | "active"
+    | "withdrawn"
+    | "rejected";
+  expected_active_canonical_revision: number | null;
+  expected_canonical_revision_count: number;
+  expected_deletion_generation: number;
+  expected_lifecycle_changed_at: string;
+}
+
+export interface PlayerHandReviewPreview {
+  schema_version: "player-hand-review-preview/v1";
+  request_id: string;
+  draft_revision: number;
+  record_key: string;
+  record_version: string;
+  detection_id: string;
+  valid: boolean;
+  reviewed_state: ImportedHandState | null;
+  warnings: string[];
+  field_errors: Array<{
+    pointer: string;
+    code:
+      | "missing_value"
+      | "unexpected_field"
+      | "invalid_type"
+      | "invalid_value"
+      | "private_source_excerpt"
+      | "correction_reason_required";
+    message: string;
+  }>;
+}
+
 export interface PlayerHandDetail {
   summary: PlayerHandSummary;
   lifecycle: {
@@ -189,7 +413,7 @@ export interface PlayerHandDetail {
     detector_id: string;
     detector_version: string;
     detected_at: string;
-    state: Record<string, unknown>;
+    state: ImportedHandState;
     field_evidence: Record<
       string,
       {
@@ -221,7 +445,7 @@ export interface PlayerHandDetail {
     revision: number;
     detection_id: string;
     approved_at: string;
-    state: Record<string, unknown>;
+    state: ImportedHandState;
     corrections: Array<{
       field_pointer: string;
       detected_value: unknown;
@@ -531,6 +755,35 @@ export async function approvePlayerHand(
     throw error;
   }
   return (await response.json()) as PlayerHandDetail;
+}
+
+/**
+ * Prepare a review draft without changing retained hand, approval, or decision
+ * state. V2 supplies the structured editor that invokes this contract.
+ */
+export async function previewPlayerHandReview(
+  credentials: PlayerCredentials,
+  recordKey: string,
+  request: PlayerHandReviewPreviewRequest,
+): Promise<PlayerHandReviewPreview> {
+  let response: Response;
+  try {
+    response = await playerRequest(
+      credentials,
+      `/api/player/hands/${encodeURIComponent(recordKey)}/review-preview`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+      },
+    );
+  } catch (error) {
+    if (error instanceof PlayerApiError && error.status === 503) {
+      throw new PlayerHandRecoveryRequiredError();
+    }
+    throw error;
+  }
+  return (await response.json()) as PlayerHandReviewPreview;
 }
 
 export async function resolvePlayerHandConflict(

@@ -52,6 +52,7 @@ import {
   clearPlayerHandReimportRetry,
   preservePlayerHandReimportRetry,
 } from "./playerReimportRetry";
+import { RecordedHandTimeline } from "./RecordedHandTimeline";
 
 type BusyAction =
   | "export"
@@ -93,10 +94,17 @@ function handLabel(hand: PlayerHandSummary): string {
 
 function confidenceLabel(confidence: string | null): string {
   if (confidence === null) return "confidence not scored";
-  const value = Number(confidence);
-  return Number.isFinite(value)
-    ? `${Math.round(value * 100)}% confidence`
-    : "confidence unavailable";
+  const match = /^(0|1)(?:\.(\d+))?$/.exec(confidence);
+  if (!match) return "confidence unavailable";
+  if (match[1] === "1") {
+    return !match[2] || /^0+$/.test(match[2])
+      ? "100% confidence"
+      : "confidence unavailable";
+  }
+  const shifted = (match[2] ?? "") + "00";
+  const whole = shifted.slice(0, 2).replace(/^0+(?=\d)/, "");
+  const fraction = shifted.slice(2).replace(/0+$/, "");
+  return (fraction ? whole + "." + fraction : whole) + "% confidence";
 }
 
 function evidenceLocation(
@@ -590,6 +598,7 @@ function HandDetail({
           </div>
         </div>
       ) : null}
+      <RecordedHandTimeline detail={detail} />
       {detail.detections.length > 0 ? (
         <div className="audit-block state-block">
           <h4>Detected proposals</h4>
