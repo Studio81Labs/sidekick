@@ -10,8 +10,23 @@ removed old recommendation execution; C3 #521 replaced the hosted analyzer
 entry with `/admin/ocr` and authenticated `/api/admin/ocr` data routes. The
 separate `/admin/ocr/mcp` credential surface and status-only gateway follow
 [ADR 0080](../decisions/0080-retire-mcp-data-and-write-principal-operations.md).
-The cleanup is complete; #409/#412 source evidence and the final #414 gate are
-still outstanding.
+The cleanup is complete. [ADR 0082](../decisions/0082-deliver-a-review-first-local-mvp.md)
+now makes #405 a review-first local MVP. #409 corpus evidence, #527 structured
+review, #528 application-file lifecycle and the #414 review-pilot gate remain
+outstanding; #412 and the remaining teaching loop are deferred, not release
+dependencies. Older Phase 1/shared-gate descriptions below concern that deferred
+learning target, not an instruction to resume source screening.
+
+The approved next contract is a stateless authenticated local
+`POST /api/player/hands/{record_key}/review-preview`, sharing canonical validation
+and Python structural-position derivation with the existing review domain.
+It is **planned, not implemented**. Typed timeline/editor controls replace the
+JSON workflow; preview grants no write/approval authority and drafts stay in
+memory. No storage or grading-contract change is planned. Exact request/error,
+lifecycle and implementation boundaries are in the
+[Epic plan](https://github.com/Studio81Labs/sidekick/issues/405#technical-implementation-plan).
+The initial delivery target is a controlled macOS arm64 pilot, with manual
+application-file replacement still requiring #528 validation.
 
 The repository security, release, dependency-trust, and required-check baseline
 is defined by
@@ -399,12 +414,22 @@ Labeled composition remains visible, while tag gates count only matching parsed
 cases so an expected rejection cannot stand in for verified parser coverage.
 The separate labeled-only gate is limited to independently reviewed incomplete
 hands, whose correct safe outcome may be rejection.
-The documented runnable gate covers only the adapter's current matching-parse
-surface. Tournament variants beyond the reviewed historical HAND2 form,
-player-selected origins, reconnect/absence semantics, and automatic cases
-beyond the reviewed timeout subsets remain unsupported Phase 0 blockers. Their
-verified parsed gates must be added from independently reviewed examples; a
-current-surface exit status of zero is not full Phase 0 acceptance.
+The documented runnable gate now defines the `review-mvp/v1` profile under
+ADR 0082: retain the current supported cash/HAND2 tournament, automatic timeout/
+disconnect, forced and unknown coverage floors. Positive parsed player-selected,
+preselection, reconnect and absence semantics are not mandatory review-release
+prerequisites. Unknown stays unknown; returned status is not reconnect proof,
+and no nonexistent CLI tags may be added. Broader syntax/semantics still needs
+independently reviewed evidence before any parser expansion. Future learning
+qualification separately requires affirmative voluntary-action evidence.
+
+The review gate still requires at least 1,000 distinct authorized real hands
+from free public downloads, independently authored full labels, a frozen
+representative sampling/composition plan, all labels matching and ≥99% clean
+parses across the entire labelled denominator. The exact complete invocation,
+profile, code/adapter/format revisions, report digest and corpus fingerprint
+must be bound together in the evidence index. An exit-zero synthetic or partial
+checkpoint is not #409 completion; the qualifying full corpus remains missing.
 
 These contracts are now backed by a player-local file store. Authenticated,
 loopback-only player routes expose bounded record summaries and sanitized audit
@@ -773,8 +798,10 @@ backup and restore. ADR 0072 records this boundary.
 
 [ADR 0081](../decisions/0081-require-no-fee-reference-sourcing.md) replaces the
 HRC-first sourcing assumption with zero mandatory source/license/service fees.
-The planned delivery remains an immutable static lookup generated offline from
-qualified freely obtainable results or free software on existing hardware.
+For deferred learning re-entry, the reference delivery remains an immutable
+static lookup generated offline from qualified freely obtainable results or
+free software on existing hardware. ADR 0082 defers #412 under #406; no source
+screening or source-specific implementation is currently the next step.
 This changes no native model, API or store. Source-specific implementation still
 requires an actual artifact, independent qualification and useful coverage;
 no free solver is selected and no trial is required.
@@ -783,15 +810,17 @@ The packaged reference and learning-content catalogs remain empty and no API
 publishes either one. Production composition still does not authorize a solved
 reference or remote provider, consume persisted evidence for mastery,
 calculate aggregate mixing deviations, move mastery, or schedule drills. Those
-application and Phase 0 gates remain open under issues #412, #414, #416, and
-#418.
+learning capabilities and source gates are deferred under #406, #412, #416
+and #418; none is a prerequisite for the ungraded review MVP.
 
-The [Phase 0 gate-readiness ledger](./v2-phase-0-gate-readiness.md) separates
-these implemented contracts and completed safety/local-delivery prerequisites
-from the missing real corpus, source-rights, benchmark, coverage, cost, and
-review evidence. It records an explicit Phase 1 no-go while #409 and #412 remain
-open, but it is not the final `go`, `reshape`, or `stop` decision required by
-#414.
+The [review gate-readiness ledger](./v2-phase-0-gate-readiness.md) identifies
+#409 representative import evidence, #527 structured review, #528 application-
+file lifecycle and #414 exact-candidate review validation as active work.
+#527/#528 implementation may proceed while corpus evidence is collected.
+#414's review-pilot `go`, `reshape` or `stop` needs all those deliverables plus
+independent recorded-fact/usability and local security validation. Source rights,
+solved benchmarks and teaching coverage remain separate future #406/#412 gates;
+a review `go` does not satisfy or automatically open them.
 
 Solved comparison additionally requires an independent
 `ReferenceSourceQualification` argument. The immutable qualification records

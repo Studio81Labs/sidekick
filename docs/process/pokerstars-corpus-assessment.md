@@ -48,7 +48,7 @@ The Pydantic models in
 contract. Invalid, duplicate, incomplete, unsorted, or path-escaping manifests
 are rejected before a result can be treated as evidence.
 
-## Run the current adapter checkpoint
+## Run the review MVP acceptance profile
 
 From the repository root, gate the format and scenarios the current bounded
 adapter can produce as matching parses:
@@ -78,20 +78,30 @@ pnpm backend:pokerstars-corpus /absolute/private/manifest.json \
   --json > /absolute/private/pokerstars-assessment.json
 ```
 
-This is a regression checkpoint for the adapter's current supported surface,
-not the complete Phase 0 acceptance gate. The current format revision maps one
-reviewed tournament form and two reviewed, versioned automatic-action cash
-forms, while ordinary unmarked decisions remain `unknown`. The four added tag
-floors are presence requirements for that already supported surface; `=1` is
-not a sampling design or representative-corpus claim.
+The command above supplies the mechanical gates for the **`review-mvp/v1`**
+profile approved by [ADR 0082](../decisions/0082-deliver-a-review-first-local-mvp.md).
+The manifest/report schemas remain v1. Before evaluating, freeze a representative
+sampling plan with independent review: public source URLs/revisions/hashes,
+rights/custodian, supported-format/date/economic distribution, exclusions and
+reasons, independently authored full labels and named reviewers. Record an
+immutable evidence index binding `profile: review-mvp/v1` to that plan, the exact
+command, adapter/format/code revisions, report digest and corpus fingerprint.
+`=1` floors prove scenario presence, not representative composition. Do not
+change the sampling plan or labels to conceal failed cases after seeing results.
 
-`player_selected_action` remains a mandatory final parsed-coverage tag, but
-cannot enter this checkpoint until independently evidenced parser support
-exists. Reconnect and absence semantics require reviewed scenarios but are not
-current `CorpusTag` values, so they must not be added as CLI gates. Until the
-remaining semantics, representative labels, sampling design, and pinned
-assessment are complete, exit status `0` proves only the current adapter
-checkpoint and must not be reported as Phase 0 acceptance.
+For this review-only profile, `player_selected_action` is not a mandatory parsed
+tag. Positive preselection/reconnect/absence semantics are deferred, not guessed
+or treated as passed. Reconnect and absence are not CLI tags. All existing
+supported automatic timeout/disconnect, forced and unknown coverage floors
+remain. Unknown origins must match independent labels and remain unknown in the
+UI; #411 still requires affirmative evidence for any future voluntary learning
+decision. A returned-status line proves no reconnect semantics.
+
+At least 1,000 distinct authorized real hands from free public downloads are
+required; no owner-supplied personal history or paid source is a prerequisite.
+Source rights, labels, reviewers and the representative study remain unresolved.
+An exit-zero run without those artifacts is an instrument/checkpoint result,
+not #409 completion. Historical reports retain their original profile and claims.
 
 After recording the first reviewed report, pin its printed digest on repeat
 runs:
@@ -125,12 +135,11 @@ pnpm backend:pokerstars-corpus /absolute/private/manifest.json \
 Exit status `0` means every case matched its labels and all requested gates
 passed. Status `1` means a ground-truth, count, rate, tag, or fingerprint gate
 failed. Status `2` means the manifest or corpus could not be assessed safely.
-The repeat command retains every current-checkpoint count, rate, and composition
-gate together with the fingerprint; it is not a short fingerprint-only check.
-After independently evidenced parser support exists,
-`--minimum-tag-count player_selected_action=1` must be added to this full
-invocation for the final #409 gate. Reconnect and absence semantics still do
-not create CLI tags.
+The repeat command retains every review-profile count, rate and composition
+gate together with the fingerprint; it is not a fingerprint-only check. Future
+learning qualification must explicitly define any additional positive-origin
+coverage and implement it only from independently reviewed source semantics.
+Do not retroactively label this review report as a passed learning-origin gate.
 
 The clean-parse rate always divides clean matching parses by every labeled hand,
 including expected rejections; unsupported cases cannot be removed from the 99%
@@ -149,10 +158,9 @@ redaction to make a report self-contained.
 
 ## Evidence boundary
 
-A passing synthetic run validates the assessment instrument only. A passing
-current-adapter checkpoint validates only its listed supported surface. Do not
-claim the #409 representative-corpus requirement, 99% Phase 0 gate, complete
-format/action-origin coverage, or issue completion until the unsupported
-categories above are implemented and gated and the legally obtained or
-sanitized real corpus has the required composition, independent labels, and a
-passing pinned run.
+A synthetic run validates the instrument only. A full `review-mvp/v1` acceptance
+claim requires the real representative corpus, rights/custody, independent labels
+and review, all frozen composition/count/rate gates and a passing fingerprint-
+pinned run. No qualifying full corpus has yet been certified. This profile does
+not certify comprehensive PokerStars syntax, positive voluntary/reconnect
+semantics, showdown ranking, solved grading or learning eligibility.

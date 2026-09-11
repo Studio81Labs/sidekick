@@ -4,6 +4,11 @@ Status: accepted for sourcing and budget; no solver or policy is qualified
 
 Date: 2026-09-11
 
+Execution update: [ADR 0082](0082-deliver-a-review-first-local-mvp.md) supersedes
+this ADR's immediate R0a/R0/R1–R4 sequence after the bounded screen exhausted its
+candidates. Source qualification is deferred; review-only implementation may
+proceed. The zero mandatory fee decision below remains binding.
+
 ## Context
 
 The owner rejects HRC costs before paying customers exist. Epic #405 and issue

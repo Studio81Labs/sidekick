@@ -2,6 +2,12 @@
 
 Status: accepted
 
+Release-scope update: [ADR 0082](0082-deliver-a-review-first-local-mvp.md) permits
+a review-first local MVP before solved-reference qualification. The original
+shared learning entry gate below remains a future teaching requirement; it no
+longer blocks #527/#528 review implementation. Canonical/provenance, post-hand,
+local security and lifecycle invariants remain binding.
+
 The V1 retention and pre-release compatibility requirements below are superseded
 by [ADR 0079](0079-adopt-an-unreleased-current-only-cutover.md). Domain, current
 V2 provenance/lifecycle and security requirements remain in force. Earlier

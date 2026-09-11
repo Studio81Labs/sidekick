@@ -4,6 +4,13 @@ Status: accepted
 
 Date: 2026-09-05
 
+Scope update: [ADR 0082](0082-deliver-a-review-first-local-mvp.md) now defines the
+`review-mvp/v1` profile and supersedes the original requirement for positive
+player-selected/reconnect/absence semantics before review release. Measurement,
+independent-label, denominator, privacy and fingerprint invariants here remain
+unchanged. The current process document is authoritative for runnable gates;
+capability statements below describe this ADR's historical checkpoint.
+
 ## Context
 
 Issue #409 requires evidence from approximately 1,000 representative, legally

@@ -9,7 +9,9 @@ evidence required by the Phase 0 gate.
 Status: P1a0 compatibility merged in #500; the P1a implementation maps the
 reviewed HAND2 form defined in [the label sheet](pokerstars-hand2-source-labels.md)
 and [ADR 0078](../decisions/0078-preserve-unresolved-historical-source-time.md).
-Phase 1 remains **NO-GO**.
+The learning loop is **deferred** under ADR 0082. Review implementation #527/#528
+may proceed; #409's representative public-source corpus still gates release.
+R0a is complete and #412 is deferred, so source screening is not the next step.
 
 ## Evidence boundary
 
@@ -130,9 +132,10 @@ input-normalization rule or a positive general status grammar.
 
 Historical acquisition evidence only. The owner's zero-fee decision in
 [ADR 0081](../decisions/0081-require-no-fee-reference-sourcing.md) removes HRC
-purchase/trial/export delivery as a prerequisite. Continue with the bounded
-[no-fee source screen](../reference/v2-grading-reference-assessment.md#r0a-execution-and-exit);
-this viewer file remains unqualified.
+purchase/trial/export delivery as a prerequisite. The bounded
+[no-fee source screen](../reference/v2-grading-reference-assessment.md#r0a-bounded-pass-result)
+is complete; ADR 0082 defers #412 and approves review-first implementation.
+This viewer file remains unqualified.
 
 | Field                    | Recorded value                                                                                                                                                           |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -190,7 +193,10 @@ The P1a implementation uses the linked HAND2 mapping and source-authored
 full-state expectations, including unknowns, warnings and retained evidence.
 It does not derive expected labels from its own parser output. P2 still needs a
 representative authorized corpus and independent labels, sourced from free public
-downloads rather than the owner's personal histories. R0a now investigates no-fee
-sources; final R0 needs an actual complete artifact and rights evidence; no
-source-specific normalizer, lookup, certification, production catalog, or
-network transport is authorized by this inventory.
+downloads rather than the owner's personal histories. R0a completed with no
+eligible source. ADR 0082 resolves #525 by approving a
+review-first MVP; #412 source qualification is deferred under #406. Do not repeat
+screening or wait for solver exports to implement #527/#528. #409 still requires
+the authorized, independently labelled representative public corpus under the
+named `review-mvp/v1` profile. No source-specific normalizer, lookup,
+certification, production catalog or network transport is authorized.
