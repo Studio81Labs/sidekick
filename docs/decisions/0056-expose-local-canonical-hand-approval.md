@@ -2,6 +2,14 @@
 
 Status: accepted
 
+Provenance amendment: [ADR 0083](0083-bind-reviewed-rows-to-retained-source-evidence.md)
+supersedes the one-to-one/survival rule below for added/removed canonical rows.
+#533 must implement server-owned reusable retained-locator restoration before
+#531 merges. It also permits a bounded authenticated local source-lines view;
+other projections remain redacted. Canonical excerpts stay server-owned, and
+canonical audit, action-confirmation identity and approval/lifecycle preconditions
+remain protected.
+
 Date: 2026-09-01
 
 ## Context
