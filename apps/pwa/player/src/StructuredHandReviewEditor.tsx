@@ -182,7 +182,10 @@ function TextField({
           placeholder={placeholder ?? "Not recorded"}
           type="text"
           value={value ?? ""}
-          onChange={(event) => onChange(nullableText(event.target.value))}
+          onBlur={() => onChange(nullableText(value ?? ""))}
+          onChange={(event) =>
+            onChange(event.target.value === "" ? null : event.target.value)
+          }
         />
         {clearable ? (
           <button
@@ -608,6 +611,7 @@ export interface StructuredHandReviewEditorProps {
   disabled: boolean;
   evidenceOptions?: readonly ImportedHandSourceEvidence[];
   errors: readonly ReviewError[];
+  immutablePlayerIds?: readonly string[];
   state: ImportedHandState;
   onChange: (state: ImportedHandState) => void;
 }
@@ -622,6 +626,7 @@ export function StructuredHandReviewEditor({
   disabled,
   evidenceOptions = [],
   errors,
+  immutablePlayerIds = [],
   state,
   onChange,
 }: StructuredHandReviewEditorProps) {
@@ -943,9 +948,10 @@ export function StructuredHandReviewEditor({
         <div className="review-list">
           {state.seats.map((seat, index) => (
             <SeatEditor
-              key={`${seat.player_id || "new"}-${seat.seat_number}-${index}`}
+              key={`seat-${seat.seat_number}-${index}`}
               disabled={disabled}
               errors={errors}
+              immutablePlayerIds={immutablePlayerIds}
               path={`/seats/${index}`}
               seat={seat}
               onChange={(updated) =>
@@ -1493,6 +1499,7 @@ function SimpleEconomicLists({
 function SeatEditor({
   disabled,
   errors,
+  immutablePlayerIds,
   path,
   seat,
   onChange,
@@ -1501,6 +1508,7 @@ function SeatEditor({
 }: {
   disabled: boolean;
   errors: readonly ReviewError[];
+  immutablePlayerIds: readonly string[];
   path: string;
   seat: Seat;
   onChange: (seat: Seat) => void;
@@ -1518,12 +1526,12 @@ function SeatEditor({
         </span>
       </h6>
       <div className="review-grid">
-        {seat.player_id === "" ? (
+        {!immutablePlayerIds.includes(seat.player_id) ? (
           <TextField
             clearable={false}
             disabled={disabled}
             errors={errors}
-            label="New player identity"
+            label="Player identity"
             path={`${path}/player_id`}
             value={seat.player_id}
             onChange={(value) => onChange({ ...seat, player_id: value ?? "" })}

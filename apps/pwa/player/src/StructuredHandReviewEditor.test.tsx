@@ -173,6 +173,88 @@ describe("StructuredHandReviewEditor", () => {
     ).toHaveValue("spades");
   });
 
+  it("keeps a new player identity editable while it is entered", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    state.seats.push({
+      seat_number: 3,
+      player_id: "",
+      display_name: null,
+      starting_stack: null,
+      participation: "unknown",
+      position: null,
+    });
+    const { rerender } = render(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        immutablePlayerIds={["hero", "villain"]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    const playerIdentity = screen.getByRole("textbox", {
+      name: "Player identity",
+    });
+    playerIdentity.focus();
+    fireEvent.change(playerIdentity, { target: { value: "N" } });
+    const updated = onChange.mock.lastCall?.[0] as ImportedHandState;
+    expect(updated.seats[2]?.player_id).toBe("N");
+
+    rerender(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        immutablePlayerIds={["hero", "villain"]}
+        state={updated}
+        onChange={onChange}
+      />,
+    );
+    const continuedPlayerIdentity = screen.getByRole("textbox", {
+      name: "Player identity",
+    });
+    expect(continuedPlayerIdentity).toHaveFocus();
+    fireEvent.change(continuedPlayerIdentity, {
+      target: { value: "New Player" },
+    });
+    expect(
+      (onChange.mock.lastCall?.[0] as ImportedHandState).seats[2]?.player_id,
+    ).toBe("New Player");
+  });
+
+  it("preserves text whitespace while editing and normalizes it on blur", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    const { rerender } = render(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    const displayName = screen.getAllByRole("textbox", {
+      name: "Display name",
+    })[0];
+    fireEvent.change(displayName, { target: { value: "Alice Example " } });
+    let updated = onChange.mock.lastCall?.[0] as ImportedHandState;
+    expect(updated.seats[0]?.display_name).toBe("Alice Example ");
+
+    rerender(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        state={updated}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.blur(screen.getAllByRole("textbox", { name: "Display name" })[0]);
+    updated = onChange.mock.lastCall?.[0] as ImportedHandState;
+    expect(updated.seats[0]?.display_name).toBe("Alice Example");
+  });
+
   it("clears derived positions when the button seat changes", () => {
     const onChange = vi.fn();
     render(

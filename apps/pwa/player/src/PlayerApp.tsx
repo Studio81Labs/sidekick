@@ -744,6 +744,11 @@ function HandDetail({
             disabled={busy !== null}
             evidenceOptions={reviewEvidenceOptions}
             errors={reviewPreview?.field_errors ?? []}
+            immutablePlayerIds={
+              reviewedDetection?.state.seats
+                .map((seat) => seat.player_id)
+                .filter((playerId) => playerId !== "") ?? []
+            }
             state={approvalDraft.reviewedState}
             onChange={onReviewedStateChange}
           />
