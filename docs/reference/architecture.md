@@ -116,11 +116,16 @@ binds exact retries to a unique approval ID.
 plans the #533 provenance repair required before #531 merges: exact retained
 source locators may be reused for new canonical rows, while removed rows keep
 raw/detected audit without surviving as canonical placeholders. Existing safe
-row mappings are retained; new bindings require a unique server-owned excerpt
-value and cannot use another detection or editable draft as authority. This is
+row mappings are retained; new parser-linked bindings require a unique
+server-owned excerpt value. Wholly omitted lines use a new bounded authenticated
+`POST /api/player/hands/{record_key}/review-source-lines` view and deterministic
+`review-source-line/v1` locators regenerated from the selected raw source.
+Only that optional local view returns source text; other projections remain
+redacted. No other detection or editable draft is evidence authority. This is
 not yet implemented at the #530 baseline. The same resolver must serve review
-preparation and aggregate correction reconstruction, without changing the local
-DTOs, layout 6 or backup 4. It does not relax detected-action identity for
+preparation and aggregate correction reconstruction, including reserved-marker
+validation against retained raw lines. Existing preview/approval DTOs, layout 6
+and backup 4 remain unchanged; the source-lines read DTO is new. It does not relax detected-action identity for
 `user_confirmed` origins. #527 V2 remains incomplete until #533 and #531's actual
 backend/UI integration pass; implementation status must be updated when those
 PRs land.

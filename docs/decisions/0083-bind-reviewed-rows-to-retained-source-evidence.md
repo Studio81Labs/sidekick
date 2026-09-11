@@ -47,6 +47,8 @@ technical plan is [#405](https://github.com/Studio81Labs/sidekick/issues/405#tec
    include other detections, other hands, editable drafts or arbitrary client
    dictionaries. The validated detection binds all pool entries to its one
    retained raw source; retain raw line-range and substring validation.
+   This pool serves parser-linked evidence only. Entirely omitted lines use the
+   separately validated user-selected source-line path below.
 2. A locator key is the exact typed tuple
    `(raw_source_id, line_start, line_end, marker)`. Validate submitted scalar types
    before lookup, including rejection of booleans as line numbers. Preserve null
@@ -84,8 +86,84 @@ technical plan is [#405](https://github.com/Studio81Labs/sidekick/issues/405#tec
    aggregate lifecycle validation after restoration. A locator's existence
    proves where the reviewer associated a correction, not that the selected
    text establishes the asserted poker fact or an independently verified winner.
-   Missing suitable retained evidence remains an explicit invalid correction;
-   this decision does not add arbitrary raw-line selection or free-text evidence.
+   If no parser locator covers the fact, use the server-owned source-line path
+   below. No usable line or binding remains an explicit invalid correction;
+   free-text evidence and unrelated locators are not substitutes.
+
+### Source lines omitted by the parser
+
+The retained-locator pool alone cannot support a wholly omitted row whose line
+has no state/field-evidence entry. Add a bounded, read-only local
+`POST /api/player/hands/{record_key}/review-source-lines` endpoint. This is the
+only new wire contract in this amendment. Request: `detection_id`, the same six
+`expected_*` fields as review/approval, `start_line` (one-based, default 1) and
+`limit` (1–50, default 50). No approved state or mutation request ID is needed.
+Use the existing session/Host/Origin/CSRF, body bounds, selected eligible detection,
+source-conflict, lock-order and recovery checks. Do not accept a filesystem path
+or an arbitrary raw-source ID. Stale state/source is 409, inaccessible/deleted
+records use existing not-found/lifecycle errors, invalid pagination is 422 and
+recovery is 503; error payloads contain no raw source text.
+
+Response schema: `player-hand-review-source-lines/v1`, with `record_key`,
+`record_version`, `detection_id`, `raw_source_id`, `total_lines`, `start_line`,
+`next_start_line` (nullable) and `lines`. Each line contains `line_number`, `text`,
+`truncated`, `binding` (nullable sanitized `SourceEvidence`) and
+`unavailable_reason` (null, `blank` or `line_too_long`). Return at most 50 lines,
+with each text limited to 1,000 Unicode characters and the encoded response
+bounded to 256 KiB. Stop the page before exceeding that encoded-byte budget
+and set `next_start_line` to the first unreturned line; never silently skip it.
+Blank/whitespace-only and over-1,000-character lines are
+not bindable; long text is explicitly truncated for display, never silently used
+as a complete evidence excerpt. Invalid line offsets fail safely. These bounds
+match the existing excerpt limit; do not invent unsupported fragments or spans.
+
+For a bindable line, issue the ordinary locator fields with the selected raw
+source ID, `line_start == line_end == line_number` and the reserved marker
+`review-source-line/v1`; omit `excerpt`. This marker identifies a **user-selected
+source line**, not parser evidence. Reserve it from detector-produced evidence.
+The browser returns the locator in existing `approved_state` evidence arrays;
+review-preview/approval request and response shapes remain unchanged. A marker
+is not a bearer token: direct clients may propose this locator without first
+reading the page, but the server independently validates and regenerates it.
+
+Resolve the reserved marker from the exact selected retained raw source, even
+when no detection entry mentions the line. Require exact source ID, positive
+integer equal start/end, a present nonblank line within the limit, and no client
+excerpt. The canonical excerpt is the exact line content excluding its line
+terminator, preserving spaces and characters. Never resolve it through the
+parser-evidence pool or reuse that pool's confidence/semantic attestations.
+A reserved marker in action-origin evidence authorizes only unresolved table
+origin or the existing forced/system shape, never player-selected or automatic
+attestation; enforce that independently of excerpt reconstruction. All ordinary
+source-location and poker-state validation follows. Pass the
+server-selected raw source into the shared resolver wherever needed, including
+canonical preparation and aggregate correction reconstruction on reload/restore;
+no client-supplied text or filesystem lookup may stand in for it. Persisted
+reserved-marker evidence must match the regenerated line exactly even if the
+correction uses a complete-value audit representation; no alternate correction
+branch may bypass this new invariant.
+
+This deliberately permits the authenticated local player to view their own
+retained hand source, expanding the earlier blanket redaction boundary in ADRs
+0056/0062 for **this endpoint only**. Hand detail, preview, errors, corrections,
+logs and other projections retain their existing redaction. The optional source
+panel opens only on user action, renders text as inert text, makes no external
+requests and keeps pages in memory. All responses are `Cache-Control: no-store`;
+exclude the route from service-worker caches, browser persistence, telemetry and
+hosted routing. Cancel/fence pages and selections on hand/detection/version/session
+changes and include reads in the existing busy/update coordinator. The same
+owner/session already controls these local imports; no other principal or remote
+service gains access. Tests must prove this explicit read boundary and all
+other projections' continuing redaction.
+
+#531 adds the optional source panel, line selection and clear `User-selected
+source line` provenance labeling. A new row must use an explicitly chosen
+applicable parser-linked or user-selected source locator. The initial request
+is made against the retained hand segment, so line numbers are relative to that
+hand and the displayed source—not an internal model index or another import
+file. No correct bindable line means an explicit invalid correction; attaching
+unrelated evidence is not an acceptable substitute. Merely seeing a line or
+selecting it does not grant positive action-origin or learning authority.
 
 ### Shared validation, persistence and privacy
 
@@ -96,8 +174,9 @@ Do not create an HTTP-only bypass or a new permissive raw-correction branch.
 Keep existing valid current-format behavior and existing private-source checks;
 a discovered need to change historical format validity requires escalation.
 
-No new API endpoint, request/response field, server-issued token, persisted row
-ID or mapping table is needed. The selected detection ID, existing record
+The bounded source-lines endpoint above is new. Existing review-preview and
+approval wire shapes need no new field, token, persisted row ID or mapping table.
+The selected detection ID, existing record
 preconditions and full reviewed state already supply the authority scope.
 Canonical evidence plus the immutable detection and server-owned corrections
 retain the resulting association for audit/reconstruction. Workspace layout 6
@@ -106,8 +185,10 @@ rewrite is authorized.
 
 Preview remains read-only under its existing locks. Approval retains its full
 precondition, conflict, deletion/recovery, retry and atomic cascade behavior.
-Neither the client nor an error/preview/correction projection receives private
-excerpts. Invalid bindings return the existing safe invalid-review response,
+Only the explicit source-lines endpoint returns the selected owner's source
+text. Errors, hand detail, preview and correction projections continue to omit
+private excerpts. Invalid bindings return the existing safe invalid-review
+response,
 with a useful field pointer where available and no source values in error text.
 
 ### Action origin remains a separate invariant
@@ -134,8 +215,8 @@ decision, not an implicit change in this provenance repair.
 ### Frontend and validation obligations
 
 #531 must select from the immutable detection's sanitized state/field-evidence
-options, not from the edited draft as authority. New rows require an explicit
-binding choice; do not auto-select a nearby locator. A missing usable option is
+options or the server-owned source-line panel, not from edited draft evidence
+as authority. New rows require an explicit binding choice; do not auto-select a nearby locator. A missing usable option is
 visible. Display user correction/association separately from parser evidence;
 never present the new row as parser-confirmed. Use the current server preview
 and explicit approval, with existing draft/source/session fencing.
@@ -146,8 +227,12 @@ validation, reapproval/retry and backup/restore. Cover shared identical bindings
 field-evidence-only bindings, distinct-value ambiguity, unchanged safe mappings,
 malformed scalar types/key collisions, absent/foreign keys, client excerpt keys,
 invalid poker state, missing reason, stale/concurrent/deletion/recovery cases
-and attempts to obtain user-confirmed origin through copied evidence. Verify
-unchanged raw/detection bytes, excerpt-free corrections/responses and no preview
+and attempts to obtain user-confirmed origin through copied evidence. Include
+an entirely omitted action/showdown/award whose source line has no detection or
+field-evidence locator; it must round-trip through user-selected source evidence.
+Test source-panel pagination, bounds, intentional local text access and continued
+redaction everywhere else, hosted/cache denial and stale source/session fences.
+Verify unchanged raw/detection bytes, excerpt-free corrections/responses and no preview
 writes. #531 then needs real backend-plus-UI tests for the added/removed rows;
 a mocked `valid:true` response is insufficient.
 
@@ -161,17 +246,20 @@ a mocked `valid:true` response is insufficient.
   blocks legitimate multiple facts linked to the same location.
 - Accept any same-source span or choose the first hidden match: invents a source
   association and hides ambiguity.
-- Add server-issued binding IDs/new API or persistence: unnecessary for the
-  bounded retained-locator scope; exact immutable keys plus existing revision
-  preconditions suffice. A future raw-line evidence browser is separate work.
+- Use only parser-linked locators: does not cover an entirely omitted row and
+  would force unrelated evidence or leave the approved correction impossible.
+- Add bearer binding tokens or a persistence mapping table: unnecessary. The
+  bounded source-line read and deterministic reserved-marker reconstruction use
+  existing retained source and revision authority, without a new storage schema.
 - Weaken action-confirmation identity along with excerpt restoration: changes
   the voluntary-learning invariant and is unnecessary for ungraded review.
 
 ## Execution and supersession
 
-This ADR supersedes ADR 0056's one-to-one/survival requirement only for canonical
-row evidence restoration; its private-source ownership, audit, confirmation and
-atomic approval requirements remain. It refines ADR 0082 without changing its
+This ADR supersedes ADR 0056's one-to-one/survival requirement for canonical
+row evidence restoration and ADRs 0056/0062's blanket source-text redaction only
+for the explicit authenticated local source-lines view. Server-owned canonical
+excerpts, audit, confirmation and atomic approval requirements remain. It refines ADR 0082 without changing its
 review product scope, fee boundary or deferred learning status.
 
 Execution remains **SERIAL**, maximum one implementation writer/merge-bound PR:

@@ -352,7 +352,12 @@ shape includes at minimum:
 award rows remain in the review MVP. Under
 [ADR 0083](../decisions/0083-bind-reviewed-rows-to-retained-source-evidence.md),
 the server restores private evidence from exact retained locators in the
-selected immutable detection. One location can support several explicitly
+selected immutable detection. An optional bounded authenticated local source-line
+view also lets the player select a real line omitted from parser evidence; the
+server regenerates that distinct user-selected provenance from retained text.
+Only this explicit local view exposes source text; existing projections remain
+redacted and canonical excerpts stay server-owned. One location can support
+several explicitly
 reviewed associations; new bindings require an unambiguous retained excerpt
 value and an explicit correction reason. The client cannot supply hidden text
 or manufacture locators. Removed proposals remain in raw/detection/prior-revision
@@ -361,7 +366,7 @@ parser confirmation or solved poker evidence. Added table actions remain unknown
 unless the existing unambiguous detected-unknown action-confirmation invariant
 is satisfied; source reuse never creates positive voluntary-origin authority.
 The same preparation must validate preview, approval and persisted reconstruction.
-No raw-line evidence browser, new storage format or learning scope is implied.
+No public source endpoint, new storage format or learning scope is implied.
 
 **Identity and re-import semantics:** `(site, source hand id)` is the stable hand
 identity unless a site adapter documents a stronger versioned namespace for a

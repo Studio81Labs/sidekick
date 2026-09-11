@@ -2,6 +2,12 @@
 
 Status: accepted
 
+Local source-read amendment: [ADR 0083](0083-bind-reviewed-rows-to-retained-source-evidence.md)
+authorizes an optional bounded authenticated source-lines view for the owner to
+bind canonical corrections to entirely omitted lines. Import responses and all
+other existing projections remain redacted; source text stays local and
+canonical excerpts stay server-owned. This is planned under #533/#527.
+
 Date: 2026-09-02
 
 ## Context
