@@ -916,8 +916,14 @@ def test_player_hand_review_preview_reports_safe_draft_errors_and_stale_state(
     assert runtime.workspace.imported_hands.get(key) == changed
 
 
-def test_player_review_preview_and_approval_derive_reviewed_positions(
+@pytest.mark.parametrize(
+    ("corrected_participation", "positions_are_known"),
+    [("sitting_out", True), ("unknown", False)],
+)
+def test_player_review_preview_and_approval_normalize_reviewed_positions(
     tmp_path: Path,
+    corrected_participation: str,
+    positions_are_known: bool,
 ) -> None:
     client, runtime = player_client(tmp_path)
     record = pending_review_record()
@@ -963,25 +969,35 @@ def test_player_review_preview_and_approval_derive_reviewed_positions(
     session = exchange_session(client, runtime)
     reviewed_state = detected_state.model_dump(mode="json")
     reviewed_state["button_seat"] = 2
-    reviewed_state["seats"][2]["participation"] = "sitting_out"
+    reviewed_state["seats"][2]["participation"] = corrected_participation
     reviewed_seats = [
         seat.model_copy(
             update=(
-                {"participation": "sitting_out", "position": None}
+                {"participation": corrected_participation, "position": None}
                 if seat.player_id == "third-player"
                 else {}
             )
         )
         for seat in detected_state.seats
     ]
-    expected_positions = {
-        seat_number: position.model_dump(mode="json")
-        for seat_number, position in derive_structural_positions(
-            reviewed_seats,
-            2,
-        ).items()
-    }
-    expected_positions[3] = None
+    expected_positions = (
+        {
+            seat_number: position.model_dump(mode="json")
+            for seat_number, position in derive_structural_positions(
+                reviewed_seats,
+                2,
+            ).items()
+        }
+        if positions_are_known
+        else {}
+    )
+    expected_positions.update(
+        {
+            seat.seat_number: None
+            for seat in reviewed_seats
+            if not positions_are_known or seat.participation != "dealt_in"
+        }
+    )
     preview_payload = hand_review_preview_payload(
         record,
         approved_state=reviewed_state,

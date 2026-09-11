@@ -226,8 +226,10 @@ def _review_state_with_derived_structural_positions(
     The submitted review remains the source of every poker fact. This copies it
     before replacing just the derived technical position fields, so a button or
     participation correction cannot retain a stale position. Non-dealt seats
-    never retain a position; partial, unknown, and dead-button rings otherwise
-    remain untouched for normal canonical validation.
+    never retain a position. An unknown participation clears the entire ring:
+    no remaining position is trustworthy until every seat's participation is
+    known. Partial and dead-button rings otherwise remain untouched for normal
+    canonical validation.
     """
 
     normalized = cast(
@@ -247,6 +249,11 @@ def _review_state_with_derived_structural_positions(
         if raw_seat.get("participation") != "dealt_in":
             raw_seat["position"] = None
 
+    if any(raw_seat.get("participation") == "unknown" for raw_seat in raw_seats):
+        for raw_seat in raw_seats:
+            raw_seat["position"] = None
+        return normalized
+
     try:
         seats = [
             ImportedSeat.model_validate_json(
@@ -255,8 +262,6 @@ def _review_state_with_derived_structural_positions(
             for seat in raw_seats
         ]
     except ValidationError:
-        return normalized
-    if any(seat.participation == "unknown" for seat in seats):
         return normalized
     try:
         positions = derive_structural_positions(seats, button_seat)

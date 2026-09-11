@@ -13,6 +13,14 @@ describe("RecordedHandTimeline", () => {
       ...backendProducedState,
       hero_player_id: null,
       hero_cards: [],
+      chronology: {
+        ...backendProducedState.chronology,
+        played_at: "2026-09-11T10:00:00Z",
+        source_timezone: "Europe/Prague",
+        source_session_id: "detected-session",
+        source_file_id: "detected-file",
+        hand_ordinal: 7,
+      },
       seats: backendProducedState.seats.map((seat) =>
         seat.player_id === "villain"
           ? { ...seat, participation: "sitting_out" }
@@ -21,6 +29,14 @@ describe("RecordedHandTimeline", () => {
     };
     const approvedTournamentState: ImportedHandState = {
       ...backendProducedState,
+      chronology: {
+        ...backendProducedState.chronology,
+        played_at: "2026-09-11T11:00:00Z",
+        source_timezone: "America/Los_Angeles",
+        source_session_id: "reviewed-session",
+        source_file_id: "reviewed-file",
+        hand_ordinal: 8,
+      },
       game: {
         ...backendProducedState.game,
         economics: {
@@ -74,6 +90,16 @@ describe("RecordedHandTimeline", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Hero is not recorded/)).toBeInTheDocument();
     expect(screen.getByText(/villain · sitting out/)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Played at 2026-09-11T10:00:00Z · source timezone Europe\/Prague · source session detected-session · source file detected-file · hand ordinal 7/,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Played at 2026-09-11T11:00:00Z · source timezone America\/Los_Angeles · source session reviewed-session · source file reviewed-file · hand ordinal 8/,
+      ),
+    ).toBeInTheDocument();
     expect(
       screen.getAllByText(
         /Incremental amount: 0.5 USD · total committed: 0.5 USD/,

@@ -179,6 +179,25 @@ function RecordedEconomics({
   );
 }
 
+function RecordedChronology({
+  chronology,
+}: {
+  chronology: ImportedHandState["chronology"];
+}): JSX.Element {
+  return (
+    <section>
+      <h6>Recorded chronology</h6>
+      <p>
+        Played at {chronology.played_at ?? "not recorded"} · source timezone{" "}
+        {chronology.source_timezone ?? "not recorded"} · source session{" "}
+        {chronology.source_session_id ?? "not recorded"} · source file{" "}
+        {chronology.source_file_id} · hand ordinal{" "}
+        {chronology.hand_ordinal ?? "not recorded"}
+      </p>
+    </section>
+  );
+}
+
 function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
   const handUnit = handAmountUnit(state);
   const monetaryUnit = monetaryAmountUnit(state);
@@ -202,6 +221,7 @@ function RecordedStateTimeline({ label, state }: RecordedState): JSX.Element {
             ? " · cards " + state.hero_cards.map(cardLabel).join(", ")
             : " · cards not recorded"}
         </p>
+        <RecordedChronology chronology={state.chronology} />
         <RecordedEconomics
           state={state}
           handUnit={handUnit}
