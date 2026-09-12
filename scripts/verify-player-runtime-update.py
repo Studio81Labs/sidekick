@@ -865,6 +865,7 @@ def _run_update_validation(
         port_blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         port_blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         port_blocker.bind(("127.0.0.1", 8765))
+        port_blocker.listen(1)
         try:
             blocked = subprocess.Popen(
                 [str(candidate.entrypoint)],
