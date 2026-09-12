@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from stat import S_IMODE
 from threading import Thread
 from time import monotonic, sleep
 from types import ModuleType
@@ -62,6 +63,7 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from app.data_lock import player_runtime_lease
+from app.player_workspace import PlayerDataDirectoryError, reject_macos_extended_acl
 
 
 class PlayerUpdateValidationError(RuntimeError):
@@ -940,16 +942,45 @@ def _assert_runtime_lease_blocks_candidate(
 
 def _workspace_digest(data_dir: Path) -> str:
     digest = sha256()
-    for path in sorted(data_dir.rglob("*"), key=lambda item: item.as_posix()):
-        relative = path.relative_to(data_dir).as_posix().encode()
+    paths = (
+        data_dir,
+        *sorted(data_dir.rglob("*"), key=lambda item: item.as_posix()),
+    )
+    for path in paths:
+        relative = (
+            b"."
+            if path == data_dir
+            else path.relative_to(data_dir).as_posix().encode()
+        )
         digest.update(relative)
+        try:
+            metadata = path.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise PlayerUpdateValidationError(
+                "Cannot inspect player workspace security metadata"
+            ) from exc
+        digest.update(f"M{S_IMODE(metadata.st_mode):04o}".encode())
+        digest.update(f"U{metadata.st_uid}".encode())
+        digest.update(f"G{metadata.st_gid}".encode())
         if path.is_symlink():
             digest.update(b"L")
             digest.update(os.fsencode(os.readlink(path)))
         elif path.is_file():
+            try:
+                reject_macos_extended_acl(path)
+            except PlayerDataDirectoryError as exc:
+                raise PlayerUpdateValidationError(
+                    "Player workspace has unsafe extended ACL metadata"
+                ) from exc
             digest.update(b"F")
             digest.update(_sha256_file(path).encode())
         elif path.is_dir():
+            try:
+                reject_macos_extended_acl(path)
+            except PlayerDataDirectoryError as exc:
+                raise PlayerUpdateValidationError(
+                    "Player workspace has unsafe extended ACL metadata"
+                ) from exc
             digest.update(b"D")
         else:
             raise PlayerUpdateValidationError("Player workspace contains an unsafe entry")
@@ -1082,6 +1113,7 @@ def _run_update_validation(
         try:
             record_key, before_update = _import_and_reject(base_session)
             before_snapshot = _hand_snapshot(before_update)
+            grade_before_update = _hand_detail(grade_record_key, base_session)
             backup_archive = _export_backup(base_session)
             backup_artifacts = _backup_record_artifact_inventory(
                 backup_archive,
@@ -1183,6 +1215,11 @@ def _run_update_validation(
                 ),
                 description="Backup restore rehearsal did not preserve retained grades",
             )
+            _assert_restored_hand_matches(
+                grade_before_update,
+                _hand_detail(grade_record_key, restore_session),
+                description="Backup restore rehearsal did not preserve the seeded grade hand",
+            )
         finally:
             restore_capture.unlink(missing_ok=True)
             _stop_runtime(restore_process)
@@ -1234,6 +1271,11 @@ def _run_update_validation(
                     record_key=grade_record_key,
                 ),
                 description="Stale backup restore changed an unrelated retained grade",
+            )
+            _assert_restored_hand_matches(
+                grade_before_update,
+                _hand_detail(grade_record_key, candidate_session),
+                description="Stale backup restore changed the seeded grade hand",
             )
         finally:
             candidate_capture.unlink(missing_ok=True)
@@ -1361,6 +1403,14 @@ def _run_update_validation(
                 description=(
                     "Candidate export-before-data-removal backup restore did not "
                     "preserve the retained grade artifact"
+                ),
+            )
+            _assert_restored_hand_matches(
+                grade_before_update,
+                _hand_detail(grade_record_key, final_restore_session),
+                description=(
+                    "Candidate export-before-data-removal backup did not preserve "
+                    "the seeded grade hand"
                 ),
             )
         finally:
