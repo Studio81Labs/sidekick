@@ -886,6 +886,112 @@ def _assert_workspace_manifest_preserved(
         )
 
 
+def _workspace_metadata_snapshot(
+    data_dir: Path,
+) -> tuple[tuple[str, str, int, int, int, str], ...]:
+    """Return every workspace entry's security-relevant metadata.
+
+    Content legitimately changes when candidate startup replays the staged
+    lifecycle transition.  File kind, path, POSIX permissions and ownership
+    must not: comparing this snapshot lets the update rehearsal permit that
+    expected content transition without certifying a privacy regression.
+    """
+
+    entries: list[tuple[str, str, int, int, int, str]] = []
+    paths = (
+        data_dir,
+        *sorted(data_dir.rglob("*"), key=lambda item: item.as_posix()),
+    )
+    for path in paths:
+        relative = (
+            "." if path == data_dir else path.relative_to(data_dir).as_posix()
+        )
+        try:
+            metadata = path.stat(follow_symlinks=False)
+        except OSError as exc:
+            raise PlayerUpdateValidationError(
+                "Cannot inspect player workspace security metadata"
+            ) from exc
+        if path.is_symlink():
+            entries.append(
+                (
+                    relative,
+                    "symlink",
+                    S_IMODE(metadata.st_mode),
+                    metadata.st_uid,
+                    metadata.st_gid,
+                    os.fsdecode(os.readlink(path)),
+                )
+            )
+        elif path.is_file():
+            try:
+                reject_macos_extended_acl(path)
+            except PlayerDataDirectoryError as exc:
+                raise PlayerUpdateValidationError(
+                    "Player workspace has unsafe extended ACL metadata"
+                ) from exc
+            entries.append(
+                (
+                    relative,
+                    "file",
+                    S_IMODE(metadata.st_mode),
+                    metadata.st_uid,
+                    metadata.st_gid,
+                    "",
+                )
+            )
+        elif path.is_dir():
+            try:
+                reject_macos_extended_acl(path)
+            except PlayerDataDirectoryError as exc:
+                raise PlayerUpdateValidationError(
+                    "Player workspace has unsafe extended ACL metadata"
+                ) from exc
+            entries.append(
+                (
+                    relative,
+                    "directory",
+                    S_IMODE(metadata.st_mode),
+                    metadata.st_uid,
+                    metadata.st_gid,
+                    "",
+                )
+            )
+        else:
+            raise PlayerUpdateValidationError("Player workspace contains an unsafe entry")
+    return tuple(entries)
+
+
+def _assert_workspace_metadata_preserved(
+    data_dir: Path,
+    *,
+    expected: tuple[tuple[str, str, int, int, int, str], ...],
+    expected_removed_paths: frozenset[str],
+) -> None:
+    remaining_expected = tuple(
+        entry for entry in expected if entry[0] not in expected_removed_paths
+    )
+    if _workspace_metadata_snapshot(data_dir) != remaining_expected:
+        raise PlayerUpdateValidationError(
+            "Candidate runtime changed player workspace security metadata"
+        )
+
+
+def _artifact_workspace_paths(
+    record_key: str,
+    artifacts: dict[str, tuple[tuple[str, str, str, int], ...]],
+) -> frozenset[str]:
+    directories = {
+        "decision_artifacts": "decisions",
+        "grade_artifacts": "grades",
+    }
+    return frozenset(
+        f"imported-hands/{record_key}/{directory}/{artifact[0]}"
+        for field, directory in directories.items()
+        for artifact in artifacts[field]
+    )
+
+
 def _ready_cascade_markers(data_dir: Path) -> tuple[Path, ...]:
     cascade_root = data_dir / "imported-hands" / ".cascade"
     if not cascade_root.is_dir() or cascade_root.is_symlink():
@@ -1383,6 +1489,11 @@ def _run_update_validation(
                 raise PlayerUpdateValidationError(
                     "Update-validation grade fixture has no retained grade artifacts"
                 )
+            workspace_metadata_before_handoff = _workspace_metadata_snapshot(data_dir)
+            expected_deleted_artifact_paths = _artifact_workspace_paths(
+                record_key,
+                backup_artifacts,
+            )
         finally:
             base_capture.unlink(missing_ok=True)
             _stop_runtime(base_process)
@@ -1421,6 +1532,10 @@ def _run_update_validation(
             raise PlayerUpdateValidationError(
                 "Interrupted lifecycle write did not retain its expected transition"
             )
+        if workspace_metadata_before_handoff is None:
+            raise PlayerUpdateValidationError(
+                "Update validation did not retain its pre-handoff workspace metadata"
+            )
         operator_authorities_before_candidate = _current_operator_authority_snapshot(
             data_dir
         )
@@ -1431,6 +1546,11 @@ def _run_update_validation(
             candidate, data_dir=data_dir, capture_path=candidate_capture
         )
         try:
+            _assert_workspace_metadata_preserved(
+                data_dir,
+                expected=workspace_metadata_before_handoff,
+                expected_removed_paths=expected_deleted_artifact_paths,
+            )
             _assert_workspace_manifest_preserved(
                 data_dir,
                 expected=workspace_manifest_before_candidate,
@@ -1451,6 +1571,11 @@ def _run_update_validation(
             _assert_current_operator_authorities_preserved(
                 data_dir,
                 expected=operator_authorities_before_candidate,
+            )
+            _assert_workspace_metadata_preserved(
+                data_dir,
+                expected=workspace_metadata_before_handoff,
+                expected_removed_paths=expected_deleted_artifact_paths,
             )
             _assert_workspace_manifest_preserved(
                 data_dir,
