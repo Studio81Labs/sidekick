@@ -911,6 +911,26 @@ def test_update_restore_comparison_rejects_missing_retained_artifacts(
         )
 
 
+def test_update_recovery_comparison_rejects_a_lost_primary_decision_artifact() -> None:
+    expected = {
+        "decision_artifacts": (("r1-g0.json", "hand/r1-g0.json", "a" * 64, 1),),
+        "grade_artifacts": (),
+    }
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="Candidate lifecycle recovery did not preserve the primary hand",
+    ):
+        verify_player_runtime_update._assert_restored_artifact_inventory_matches(
+            expected,
+            expected | {"decision_artifacts": ()},
+            description=(
+                "Candidate lifecycle recovery did not preserve the primary "
+                "hand's retained artifacts"
+            ),
+        )
+
+
 def test_update_seeds_a_valid_retained_grade_artifact(tmp_path: Path) -> None:
     data_dir = tmp_path / "player-data"
     data_dir.mkdir(mode=0o700)

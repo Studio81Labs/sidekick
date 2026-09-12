@@ -1412,6 +1412,31 @@ def _run_update_validation(
                 data_dir,
                 expected=operator_authorities_before_candidate,
             )
+            recovered_backup = _export_backup(candidate_session)
+            _assert_restored_artifact_inventory_matches(
+                backup_artifacts,
+                _backup_record_artifact_inventory(
+                    recovered_backup,
+                    record_key=record_key,
+                ),
+                description=(
+                    "Candidate lifecycle recovery did not preserve the primary "
+                    "hand's retained artifacts"
+                ),
+            )
+            _assert_restored_artifact_inventory_matches(
+                grade_backup_artifacts,
+                _backup_record_artifact_inventory(
+                    recovered_backup,
+                    record_key=grade_record_key,
+                ),
+                description="Candidate lifecycle recovery did not preserve retained grades",
+            )
+            _assert_restored_hand_matches(
+                grade_before_update,
+                _hand_detail(grade_record_key, candidate_session),
+                description="Candidate lifecycle recovery changed the seeded grade hand",
+            )
         finally:
             candidate_capture.unlink(missing_ok=True)
             _stop_runtime(candidate_process)
