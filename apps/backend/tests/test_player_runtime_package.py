@@ -721,6 +721,27 @@ def test_update_snapshot_includes_retained_recognition_evidence() -> None:
     assert verify_player_runtime_update._hand_snapshot(detail) != snapshot
 
 
+def test_update_workspace_digest_rejects_a_lease_failure_mutation(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "player-data"
+    data_dir.mkdir()
+    authority = data_dir / ".poker-hero-reference-activation-catalog.json"
+    authority.write_text('{"revision": 1}\n', encoding="utf-8")
+    before = verify_player_runtime_update._workspace_digest(data_dir)
+    authority.write_text('{"revision": 2}\n', encoding="utf-8")
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="lifetime-lease failure changed",
+    ):
+        verify_player_runtime_update._assert_workspace_unchanged(
+            data_dir,
+            expected_digest=before,
+            description="Candidate lifetime-lease failure changed the player data workspace",
+        )
+
+
 def test_update_restore_comparison_rejects_an_incomplete_deleted_hand() -> None:
     expected = {
         "summary": {"record_key": "record", "lifecycle_status": "deleted"},

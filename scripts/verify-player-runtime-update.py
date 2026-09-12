@@ -800,6 +800,7 @@ def _assert_runtime_lease_blocks_candidate(
 
     lease = player_runtime_lease(data_dir)
     descriptor = lease.acquire(exclusive=True, timeout_seconds=0)
+    workspace_before_candidate = _workspace_digest(data_dir)
     try:
         competing = subprocess.Popen(
             [str(candidate.entrypoint)],
@@ -815,6 +816,11 @@ def _assert_runtime_lease_blocks_candidate(
         )
     finally:
         lease.release(descriptor)
+    _assert_workspace_unchanged(
+        data_dir,
+        expected_digest=workspace_before_candidate,
+        description="Candidate lifetime-lease failure changed the player data workspace",
+    )
 
 
 def _workspace_digest(data_dir: Path) -> str:
@@ -833,6 +839,16 @@ def _workspace_digest(data_dir: Path) -> str:
         else:
             raise PlayerUpdateValidationError("Player workspace contains an unsafe entry")
     return digest.hexdigest()
+
+
+def _assert_workspace_unchanged(
+    data_dir: Path,
+    *,
+    expected_digest: str,
+    description: str,
+) -> None:
+    if _workspace_digest(data_dir) != expected_digest:
+        raise PlayerUpdateValidationError(description)
 
 
 def _assert_negative_artifacts_do_not_stage(
@@ -1054,10 +1070,11 @@ def _run_update_validation(
             _wait_for_expected_failure(blocked, description="Occupied player runtime port")
         finally:
             port_blocker.close()
-        if _workspace_digest(data_dir) != digest_before_port_failure:
-            raise PlayerUpdateValidationError(
-                "Occupied-port startup changed the player data workspace"
-            )
+        _assert_workspace_unchanged(
+            data_dir,
+            expected_digest=digest_before_port_failure,
+            description="Occupied-port startup changed the player data workspace",
+        )
 
         shutil.rmtree(base.bundle_root)
         if not data_dir.exists():
