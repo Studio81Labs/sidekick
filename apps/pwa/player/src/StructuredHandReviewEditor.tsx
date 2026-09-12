@@ -2122,13 +2122,41 @@ function ResultLists({
   results: NonNullable<ImportedHandState["results"]>;
   onChange: (value: NonNullable<ImportedHandState["results"]>) => void;
 }) {
+  const resultDraftIdCounter = useRef(0);
+  const showdownDraftIdsRef = useRef<string[] | null>(null);
+  const awardDraftIdsRef = useRef<string[] | null>(null);
+  const createResultDraftId = (kind: "showdown" | "award") => {
+    const id = resultDraftIdCounter.current;
+    resultDraftIdCounter.current += 1;
+    return `draft-${kind}-${id}`;
+  };
+  if (showdownDraftIdsRef.current === null) {
+    showdownDraftIdsRef.current = results.showdown.map(() =>
+      createResultDraftId("showdown"),
+    );
+  }
+  if (awardDraftIdsRef.current === null) {
+    awardDraftIdsRef.current = results.awards.map(() =>
+      createResultDraftId("award"),
+    );
+  }
+  const showdownDraftIds = showdownDraftIdsRef.current;
+  const awardDraftIds = awardDraftIdsRef.current;
+  const updateShowdownDraftIds = (update: (draftIds: string[]) => string[]) => {
+    showdownDraftIdsRef.current = update([
+      ...(showdownDraftIdsRef.current ?? []),
+    ]);
+  };
+  const updateAwardDraftIds = (update: (draftIds: string[]) => string[]) => {
+    awardDraftIdsRef.current = update([...(awardDraftIdsRef.current ?? [])]);
+  };
   return (
     <div className="review-list">
       <h6>Showdown</h6>
       {results.showdown.map((entry, index) => (
         <div
           className="review-list-row"
-          key={`showdown-${entry.player_id}-${index}`}
+          key={showdownDraftIds[index] ?? `missing-showdown-draft-${index}`}
         >
           <SelectField
             disabled={disabled}
@@ -2190,20 +2218,71 @@ function ResultLists({
           ) : (
             <ReadOnlyEvidence evidence={entry.evidence} label="Evidence" />
           )}
-          <button
-            disabled={disabled}
-            type="button"
-            onClick={() =>
-              onChange({
-                ...results,
-                showdown: results.showdown.filter(
-                  (_, itemIndex) => itemIndex !== index,
-                ),
-              })
-            }
-          >
-            Remove showdown
-          </button>
+          <div className="lifecycle-action-buttons">
+            <button
+              aria-label={`Move showdown ${index + 1} earlier`}
+              disabled={disabled || index === 0}
+              type="button"
+              onClick={() => {
+                const target = index - 1;
+                updateShowdownDraftIds((draftIds) => {
+                  [draftIds[index], draftIds[target]] = [
+                    draftIds[target],
+                    draftIds[index],
+                  ];
+                  return draftIds;
+                });
+                const showdown = [...results.showdown];
+                [showdown[index], showdown[target]] = [
+                  showdown[target],
+                  showdown[index],
+                ];
+                onChange({ ...results, showdown });
+              }}
+            >
+              Move earlier
+            </button>
+            <button
+              aria-label={`Move showdown ${index + 1} later`}
+              disabled={disabled || index === results.showdown.length - 1}
+              type="button"
+              onClick={() => {
+                const target = index + 1;
+                updateShowdownDraftIds((draftIds) => {
+                  [draftIds[index], draftIds[target]] = [
+                    draftIds[target],
+                    draftIds[index],
+                  ];
+                  return draftIds;
+                });
+                const showdown = [...results.showdown];
+                [showdown[index], showdown[target]] = [
+                  showdown[target],
+                  showdown[index],
+                ];
+                onChange({ ...results, showdown });
+              }}
+            >
+              Move later
+            </button>
+            <button
+              disabled={disabled}
+              type="button"
+              onClick={() => {
+                updateShowdownDraftIds((draftIds) =>
+                  draftIds.filter((_, itemIndex) => itemIndex !== index),
+                );
+                onChange({
+                  ...results,
+                  showdown: results.showdown.filter(
+                    (_, itemIndex) => itemIndex !== index,
+                  ),
+                });
+              }}
+            >
+              Remove showdown
+            </button>
+          </div>
         </div>
       ))}
       <button
@@ -2211,7 +2290,11 @@ function ResultLists({
           disabled || players.length === 0 || evidenceOptions.length === 0
         }
         type="button"
-        onClick={() =>
+        onClick={() => {
+          updateShowdownDraftIds((draftIds) => [
+            ...draftIds,
+            createResultDraftId("showdown"),
+          ]);
           onChange({
             ...results,
             showdown: [
@@ -2223,8 +2306,8 @@ function ResultLists({
                 evidence: [],
               },
             ],
-          })
-        }
+          });
+        }}
       >
         Add showdown
       </button>
@@ -2232,7 +2315,7 @@ function ResultLists({
       {results.awards.map((award, index) => (
         <div
           className="review-list-row"
-          key={`award-${award.player_id}-${award.pot_index}-${index}`}
+          key={awardDraftIds[index] ?? `missing-award-draft-${index}`}
         >
           <SelectField
             disabled={disabled}
@@ -2290,20 +2373,71 @@ function ResultLists({
           ) : (
             <ReadOnlyEvidence evidence={award.evidence} label="Evidence" />
           )}
-          <button
-            disabled={disabled}
-            type="button"
-            onClick={() =>
-              onChange({
-                ...results,
-                awards: results.awards.filter(
-                  (_, itemIndex) => itemIndex !== index,
-                ),
-              })
-            }
-          >
-            Remove award
-          </button>
+          <div className="lifecycle-action-buttons">
+            <button
+              aria-label={`Move award ${index + 1} earlier`}
+              disabled={disabled || index === 0}
+              type="button"
+              onClick={() => {
+                const target = index - 1;
+                updateAwardDraftIds((draftIds) => {
+                  [draftIds[index], draftIds[target]] = [
+                    draftIds[target],
+                    draftIds[index],
+                  ];
+                  return draftIds;
+                });
+                const awards = [...results.awards];
+                [awards[index], awards[target]] = [
+                  awards[target],
+                  awards[index],
+                ];
+                onChange({ ...results, awards });
+              }}
+            >
+              Move earlier
+            </button>
+            <button
+              aria-label={`Move award ${index + 1} later`}
+              disabled={disabled || index === results.awards.length - 1}
+              type="button"
+              onClick={() => {
+                const target = index + 1;
+                updateAwardDraftIds((draftIds) => {
+                  [draftIds[index], draftIds[target]] = [
+                    draftIds[target],
+                    draftIds[index],
+                  ];
+                  return draftIds;
+                });
+                const awards = [...results.awards];
+                [awards[index], awards[target]] = [
+                  awards[target],
+                  awards[index],
+                ];
+                onChange({ ...results, awards });
+              }}
+            >
+              Move later
+            </button>
+            <button
+              disabled={disabled}
+              type="button"
+              onClick={() => {
+                updateAwardDraftIds((draftIds) =>
+                  draftIds.filter((_, itemIndex) => itemIndex !== index),
+                );
+                onChange({
+                  ...results,
+                  awards: results.awards.filter(
+                    (_, itemIndex) => itemIndex !== index,
+                  ),
+                });
+              }}
+            >
+              Remove award
+            </button>
+          </div>
         </div>
       ))}
       <button
@@ -2311,7 +2445,11 @@ function ResultLists({
           disabled || players.length === 0 || evidenceOptions.length === 0
         }
         type="button"
-        onClick={() =>
+        onClick={() => {
+          updateAwardDraftIds((draftIds) => [
+            ...draftIds,
+            createResultDraftId("award"),
+          ]);
           onChange({
             ...results,
             awards: [
@@ -2323,8 +2461,8 @@ function ResultLists({
                 evidence: [],
               },
             ],
-          })
-        }
+          });
+        }}
       >
         Add award
       </button>

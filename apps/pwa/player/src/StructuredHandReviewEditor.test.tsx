@@ -502,6 +502,73 @@ describe("StructuredHandReviewEditor", () => {
     ]);
   });
 
+  it("reorders reviewed showdown and award rows without rebuilding them", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    const evidence = structuredClone(state.streets[0].actions[0].evidence);
+    if (state.results === null) throw new Error("Expected recorded results");
+    state.results.showdown = [
+      {
+        player_id: "hero",
+        cards: [],
+        disposition: "shown",
+        evidence,
+      },
+      {
+        player_id: "villain",
+        cards: [],
+        disposition: "mucked",
+        evidence: structuredClone(evidence),
+      },
+    ];
+    state.results.awards = [
+      {
+        player_id: "hero",
+        amount: "1.00",
+        pot_index: 0,
+        evidence: structuredClone(evidence),
+      },
+      {
+        player_id: "villain",
+        amount: "2.00",
+        pot_index: 1,
+        evidence: structuredClone(evidence),
+      },
+    ];
+    const { rerender } = render(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Move showdown 1 later" }),
+    );
+    const showdownReordered = onChange.mock.lastCall?.[0] as ImportedHandState;
+    expect(showdownReordered.results?.showdown).toMatchObject([
+      { player_id: "villain", disposition: "mucked" },
+      { player_id: "hero", disposition: "shown" },
+    ]);
+
+    rerender(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        state={showdownReordered}
+        onChange={onChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Move award 1 later" }));
+    const reordered = onChange.mock.lastCall?.[0] as ImportedHandState;
+    expect(reordered.results?.awards).toMatchObject([
+      { player_id: "villain", amount: "2.00", pot_index: 1 },
+      { player_id: "hero", amount: "1.00", pot_index: 0 },
+    ]);
+  });
+
   it("confirms an unresolved origin only with its retained evidence and review reference", () => {
     const onChange = vi.fn();
     const state = recordedState();
