@@ -1,6 +1,7 @@
 import { readFile, rm } from "node:fs/promises";
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
+import { get as getHttp } from "node:http";
 import { resolve } from "node:path";
 
 import { expect, test, type Page } from "@playwright/test";
@@ -34,6 +35,29 @@ function runtimeSpec(name: "BASE" | "CANDIDATE"): RuntimeSpec {
 
 function launchFile(name: string): string {
   return resolve(requiredEnvironment("POKER_PLAYER_UPDATE_CAPTURE_DIR"), name);
+}
+
+function playerRequest(
+  path: string,
+): Promise<{ body: Buffer; status: number }> {
+  return new Promise((resolveRequest, rejectRequest) => {
+    const request = getHttp(`${PLAYER_ORIGIN}${path}`, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.once("error", rejectRequest);
+      response.once("end", () => {
+        if (response.statusCode === undefined) {
+          rejectRequest(new Error(`Loopback request to ${path} had no status`));
+          return;
+        }
+        resolveRequest({
+          body: Buffer.concat(chunks),
+          status: response.statusCode,
+        });
+      });
+    });
+    request.once("error", rejectRequest);
+  });
 }
 
 async function startRuntime(
@@ -73,7 +97,7 @@ async function startRuntime(
             );
           }
           try {
-            return (await fetch(`${PLAYER_ORIGIN}/`)).status;
+            return (await playerRequest("/")).status;
           } catch {
             return 0;
           }
@@ -82,9 +106,7 @@ async function startRuntime(
       )
       .toBe(200);
     const expectedWorker = await readFile(spec.workerPath);
-    const servedWorker = Buffer.from(
-      await (await fetch(`${PLAYER_ORIGIN}/sw.js`)).arrayBuffer(),
-    );
+    const servedWorker = (await playerRequest("/sw.js")).body;
     expect(servedWorker.equals(expectedWorker)).toBe(true);
     await expect
       .poll(
