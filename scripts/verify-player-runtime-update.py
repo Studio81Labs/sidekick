@@ -65,6 +65,7 @@ if str(BACKEND) not in sys.path:
 from app.data_lock import player_runtime_lease
 from app.domain.imported_hands import ImportedHandRecord
 from app.player_hands import player_hand_record_version
+from app.player_runtime import PLAYER_SECRET_FILENAME
 from app.player_workspace import (
     PLAYER_WORKSPACE_MANIFEST_FILENAME,
     PlayerDataDirectoryError,
@@ -886,6 +887,32 @@ def _assert_workspace_manifest_preserved(
         )
 
 
+def _installation_key_snapshot(data_dir: Path) -> tuple[str, str]:
+    """Return the permanent player installation credential identity."""
+
+    path = data_dir / PLAYER_SECRET_FILENAME
+    if path.is_symlink() or not path.is_file():
+        raise PlayerUpdateValidationError("Player installation key is missing or unsafe")
+    try:
+        reject_macos_extended_acl(path)
+    except PlayerDataDirectoryError as exc:
+        raise PlayerUpdateValidationError(
+            "Player installation key has unsafe extended ACL metadata"
+        ) from exc
+    return (PLAYER_SECRET_FILENAME, _sha256_file(path))
+
+
+def _assert_installation_key_preserved(
+    data_dir: Path,
+    *,
+    expected: tuple[str, str],
+) -> None:
+    if _installation_key_snapshot(data_dir) != expected:
+        raise PlayerUpdateValidationError(
+            "Candidate runtime changed the permanent player installation key"
+        )
+
+
 def _workspace_metadata_snapshot(
     data_dir: Path,
 ) -> tuple[tuple[str, str, int, int, int, str], ...]:
@@ -1520,6 +1547,7 @@ def _run_update_validation(
             data_dir
         )
         workspace_manifest_before_candidate = _workspace_manifest_snapshot(data_dir)
+        installation_key_before_candidate = _installation_key_snapshot(data_dir)
 
         candidate_capture = capture_dir / "candidate-launch-url"
         candidate_process, candidate_session = _start_runtime(
@@ -1533,6 +1561,10 @@ def _run_update_validation(
             _assert_workspace_manifest_preserved(
                 data_dir,
                 expected=workspace_manifest_before_candidate,
+            )
+            _assert_installation_key_preserved(
+                data_dir,
+                expected=installation_key_before_candidate,
             )
             old_session_status = SMOKE._request(
                 "/api/player/health", headers=_session_headers(base_session)
@@ -1558,6 +1590,10 @@ def _run_update_validation(
             _assert_workspace_manifest_preserved(
                 data_dir,
                 expected=workspace_manifest_before_candidate,
+            )
+            _assert_installation_key_preserved(
+                data_dir,
+                expected=installation_key_before_candidate,
             )
             recovered_backup = _export_backup(candidate_session)
             _assert_restored_artifact_inventory_matches(

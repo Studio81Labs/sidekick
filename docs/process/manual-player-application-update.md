@@ -84,16 +84,116 @@ cat /absolute/private/candidate/poker-hero-player-*.tar.gz.sha256
 cat /absolute/private/candidate/poker-hero-player-*.tar.gz.provenance.json
 ```
 
-Inspect the archive before extracting it. It must contain exactly one root
-application directory, `manifest.json`, `BUNDLE-README.txt`,
-`UPDATE-RUNBOOK.md`, an executable `poker-hero-player`, and `player-assets`.
-The manifest's artifact name, product version, operating system, architecture,
-and Python ABI must match the intended controlled host. A corrupt, incomplete,
-unexpected-platform, unknown-provenance, or failed-manifest archive is rejected
-before it is staged; do not try to repair it in place.
+Validate the complete archive before staging it. The following macOS-only
+procedure checks the sidecars, every manifest binding, every regular file's
+size/mode/SHA-256, the complete file-and-link inventory, and every link target.
+It extracts only to a temporary private inspection directory, which it removes
+after validation; it does not stage an application. Run it once for the base
+archive and once for the candidate archive. A corrupt, incomplete,
+unexpected-platform, unknown-provenance, or failed-manifest archive is
+rejected; do not try to repair it in place. It uses only standard macOS tools,
+including the built-in `osascript` JavaScript runner to read JSON.
 
 ```bash
-tar -tzf /absolute/private/candidate/poker-hero-player-*.tar.gz | sed -n '1,40p'
+verify_player_archive() (
+  set -eu
+  umask 077
+  archive=$1
+  checksum="$archive.sha256"
+  provenance="$archive.provenance.json"
+  fail() { printf '%s\n' "archive verification failed: $*" >&2; exit 1; }
+  json_value() {
+    osascript -l JavaScript -e '
+      ObjC.import("Foundation");
+      function run(argv) {
+        const text = ObjC.unwrap($.NSString.stringWithContentsOfFileEncodingError($(argv[0]), $.NSUTF8StringEncoding, null));
+        let value = JSON.parse(text);
+        for (const part of argv[1].split(".")) {
+          if (value === null || typeof value !== "object" || !(part in value)) throw new Error("missing JSON path");
+          value = value[part];
+        }
+        if (value === null || typeof value === "object") throw new Error("JSON path is not a scalar");
+        return String(value);
+      }
+    ' "$1" "$2"
+  }
+  test -f "$archive" && test ! -L "$archive" || fail "archive is not a file"
+  test -f "$checksum" && test ! -L "$checksum" || fail "checksum is not a file"
+  test -f "$provenance" && test ! -L "$provenance" || fail "provenance is not a file"
+  test "$(awk 'END { print NR }' "$checksum")" = 1 || fail "checksum has multiple lines"
+  expected_digest=$(awk 'NR == 1 { print $1 }' "$checksum")
+  test "$expected_digest" = "$(shasum -a 256 "$archive" | awk '{ print $1 }')" || fail "checksum mismatch"
+  test "$(awk 'NR == 1 { print $2 }' "$checksum")" = "$(basename "$archive")" || fail "checksum filename mismatch"
+  provenance_value() { json_value "$provenance" "$1"; }
+  test "$(provenance_value schema_version)" = 1 || fail "unsupported provenance schema"
+  test "$(provenance_value archive_name)" = "$(basename "$archive")" || fail "provenance archive name"
+  test "$(provenance_value archive_sha256)" = "$expected_digest" || fail "provenance digest"
+  test "$(provenance_value artifact)" = poker-hero-player-runtime || fail "provenance artifact"
+  test "$(provenance_value source_tree_clean)" = true || fail "unclean source provenance"
+  inspection_dir=$(mktemp -d "${TMPDIR:-/tmp}/poker-hero-player-verify.XXXXXX")
+  trap 'rm -rf "$inspection_dir"' EXIT HUP INT TERM
+  tar -tzf "$archive" | awk '
+    /^\// || /(^|\/)\.\.($|\/)/ { exit 1 }
+    { split($0, parts, "/"); if (!(parts[1] in roots)) { roots[parts[1]] = 1; root_count += 1 } }
+    END { if (root_count != 1) exit 1 }
+  ' || fail "unsafe or multi-root archive listing"
+  tar -xzpf "$archive" -C "$inspection_dir"
+  test "$(find "$inspection_dir" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" = 1 || fail "archive root count"
+  bundle_root=$(find "$inspection_dir" -mindepth 1 -maxdepth 1 -type d -print)
+  test -n "$bundle_root" && test ! -L "$bundle_root" || fail "archive root"
+  manifest="$bundle_root/manifest.json"
+  test -f "$manifest" && test ! -L "$manifest" || fail "missing manifest"
+  manifest_value() { json_value "$manifest" "$1"; }
+  test "$(manifest_value schema_version)" = 1 || fail "unsupported manifest schema"
+  test "$(manifest_value artifact)" = poker-hero-player-runtime || fail "manifest artifact"
+  test "$(manifest_value artifact_name)" = "$(basename "$bundle_root")" || fail "manifest name"
+  test "$(manifest_value platform.system)" = "$(uname -s | tr '[:upper:]' '[:lower:]')" || fail "platform system"
+  test "$(manifest_value platform.machine)" = "$(uname -m)" || fail "platform machine"
+  python_abi=$(manifest_value platform.python)
+  case "$python_abi" in [0-9]*.[0-9]*.[0-9]*) ;; *) fail "platform Python ABI" ;; esac
+  product_version=$(manifest_value product_version)
+  product_tag=$(printf '%s' "$product_version" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9][^a-z0-9]*/-/g; s/^-//; s/-$//')
+  expected_name="poker-hero-player-$product_tag-$(manifest_value platform.system)-$(manifest_value platform.machine)-cp$(printf '%s' "$python_abi" | awk -F. '{ print $1 $2 }')"
+  test "$(manifest_value artifact_name)" = "$expected_name" || fail "manifest platform identity"
+  : > "$inspection_dir/expected-paths"
+  entry=0
+  while inventory_path=$(manifest_value "files.$entry.path" 2>/dev/null); do
+    case "/$inventory_path/" in /*//*) fail "empty manifest path segment" ;; *"/../"*) fail "unsafe manifest path" ;; esac
+    case "$inventory_path" in /*|'') fail "unsafe manifest path" ;; esac
+    kind=$(manifest_value "files.$entry.kind")
+    mode=$(manifest_value "files.$entry.mode")
+    target="$bundle_root/$inventory_path"
+    case "$kind" in
+      file)
+        test -f "$target" && test ! -L "$target" || fail "missing file $inventory_path"
+        test "$(stat -f '%z' "$target")" = "$(manifest_value "files.$entry.size")" || fail "size $inventory_path"
+        test "$(stat -f '%Lp' "$target")" = "$(printf '%o' "$mode")" || fail "mode $inventory_path"
+        test "$(shasum -a 256 "$target" | awk '{ print $1 }')" = "$(manifest_value "files.$entry.sha256")" || fail "checksum $inventory_path"
+        ;;
+      symlink)
+        test -L "$target" || fail "missing link $inventory_path"
+        link_target=$(manifest_value "files.$entry.target")
+        test "$(readlink "$target")" = "$link_target" || fail "link target $inventory_path"
+        test -e "$target" || fail "broken link $inventory_path"
+        resolved_target=$(cd -P "$(dirname "$target")" && cd -P "$(dirname "$link_target")" && printf '%s/%s' "$PWD" "$(basename "$link_target")")
+        case "$resolved_target" in "$bundle_root"/*) ;; *) fail "escaping link $inventory_path" ;; esac
+        ;;
+      *) fail "unknown manifest entry kind $kind" ;;
+    esac
+    printf '%s\n' "$inventory_path" >> "$inspection_dir/expected-paths"
+    entry=$((entry + 1))
+  done
+  test "$entry" -gt 0 || fail "empty manifest inventory"
+  (cd "$bundle_root" && find . -mindepth 1 \( -type f -o -type l \) ! -path './manifest.json' -print | sed 's#^./##' | LC_ALL=C sort) > "$inspection_dir/actual-paths"
+  LC_ALL=C sort -u "$inspection_dir/expected-paths" > "$inspection_dir/sorted-expected-paths"
+  diff -u "$inspection_dir/sorted-expected-paths" "$inspection_dir/actual-paths" || fail "incomplete manifest inventory"
+  entrypoint=$(manifest_value entrypoint)
+  test -f "$bundle_root/$entrypoint" && test ! -L "$bundle_root/$entrypoint" && test -x "$bundle_root/$entrypoint" || fail "entrypoint"
+  printf 'verified %s\n' "$archive"
+)
+
+verify_player_archive /absolute/private/base/poker-hero-player-*.tar.gz
+verify_player_archive /absolute/private/candidate/poker-hero-player-*.tar.gz
 ```
 
 Extract base and candidate into different newly-created application directories.

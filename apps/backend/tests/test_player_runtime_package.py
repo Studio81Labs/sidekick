@@ -15,6 +15,7 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
+from app.player_runtime import load_or_create_installation_secret
 from app.player_workspace import PlayerWorkspace
 
 
@@ -984,6 +985,26 @@ def test_update_rejects_a_candidate_that_changes_the_workspace_manifest(
         match="changed the current player workspace manifest",
     ):
         verify_player_runtime_update._assert_workspace_manifest_preserved(
+            data_dir,
+            expected=expected,
+        )
+
+
+def test_update_rejects_a_candidate_that_changes_the_installation_key(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "player-data"
+    data_dir.mkdir(mode=0o700)
+    verify_player_runtime_update._seed_retained_grade_artifact(data_dir)
+    assert len(load_or_create_installation_secret(data_dir)) == 32
+    expected = verify_player_runtime_update._installation_key_snapshot(data_dir)
+    (data_dir / expected[0]).write_bytes(b"x" * 32)
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="changed the permanent player installation key",
+    ):
+        verify_player_runtime_update._assert_installation_key_preserved(
             data_dir,
             expected=expected,
         )

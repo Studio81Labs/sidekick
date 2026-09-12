@@ -19,6 +19,11 @@ interface RunningRuntime {
   process: ChildProcess;
 }
 
+interface PlayerBuildIdentity {
+  cacheName: string;
+  revision: string;
+}
+
 function requiredEnvironment(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required for the update rehearsal`);
@@ -35,6 +40,28 @@ function runtimeSpec(name: "BASE" | "CANDIDATE"): RuntimeSpec {
 
 function launchFile(name: string): string {
   return resolve(requiredEnvironment("POKER_PLAYER_UPDATE_CAPTURE_DIR"), name);
+}
+
+async function playerBuildIdentity(
+  spec: RuntimeSpec,
+): Promise<PlayerBuildIdentity> {
+  const [shell, worker] = await Promise.all([
+    readFile(resolve(spec.workerPath, "..", "index.html"), "utf8"),
+    readFile(spec.workerPath, "utf8"),
+  ]);
+  const revision =
+    /<meta name="poker-hero-build-revision" content="([0-9a-f]{40,64})" \/>/.exec(
+      shell,
+    )?.[1];
+  const cacheName = /const CACHE_NAME = "([^"]+)";/.exec(worker)?.[1];
+  if (
+    !revision ||
+    !cacheName ||
+    !cacheName.startsWith("poker-hero-player-shell-")
+  ) {
+    throw new Error("Packaged player build identity is invalid");
+  }
+  return { cacheName, revision };
 }
 
 function playerRequest(
@@ -167,11 +194,15 @@ test("hands a staged player shell to the candidate worker only when safe", async
 }) => {
   const base = runtimeSpec("BASE");
   const candidate = runtimeSpec("CANDIDATE");
-  const [baseWorker, candidateWorker] = await Promise.all([
-    readFile(base.workerPath),
-    readFile(candidate.workerPath),
-  ]);
+  const [baseWorker, candidateWorker, baseBuild, candidateBuild] =
+    await Promise.all([
+      readFile(base.workerPath),
+      readFile(candidate.workerPath),
+      playerBuildIdentity(base),
+      playerBuildIdentity(candidate),
+    ]);
   expect(baseWorker.equals(candidateWorker)).toBe(false);
+  expect(baseBuild).not.toEqual(candidateBuild);
 
   const dataDir = requiredEnvironment("POKER_PLAYER_UPDATE_DATA_DIR");
   const baseRuntime = await startRuntime(base, {
@@ -262,6 +293,32 @@ test("hands a staged player shell to the candidate worker only when safe", async
         }),
       )
       .toBe("activated");
+    await expect
+      .poll(
+        () =>
+          page.evaluate(async (expected) => {
+            const registration =
+              await navigator.serviceWorker.getRegistration("/");
+            const playerCaches = (await caches.keys())
+              .filter((name) => name.startsWith("poker-hero-player-shell-"))
+              .sort();
+            return {
+              activeState: registration?.active?.state ?? null,
+              buildRevision: document
+                .querySelector('meta[name="poker-hero-build-revision"]')
+                ?.getAttribute("content"),
+              playerCaches,
+              workerCachePresent: playerCaches.includes(expected.cacheName),
+            };
+          }, candidateBuild),
+        { timeout: 15_000 },
+      )
+      .toEqual({
+        activeState: "activated",
+        buildRevision: candidateBuild.revision,
+        playerCaches: [candidateBuild.cacheName],
+        workerCachePresent: true,
+      });
   } finally {
     if (candidateRuntime !== null) await stopRuntime(candidateRuntime.process);
     else await stopRuntime(baseRuntime.process);
