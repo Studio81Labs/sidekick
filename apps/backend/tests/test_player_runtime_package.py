@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import signal
 import subprocess
 import sys
 import tarfile
@@ -464,6 +465,40 @@ def test_update_requires_a_real_browser_worker_transition(tmp_path: Path) -> Non
         match="player workers are identical",
     ):
         verify_player_runtime_update._require_distinct_player_workers(base, candidate)
+
+
+def test_update_timeout_terminates_the_browser_rehearsal_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    signals: list[tuple[int, signal.Signals]] = []
+    timeouts: list[int] = []
+
+    class Process:
+        pid = 123
+
+        def communicate(self, *, timeout: int) -> tuple[str, str]:
+            timeouts.append(timeout)
+            if len(timeouts) == 1:
+                raise subprocess.TimeoutExpired("pnpm", timeout)
+            return "", ""
+
+    monkeypatch.setattr(
+        verify_player_runtime_update.os,
+        "killpg",
+        lambda process_group, termination_signal: signals.append(
+            (process_group, termination_signal)
+        ),
+    )
+
+    verify_player_runtime_update._terminate_browser_update_rehearsal_process_group(
+        Process()  # type: ignore[arg-type]
+    )
+
+    assert signals == [(123, signal.SIGTERM), (123, signal.SIGKILL)]
+    assert timeouts == [
+        verify_player_runtime_update._BROWSER_REHEARSAL_TERMINATION_TIMEOUT_SECONDS,
+        verify_player_runtime_update._BROWSER_REHEARSAL_TERMINATION_TIMEOUT_SECONDS,
+    ]
 
 
 def test_update_requires_candidate_to_match_checkout_and_descend_from_base(

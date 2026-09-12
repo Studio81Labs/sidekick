@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -41,6 +42,8 @@ _UUID_IMPORT = "55555555-5555-4555-8555-555555555555"
 _UUID_APPROVE = "33333333-3333-4333-8333-333333333333"
 _UUID_DELETE = "11111111-1111-4111-8111-111111111111"
 _DELETE_REASON = "Exercise stale-restore protection after manual update"
+_BROWSER_REHEARSAL_OUTER_TIMEOUT_SECONDS = 130
+_BROWSER_REHEARSAL_TERMINATION_TIMEOUT_SECONDS = 5
 
 _SYNTHETIC_HAND = b"""PokerStars Hand #900000000002: Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:35:56 ET
 Table 'Synthetic Heads Up' 2-max Seat #1 is the button
@@ -303,7 +306,7 @@ def _run_browser_update_rehearsal(
         }
     )
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             [
                 "pnpm",
                 "exec",
@@ -314,22 +317,46 @@ def _run_browser_update_rehearsal(
             cwd=ROOT / "apps" / "pwa",
             env=environment,
             capture_output=True,
-            check=False,
             text=True,
-            timeout=120,
+            start_new_session=True,
         )
     except FileNotFoundError as exc:
         raise PlayerUpdateValidationError(
             "Browser update rehearsal requires pnpm and the pinned Playwright runtime"
         ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise PlayerUpdateValidationError(
-            "Browser update rehearsal did not complete before its fixed deadline"
-        ) from exc
-    if result.returncode != 0:
-        raise PlayerUpdateValidationError(
-            "Browser update rehearsal failed:\n" + result.stdout + result.stderr
+    try:
+        stdout, stderr = process.communicate(
+            timeout=_BROWSER_REHEARSAL_OUTER_TIMEOUT_SECONDS
         )
+    except subprocess.TimeoutExpired as exc:
+        _terminate_browser_update_rehearsal_process_group(process)
+        raise PlayerUpdateValidationError(
+            "Browser update rehearsal did not complete before its outer deadline"
+        ) from exc
+    if process.returncode != 0:
+        raise PlayerUpdateValidationError(
+            "Browser update rehearsal failed:\n" + stdout + stderr
+        )
+
+
+def _terminate_browser_update_rehearsal_process_group(
+    process: subprocess.Popen[str],
+) -> None:
+    """Terminate and reap pnpm plus its Playwright/runtime descendants."""
+
+    for termination_signal in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, termination_signal)
+        except ProcessLookupError:
+            return
+        try:
+            process.communicate(timeout=_BROWSER_REHEARSAL_TERMINATION_TIMEOUT_SECONDS)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+    raise PlayerUpdateValidationError(
+        "Browser update rehearsal descendants did not terminate after timeout"
+    )
 
 
 def _require_clean_checkout() -> None:
