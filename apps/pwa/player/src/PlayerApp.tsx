@@ -736,6 +736,7 @@ function HandDetail({
             ) : null}
           </section>
           <StructuredHandReviewEditor
+            key={approvalDraft.detectionId}
             confirmationActionCandidates={
               reviewedDetection?.state.streets.map(
                 (street) => street.actions,

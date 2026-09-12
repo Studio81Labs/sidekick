@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { StructuredHandReviewEditor } from "./StructuredHandReviewEditor";
@@ -221,6 +227,46 @@ describe("StructuredHandReviewEditor", () => {
     expect(
       (onChange.mock.lastCall?.[0] as ImportedHandState).seats[2]?.player_id,
     ).toBe("New Player");
+  });
+
+  it("keeps a detected seat row focused while its number is corrected", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    state.seats[0].seat_number = 9;
+    const { rerender } = render(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        immutablePlayerIds={["hero", "villain"]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    const seatNumber = screen.getAllByRole("spinbutton", {
+      name: "Seat number",
+    })[0];
+    seatNumber.focus();
+    fireEvent.change(seatNumber, { target: { value: "1" } });
+    const updated = onChange.mock.lastCall?.[0] as ImportedHandState;
+
+    rerender(
+      <StructuredHandReviewEditor
+        disabled={false}
+        errors={[]}
+        immutablePlayerIds={["hero", "villain"]}
+        state={updated}
+        onChange={onChange}
+      />,
+    );
+    const continuedSeatNumber = screen.getAllByRole("spinbutton", {
+      name: "Seat number",
+    })[0];
+    expect(continuedSeatNumber).toHaveFocus();
+    fireEvent.change(continuedSeatNumber, { target: { value: "10" } });
+    expect(
+      (onChange.mock.lastCall?.[0] as ImportedHandState).seats[0]?.seat_number,
+    ).toBe(10);
   });
 
   it("preserves text whitespace while editing and normalizes it on blur", () => {
@@ -493,6 +539,97 @@ describe("StructuredHandReviewEditor", () => {
       basis: "user_confirmed",
       review_reference: "review-action-1",
       evidence: [expect.objectContaining({ raw_source_id: "source-1" })],
+    });
+  });
+
+  it("keeps a confirmation reference with its action when actions are reordered", () => {
+    const onChange = vi.fn();
+    const state = recordedState();
+    const sourceAction = state.streets[0].actions[0];
+    const unknownOrigin = {
+      ...sourceAction.origin,
+      kind: "unknown" as const,
+      basis: "unresolved" as const,
+      confidence: null,
+      semantics_revision: null,
+    };
+    state.streets[0].actions = [
+      {
+        ...sourceAction,
+        action_type: "check",
+        amount: null,
+        total_committed: "0",
+        origin: unknownOrigin,
+      },
+      {
+        ...sourceAction,
+        sequence: 1,
+        actor_id: "villain",
+        action_type: "call",
+        amount: "1.00",
+        total_committed: "1.00",
+        origin: structuredClone(unknownOrigin),
+        evidence: structuredClone(sourceAction.evidence),
+      },
+    ];
+    const confirmationActionCandidates = [
+      structuredClone(state.streets[0].actions),
+    ];
+    const { rerender } = render(
+      <StructuredHandReviewEditor
+        confirmationActionCandidates={confirmationActionCandidates}
+        disabled={false}
+        errors={[]}
+        state={state}
+        onChange={onChange}
+      />,
+    );
+
+    fireEvent.change(
+      screen.getAllByRole("textbox", {
+        name: "Origin confirmation reference",
+      })[1],
+      { target: { value: "review-villain" } },
+    );
+    const secondAction = screen.getByText("Action 2").closest("article");
+    if (!secondAction) throw new Error("Expected the second action row");
+    fireEvent.click(
+      within(secondAction).getByRole("button", { name: "Move earlier" }),
+    );
+    const reordered = onChange.mock.lastCall?.[0] as ImportedHandState;
+
+    rerender(
+      <StructuredHandReviewEditor
+        confirmationActionCandidates={confirmationActionCandidates}
+        disabled={false}
+        errors={[]}
+        state={reordered}
+        onChange={onChange}
+      />,
+    );
+    expect(screen.getAllByRole("combobox", { name: "Actor" })[0]).toHaveValue(
+      "villain",
+    );
+    expect(
+      screen.getAllByRole("textbox", {
+        name: "Origin confirmation reference",
+      })[0],
+    ).toHaveValue("review-villain");
+
+    fireEvent.click(
+      screen.getAllByRole("button", {
+        name: "Confirm player-selected origin",
+      })[0],
+    );
+    expect(
+      (onChange.mock.lastCall?.[0] as ImportedHandState).streets[0]?.actions[0],
+    ).toMatchObject({
+      actor_id: "villain",
+      origin: {
+        kind: "player_selected",
+        basis: "user_confirmed",
+        review_reference: "review-villain",
+      },
     });
   });
 

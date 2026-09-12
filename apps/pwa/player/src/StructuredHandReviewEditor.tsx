@@ -1,4 +1,4 @@
-import { useState, type ChangeEvent } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 
 import type {
   ImportedHandCard,
@@ -557,16 +557,17 @@ function EvidenceBinding({
   );
 }
 
-function actionStableKey(action: Action, index: number): string {
-  // This key deliberately excludes mutable action fields. A controlled text
-  // edit must not remount its row after every keystroke. The row's explicit
-  // evidence is stable while editing, and its current position keeps repeated
-  // locators distinct; moving a row intentionally resets row-local UI state.
-  return JSON.stringify([
-    action.evidence.map(sourceEvidenceKey),
-    action.origin.evidence.map(sourceEvidenceKey),
-    index,
-  ]);
+function seatStableKey(
+  seat: Seat,
+  index: number,
+  immutablePlayerIds: readonly string[],
+): string {
+  // Detected player IDs are read-only in this editor, so they remain a stable
+  // row identity while a reviewer corrects editable seat fields. New rows do
+  // not acquire an ID until preview, so keep their draft position stable.
+  return immutablePlayerIds.includes(seat.player_id)
+    ? `retained-seat-${seat.player_id}`
+    : `draft-seat-${index}`;
 }
 
 function actionDraft(): Action {
@@ -625,6 +626,8 @@ export function StructuredHandReviewEditor({
   state,
   onChange,
 }: StructuredHandReviewEditorProps) {
+  const actionDraftIdCounter = useRef(0);
+  const actionDraftIdsRef = useRef<string[][] | null>(null);
   const change = (mutate: (next: ImportedHandState) => void) => {
     const next = cloneState(state);
     mutate(next);
@@ -642,6 +645,31 @@ export function StructuredHandReviewEditor({
       </p>
     );
   }
+  const createActionDraftId = () => {
+    const id = actionDraftIdCounter.current;
+    actionDraftIdCounter.current += 1;
+    return `draft-action-${id}`;
+  };
+  if (actionDraftIdsRef.current === null) {
+    actionDraftIdsRef.current = state.streets.map((street) =>
+      street.actions.map(() => createActionDraftId()),
+    );
+  }
+  const actionDraftIds = actionDraftIdsRef.current;
+  const updateActionDraftIds = (
+    streetIndex: number,
+    update: (draftIds: string[]) => string[],
+  ) => {
+    const next =
+      actionDraftIdsRef.current?.map((draftIds) => [...draftIds]) ?? [];
+    next[streetIndex] = update(next[streetIndex] ?? []);
+    actionDraftIdsRef.current = next;
+  };
+  const removeStreetActionDraftIds = (streetIndex: number) => {
+    actionDraftIdsRef.current =
+      actionDraftIdsRef.current?.filter((_, index) => index !== streetIndex) ??
+      [];
+  };
   const players = state.seats
     .map((seat) => seat.player_id)
     .filter((playerId) => playerId !== "");
@@ -943,7 +971,7 @@ export function StructuredHandReviewEditor({
         <div className="review-list">
           {state.seats.map((seat, index) => (
             <SeatEditor
-              key={`seat-${seat.seat_number}-${index}`}
+              key={seatStableKey(seat, index, immutablePlayerIds)}
               disabled={disabled}
               errors={errors}
               immutablePlayerIds={immutablePlayerIds}
@@ -1000,7 +1028,9 @@ export function StructuredHandReviewEditor({
         {state.streets.map((street, streetIndex) => (
           <StreetEditor
             key={street.street}
+            actionDraftIds={actionDraftIds[streetIndex] ?? []}
             confirmationCandidateKeyCounts={confirmationCandidateKeyCounts}
+            createActionDraftId={createActionDraftId}
             currentActionKeyCounts={currentActionKeyCounts}
             disabled={disabled}
             evidenceOptions={retainedEvidence}
@@ -1009,6 +1039,9 @@ export function StructuredHandReviewEditor({
             path={`/streets/${streetIndex}`}
             street={street}
             streetIndex={streetIndex}
+            onActionDraftIdsChange={(update) =>
+              updateActionDraftIds(streetIndex, update)
+            }
             onChange={(updated) =>
               change((next) => {
                 next.streets[streetIndex] = updated;
@@ -1019,6 +1052,7 @@ export function StructuredHandReviewEditor({
                 ? undefined
                 : () =>
                     change((next) => {
+                      removeStreetActionDraftIds(streetIndex);
                       next.streets.splice(streetIndex, 1);
                     })
             }
@@ -1030,8 +1064,13 @@ export function StructuredHandReviewEditor({
           onClick={() =>
             change((next) => {
               const street = STREETS[next.streets.length];
-              if (street)
+              if (street) {
+                actionDraftIdsRef.current = [
+                  ...(actionDraftIdsRef.current ?? []),
+                  [],
+                ];
                 next.streets.push({ street, board_cards: [], actions: [] });
+              }
             })
           }
         >
@@ -1593,7 +1632,9 @@ function SeatEditor({
 }
 
 function StreetEditor({
+  actionDraftIds,
   confirmationCandidateKeyCounts,
+  createActionDraftId,
   currentActionKeyCounts,
   disabled,
   evidenceOptions,
@@ -1602,10 +1643,13 @@ function StreetEditor({
   path,
   street,
   streetIndex,
+  onActionDraftIdsChange,
   onChange,
   onRemove,
 }: {
+  actionDraftIds: readonly string[];
   confirmationCandidateKeyCounts: ReadonlyMap<string, number>;
+  createActionDraftId: () => string;
   currentActionKeyCounts: ReadonlyMap<string, number>;
   disabled: boolean;
   evidenceOptions: readonly ImportedHandSourceEvidence[];
@@ -1614,6 +1658,7 @@ function StreetEditor({
   path: string;
   street: ImportedHandState["streets"][number];
   streetIndex: number;
+  onActionDraftIdsChange: (update: (draftIds: string[]) => string[]) => void;
   onChange: (street: ImportedHandState["streets"][number]) => void;
   onRemove?: () => void;
 }) {
@@ -1639,7 +1684,7 @@ function StreetEditor({
       <div className="review-list">
         {street.actions.map((action, index) => (
           <ActionEditor
-            key={actionStableKey(action, index)}
+            key={actionDraftIds[index] ?? `missing-action-draft-${index}`}
             action={action}
             canConfirmPlayerSelectedOrigin={
               currentActionKeyCounts.get(
@@ -1662,6 +1707,11 @@ function StreetEditor({
             onMove={(direction) => {
               const target = index + direction;
               if (target < 0 || target >= street.actions.length) return;
+              onActionDraftIdsChange((draftIds) => {
+                const next = [...draftIds];
+                [next[index], next[target]] = [next[target], next[index]];
+                return next;
+              });
               const actions = [...street.actions];
               [actions[index], actions[target]] = [
                 actions[target],
@@ -1669,29 +1719,36 @@ function StreetEditor({
               ];
               onChange({ ...street, actions: resequence(actions) });
             }}
-            onRemove={() =>
+            onRemove={() => {
+              onActionDraftIdsChange((draftIds) =>
+                draftIds.filter((_, itemIndex) => itemIndex !== index),
+              );
               onChange({
                 ...street,
                 actions: resequence(
                   street.actions.filter((_, itemIndex) => itemIndex !== index),
                 ),
-              })
-            }
+              });
+            }}
           />
         ))}
       </div>
       <button
         disabled={disabled || evidenceOptions.length === 0}
         type="button"
-        onClick={() =>
+        onClick={() => {
+          onActionDraftIdsChange((draftIds) => [
+            ...draftIds,
+            createActionDraftId(),
+          ]);
           onChange({
             ...street,
             actions: [
               ...street.actions,
               { ...actionDraft(), sequence: street.actions.length },
             ],
-          })
-        }
+          });
+        }}
       >
         Add action
       </button>
