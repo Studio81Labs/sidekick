@@ -469,6 +469,53 @@ def test_update_negative_artifact_checks_handle_truncated_gzip(
     )
 
 
+def test_update_detects_only_durable_ready_cascades(tmp_path: Path) -> None:
+    cascade_root = tmp_path / "imported-hands" / ".cascade"
+    ready = cascade_root / "a" / "ready"
+    ready.parent.mkdir(parents=True)
+    ready.write_bytes(b"")
+    incomplete = cascade_root / "b"
+    incomplete.mkdir()
+
+    assert verify_player_runtime_update._ready_cascade_markers(tmp_path) == (ready,)
+
+    second = cascade_root / "c" / "ready"
+    second.parent.mkdir()
+    second.write_bytes(b"")
+    assert verify_player_runtime_update._ready_cascade_markers(tmp_path) == (
+        ready,
+        second,
+    )
+
+
+def test_update_recovery_requires_pending_lifecycle_and_retained_audit() -> None:
+    before = {
+        "canonical_revisions": [{"revision": 1, "approval_id": "approval"}],
+    }
+    after = {
+        "canonical_revisions": [{"revision": 1, "approval_id": "approval"}],
+        "summary": {
+            "lifecycle_status": "deletion_pending",
+            "canonical_revision_count": 1,
+        },
+        "lifecycle": {
+            "reason": verify_player_runtime_update._DELETE_REASON,
+        },
+    }
+
+    verify_player_runtime_update._assert_recovered_lifecycle_retains_audit_state(
+        before, after
+    )
+    after["canonical_revisions"] = []
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="canonical audit history",
+    ):
+        verify_player_runtime_update._assert_recovered_lifecycle_retains_audit_state(
+            before, after
+        )
+
+
 def test_update_report_is_private_and_non_replaceable(tmp_path: Path) -> None:
     report_path = tmp_path / "update-report.json"
     report = {"schema_version": 1, "candidate": {"source_revision": "b" * 40}}

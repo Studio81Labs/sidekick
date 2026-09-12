@@ -23,6 +23,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from threading import Thread
+from time import monotonic, sleep
 from types import ModuleType
 from typing import Any
 
@@ -34,6 +36,7 @@ PROVENANCE_SCHEMA_VERSION = 1
 _UUID_IMPORT = "55555555-5555-4555-8555-555555555555"
 _UUID_APPROVE = "33333333-3333-4333-8333-333333333333"
 _UUID_DELETE = "11111111-1111-4111-8111-111111111111"
+_DELETE_REASON = "Exercise stale-restore protection after manual update"
 
 _SYNTHETIC_HAND = b"""PokerStars Hand #900000000002: Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:35:56 ET
 Table 'Synthetic Heads Up' 2-max Seat #1 is the button
@@ -468,17 +471,23 @@ def _restore_backup(session: dict[str, object], archive: bytes) -> None:
     )
 
 
-def _delete_hand(record_key: str, detail: dict[str, Any], session: dict[str, object]) -> dict[str, Any]:
+def _delete_payload(detail: dict[str, Any]) -> dict[str, object]:
     summary = detail["summary"]
-    payload = {
+    return {
         "request_id": _UUID_DELETE,
-        "reason": "Exercise stale-restore protection after manual update",
+        "reason": _DELETE_REASON,
         "expected_record_version": summary["record_version"],
         "expected_lifecycle_status": summary["lifecycle_status"],
         "expected_active_canonical_revision": summary["active_canonical_revision"],
         "expected_deletion_generation": summary["deletion_generation"],
         "expected_lifecycle_changed_at": summary["lifecycle_changed_at"],
     }
+
+
+def _delete_hand(
+    record_key: str, detail: dict[str, Any], session: dict[str, object]
+) -> dict[str, Any]:
+    payload = _delete_payload(detail)
     deleted = _json_response(
         f"/api/player/hands/{record_key}/delete",
         session=session,
@@ -490,6 +499,151 @@ def _delete_hand(record_key: str, detail: dict[str, Any], session: dict[str, obj
     if deleted.get("summary", {}).get("lifecycle_status") != "deleted":
         raise PlayerUpdateValidationError("Update-validation hand was not deleted")
     return deleted
+
+
+def _ready_cascade_markers(data_dir: Path) -> tuple[Path, ...]:
+    cascade_root = data_dir / "imported-hands" / ".cascade"
+    if not cascade_root.is_dir() or cascade_root.is_symlink():
+        return ()
+    return tuple(
+        sorted(
+            (
+                marker
+                for marker in cascade_root.glob("*/ready")
+                if marker.is_file() and not marker.is_symlink()
+            ),
+            key=lambda marker: marker.as_posix(),
+        )
+    )
+
+
+def _wait_for_ready_cascade(
+    data_dir: Path,
+    process: subprocess.Popen[bytes],
+    *,
+    timeout_seconds: float = 10,
+) -> Path:
+    """Wait for a runtime lifecycle write to cross its durable replay point."""
+
+    deadline = monotonic() + timeout_seconds
+    while monotonic() < deadline:
+        markers = _ready_cascade_markers(data_dir)
+        if len(markers) == 1:
+            return markers[0]
+        if len(markers) > 1:
+            raise PlayerUpdateValidationError(
+                "Controlled interruption created multiple pending lifecycle cascades"
+            )
+        if process.poll() is not None:
+            stdout, stderr = process.communicate()
+            raise PlayerUpdateValidationError(
+                "Base runtime exited before its interrupted lifecycle write reached "
+                "the durable recovery point:\n"
+                + stdout.decode(errors="replace")
+                + stderr.decode(errors="replace")
+            )
+        sleep(0.01)
+    raise PlayerUpdateValidationError(
+        "Controlled interruption did not reach a durable lifecycle recovery point"
+    )
+
+
+def _interrupt_lifecycle_write(
+    process: subprocess.Popen[bytes],
+    *,
+    data_dir: Path,
+    record_key: str,
+    detail: dict[str, Any],
+    session: dict[str, object],
+) -> None:
+    """Kill a packaged runtime after a real lifecycle write becomes recoverable.
+
+    The record directory is temporarily non-writable before the request starts.
+    That lets the runtime stage and durably mark the delete lifecycle cascade,
+    while preventing its first live-file replacement.  Once ``ready`` exists,
+    the journal contract requires a subsequent runtime to complete it.  The
+    process is then terminated rather than stopped normally, so candidate
+    startup must perform real recovery rather than merely opening clean data.
+    """
+
+    record_dir = data_dir / "imported-hands" / record_key
+    if record_dir.is_symlink() or not record_dir.is_dir():
+        raise PlayerUpdateValidationError(
+            "Could not locate the retained record for interruption validation"
+        )
+    original_mode = record_dir.stat(follow_symlinks=False).st_mode & 0o777
+    request_result: list[tuple[int, bytes, dict[str, str]]] = []
+    payload = json.dumps(_delete_payload(detail)).encode()
+
+    def request_delete() -> None:
+        try:
+            request_result.append(
+                SMOKE._request(
+                    f"/api/player/hands/{record_key}/delete",
+                    method="POST",
+                    headers={
+                        **_session_headers(session, mutation=True),
+                        "Content-Type": "application/json",
+                    },
+                    body=payload,
+                )
+            )
+        except BaseException:
+            # A killed runtime can close the connection before it returns the
+            # expected 503.  The durable marker below is the test evidence.
+            pass
+
+    request_thread = Thread(target=request_delete, daemon=True)
+    os.chmod(record_dir, 0o500)
+    ready_marker: Path | None = None
+    try:
+        request_thread.start()
+        ready_marker = _wait_for_ready_cascade(data_dir, process)
+        process.kill()
+        process.wait(timeout=10)
+    finally:
+        os.chmod(record_dir, original_mode)
+        request_thread.join(timeout=10)
+
+    if request_thread.is_alive():
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle request did not finish after terminating the runtime"
+        )
+    if process.returncode == 0:
+        raise PlayerUpdateValidationError(
+            "Controlled interruption stopped the base runtime successfully"
+        )
+    if ready_marker is None or not ready_marker.is_file():
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle write did not leave durable recovery work"
+        )
+    if request_result and request_result[0][0] != 503:
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle request did not report recovery as required"
+        )
+
+
+def _assert_recovered_lifecycle_retains_audit_state(
+    before: dict[str, Any], after: dict[str, Any]
+) -> None:
+    before_revisions = before.get("canonical_revisions")
+    after_revisions = after.get("canonical_revisions")
+    if not isinstance(before_revisions, list) or after_revisions != before_revisions:
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle recovery did not retain canonical audit history"
+        )
+    summary = after.get("summary")
+    lifecycle = after.get("lifecycle")
+    if (
+        not isinstance(summary, dict)
+        or summary.get("lifecycle_status") != "deletion_pending"
+        or summary.get("canonical_revision_count") != len(before_revisions)
+        or not isinstance(lifecycle, dict)
+        or lifecycle.get("reason") != _DELETE_REASON
+    ):
+        raise PlayerUpdateValidationError(
+            "Candidate runtime did not recover the interrupted lifecycle write"
+        )
 
 
 def _stop_runtime(process: subprocess.Popen[bytes]) -> None:
@@ -624,6 +778,7 @@ def _run_update_validation(
         base_process, base_session = _start_runtime(
             base, data_dir=data_dir, capture_path=base_capture
         )
+        base_interrupted = False
         try:
             record_key, before_update = _import_and_reject(base_session)
             before_snapshot = _hand_snapshot(before_update)
@@ -640,9 +795,18 @@ def _run_update_validation(
             _wait_for_expected_failure(
                 competing, description="Second player runtime using the same data directory"
             )
+            _interrupt_lifecycle_write(
+                base_process,
+                data_dir=data_dir,
+                record_key=record_key,
+                detail=before_update,
+                session=base_session,
+            )
+            base_interrupted = True
         finally:
             base_capture.unlink(missing_ok=True)
-            _stop_runtime(base_process)
+            if not base_interrupted:
+                _stop_runtime(base_process)
 
         candidate_capture = capture_dir / "candidate-launch-url"
         candidate_process, candidate_session = _start_runtime(
@@ -657,10 +821,7 @@ def _run_update_validation(
                     "The candidate runtime accepted an old runtime session"
                 )
             after_update = _hand_detail(record_key, candidate_session)
-            if _hand_snapshot(after_update) != before_snapshot:
-                raise PlayerUpdateValidationError(
-                    "Hand identity, canonical revision, or lifecycle changed during update"
-                )
+            _assert_recovered_lifecycle_retains_audit_state(before_update, after_update)
         finally:
             candidate_capture.unlink(missing_ok=True)
             _stop_runtime(candidate_process)
