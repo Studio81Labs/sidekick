@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import platform
 import subprocess
+import sys
 import tarfile
 from types import ModuleType
 
@@ -21,6 +22,7 @@ def _load_script(module_name: str, filename: str) -> ModuleType:
     assert spec is not None
     assert spec.loader is not None
     module = util.module_from_spec(spec)
+    sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -33,6 +35,56 @@ smoke_player_runtime = _load_script(
     "smoke_player_runtime_script",
     "smoke-player-runtime.py",
 )
+verify_player_runtime_update = _load_script(
+    "verify_player_runtime_update_script",
+    "verify-player-runtime-update.py",
+)
+
+
+def _runtime_archive(
+    tmp_path: Path,
+    *,
+    output_name: str,
+    payload: bytes,
+    source_revision: str,
+) -> Path:
+    product_version = "0.1.0"
+    system = smoke_player_runtime._safe_tag(platform.system())
+    machine = smoke_player_runtime._safe_tag(platform.machine())
+    python_parts = platform.python_version().split(".")
+    artifact_name = (
+        f"poker-hero-player-0-1-0-{system}-{machine}-"
+        f"cp{python_parts[0]}{python_parts[1]}"
+    )
+    bundle = tmp_path / output_name / artifact_name
+    bundle.mkdir(parents=True)
+    entrypoint = bundle / "poker-hero-player"
+    entrypoint.write_bytes(b"#!/bin/sh\nexit 0\n")
+    entrypoint.chmod(0o755)
+    (bundle / "application-bytes").write_bytes(payload)
+    build_player_runtime._write_bundle_manifest(
+        bundle,
+        artifact_name=artifact_name,
+        product_version=product_version,
+        entrypoint=entrypoint.name,
+    )
+    output = tmp_path / output_name / "release"
+    output.mkdir()
+    archive = output / f"{artifact_name}.tar.gz"
+    checksum = output / f"{artifact_name}.tar.gz.sha256"
+    provenance = output / f"{artifact_name}.tar.gz.provenance.json"
+    build_player_runtime._publish_archive(
+        bundle,
+        archive,
+        checksum,
+        provenance,
+        {
+            "schema_version": 1,
+            "source_revision": source_revision,
+            "source_tree_clean": True,
+        },
+    )
+    return archive
 
 
 def test_launch_capture_helper_writes_a_private_single_use_ticket(
@@ -278,3 +330,93 @@ def test_smoke_rejects_uninventoried_nested_manifest(tmp_path: Path) -> None:
         match="file inventory does not match",
     ):
         smoke_player_runtime._verify_bundle(bundle)
+
+
+def test_runtime_archive_publication_binds_clean_source_provenance(
+    tmp_path: Path,
+) -> None:
+    archive = _runtime_archive(
+        tmp_path,
+        output_name="candidate",
+        payload=b"candidate application bytes",
+        source_revision="a" * 40,
+    )
+
+    provenance = verify_player_runtime_update._read_provenance(archive)
+
+    assert provenance == {
+        "archive_name": archive.name,
+        "archive_sha256": sha256(archive.read_bytes()).hexdigest(),
+        "artifact": "poker-hero-player-runtime",
+        "schema_version": 1,
+        "source_revision": "a" * 40,
+        "source_tree_clean": True,
+    }
+
+
+def test_update_staging_requires_changed_clean_source_and_application_bytes(
+    tmp_path: Path,
+) -> None:
+    base_archive = _runtime_archive(
+        tmp_path,
+        output_name="base",
+        payload=b"base application bytes",
+        source_revision="a" * 40,
+    )
+    candidate_archive = _runtime_archive(
+        tmp_path,
+        output_name="candidate",
+        payload=b"candidate application bytes",
+        source_revision="b" * 40,
+    )
+
+    base = verify_player_runtime_update._stage_archive(
+        base_archive,
+        stage_root=tmp_path / "stage",
+        label="base",
+    )
+    candidate = verify_player_runtime_update._stage_archive(
+        candidate_archive,
+        stage_root=tmp_path / "stage",
+        label="candidate",
+    )
+
+    verify_player_runtime_update._require_distinct_bundles(base, candidate)
+
+    assert base.entrypoint.is_file()
+    assert candidate.entrypoint.is_file()
+    assert base.bundle_root.parent != candidate.bundle_root.parent
+
+
+def test_update_staging_cleans_incomplete_application_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive(
+        tmp_path,
+        output_name="candidate",
+        payload=b"candidate application bytes",
+        source_revision="b" * 40,
+    )
+
+    def interrupted_extract(_archive: Path, _destination: Path) -> Path:
+        raise smoke_player_runtime.PlayerPackageSmokeError("simulated interruption")
+
+    monkeypatch.setattr(
+        verify_player_runtime_update.SMOKE,
+        "_extract_archive",
+        interrupted_extract,
+    )
+
+    with pytest.raises(
+        smoke_player_runtime.PlayerPackageSmokeError,
+        match="simulated interruption",
+    ):
+        verify_player_runtime_update._stage_archive(
+            archive,
+            stage_root=tmp_path / "stage",
+            label="candidate",
+        )
+
+    staged = tmp_path / "stage"
+    assert not staged.exists() or list(staged.iterdir()) == []

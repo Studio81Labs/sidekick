@@ -18,6 +18,7 @@
     "player:start": "pnpm player:build && cd apps/backend && .venv/bin/python -m app.player_main",
     "player:package": "pnpm player:build && scripts/run-player-python.sh scripts/build-player-runtime.py",
     "player:package:test": "scripts/run-player-python.sh scripts/smoke-player-runtime.py",
+    "player:package:update:test": "scripts/run-player-python.sh scripts/verify-player-runtime-update.py",
     "player:export-and-remove": "cd apps/backend && .venv/bin/python -m app.player_uninstall",
     "player:test:e2e": "pnpm -C apps/pwa test:e2e:player-boundary",
     "backend:mcp": "cd apps/backend && .venv/bin/python -m app.mcp_gateway",

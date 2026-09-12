@@ -12,10 +12,13 @@ player product.
 [ADR 0082](../decisions/0082-deliver-a-review-first-local-mvp.md) approves a
 review-first controlled macOS arm64 pilot. #527 owns structured review and the
 stateless local preview contract; #528 owns the missing manual application-file
-update procedure and its verification. These are planned, not implemented by
-the scope decision. #414 qualifies the exact candidate; #409 still needs the
-real public corpus under `review-mvp/v1`. #412 and the remaining teaching loop
-are deferred and no longer block bounded review implementation.
+update procedure and its verification. #528 now provides the two-bundle
+release-engineering harness and the archive-embedded
+[manual update runbook](manual-player-application-update.md); it does not by
+itself qualify an exact macOS candidate or release. #414 qualifies that exact
+candidate; #409 still needs the real public corpus under `review-mvp/v1`. #412
+and the remaining teaching loop are deferred and no longer block bounded review
+implementation.
 
 The application-file procedure must verify and stage a separate current bundle,
 finish operations, verify/rehearse a current-format backup, stop the old runtime,
@@ -153,6 +156,12 @@ not require a repository checkout, Node, pnpm, or a separately installed Python
 runtime after extraction. It never contains the player workspace, installation
 credential, backup, or other user data.
 
+Each archive now has two required sidecars: `.sha256` binds the compressed
+archive and `.provenance.json` records that digest, a clean Git source revision,
+and the artifact identity. These are controlled repository-build evidence, not
+publisher authentication. `UPDATE-RUNBOOK.md` is included in the archive so the
+target-machine procedure can be followed without a checkout.
+
 Verify the archive checksum, complete internal file manifest, clean-extraction
 launch, one-use bootstrap and session flow, Host/Origin/CSRF and direct-LAN
 boundaries, local shell/authentication boundary, and packaged export/remove
@@ -161,6 +170,23 @@ handoff:
 ```bash
 pnpm player:package:test -- /absolute/path/poker-hero-player-*.tar.gz
 ```
+
+To validate a manual application-file update, build a base and a candidate from
+different clean source revisions into separate output directories, then run:
+
+```bash
+pnpm player:package:update:test \
+  /absolute/private/base/poker-hero-player-*.tar.gz \
+  /absolute/private/candidate/poker-hero-player-*.tar.gz
+```
+
+The harness rejects a same archive, same revision, or identical application
+inventory. It uses private temporary application/data roots to test integrity,
+platform binding, side-by-side staging, fresh sessions, lease/port failure,
+backup/restore, stale restore, application-only removal, and packaged
+export-before-data-removal. Follow the archive-embedded or source
+[manual update runbook](manual-player-application-update.md) for the separate
+controlled target-machine procedure and evidence record.
 
 After verification, extract the archive and run `./poker-hero-player`. The
 packaged runtime keeps the fixed `127.0.0.1:8765` origin and opens the browser in
@@ -182,9 +208,11 @@ or remove player data. Export and remove it through the packaged executable:
 
 These archives are unsigned release-engineering artifacts. They are not yet a
 supported end-user installer or update channel. ADR 0082 chooses a controlled
-macOS arm64 pilot; #528/#414 still must qualify
-its installation/update/removal lifecycle. Public signing/notarization,
-publication and additional platform support require a separate decision.
+macOS arm64 pilot; the #528 harness/runbook must be run against two exact
+candidate archives and #414 must record the resulting platform evidence before
+its installation/update/removal lifecycle is qualified. Public
+signing/notarization, publication and additional platform support require a
+separate decision.
 
 ## Imported-hand backup and restore
 
