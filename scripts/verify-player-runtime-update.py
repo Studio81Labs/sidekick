@@ -329,7 +329,8 @@ def _run_browser_update_rehearsal(
             ],
             cwd=ROOT / "apps" / "pwa",
             env=environment,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             start_new_session=True,
         )

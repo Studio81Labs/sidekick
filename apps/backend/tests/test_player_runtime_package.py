@@ -472,6 +472,7 @@ def test_update_browser_rehearsal_passes_validated_source_provenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     launched_environment: dict[str, str] = {}
+    launch_options: dict[str, object] = {}
 
     def bundle(
         label: str, revision: str, worker: bytes
@@ -506,6 +507,7 @@ def test_update_browser_rehearsal_passes_validated_source_provenance(
         environment = kwargs["env"]
         assert isinstance(environment, dict)
         launched_environment.update(environment)
+        launch_options.update(kwargs)
         return Process()
 
     monkeypatch.setattr(
@@ -526,6 +528,9 @@ def test_update_browser_rehearsal_passes_validated_source_provenance(
         launched_environment["POKER_PLAYER_UPDATE_CANDIDATE_SOURCE_REVISION"]
         == "b" * 40
     )
+    assert launch_options["stdout"] is subprocess.PIPE
+    assert launch_options["stderr"] is subprocess.PIPE
+    assert "capture_output" not in launch_options
 
 
 def test_update_recovery_interruption_duplicates_distinct_ready_cascades(
