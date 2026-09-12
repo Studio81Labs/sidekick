@@ -63,7 +63,19 @@ if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
 
 from app.data_lock import player_runtime_lease
+from app.domain.imported_hands import ImportedHandRecord
+from app.player_hands import player_hand_record_version
 from app.player_workspace import PlayerDataDirectoryError, reject_macos_extended_acl
+from app.storage.learning_content_catalog_store import LEARNING_CONTENT_CATALOG_FILENAME
+from app.storage.reference_activation_catalog_store import (
+    REFERENCE_ACTIVATION_CATALOG_FILENAME,
+)
+
+
+_CURRENT_OPERATOR_AUTHORITY_FILENAMES = (
+    LEARNING_CONTENT_CATALOG_FILENAME,
+    REFERENCE_ACTIVATION_CATALOG_FILENAME,
+)
 
 
 class PlayerUpdateValidationError(RuntimeError):
@@ -719,6 +731,43 @@ def _delete_hand(
     return deleted
 
 
+def _current_operator_authority_snapshot(data_dir: Path) -> tuple[tuple[str, str], ...]:
+    """Return exact retained catalog authorities outside player backups.
+
+    These install-local authorities intentionally do not travel in a portable
+    player backup. The update rehearsal therefore snapshots them directly
+    across the base-to-candidate handoff rather than treating a valid hand
+    backup as evidence that they survived candidate startup.
+    """
+
+    authorities: list[tuple[str, str]] = []
+    for filename in _CURRENT_OPERATOR_AUTHORITY_FILENAMES:
+        path = data_dir / filename
+        if path.is_symlink() or not path.is_file():
+            raise PlayerUpdateValidationError(
+                "Current operator authority is missing or unsafe"
+            )
+        try:
+            reject_macos_extended_acl(path)
+        except PlayerDataDirectoryError as exc:
+            raise PlayerUpdateValidationError(
+                "Current operator authority has unsafe extended ACL metadata"
+            ) from exc
+        authorities.append((filename, _sha256_file(path)))
+    return tuple(authorities)
+
+
+def _assert_current_operator_authorities_preserved(
+    data_dir: Path,
+    *,
+    expected: tuple[tuple[str, str], ...],
+) -> None:
+    if _current_operator_authority_snapshot(data_dir) != expected:
+        raise PlayerUpdateValidationError(
+            "Candidate runtime changed current operator authorities"
+        )
+
+
 def _ready_cascade_markers(data_dir: Path) -> tuple[Path, ...]:
     cascade_root = data_dir / "imported-hands" / ".cascade"
     if not cascade_root.is_dir() or cascade_root.is_symlink():
@@ -766,6 +815,54 @@ def _wait_for_ready_cascade(
     )
 
 
+def _staged_pending_lifecycle_transition(
+    ready_marker: Path,
+    *,
+    record_key: str,
+) -> dict[str, dict[str, Any]]:
+    """Read the exact pending transition promised by a durable cascade."""
+
+    staged_record = (
+        ready_marker.parent
+        / "staged"
+        / record_key
+        / "content"
+        / "record.json"
+    )
+    if staged_record.is_symlink() or not staged_record.is_file():
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle write did not stage its retained record"
+        )
+    try:
+        record = ImportedHandRecord.model_validate_json(staged_record.read_bytes())
+    except (OSError, ValueError) as exc:
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle write staged an invalid retained record"
+        ) from exc
+    if record.lifecycle.status != "deletion_pending":
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle write did not stage a deletion-pending record"
+        )
+    lifecycle = record.lifecycle.model_dump(mode="json")
+    return {
+        "lifecycle": lifecycle,
+        "summary": {
+            "record_key": record_key,
+            "record_version": player_hand_record_version(record),
+            "identity": (
+                record.identity.model_dump(mode="json")
+                if record.identity is not None
+                else None
+            ),
+            "lifecycle_status": lifecycle["status"],
+            "lifecycle_changed_at": lifecycle["changed_at"],
+            "active_canonical_revision": lifecycle["active_canonical_revision"],
+            "deletion_generation": lifecycle["deletion_generation"],
+            "canonical_revision_count": len(record.canonical_revisions),
+        },
+    }
+
+
 def _interrupt_lifecycle_write(
     process: subprocess.Popen[bytes],
     *,
@@ -773,7 +870,7 @@ def _interrupt_lifecycle_write(
     record_key: str,
     detail: dict[str, Any],
     session: dict[str, object],
-) -> None:
+) -> dict[str, dict[str, Any]]:
     """Kill a packaged runtime after a real lifecycle write becomes recoverable.
 
     The record directory is temporarily non-writable before the request starts.
@@ -814,9 +911,14 @@ def _interrupt_lifecycle_write(
     request_thread = Thread(target=request_delete, daemon=True)
     os.chmod(record_dir, 0o500)
     ready_marker: Path | None = None
+    expected_transition: dict[str, dict[str, Any]] | None = None
     try:
         request_thread.start()
         ready_marker = _wait_for_ready_cascade(data_dir, process)
+        expected_transition = _staged_pending_lifecycle_transition(
+            ready_marker,
+            record_key=record_key,
+        )
         process.kill()
         process.wait(timeout=10)
     finally:
@@ -839,10 +941,17 @@ def _interrupt_lifecycle_write(
         raise PlayerUpdateValidationError(
             "Interrupted lifecycle request did not report recovery as required"
         )
+    if expected_transition is None:
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle write did not retain its expected transition"
+        )
+    return expected_transition
 
 
 def _assert_recovered_lifecycle_retains_audit_state(
-    before: dict[str, Any], after: dict[str, Any]
+    before: dict[str, Any],
+    after: dict[str, Any],
+    expected_transition: dict[str, dict[str, Any]],
 ) -> None:
     audit_fields = (
         "raw_sources",
@@ -857,19 +966,38 @@ def _assert_recovered_lifecycle_retains_audit_state(
                 "Interrupted lifecycle recovery did not retain audit evidence "
                 f"for {field}"
             )
-    before_revisions = before["canonical_revisions"]
     summary = after.get("summary")
     lifecycle = after.get("lifecycle")
+    expected_summary = expected_transition.get("summary")
+    expected_lifecycle = expected_transition.get("lifecycle")
     if (
         not isinstance(summary, dict)
-        or summary.get("lifecycle_status") != "deletion_pending"
-        or summary.get("canonical_revision_count") != len(before_revisions)
         or not isinstance(lifecycle, dict)
-        or lifecycle.get("reason") != _DELETE_REASON
+        or not isinstance(expected_summary, dict)
+        or not isinstance(expected_lifecycle, dict)
     ):
         raise PlayerUpdateValidationError(
             "Candidate runtime did not recover the interrupted lifecycle write"
         )
+    if lifecycle != expected_lifecycle:
+        raise PlayerUpdateValidationError(
+            "Candidate runtime did not preserve the complete interrupted lifecycle"
+        )
+    for field in (
+        "record_key",
+        "record_version",
+        "identity",
+        "lifecycle_status",
+        "lifecycle_changed_at",
+        "active_canonical_revision",
+        "deletion_generation",
+        "canonical_revision_count",
+    ):
+        if summary.get(field) != expected_summary.get(field):
+            raise PlayerUpdateValidationError(
+                "Candidate runtime did not preserve the interrupted lifecycle "
+                f"summary {field}"
+            )
 
 
 def _stop_runtime(process: subprocess.Popen[bytes]) -> None:
@@ -1145,13 +1273,14 @@ def _run_update_validation(
             base, data_dir=data_dir, capture_path=base_capture
         )
         base_interrupted = False
+        expected_transition: dict[str, dict[str, Any]] | None = None
         try:
             restarted = _hand_detail(record_key, base_session)
             if _hand_snapshot(restarted) != before_snapshot:
                 raise PlayerUpdateValidationError(
                     "Base runtime restart changed retained audit state before interruption"
                 )
-            _interrupt_lifecycle_write(
+            expected_transition = _interrupt_lifecycle_write(
                 base_process,
                 data_dir=data_dir,
                 record_key=record_key,
@@ -1163,6 +1292,14 @@ def _run_update_validation(
             base_capture.unlink(missing_ok=True)
             if not base_interrupted:
                 _stop_runtime(base_process)
+
+        if expected_transition is None:
+            raise PlayerUpdateValidationError(
+                "Interrupted lifecycle write did not retain its expected transition"
+            )
+        operator_authorities_before_candidate = _current_operator_authority_snapshot(
+            data_dir
+        )
 
         candidate_capture = capture_dir / "candidate-launch-url"
         candidate_process, candidate_session = _start_runtime(
@@ -1177,7 +1314,15 @@ def _run_update_validation(
                     "The candidate runtime accepted an old runtime session"
                 )
             after_update = _hand_detail(record_key, candidate_session)
-            _assert_recovered_lifecycle_retains_audit_state(before_update, after_update)
+            _assert_recovered_lifecycle_retains_audit_state(
+                before_update,
+                after_update,
+                expected_transition,
+            )
+            _assert_current_operator_authorities_preserved(
+                data_dir,
+                expected=operator_authorities_before_candidate,
+            )
         finally:
             candidate_capture.unlink(missing_ok=True)
             _stop_runtime(candidate_process)

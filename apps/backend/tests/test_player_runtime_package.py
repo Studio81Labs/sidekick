@@ -687,16 +687,40 @@ def test_update_recovery_requires_pending_lifecycle_and_retained_audit() -> None
         "conflicts": [{"conflict_id": "conflict"}],
         "canonical_revisions": [{"revision": 1, "approval_id": "approval"}],
         "summary": {
+            "record_key": "record",
+            "record_version": "version",
+            "identity": {
+                "namespace": "pokerstars",
+                "site": "PokerStars",
+                "source_hand_id": "1",
+            },
             "lifecycle_status": "deletion_pending",
+            "lifecycle_changed_at": "2026-09-12T00:00:00Z",
+            "active_canonical_revision": None,
+            "deletion_generation": 1,
             "canonical_revision_count": 1,
         },
         "lifecycle": {
+            "status": "deletion_pending",
+            "active_canonical_revision": None,
+            "deletion_generation": 1,
+            "changed_at": "2026-09-12T00:00:00Z",
             "reason": verify_player_runtime_update._DELETE_REASON,
+            "deletion_request": {
+                "generation": 1,
+                "requested_at": "2026-09-12T00:00:00Z",
+                "cleanup_status": "pending",
+                "last_error": None,
+            },
         },
+    }
+    expected_transition = {
+        "summary": after["summary"].copy(),
+        "lifecycle": after["lifecycle"].copy(),
     }
 
     verify_player_runtime_update._assert_recovered_lifecycle_retains_audit_state(
-        before, after
+        before, after, expected_transition
     )
     after["detections"] = []
     with pytest.raises(
@@ -704,7 +728,75 @@ def test_update_recovery_requires_pending_lifecycle_and_retained_audit() -> None
         match="audit evidence for detections",
     ):
         verify_player_runtime_update._assert_recovered_lifecycle_retains_audit_state(
-            before, after
+            before, after, expected_transition
+        )
+
+
+@pytest.mark.parametrize(
+    ("target", "value", "match"),
+    [
+        ("lifecycle.changed_at", "2026-09-12T00:00:01Z", "complete interrupted"),
+        (
+            "lifecycle.deletion_request.requested_at",
+            "2026-09-12T00:00:01Z",
+            "complete interrupted",
+        ),
+        ("summary.record_version", "different-version", "summary record_version"),
+    ],
+)
+def test_update_recovery_requires_the_exact_staged_lifecycle_transition(
+    target: str,
+    value: str,
+    match: str,
+) -> None:
+    before = {
+        "raw_sources": [{"raw_source_id": "source"}],
+        "detections": [{"detection_id": "detection", "confidence": 0.8}],
+        "conflicts": [{"conflict_id": "conflict"}],
+        "canonical_revisions": [{"revision": 1, "approval_id": "approval"}],
+    }
+    expected_transition = {
+        "summary": {
+            "record_key": "record",
+            "record_version": "version",
+            "identity": {"namespace": "pokerstars"},
+            "lifecycle_status": "deletion_pending",
+            "lifecycle_changed_at": "2026-09-12T00:00:00Z",
+            "active_canonical_revision": None,
+            "deletion_generation": 1,
+            "canonical_revision_count": 1,
+        },
+        "lifecycle": {
+            "status": "deletion_pending",
+            "active_canonical_revision": None,
+            "deletion_generation": 1,
+            "changed_at": "2026-09-12T00:00:00Z",
+            "reason": verify_player_runtime_update._DELETE_REASON,
+            "deletion_request": {
+                "generation": 1,
+                "requested_at": "2026-09-12T00:00:00Z",
+                "cleanup_status": "pending",
+                "last_error": None,
+            },
+        },
+    }
+    after = json.loads(json.dumps(before | expected_transition))
+    container: dict[str, object] = after
+    parts = target.split(".")
+    for part in parts[:-1]:
+        child = container[part]
+        assert isinstance(child, dict)
+        container = child
+    container[parts[-1]] = value
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match=match,
+    ):
+        verify_player_runtime_update._assert_recovered_lifecycle_retains_audit_state(
+            before,
+            after,
+            expected_transition,
         )
 
 
@@ -787,6 +879,31 @@ def test_update_seeds_a_valid_retained_grade_artifact(tmp_path: Path) -> None:
     assert len(
         workspace.imported_hands.list_reference_activated_grade_artifacts(record_key)
     ) == 1
+
+
+def test_update_rejects_a_candidate_that_changes_current_operator_authority(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "player-data"
+    data_dir.mkdir(mode=0o700)
+    verify_player_runtime_update._seed_retained_grade_artifact(data_dir)
+    expected = verify_player_runtime_update._current_operator_authority_snapshot(
+        data_dir
+    )
+    authority = (
+        data_dir
+        / verify_player_runtime_update._CURRENT_OPERATOR_AUTHORITY_FILENAMES[0]
+    )
+    authority.write_text('{"reset": true}\n', encoding="utf-8")
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="changed current operator authorities",
+    ):
+        verify_player_runtime_update._assert_current_operator_authorities_preserved(
+            data_dir,
+            expected=expected,
+        )
 
 
 def test_update_workspace_digest_rejects_a_lease_failure_mutation(
