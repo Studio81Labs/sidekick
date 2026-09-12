@@ -178,6 +178,54 @@ def _source_provenance() -> dict[str, object]:
     }
 
 
+def _bind_player_build_provenance(
+    bundle_root: Path,
+    *,
+    source_revision: str,
+) -> None:
+    """Make the packaged shell and worker identify their clean build revision."""
+
+    asset_roots = [
+        path
+        for path in bundle_root.rglob("player-assets")
+        if not path.is_symlink()
+        and path.is_dir()
+        and (path / "index.html").is_file()
+        and (path / "sw.js").is_file()
+    ]
+    if len(asset_roots) != 1:
+        raise PlayerPackageError(
+            "The packaged player runtime must contain one player asset directory"
+        )
+    assets = asset_roots[0]
+    index_path = assets / "index.html"
+    worker_path = assets / "sw.js"
+    if index_path.is_symlink() or worker_path.is_symlink():
+        raise PlayerPackageError("The packaged player assets must not be symlinks")
+    index = index_path.read_text(encoding="utf-8")
+    marker = (
+        f'    <meta name="poker-hero-build-revision" '
+        f'content="{source_revision}" />\n'
+    )
+    if index.count("</head>") != 1 or "poker-hero-build-revision" in index:
+        raise PlayerPackageError("The packaged player shell cannot bind build provenance")
+    index_path.write_text(index.replace("</head>", marker + "  </head>"), encoding="utf-8")
+
+    worker = worker_path.read_text(encoding="utf-8")
+    revision_tag = source_revision[:12]
+    updated_worker, replacements = re.subn(
+        r"poker-hero-player-shell-[0-9a-f]+",
+        lambda match: f"{match.group(0)}-r{revision_tag}",
+        worker,
+        count=1,
+    )
+    if replacements != 1:
+        raise PlayerPackageError(
+            "The packaged player worker cannot bind build provenance"
+        )
+    worker_path.write_text(updated_worker, encoding="utf-8")
+
+
 def _publish_archive(
     bundle_root: Path,
     archive_path: Path,
@@ -352,6 +400,10 @@ def main(argv: list[str] | None = None) -> int:
 
         bundle_root = temporary / artifact_name
         shutil.copytree(pyinstaller_bundle, bundle_root, symlinks=True)
+        _bind_player_build_provenance(
+            bundle_root,
+            source_revision=str(source_provenance["source_revision"]),
+        )
         (bundle_root / "BUNDLE-README.txt").write_text(
             "Poker Hero local player runtime\n"
             f"Version: {product_version}\n"

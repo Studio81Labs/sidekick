@@ -173,6 +173,41 @@ def _bundle_inventory_digest(manifest: dict[str, Any]) -> str:
     return sha256(encoded).hexdigest()
 
 
+def _embedded_player_asset_path(bundle: ValidatedBundle, filename: str) -> Path:
+    matches = [
+        entry.get("path")
+        for entry in bundle.manifest["files"]
+        if isinstance(entry, dict)
+        and isinstance(entry.get("path"), str)
+        and entry["path"].endswith(f"player-assets/{filename}")
+    ]
+    if len(matches) != 1:
+        raise PlayerUpdateValidationError(
+            f"Runtime bundle does not contain one verified embedded {filename}"
+        )
+    return bundle.bundle_root.joinpath(*Path(matches[0]).parts)
+
+
+def _executed_application_digest(bundle: ValidatedBundle) -> str:
+    executed_paths = {
+        bundle.entrypoint.relative_to(bundle.bundle_root).as_posix(),
+        _embedded_player_asset_path(bundle, "index.html")
+        .relative_to(bundle.bundle_root)
+        .as_posix(),
+        _embedded_player_asset_path(bundle, "sw.js")
+        .relative_to(bundle.bundle_root)
+        .as_posix(),
+    }
+    entries = [
+        entry
+        for entry in bundle.manifest["files"]
+        if isinstance(entry, dict) and entry.get("path") in executed_paths
+    ]
+    return sha256(
+        json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def _require_distinct_bundles(base: ValidatedBundle, candidate: ValidatedBundle) -> None:
     if base.archive_sha256 == candidate.archive_sha256:
         raise PlayerUpdateValidationError(
@@ -182,11 +217,13 @@ def _require_distinct_bundles(base: ValidatedBundle, candidate: ValidatedBundle)
         raise PlayerUpdateValidationError(
             "Base and candidate have the same source revision; build a changed candidate"
         )
-    if _bundle_inventory_digest(base.manifest) == _bundle_inventory_digest(
-        candidate.manifest
-    ):
+    if _bundle_inventory_digest(base.manifest) == _bundle_inventory_digest(candidate.manifest):
         raise PlayerUpdateValidationError(
             "Base and candidate application files are identical; a same-bundle restart is not update evidence"
+        )
+    if _executed_application_digest(base) == _executed_application_digest(candidate):
+        raise PlayerUpdateValidationError(
+            "Base and candidate executed application and shell bytes are identical"
         )
 
 
@@ -198,21 +235,6 @@ def _runtime_environment(data_dir: Path, capture_path: Path) -> dict[str, str]:
         "POKER_DEPLOYMENT_ENVIRONMENT": "local",
         "POKER_HERO_PLAYER_LAUNCH_URL_FILE": str(capture_path),
     }
-
-
-def _embedded_shell_path(bundle: ValidatedBundle) -> Path:
-    matches = [
-        entry.get("path")
-        for entry in bundle.manifest["files"]
-        if isinstance(entry, dict)
-        and isinstance(entry.get("path"), str)
-        and entry["path"].endswith("player-assets/index.html")
-    ]
-    if len(matches) != 1:
-        raise PlayerUpdateValidationError(
-            "Runtime bundle does not contain one verified embedded player shell"
-        )
-    return bundle.bundle_root.joinpath(*Path(matches[0]).parts)
 
 
 def _start_runtime(
@@ -231,13 +253,23 @@ def _start_runtime(
     )
     try:
         SMOKE._wait_for_runtime(process, data_dir=data_dir)
-        expected_shell = _embedded_shell_path(bundle).read_bytes()
+        expected_shell = _embedded_player_asset_path(bundle, "index.html").read_bytes()
         shell = SMOKE._require_response(
             SMOKE._request("/"), status=200, description="Packaged runtime shell"
         )
         if shell != expected_shell:
             raise PlayerUpdateValidationError(
                 "Running runtime did not serve its staged application shell"
+            )
+        expected_worker = _embedded_player_asset_path(bundle, "sw.js").read_bytes()
+        worker = SMOKE._require_response(
+            SMOKE._request("/sw.js"),
+            status=200,
+            description="Packaged runtime worker",
+        )
+        if worker != expected_worker:
+            raise PlayerUpdateValidationError(
+                "Running runtime did not serve its staged application worker"
             )
         ticket = SMOKE._wait_for_launch_ticket(capture_path)
         return process, _exchange_session(ticket)

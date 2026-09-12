@@ -11,6 +11,11 @@ archive, `.sha256`, and `.provenance.json` files together. The provenance file
 binds the archive digest to its clean source revision. It is evidence for the
 controlled build channel, not a signature.
 
+The package also writes that clean revision into the embedded player shell and
+derives a new embedded service-worker cache key from it. A changed candidate
+therefore serves and activates distinguishable shell/worker bytes; this is a
+release identity marker, not a browser-stored hand draft or a network call.
+
 ## Preconditions
 
 Record the exact candidate and base source revisions, archive SHA-256 values,
@@ -34,8 +39,9 @@ rejected lifecycle state, rehearses backup/restore, rejects an old runtime
 session and concurrent runtime, checks corrupt/incomplete/interrupted staging,
 tests occupied-port startup without workspace mutation, retains a newer
 deletion through a stale restore, removes only the old application files, and
-finishes with packaged export-before-data-removal. The test uses only a
-temporary test workspace; it never accepts a production data path.
+finishes with packaged export-before-data-removal. It also rejects a candidate
+whose executed binary, shell, and worker bytes are unchanged. The test uses
+only a temporary test workspace; it never accepts a production data path.
 
 The target procedure below works from the delivered archives and standard
 macOS tools; it does not require a repository checkout, pnpm, Node, or a

@@ -160,7 +160,10 @@ Each archive now has two required sidecars: `.sha256` binds the compressed
 archive and `.provenance.json` records that digest, a clean Git source revision,
 and the artifact identity. These are controlled repository-build evidence, not
 publisher authentication. `UPDATE-RUNBOOK.md` is included in the archive so the
-target-machine procedure can be followed without a checkout.
+target-machine procedure can be followed without a checkout. The package binds
+the same clean revision into the embedded shell and derives a new service-worker
+cache key, so a changed archive has observable candidate shell/worker bytes
+without storing player data in the browser.
 
 Verify the archive checksum, complete internal file manifest, clean-extraction
 launch, one-use bootstrap and session flow, Host/Origin/CSRF and direct-LAN
@@ -180,11 +183,12 @@ pnpm player:package:update:test \
   /absolute/private/candidate/poker-hero-player-*.tar.gz
 ```
 
-The harness rejects a same archive, same revision, or identical application
-inventory. It uses private temporary application/data roots to test integrity,
-platform binding, side-by-side staging, fresh sessions, lease/port failure,
-backup/restore, stale restore, application-only removal, and packaged
-export-before-data-removal. Follow the archive-embedded or source
+The harness rejects a same archive, same revision, identical application
+inventory, or identical executed binary/shell/worker assets. It uses private
+temporary application/data roots to test integrity, platform binding,
+side-by-side staging, fresh sessions, lease/port failure, backup/restore,
+stale restore, application-only removal, and packaged export-before-data-removal.
+Follow the archive-embedded or source
 [manual update runbook](manual-player-application-update.md) for the separate
 controlled target-machine procedure and evidence record.
 

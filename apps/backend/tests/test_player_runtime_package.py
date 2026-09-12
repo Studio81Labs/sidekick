@@ -62,6 +62,10 @@ def _runtime_archive(
     entrypoint.write_bytes(b"#!/bin/sh\nexit 0\n")
     entrypoint.chmod(0o755)
     (bundle / "application-bytes").write_bytes(payload)
+    assets = bundle / "_internal" / "player-assets"
+    assets.mkdir(parents=True)
+    (assets / "index.html").write_bytes(b"<html>" + payload + b"</html>")
+    (assets / "sw.js").write_bytes(b"worker-" + payload)
     build_player_runtime._write_bundle_manifest(
         bundle,
         artifact_name=artifact_name,
@@ -352,6 +356,33 @@ def test_runtime_archive_publication_binds_clean_source_provenance(
         "source_revision": "a" * 40,
         "source_tree_clean": True,
     }
+
+
+def test_runtime_package_binds_clean_revision_to_shell_and_worker(
+    tmp_path: Path,
+) -> None:
+    bundle = tmp_path / "bundle"
+    assets = bundle / "_internal" / "player-assets"
+    assets.mkdir(parents=True)
+    index = assets / "index.html"
+    worker = assets / "sw.js"
+    index.write_text("<html><head></head><body></body></html>", encoding="utf-8")
+    worker.write_text(
+        "const cache = 'poker-hero-player-shell-deadbeef';", encoding="utf-8"
+    )
+
+    build_player_runtime._bind_player_build_provenance(
+        bundle,
+        source_revision="a" * 40,
+    )
+
+    assert (
+        f'name="poker-hero-build-revision" content="{"a" * 40}'
+        in index.read_text(encoding="utf-8")
+    )
+    assert "poker-hero-player-shell-deadbeef-raaaaaaaaaaaa" in worker.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_update_staging_requires_changed_clean_source_and_application_bytes(
