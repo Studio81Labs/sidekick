@@ -1468,6 +1468,10 @@ def _run_update_validation(
         base_process, base_session = _start_runtime(
             base, data_dir=data_dir, capture_path=base_capture
         )
+        workspace_metadata_before_handoff: (
+            tuple[tuple[str, str, int, int, int, str], ...] | None
+        ) = None
+        expected_deleted_artifact_paths: frozenset[str] = frozenset()
         try:
             record_key, before_update = _import_and_reject(base_session)
             before_snapshot = _hand_snapshot(before_update)
