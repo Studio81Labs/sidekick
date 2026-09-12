@@ -626,12 +626,20 @@ def _interrupt_lifecycle_write(
 def _assert_recovered_lifecycle_retains_audit_state(
     before: dict[str, Any], after: dict[str, Any]
 ) -> None:
-    before_revisions = before.get("canonical_revisions")
-    after_revisions = after.get("canonical_revisions")
-    if not isinstance(before_revisions, list) or after_revisions != before_revisions:
-        raise PlayerUpdateValidationError(
-            "Interrupted lifecycle recovery did not retain canonical audit history"
-        )
+    audit_fields = (
+        "raw_sources",
+        "detections",
+        "conflicts",
+        "canonical_revisions",
+    )
+    for field in audit_fields:
+        before_value = before.get(field)
+        if not isinstance(before_value, list) or after.get(field) != before_value:
+            raise PlayerUpdateValidationError(
+                "Interrupted lifecycle recovery did not retain audit evidence "
+                f"for {field}"
+            )
+    before_revisions = before["canonical_revisions"]
     summary = after.get("summary")
     lifecycle = after.get("lifecycle")
     if (

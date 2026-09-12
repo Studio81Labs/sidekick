@@ -490,9 +490,15 @@ def test_update_detects_only_durable_ready_cascades(tmp_path: Path) -> None:
 
 def test_update_recovery_requires_pending_lifecycle_and_retained_audit() -> None:
     before = {
+        "raw_sources": [{"raw_source_id": "source"}],
+        "detections": [{"detection_id": "detection", "confidence": 0.8}],
+        "conflicts": [{"conflict_id": "conflict"}],
         "canonical_revisions": [{"revision": 1, "approval_id": "approval"}],
     }
     after = {
+        "raw_sources": [{"raw_source_id": "source"}],
+        "detections": [{"detection_id": "detection", "confidence": 0.8}],
+        "conflicts": [{"conflict_id": "conflict"}],
         "canonical_revisions": [{"revision": 1, "approval_id": "approval"}],
         "summary": {
             "lifecycle_status": "deletion_pending",
@@ -506,10 +512,10 @@ def test_update_recovery_requires_pending_lifecycle_and_retained_audit() -> None
     verify_player_runtime_update._assert_recovered_lifecycle_retains_audit_state(
         before, after
     )
-    after["canonical_revisions"] = []
+    after["detections"] = []
     with pytest.raises(
         verify_player_runtime_update.PlayerUpdateValidationError,
-        match="canonical audit history",
+        match="audit evidence for detections",
     ):
         verify_player_runtime_update._assert_recovered_lifecycle_retains_audit_state(
             before, after
