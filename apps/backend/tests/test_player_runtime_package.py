@@ -1005,11 +1005,10 @@ def test_update_rejects_a_candidate_that_changes_workspace_security_metadata(
         verify_player_runtime_update._assert_workspace_metadata_preserved(
             data_dir,
             expected=expected,
-            expected_removed_paths=frozenset(),
         )
 
 
-def test_update_workspace_metadata_allows_only_expected_deleted_artifacts(
+def test_update_workspace_metadata_rejects_a_missing_retained_artifact(
     tmp_path: Path,
 ) -> None:
     data_dir = tmp_path / "player-data"
@@ -1021,15 +1020,14 @@ def test_update_workspace_metadata_allows_only_expected_deleted_artifacts(
     )
     artifact.unlink()
 
-    verify_player_runtime_update._assert_workspace_metadata_preserved(
-        data_dir,
-        expected=expected,
-        expected_removed_paths=frozenset(
-            {
-                artifact.relative_to(data_dir).as_posix(),
-            }
-        ),
-    )
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="changed player workspace security metadata",
+    ):
+        verify_player_runtime_update._assert_workspace_metadata_preserved(
+            data_dir,
+            expected=expected,
+        )
 
 
 def test_update_workspace_digest_rejects_a_lease_failure_mutation(

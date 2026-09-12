@@ -966,30 +966,11 @@ def _assert_workspace_metadata_preserved(
     data_dir: Path,
     *,
     expected: tuple[tuple[str, str, int, int, int, str], ...],
-    expected_removed_paths: frozenset[str],
 ) -> None:
-    remaining_expected = tuple(
-        entry for entry in expected if entry[0] not in expected_removed_paths
-    )
-    if _workspace_metadata_snapshot(data_dir) != remaining_expected:
+    if _workspace_metadata_snapshot(data_dir) != expected:
         raise PlayerUpdateValidationError(
             "Candidate runtime changed player workspace security metadata"
         )
-
-
-def _artifact_workspace_paths(
-    record_key: str,
-    artifacts: dict[str, tuple[tuple[str, str, str, int], ...]],
-) -> frozenset[str]:
-    directories = {
-        "decision_artifacts": "decisions",
-        "grade_artifacts": "grades",
-    }
-    return frozenset(
-        f"imported-hands/{record_key}/{directory}/{artifact[0]}"
-        for field, directory in directories.items()
-        for artifact in artifacts[field]
-    )
 
 
 def _ready_cascade_markers(data_dir: Path) -> tuple[Path, ...]:
@@ -1471,7 +1452,6 @@ def _run_update_validation(
         workspace_metadata_before_handoff: (
             tuple[tuple[str, str, int, int, int, str], ...] | None
         ) = None
-        expected_deleted_artifact_paths: frozenset[str] = frozenset()
         try:
             record_key, before_update = _import_and_reject(base_session)
             before_snapshot = _hand_snapshot(before_update)
@@ -1494,10 +1474,6 @@ def _run_update_validation(
                     "Update-validation grade fixture has no retained grade artifacts"
                 )
             workspace_metadata_before_handoff = _workspace_metadata_snapshot(data_dir)
-            expected_deleted_artifact_paths = _artifact_workspace_paths(
-                record_key,
-                backup_artifacts,
-            )
         finally:
             base_capture.unlink(missing_ok=True)
             _stop_runtime(base_process)
@@ -1553,7 +1529,6 @@ def _run_update_validation(
             _assert_workspace_metadata_preserved(
                 data_dir,
                 expected=workspace_metadata_before_handoff,
-                expected_removed_paths=expected_deleted_artifact_paths,
             )
             _assert_workspace_manifest_preserved(
                 data_dir,
@@ -1579,7 +1554,6 @@ def _run_update_validation(
             _assert_workspace_metadata_preserved(
                 data_dir,
                 expected=workspace_metadata_before_handoff,
-                expected_removed_paths=expected_deleted_artifact_paths,
             )
             _assert_workspace_manifest_preserved(
                 data_dir,
