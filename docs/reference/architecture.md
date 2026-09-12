@@ -13,9 +13,11 @@ separate `/admin/ocr/mcp` credential surface and status-only gateway follow
 The cleanup is complete. [ADR 0082](../decisions/0082-deliver-a-review-first-local-mvp.md)
 now makes #405 a review-first local MVP. #527's stateless preview, typed
 recorded-hand timeline, and V2 structured correction/approval workflow are
-implemented; #528 application-file lifecycle and the #414 review-pilot gate
-remain outstanding. #409 corpus evidence remains an active review-release dependency;
-#412 and the remaining teaching loop are deferred, not release dependencies.
+implemented. #528 supplies the manual two-bundle application-file harness and
+archive-embedded runbook, but exact macOS candidate evidence and the #414
+review-pilot gate remain outstanding. #409 corpus evidence remains an active
+review-release dependency; #412 and the remaining teaching loop are deferred,
+not release dependencies.
 Older Phase 1/shared-gate descriptions below concern that deferred learning
 target, not an instruction to resume source screening.
 
@@ -31,7 +33,8 @@ wholly omitted facts. No storage or grading-contract change is planned. Exact re
 implementation boundaries are in the
 [Epic plan](https://github.com/Studio81Labs/sidekick/issues/405#technical-implementation-plan).
 The initial delivery target is a controlled macOS arm64 pilot, with manual
-application-file replacement still requiring #528 validation.
+application-file replacement requiring execution of #528's harness on the
+exact candidate and #414 validation.
 
 The repository security, release, dependency-trust, and required-check baseline
 is defined by

@@ -29,6 +29,7 @@ REQUIRED_PLAYER_ASSETS = (
     "sw.js",
 )
 ARTIFACT_SCHEMA_VERSION = 1
+PROVENANCE_SCHEMA_VERSION = 1
 
 
 class PlayerPackageError(RuntimeError):
@@ -139,11 +140,103 @@ def _write_archive(bundle_root: Path, archive_path: Path) -> None:
                 archive.addfile(info)
 
 
+def _source_provenance() -> dict[str, object]:
+    """Return the clean repository revision that produced a release archive."""
+
+    revision = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    source_revision = revision.stdout.strip()
+    if (
+        revision.returncode != 0
+        or re.fullmatch(r"[0-9a-f]{40,64}", source_revision) is None
+    ):
+        raise PlayerPackageError(
+            "Player runtime build provenance requires a checked-out Git revision"
+        )
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if status.returncode != 0:
+        raise PlayerPackageError("Could not inspect the player runtime source tree")
+    if status.stdout:
+        raise PlayerPackageError(
+            "Refusing to package a dirty source tree; commit the candidate first"
+        )
+    return {
+        "schema_version": PROVENANCE_SCHEMA_VERSION,
+        "source_revision": source_revision,
+        "source_tree_clean": True,
+    }
+
+
+def _bind_player_build_provenance(
+    bundle_root: Path,
+    *,
+    source_revision: str,
+) -> None:
+    """Make the packaged shell and worker identify their clean build revision."""
+
+    asset_roots = [
+        path
+        for path in bundle_root.rglob("player-assets")
+        if not path.is_symlink()
+        and path.is_dir()
+        and (path / "index.html").is_file()
+        and (path / "sw.js").is_file()
+    ]
+    if len(asset_roots) != 1:
+        raise PlayerPackageError(
+            "The packaged player runtime must contain one player asset directory"
+        )
+    assets = asset_roots[0]
+    index_path = assets / "index.html"
+    worker_path = assets / "sw.js"
+    if index_path.is_symlink() or worker_path.is_symlink():
+        raise PlayerPackageError("The packaged player assets must not be symlinks")
+    index = index_path.read_text(encoding="utf-8")
+    marker = (
+        f'    <meta name="poker-hero-build-revision" '
+        f'content="{source_revision}" />\n'
+    )
+    if index.count("</head>") != 1 or "poker-hero-build-revision" in index:
+        raise PlayerPackageError("The packaged player shell cannot bind build provenance")
+    index_path.write_text(index.replace("</head>", marker + "  </head>"), encoding="utf-8")
+
+    worker = worker_path.read_text(encoding="utf-8")
+    revision_tag = source_revision[:12]
+    updated_worker, replacements = re.subn(
+        r"poker-hero-player-shell-[0-9a-f]+",
+        lambda match: f"{match.group(0)}-r{revision_tag}",
+        worker,
+        count=1,
+    )
+    if replacements != 1:
+        raise PlayerPackageError(
+            "The packaged player worker cannot bind build provenance"
+        )
+    worker_path.write_text(updated_worker, encoding="utf-8")
+
+
 def _publish_archive(
     bundle_root: Path,
     archive_path: Path,
     checksum_path: Path,
+    provenance_path: Path | None = None,
+    source_provenance: dict[str, object] | None = None,
 ) -> None:
+    if (provenance_path is None) != (source_provenance is None):
+        raise PlayerPackageError(
+            "Runtime archive provenance destination and content must be supplied together"
+        )
     with tempfile.TemporaryDirectory(
         prefix=".poker-hero-player-publish-",
         dir=archive_path.parent,
@@ -157,8 +250,27 @@ def _publish_archive(
             f"{archive_digest}  {archive_path.name}\n",
             encoding="ascii",
         )
+        temporary_provenance: Path | None = None
+        if provenance_path is not None and source_provenance is not None:
+            temporary_provenance = staging_dir / provenance_path.name
+            temporary_provenance.write_text(
+                json.dumps(
+                    {
+                        "archive_name": archive_path.name,
+                        "archive_sha256": archive_digest,
+                        "artifact": "poker-hero-player-runtime",
+                        **source_provenance,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
         os.replace(temporary_archive, archive_path)
         os.replace(temporary_checksum, checksum_path)
+        if temporary_provenance is not None and provenance_path is not None:
+            os.replace(temporary_provenance, provenance_path)
 
 
 def _require_player_assets() -> None:
@@ -172,6 +284,13 @@ def _require_player_assets() -> None:
             raise PlayerPackageError(
                 f"The verified player PWA asset {relative} is missing"
             )
+
+
+def _require_update_runbook() -> Path:
+    runbook = ROOT / "docs" / "process" / "manual-player-application-update.md"
+    if runbook.is_symlink() or not runbook.is_file():
+        raise PlayerPackageError("The packaged player update runbook is missing")
+    return runbook
 
 
 def _argument_parser() -> argparse.ArgumentParser:
@@ -220,7 +339,10 @@ def main(argv: list[str] | None = None) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     archive_path = output_dir / f"{artifact_name}.tar.gz"
     checksum_path = output_dir / f"{artifact_name}.tar.gz.sha256"
-    existing = [path for path in (archive_path, checksum_path) if path.exists()]
+    provenance_path = output_dir / f"{artifact_name}.tar.gz.provenance.json"
+    existing = [
+        path for path in (archive_path, checksum_path, provenance_path) if path.exists()
+    ]
     if existing and not args.force:
         raise PlayerPackageError(
             "Refusing to replace an existing player runtime artifact; pass --force"
@@ -230,6 +352,8 @@ def main(argv: list[str] | None = None) -> int:
             raise PlayerPackageError(
                 f"Refusing to replace unsafe artifact destination {path}"
             )
+    source_provenance = _source_provenance()
+    update_runbook = _require_update_runbook()
 
     with tempfile.TemporaryDirectory(prefix="poker-hero-player-package-") as raw:
         temporary = Path(raw)
@@ -276,6 +400,10 @@ def main(argv: list[str] | None = None) -> int:
 
         bundle_root = temporary / artifact_name
         shutil.copytree(pyinstaller_bundle, bundle_root, symlinks=True)
+        _bind_player_build_provenance(
+            bundle_root,
+            source_revision=str(source_provenance["source_revision"]),
+        )
         (bundle_root / "BUNDLE-README.txt").write_text(
             "Poker Hero local player runtime\n"
             f"Version: {product_version}\n"
@@ -285,9 +413,11 @@ def main(argv: list[str] | None = None) -> int:
             f"  ./{executable_name} export-and-remove /absolute/private/backup.zip "
             "--confirm-remove-data\n\n"
             "This archive contains application files only. It does not contain, "
-            "install, migrate, or remove the player data workspace.\n",
+            "install, migrate, or remove the player data workspace.\n"
+            "Read UPDATE-RUNBOOK.md before manually replacing application files.\n",
             encoding="utf-8",
         )
+        shutil.copy2(update_runbook, bundle_root / "UPDATE-RUNBOOK.md")
         _write_bundle_manifest(
             bundle_root,
             artifact_name=artifact_name,
@@ -295,10 +425,17 @@ def main(argv: list[str] | None = None) -> int:
             entrypoint=executable_name,
         )
 
-        _publish_archive(bundle_root, archive_path, checksum_path)
+        _publish_archive(
+            bundle_root,
+            archive_path,
+            checksum_path,
+            provenance_path,
+            source_provenance,
+        )
 
     print(archive_path)
     print(checksum_path)
+    print(provenance_path)
     return 0
 
 
