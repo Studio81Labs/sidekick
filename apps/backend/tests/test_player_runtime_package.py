@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 from importlib import util
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,7 @@ import subprocess
 import sys
 import tarfile
 from types import ModuleType
+from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
@@ -719,6 +721,58 @@ def test_update_snapshot_includes_retained_recognition_evidence() -> None:
     detail["detections"] = []
 
     assert verify_player_runtime_update._hand_snapshot(detail) != snapshot
+
+
+@pytest.mark.parametrize("missing_field", ["decision_artifacts", "grade_artifacts"])
+def test_update_restore_comparison_rejects_missing_retained_artifacts(
+    missing_field: str,
+) -> None:
+    record_key = "a" * 64
+    archive_bytes = BytesIO()
+    manifest = {
+        "records": [
+            {
+                "record_key": record_key,
+                "decision_artifacts": [
+                    {
+                        "filename": "r1-g0.json",
+                        "file": f"hands/{record_key}/decisions/r1-g0.json",
+                        "sha256": "b" * 64,
+                        "size": 123,
+                    }
+                ],
+                "grade_artifacts": [
+                    {
+                        "filename": "r1-g0-i0.json",
+                        "file": f"hands/{record_key}/grades/r1-g0-i0.json",
+                        "sha256": "c" * 64,
+                        "size": 456,
+                    }
+                ],
+            }
+        ]
+    }
+    with ZipFile(archive_bytes, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+
+    expected = verify_player_runtime_update._backup_record_artifact_inventory(
+        archive_bytes.getvalue(),
+        record_key=record_key,
+    )
+    restored = expected | {missing_field: ()}
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="did not preserve retained decision and grade artifacts",
+    ):
+        verify_player_runtime_update._assert_restored_artifact_inventory_matches(
+            expected,
+            restored,
+            description=(
+                "Backup restore rehearsal did not preserve retained decision "
+                "and grade artifacts"
+            ),
+        )
 
 
 def test_update_workspace_digest_rejects_a_lease_failure_mutation(

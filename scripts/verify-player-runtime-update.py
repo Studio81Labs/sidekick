@@ -13,6 +13,7 @@ import argparse
 from dataclasses import dataclass
 from hashlib import sha256
 from importlib import util
+from io import BytesIO
 import json
 import os
 from pathlib import Path
@@ -27,6 +28,7 @@ from threading import Thread
 from time import monotonic, sleep
 from types import ModuleType
 from typing import Any
+from zipfile import BadZipFile, ZipFile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -561,6 +563,82 @@ def _export_backup(session: dict[str, object]) -> bytes:
     )
 
 
+def _backup_record_artifact_inventory(
+    archive_bytes: bytes,
+    *,
+    record_key: str,
+) -> dict[str, tuple[tuple[str, str, str, int], ...]]:
+    """Return one retained hand's exact decision and grade backup entries."""
+
+    try:
+        with ZipFile(BytesIO(archive_bytes)) as archive:
+            manifest_bytes = archive.read("manifest.json")
+    except (BadZipFile, KeyError, OSError, ValueError) as exc:
+        raise PlayerUpdateValidationError(
+            "Update-validation backup artifact inventory cannot be read"
+        ) from exc
+    try:
+        manifest = json.loads(manifest_bytes)
+        records = manifest["records"]
+    except (KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise PlayerUpdateValidationError(
+            "Update-validation backup artifact inventory is invalid"
+        ) from exc
+    if not isinstance(records, list):
+        raise PlayerUpdateValidationError(
+            "Update-validation backup artifact inventory is invalid"
+        )
+    matching_records = [
+        record
+        for record in records
+        if isinstance(record, dict) and record.get("record_key") == record_key
+    ]
+    if len(matching_records) != 1:
+        raise PlayerUpdateValidationError(
+            "Update-validation backup does not contain exactly one retained hand"
+        )
+
+    inventory: dict[str, tuple[tuple[str, str, str, int], ...]] = {}
+    for field in ("decision_artifacts", "grade_artifacts"):
+        artifacts = matching_records[0].get(field)
+        if not isinstance(artifacts, list):
+            raise PlayerUpdateValidationError(
+                "Update-validation backup artifact inventory is invalid"
+            )
+        entries: list[tuple[str, str, str, int]] = []
+        for artifact in artifacts:
+            if (
+                not isinstance(artifact, dict)
+                or not isinstance(artifact.get("filename"), str)
+                or not isinstance(artifact.get("file"), str)
+                or not isinstance(artifact.get("sha256"), str)
+                or type(artifact.get("size")) is not int
+            ):
+                raise PlayerUpdateValidationError(
+                    "Update-validation backup artifact inventory is invalid"
+                )
+            entries.append(
+                (
+                    artifact["filename"],
+                    artifact["file"],
+                    artifact["sha256"],
+                    artifact["size"],
+                )
+            )
+        inventory[field] = tuple(sorted(entries))
+    return inventory
+
+
+def _assert_restored_artifact_inventory_matches(
+    expected: dict[str, tuple[tuple[str, str, str, int], ...]],
+    restored: dict[str, tuple[tuple[str, str, str, int], ...]],
+    *,
+    description: str,
+) -> None:
+    if restored != expected:
+        raise PlayerUpdateValidationError(description)
+
+
 def _restore_backup(session: dict[str, object], archive: bytes) -> None:
     _json_response(
         "/api/player/backups/restore",
@@ -967,6 +1045,14 @@ def _run_update_validation(
             record_key, before_update = _import_and_reject(base_session)
             before_snapshot = _hand_snapshot(before_update)
             backup_archive = _export_backup(base_session)
+            backup_artifacts = _backup_record_artifact_inventory(
+                backup_archive,
+                record_key=record_key,
+            )
+            if not backup_artifacts["decision_artifacts"]:
+                raise PlayerUpdateValidationError(
+                    "Update-validation approved hand has no retained decision artifacts"
+                )
         finally:
             base_capture.unlink(missing_ok=True)
             _stop_runtime(base_process)
@@ -1031,6 +1117,17 @@ def _run_update_validation(
                 before_update,
                 restored,
                 description="Backup restore rehearsal did not preserve the reviewed hand",
+            )
+            _assert_restored_artifact_inventory_matches(
+                backup_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(restore_session),
+                    record_key=record_key,
+                ),
+                description=(
+                    "Backup restore rehearsal did not preserve retained decision "
+                    "and grade artifacts"
+                ),
             )
         finally:
             restore_capture.unlink(missing_ok=True)
@@ -1114,6 +1211,18 @@ def _run_update_validation(
             raise PlayerUpdateValidationError(
                 "Packaged export-before-data-removal did not complete safely"
             )
+        final_backup_artifacts = _backup_record_artifact_inventory(
+            final_backup.read_bytes(),
+            record_key=record_key,
+        )
+        _assert_restored_artifact_inventory_matches(
+            backup_artifacts,
+            final_backup_artifacts,
+            description=(
+                "Candidate export-before-data-removal backup did not retain "
+                "decision and grade artifacts"
+            ),
+        )
         final_restore_dir = temporary / "export-before-data-removal-restore"
         final_restore_dir.mkdir(mode=0o700)
         final_restore_capture = capture_dir / "export-before-data-removal-launch-url"
@@ -1130,6 +1239,17 @@ def _run_update_validation(
                 description=(
                     "Candidate export-before-data-removal backup did not preserve "
                     "the deleted hand"
+                ),
+            )
+            _assert_restored_artifact_inventory_matches(
+                final_backup_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(final_restore_session),
+                    record_key=record_key,
+                ),
+                description=(
+                    "Candidate export-before-data-removal backup restore did not "
+                    "preserve decision and grade artifacts"
                 ),
             )
         finally:
