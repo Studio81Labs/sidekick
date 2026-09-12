@@ -65,7 +65,11 @@ if str(BACKEND) not in sys.path:
 from app.data_lock import player_runtime_lease
 from app.domain.imported_hands import ImportedHandRecord
 from app.player_hands import player_hand_record_version
-from app.player_workspace import PlayerDataDirectoryError, reject_macos_extended_acl
+from app.player_workspace import (
+    PLAYER_WORKSPACE_MANIFEST_FILENAME,
+    PlayerDataDirectoryError,
+    reject_macos_extended_acl,
+)
 from app.storage.learning_content_catalog_store import LEARNING_CONTENT_CATALOG_FILENAME
 from app.storage.remote_reference_consent_store import REMOTE_REFERENCE_CONSENT_FILENAME
 from app.storage.reference_activation_catalog_store import (
@@ -851,6 +855,37 @@ def _assert_current_operator_authorities_preserved(
         )
 
 
+def _workspace_manifest_snapshot(data_dir: Path) -> tuple[str, str]:
+    """Return the exact current-only workspace manifest identity.
+
+    The manifest is not portable backup content or an operator authority.  It
+    nevertheless fixes the accepted on-disk layout, so candidate startup must
+    not rewrite it as part of this no-migration handoff.
+    """
+
+    path = data_dir / PLAYER_WORKSPACE_MANIFEST_FILENAME
+    if path.is_symlink() or not path.is_file():
+        raise PlayerUpdateValidationError("Player workspace manifest is missing or unsafe")
+    try:
+        reject_macos_extended_acl(path)
+    except PlayerDataDirectoryError as exc:
+        raise PlayerUpdateValidationError(
+            "Player workspace manifest has unsafe extended ACL metadata"
+        ) from exc
+    return (PLAYER_WORKSPACE_MANIFEST_FILENAME, _sha256_file(path))
+
+
+def _assert_workspace_manifest_preserved(
+    data_dir: Path,
+    *,
+    expected: tuple[str, str],
+) -> None:
+    if _workspace_manifest_snapshot(data_dir) != expected:
+        raise PlayerUpdateValidationError(
+            "Candidate runtime changed the current player workspace manifest"
+        )
+
+
 def _ready_cascade_markers(data_dir: Path) -> tuple[Path, ...]:
     cascade_root = data_dir / "imported-hands" / ".cascade"
     if not cascade_root.is_dir() or cascade_root.is_symlink():
@@ -1389,12 +1424,17 @@ def _run_update_validation(
         operator_authorities_before_candidate = _current_operator_authority_snapshot(
             data_dir
         )
+        workspace_manifest_before_candidate = _workspace_manifest_snapshot(data_dir)
 
         candidate_capture = capture_dir / "candidate-launch-url"
         candidate_process, candidate_session = _start_runtime(
             candidate, data_dir=data_dir, capture_path=candidate_capture
         )
         try:
+            _assert_workspace_manifest_preserved(
+                data_dir,
+                expected=workspace_manifest_before_candidate,
+            )
             old_session_status = SMOKE._request(
                 "/api/player/health", headers=_session_headers(base_session)
             )[0]
@@ -1411,6 +1451,10 @@ def _run_update_validation(
             _assert_current_operator_authorities_preserved(
                 data_dir,
                 expected=operator_authorities_before_candidate,
+            )
+            _assert_workspace_manifest_preserved(
+                data_dir,
+                expected=workspace_manifest_before_candidate,
             )
             recovered_backup = _export_backup(candidate_session)
             _assert_restored_artifact_inventory_matches(

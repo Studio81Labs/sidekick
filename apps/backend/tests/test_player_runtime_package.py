@@ -969,6 +969,26 @@ def test_update_rejects_a_candidate_that_changes_current_operator_authority(
         )
 
 
+def test_update_rejects_a_candidate_that_changes_the_workspace_manifest(
+    tmp_path: Path,
+) -> None:
+    data_dir = tmp_path / "player-data"
+    data_dir.mkdir(mode=0o700)
+    verify_player_runtime_update._seed_retained_grade_artifact(data_dir)
+    expected = verify_player_runtime_update._workspace_manifest_snapshot(data_dir)
+    manifest = data_dir / expected[0]
+    manifest.write_text('{"layout_version": 5}\n', encoding="utf-8")
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="changed the current player workspace manifest",
+    ):
+        verify_player_runtime_update._assert_workspace_manifest_preserved(
+            data_dir,
+            expected=expected,
+        )
+
+
 def test_update_workspace_digest_rejects_a_lease_failure_mutation(
     tmp_path: Path,
 ) -> None:
