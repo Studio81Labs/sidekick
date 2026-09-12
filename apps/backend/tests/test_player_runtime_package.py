@@ -417,10 +417,52 @@ def test_update_staging_requires_changed_clean_source_and_application_bytes(
     )
 
     verify_player_runtime_update._require_distinct_bundles(base, candidate)
+    base_worker, candidate_worker = (
+        verify_player_runtime_update._require_distinct_player_workers(base, candidate)
+    )
 
     assert base.entrypoint.is_file()
     assert candidate.entrypoint.is_file()
     assert base.bundle_root.parent != candidate.bundle_root.parent
+    assert base_worker.read_bytes() != candidate_worker.read_bytes()
+
+
+def test_update_requires_a_real_browser_worker_transition(tmp_path: Path) -> None:
+    base_archive = _runtime_archive(
+        tmp_path,
+        output_name="base",
+        payload=b"base application bytes",
+        source_revision="a" * 40,
+    )
+    candidate_archive = _runtime_archive(
+        tmp_path,
+        output_name="candidate",
+        payload=b"candidate application bytes",
+        source_revision="b" * 40,
+    )
+    base = verify_player_runtime_update._stage_archive(
+        base_archive,
+        stage_root=tmp_path / "stage",
+        label="base",
+    )
+    candidate = verify_player_runtime_update._stage_archive(
+        candidate_archive,
+        stage_root=tmp_path / "stage",
+        label="candidate",
+    )
+    base_worker = verify_player_runtime_update._embedded_player_asset_path(
+        base, "sw.js"
+    )
+    candidate_worker = verify_player_runtime_update._embedded_player_asset_path(
+        candidate, "sw.js"
+    )
+    candidate_worker.write_bytes(base_worker.read_bytes())
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="player workers are identical",
+    ):
+        verify_player_runtime_update._require_distinct_player_workers(base, candidate)
 
 
 def test_update_requires_candidate_to_match_checkout_and_descend_from_base(
@@ -879,6 +921,7 @@ def test_update_seeds_a_valid_retained_grade_artifact(tmp_path: Path) -> None:
     assert len(
         workspace.imported_hands.list_reference_activated_grade_artifacts(record_key)
     ) == 1
+    assert workspace.remote_reference_consent.load().consent is not None
 
 
 def test_update_rejects_a_candidate_that_changes_current_operator_authority(

@@ -67,6 +67,7 @@ from app.domain.imported_hands import ImportedHandRecord
 from app.player_hands import player_hand_record_version
 from app.player_workspace import PlayerDataDirectoryError, reject_macos_extended_acl
 from app.storage.learning_content_catalog_store import LEARNING_CONTENT_CATALOG_FILENAME
+from app.storage.remote_reference_consent_store import REMOTE_REFERENCE_CONSENT_FILENAME
 from app.storage.reference_activation_catalog_store import (
     REFERENCE_ACTIVATION_CATALOG_FILENAME,
 )
@@ -74,6 +75,7 @@ from app.storage.reference_activation_catalog_store import (
 
 _CURRENT_OPERATOR_AUTHORITY_FILENAMES = (
     LEARNING_CONTENT_CATALOG_FILENAME,
+    REMOTE_REFERENCE_CONSENT_FILENAME,
     REFERENCE_ACTIVATION_CATALOG_FILENAME,
 )
 
@@ -249,6 +251,79 @@ def _require_distinct_bundles(base: ValidatedBundle, candidate: ValidatedBundle)
     if _executed_application_digest(base) == _executed_application_digest(candidate):
         raise PlayerUpdateValidationError(
             "Base and candidate executed application and shell bytes are identical"
+        )
+
+
+def _require_distinct_player_workers(
+    base: ValidatedBundle, candidate: ValidatedBundle
+) -> tuple[Path, Path]:
+    """Require an actual browser-worker handoff, not only two archives."""
+
+    base_worker = _embedded_player_asset_path(base, "sw.js")
+    candidate_worker = _embedded_player_asset_path(candidate, "sw.js")
+    if _sha256_file(base_worker) == _sha256_file(candidate_worker):
+        raise PlayerUpdateValidationError(
+            "Base and candidate player workers are identical; choose a base that "
+            "exercises the browser-worker update handoff"
+        )
+    return base_worker, candidate_worker
+
+
+def _run_browser_update_rehearsal(
+    base: ValidatedBundle,
+    candidate: ValidatedBundle,
+    *,
+    data_dir: Path,
+    capture_dir: Path,
+) -> None:
+    """Exercise the two staged browser shells through a real worker handoff."""
+
+    base_worker, candidate_worker = _require_distinct_player_workers(base, candidate)
+    data_dir.mkdir(mode=0o700)
+    capture_dir.mkdir(mode=0o700)
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "POKER_PLAYER_UPDATE_BASE_CWD": str(base.bundle_root),
+            "POKER_PLAYER_UPDATE_BASE_ENTRYPOINT": str(base.entrypoint),
+            "POKER_PLAYER_UPDATE_BASE_WORKER": str(base_worker),
+            "POKER_PLAYER_UPDATE_CANDIDATE_CWD": str(candidate.bundle_root),
+            "POKER_PLAYER_UPDATE_CANDIDATE_ENTRYPOINT": str(candidate.entrypoint),
+            "POKER_PLAYER_UPDATE_CANDIDATE_WORKER": str(candidate_worker),
+            "POKER_PLAYER_UPDATE_DATA_DIR": str(data_dir),
+            "POKER_PLAYER_UPDATE_CAPTURE_DIR": str(capture_dir),
+            "POKER_PLAYER_UPDATE_LAUNCH_CAPTURE_HELPER": str(
+                LAUNCH_CAPTURE_HELPER
+            ),
+        }
+    )
+    try:
+        result = subprocess.run(
+            [
+                "pnpm",
+                "exec",
+                "playwright",
+                "test",
+                "--config=playwright.player-update.config.ts",
+            ],
+            cwd=ROOT / "apps" / "pwa",
+            env=environment,
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise PlayerUpdateValidationError(
+            "Browser update rehearsal requires pnpm and the pinned Playwright runtime"
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise PlayerUpdateValidationError(
+            "Browser update rehearsal did not complete before its fixed deadline"
+        ) from exc
+    if result.returncode != 0:
+        raise PlayerUpdateValidationError(
+            "Browser update rehearsal failed:\n" + result.stdout + result.stderr
         )
 
 
@@ -657,10 +732,11 @@ def _seed_retained_grade_artifact(data_dir: Path) -> str:
     """Seed one valid grade through the current workspace persistence API.
 
     This source-run qualification harness requires a clean checkout already.
-    Its test fixture supplies the complete, internally consistent learning
-    authority needed to persist one real grade; the packaged player never
-    depends on test code.  The fixture lives only in this private rehearsal
-    workspace and is included to exercise backup retention, not grading UX.
+    Its test fixtures supply the complete, internally consistent learning and
+    remote-consent authorities needed to persist one real grade and one
+    non-default consent; the packaged player never depends on test code. The
+    fixture lives only in this private rehearsal workspace and is included to
+    exercise retained authority and backup retention, not grading UX.
     """
 
     test_support = BACKEND / "tests"
@@ -673,6 +749,8 @@ def _seed_retained_grade_artifact(data_dir: Path) -> str:
         sys.path.insert(0, test_support_text)
     try:
         from test_current_learning_revalidation import configured_workspace
+        from test_player_remote_references import NOW, consent_request
+        from test_remote_references import provider_policy
     except ImportError as exc:
         raise PlayerUpdateValidationError(
             "Update validation could not load its retained-grade fixture"
@@ -680,6 +758,11 @@ def _seed_retained_grade_artifact(data_dir: Path) -> str:
 
     workspace, record_key, grade, _catalog = configured_workspace(data_dir)
     workspace.persist_current_reference_activated_grade(record_key, grade)
+    workspace.accept_remote_reference_consent(
+        policy=provider_policy(),
+        request=consent_request(),
+        at=NOW,
+    )
     artifacts = workspace.imported_hands.list_reference_activated_grade_artifacts(
         record_key
     )
@@ -1229,6 +1312,12 @@ def _run_update_validation(
         )
         _require_distinct_bundles(base, candidate)
         _require_candidate_is_checked_out_descendant(base, candidate)
+        _run_browser_update_rehearsal(
+            base,
+            candidate,
+            data_dir=temporary / "browser-update-data",
+            capture_dir=temporary / "browser-update-capture",
+        )
         _assert_negative_artifacts_do_not_stage(
             candidate.archive_path,
             stage_root=temporary,
