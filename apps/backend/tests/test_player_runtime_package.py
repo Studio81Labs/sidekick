@@ -420,3 +420,34 @@ def test_update_staging_cleans_incomplete_application_directory(
 
     staged = tmp_path / "stage"
     assert not staged.exists() or list(staged.iterdir()) == []
+
+
+def test_update_negative_artifact_checks_handle_truncated_gzip(
+    tmp_path: Path,
+) -> None:
+    archive = _runtime_archive(
+        tmp_path,
+        output_name="candidate",
+        payload=b"candidate application bytes",
+        source_revision="b" * 40,
+    )
+
+    verify_player_runtime_update._assert_negative_artifacts_do_not_stage(
+        archive,
+        stage_root=tmp_path / "negative-artifacts",
+    )
+
+
+def test_update_report_is_private_and_non_replaceable(tmp_path: Path) -> None:
+    report_path = tmp_path / "update-report.json"
+    report = {"schema_version": 1, "candidate": {"source_revision": "b" * 40}}
+
+    verify_player_runtime_update._write_report(report_path, report)
+
+    assert report_path.stat().st_mode & 0o777 == 0o600
+    assert json.loads(report_path.read_text(encoding="utf-8")) == report
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="Refusing to overwrite",
+    ):
+        verify_player_runtime_update._write_report(report_path, report)

@@ -200,6 +200,21 @@ def _runtime_environment(data_dir: Path, capture_path: Path) -> dict[str, str]:
     }
 
 
+def _embedded_shell_path(bundle: ValidatedBundle) -> Path:
+    matches = [
+        entry.get("path")
+        for entry in bundle.manifest["files"]
+        if isinstance(entry, dict)
+        and isinstance(entry.get("path"), str)
+        and entry["path"].endswith("player-assets/index.html")
+    ]
+    if len(matches) != 1:
+        raise PlayerUpdateValidationError(
+            "Runtime bundle does not contain one verified embedded player shell"
+        )
+    return bundle.bundle_root.joinpath(*Path(matches[0]).parts)
+
+
 def _start_runtime(
     bundle: ValidatedBundle,
     *,
@@ -216,7 +231,7 @@ def _start_runtime(
     )
     try:
         SMOKE._wait_for_runtime(process, data_dir=data_dir)
-        expected_shell = (bundle.bundle_root / "player-assets" / "index.html").read_bytes()
+        expected_shell = _embedded_shell_path(bundle).read_bytes()
         shell = SMOKE._require_response(
             SMOKE._request("/"), status=200, description="Packaged runtime shell"
         )
@@ -482,6 +497,9 @@ def _workspace_digest(data_dir: Path) -> str:
 def _assert_negative_artifacts_do_not_stage(
     candidate_archive: Path, *, stage_root: Path
 ) -> None:
+    stage_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if stage_root.is_symlink() or not stage_root.is_dir():
+        raise PlayerUpdateValidationError("Negative-artifact staging root is invalid")
     corrupt = stage_root / "corrupt.tar.gz"
     shutil.copyfile(candidate_archive, corrupt)
     with corrupt.open("r+b") as stream:
@@ -536,7 +554,12 @@ def _assert_negative_artifacts_do_not_stage(
         _stage_archive(
             interrupted, stage_root=stage_root / "negative", label="interrupted"
         )
-    except (PlayerUpdateValidationError, SMOKE.PlayerPackageSmokeError, tarfile.TarError):
+    except (
+        EOFError,
+        PlayerUpdateValidationError,
+        SMOKE.PlayerPackageSmokeError,
+        tarfile.TarError,
+    ):
         pass
     else:
         raise PlayerUpdateValidationError("Interrupted archive staging was accepted")
@@ -545,7 +568,9 @@ def _assert_negative_artifacts_do_not_stage(
         raise PlayerUpdateValidationError("Failed runtime staging left an application directory")
 
 
-def _run_update_validation(base_archive: Path, candidate_archive: Path) -> None:
+def _run_update_validation(
+    base_archive: Path, candidate_archive: Path
+) -> dict[str, object]:
     if LAUNCH_CAPTURE_HELPER.is_symlink() or not os.access(LAUNCH_CAPTURE_HELPER, os.X_OK):
         raise PlayerUpdateValidationError("Player launch URL capture helper is missing")
     SMOKE._require_player_port_available()
@@ -707,11 +732,49 @@ def _run_update_validation(base_archive: Path, candidate_archive: Path) -> None:
         print(f"base source revision: {base.provenance['source_revision']}")
         print(f"candidate archive sha256: {candidate.archive_sha256}")
         print(f"candidate source revision: {candidate.provenance['source_revision']}")
+        return {
+            "schema_version": 1,
+            "base": {
+                "archive_sha256": base.archive_sha256,
+                "source_revision": base.provenance["source_revision"],
+            },
+            "candidate": {
+                "archive_sha256": candidate.archive_sha256,
+                "source_revision": candidate.provenance["source_revision"],
+            },
+        }
+
+
+def _write_report(path: Path, report: dict[str, object]) -> None:
+    target = path.expanduser()
+    parent = target.parent
+    if parent.is_symlink() or not parent.is_dir():
+        raise PlayerUpdateValidationError("Update-validation report parent is invalid")
+    if target.exists() or target.is_symlink():
+        raise PlayerUpdateValidationError(
+            "Refusing to overwrite an update-validation report"
+        )
+    descriptor = os.open(
+        target,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+        0o600,
+    )
+    try:
+        payload = (json.dumps(report, indent=2, sort_keys=True) + "\n").encode()
+        os.write(descriptor, payload)
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _argument_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Verify a manual update between two player runtime archives"
+    )
+    parser.add_argument(
+        "--report",
+        type=Path,
+        help="Write non-replaceable success evidence to this path",
     )
     parser.add_argument("base_archive", type=Path)
     parser.add_argument("candidate_archive", type=Path)
@@ -720,7 +783,9 @@ def _argument_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _argument_parser().parse_args(argv)
-    _run_update_validation(args.base_archive, args.candidate_archive)
+    report = _run_update_validation(args.base_archive, args.candidate_archive)
+    if args.report is not None:
+        _write_report(args.report, report)
     return 0
 
 
@@ -728,6 +793,7 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (
+        EOFError,
         OSError,
         PlayerUpdateValidationError,
         SMOKE.PlayerPackageSmokeError,
