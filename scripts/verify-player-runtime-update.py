@@ -1719,6 +1719,14 @@ def _run_update_validation(
                 raise PlayerUpdateValidationError(
                     "Update-validation approved hand has no retained decision artifacts"
                 )
+            secondary_backup_artifacts = _backup_record_artifact_inventory(
+                backup_archive,
+                record_key=secondary_record_key,
+            )
+            if not secondary_backup_artifacts["decision_artifacts"]:
+                raise PlayerUpdateValidationError(
+                    "Update-validation secondary hand has no retained decision artifacts"
+                )
             grade_backup_artifacts = _backup_record_artifact_inventory(
                 backup_archive,
                 record_key=grade_record_key,
@@ -1865,6 +1873,17 @@ def _run_update_validation(
                 ),
             )
             _assert_restored_artifact_inventory_matches(
+                secondary_backup_artifacts,
+                _backup_record_artifact_inventory(
+                    recovered_backup,
+                    record_key=secondary_record_key,
+                ),
+                description=(
+                    "Candidate lifecycle recovery did not preserve the secondary "
+                    "hand's retained artifacts"
+                ),
+            )
+            _assert_restored_artifact_inventory_matches(
                 grade_backup_artifacts,
                 _backup_record_artifact_inventory(
                     recovered_backup,
@@ -1904,6 +1923,22 @@ def _run_update_validation(
                 description=(
                     "Backup restore rehearsal did not preserve retained decision "
                     "and grade artifacts"
+                ),
+            )
+            _assert_restored_hand_matches(
+                secondary_before_update,
+                _hand_detail(secondary_record_key, restore_session),
+                description="Backup restore rehearsal did not preserve the secondary hand",
+            )
+            _assert_restored_artifact_inventory_matches(
+                secondary_backup_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(restore_session),
+                    record_key=secondary_record_key,
+                ),
+                description=(
+                    "Backup restore rehearsal did not preserve the secondary hand's "
+                    "retained artifacts"
                 ),
             )
             _assert_restored_artifact_inventory_matches(
@@ -1965,6 +2000,14 @@ def _run_update_validation(
                 retained_grade_artifacts,
                 description="Candidate deletion changed an unrelated retained grade",
             )
+            secondary_before_stale_restore = _hand_detail(
+                secondary_record_key,
+                candidate_session,
+            )
+            retained_secondary_artifacts = _backup_record_artifact_inventory(
+                post_deletion_backup,
+                record_key=secondary_record_key,
+            )
             _restore_backup(candidate_session, backup_archive)
             retained_tombstone = _hand_detail(record_key, candidate_session)
             if _hand_snapshot(retained_tombstone) != _hand_snapshot(deleted):
@@ -1986,6 +2029,19 @@ def _run_update_validation(
                     record_key=grade_record_key,
                 ),
                 description="Stale backup restore changed an unrelated retained grade",
+            )
+            _assert_restored_hand_matches(
+                secondary_before_stale_restore,
+                _hand_detail(secondary_record_key, candidate_session),
+                description="Stale backup restore changed the secondary hand",
+            )
+            _assert_restored_artifact_inventory_matches(
+                retained_secondary_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(candidate_session),
+                    record_key=secondary_record_key,
+                ),
+                description="Stale backup restore changed the secondary hand's artifacts",
             )
             _assert_restored_hand_matches(
                 grade_before_update,
@@ -2080,6 +2136,18 @@ def _run_update_validation(
                 "an unrelated grade artifact"
             ),
         )
+        final_secondary_artifacts = _backup_record_artifact_inventory(
+            final_backup.read_bytes(),
+            record_key=secondary_record_key,
+        )
+        _assert_restored_artifact_inventory_matches(
+            retained_secondary_artifacts,
+            final_secondary_artifacts,
+            description=(
+                "Candidate export-before-data-removal backup changed the secondary "
+                "hand's artifacts"
+            ),
+        )
         final_restore_dir = temporary / "export-before-data-removal-restore"
         final_restore_dir.mkdir(mode=0o700)
         final_restore_capture = capture_dir / "export-before-data-removal-launch-url"
@@ -2107,6 +2175,25 @@ def _run_update_validation(
                 description=(
                     "Candidate export-before-data-removal backup restore did not "
                     "preserve decision and grade artifacts"
+                ),
+            )
+            _assert_restored_hand_matches(
+                secondary_before_stale_restore,
+                _hand_detail(secondary_record_key, final_restore_session),
+                description=(
+                    "Candidate export-before-data-removal backup did not preserve "
+                    "the secondary hand"
+                ),
+            )
+            _assert_restored_artifact_inventory_matches(
+                final_secondary_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(final_restore_session),
+                    record_key=secondary_record_key,
+                ),
+                description=(
+                    "Candidate export-before-data-removal backup restore did not "
+                    "preserve the secondary hand's artifacts"
                 ),
             )
             _assert_restored_artifact_inventory_matches(
