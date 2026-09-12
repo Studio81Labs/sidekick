@@ -30,6 +30,7 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+BACKEND = ROOT / "apps" / "backend"
 LAUNCH_CAPTURE_HELPER = ROOT / "scripts" / "capture-player-launch-url.sh"
 PLAYER_ORIGIN = "http://127.0.0.1:8765"
 PROVENANCE_SCHEMA_VERSION = 1
@@ -54,6 +55,11 @@ Total pot $1.00 | Rake $0.00
 Seat 1: Heads Hero (button) (small blind) folded before Flop
 Seat 2: Heads Rival (big blind) collected ($1.00)
 """
+
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
+
+from app.data_lock import player_runtime_lease
 
 
 class PlayerUpdateValidationError(RuntimeError):
@@ -443,6 +449,9 @@ def _hand_snapshot(detail: dict[str, Any]) -> str:
     fields = {
         "summary": detail.get("summary"),
         "lifecycle": detail.get("lifecycle"),
+        "raw_sources": detail.get("raw_sources"),
+        "detections": detail.get("detections"),
+        "conflicts": detail.get("conflicts"),
         "canonical_revisions": detail.get("canonical_revisions"),
         "deletion_receipt": detail.get("deletion_receipt"),
     }
@@ -658,7 +667,12 @@ def _stop_runtime(process: subprocess.Popen[bytes]) -> None:
     SMOKE._stop_runtime(process)
 
 
-def _wait_for_expected_failure(process: subprocess.Popen[bytes], *, description: str) -> None:
+def _wait_for_expected_failure(
+    process: subprocess.Popen[bytes],
+    *,
+    description: str,
+    required_diagnostic: str | None = None,
+) -> None:
     try:
         stdout, stderr = process.communicate(timeout=15)
     except subprocess.TimeoutExpired as exc:
@@ -668,6 +682,47 @@ def _wait_for_expected_failure(process: subprocess.Popen[bytes], *, description:
         raise PlayerUpdateValidationError(f"{description} unexpectedly succeeded")
     if not stdout and not stderr:
         raise PlayerUpdateValidationError(f"{description} failed without diagnostics")
+    diagnostics = stdout + stderr
+    if (
+        required_diagnostic is not None
+        and required_diagnostic.encode() not in diagnostics
+    ):
+        raise PlayerUpdateValidationError(
+            f"{description} failed without the expected diagnostic"
+        )
+
+
+def _assert_runtime_lease_blocks_candidate(
+    candidate: ValidatedBundle,
+    *,
+    data_dir: Path,
+    capture_path: Path,
+) -> None:
+    """Prove the candidate refuses the retained root before any port conflict.
+
+    Hold the exact sibling lifetime lease with the base runtime stopped.  The
+    fixed local port is consequently available, so a candidate which starts
+    despite this process has lost its exclusive workspace authority rather than
+    merely failing later at Uvicorn's bind.
+    """
+
+    lease = player_runtime_lease(data_dir)
+    descriptor = lease.acquire(exclusive=True, timeout_seconds=0)
+    try:
+        competing = subprocess.Popen(
+            [str(candidate.entrypoint)],
+            cwd=candidate.bundle_root,
+            env=_runtime_environment(data_dir, capture_path),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        _wait_for_expected_failure(
+            competing,
+            description="Candidate runtime using a retained lifetime lease",
+            required_diagnostic="player runtime lifetime lease",
+        )
+    finally:
+        lease.release(descriptor)
 
 
 def _workspace_digest(data_dir: Path) -> str:
@@ -786,28 +841,35 @@ def _run_update_validation(
         base_process, base_session = _start_runtime(
             base, data_dir=data_dir, capture_path=base_capture
         )
-        base_interrupted = False
         try:
             record_key, before_update = _import_and_reject(base_session)
             before_snapshot = _hand_snapshot(before_update)
             backup_archive = _export_backup(base_session)
+        finally:
+            base_capture.unlink(missing_ok=True)
+            _stop_runtime(base_process)
 
-            competing_capture = capture_dir / "competing-launch-url"
-            competing = subprocess.Popen(
-                [str(candidate.entrypoint)],
-                cwd=candidate.bundle_root,
-                env=_runtime_environment(data_dir, competing_capture),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-            )
-            _wait_for_expected_failure(
-                competing, description="Second player runtime using the same data directory"
-            )
+        _assert_runtime_lease_blocks_candidate(
+            candidate,
+            data_dir=data_dir,
+            capture_path=capture_dir / "lease-launch-url",
+        )
+
+        base_process, base_session = _start_runtime(
+            base, data_dir=data_dir, capture_path=base_capture
+        )
+        base_interrupted = False
+        try:
+            restarted = _hand_detail(record_key, base_session)
+            if _hand_snapshot(restarted) != before_snapshot:
+                raise PlayerUpdateValidationError(
+                    "Base runtime restart changed retained audit state before interruption"
+                )
             _interrupt_lifecycle_write(
                 base_process,
                 data_dir=data_dir,
                 record_key=record_key,
-                detail=before_update,
+                detail=restarted,
                 session=base_session,
             )
             base_interrupted = True

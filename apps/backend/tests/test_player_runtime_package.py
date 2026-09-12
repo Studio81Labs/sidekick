@@ -522,6 +522,23 @@ def test_update_recovery_requires_pending_lifecycle_and_retained_audit() -> None
         )
 
 
+def test_update_snapshot_includes_retained_recognition_evidence() -> None:
+    detail = {
+        "summary": {"record_key": "record"},
+        "lifecycle": {"status": "rejected"},
+        "raw_sources": [{"raw_source_id": "source"}],
+        "detections": [{"detection_id": "detection", "confidence": 0.8}],
+        "conflicts": [{"conflict_id": "conflict"}],
+        "canonical_revisions": [{"revision": 1}],
+        "deletion_receipt": None,
+    }
+
+    snapshot = verify_player_runtime_update._hand_snapshot(detail)
+    detail["detections"] = []
+
+    assert verify_player_runtime_update._hand_snapshot(detail) != snapshot
+
+
 def test_update_report_is_private_and_non_replaceable(tmp_path: Path) -> None:
     report_path = tmp_path / "update-report.json"
     report = {"schema_version": 1, "candidate": {"source_revision": "b" * 40}}
