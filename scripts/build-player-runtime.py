@@ -361,7 +361,8 @@ def main(argv: list[str] | None = None) -> int:
             f"  ./{executable_name} export-and-remove /absolute/private/backup.zip "
             "--confirm-remove-data\n\n"
             "This archive contains application files only. It does not contain, "
-            "install, migrate, or remove the player data workspace.\n",
+            "install, migrate, or remove the player data workspace.\n"
+            "Read UPDATE-RUNBOOK.md before manually replacing application files.\n",
             encoding="utf-8",
         )
         shutil.copy2(update_runbook, bundle_root / "UPDATE-RUNBOOK.md")
