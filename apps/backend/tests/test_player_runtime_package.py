@@ -443,6 +443,11 @@ def test_update_requires_candidate_to_match_checkout_and_descend_from_base(
         "_checked_out_source_revision",
         lambda: "b" * 40,
     )
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_require_clean_checkout",
+        lambda: None,
+    )
     ancestry_checks: list[tuple[str, str]] = []
 
     def is_ancestor(base_revision: str, candidate_revision: str) -> bool:
@@ -488,6 +493,11 @@ def test_update_rejects_downgrade_or_wrong_checked_out_candidate(
     )
     monkeypatch.setattr(
         verify_player_runtime_update,
+        "_require_clean_checkout",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        verify_player_runtime_update,
         "_is_git_ancestor",
         lambda *_: False,
     )
@@ -512,6 +522,24 @@ def test_update_rejects_downgrade_or_wrong_checked_out_candidate(
         verify_player_runtime_update._require_candidate_is_checked_out_descendant(
             base, candidate
         )
+
+
+def test_update_requires_a_clean_checkout(monkeypatch: pytest.MonkeyPatch) -> None:
+    def dirty_status(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=" M scripts/verify-player-runtime-update.py\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(verify_player_runtime_update.subprocess, "run", dirty_status)
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="requires a clean",
+    ):
+        verify_player_runtime_update._require_clean_checkout()
 
 
 def test_update_staging_cleans_incomplete_application_directory(

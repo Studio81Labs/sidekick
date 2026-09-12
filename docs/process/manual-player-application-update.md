@@ -30,7 +30,7 @@ pnpm player:package:update:test \
 ```
 
 That release-engineering harness requires two separately built archives from
-different clean revisions. Run it from a source checkout at the intended
+different clean revisions. Run it from a clean source checkout at the intended
 candidate revision with the base revision available in its Git history. It
 rejects an identical archive, the same source revision, a candidate that does
 not match that checkout or descend from the base, or identical packaged

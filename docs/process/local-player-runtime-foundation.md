@@ -176,8 +176,8 @@ pnpm player:package:test -- /absolute/path/poker-hero-player-*.tar.gz
 
 To validate a manual application-file update, build a base and a candidate from
 different clean source revisions into separate output directories. Run the
-source harness from a checkout at the intended candidate revision with the base
-revision available in its Git history, then run:
+source harness from a clean checkout at the intended candidate revision with
+the base revision available in its Git history, then run:
 
 ```bash
 pnpm player:package:update:test \

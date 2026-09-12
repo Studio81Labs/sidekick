@@ -236,6 +236,30 @@ def _require_distinct_bundles(base: ValidatedBundle, candidate: ValidatedBundle)
         )
 
 
+def _require_clean_checkout() -> None:
+    result = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise PlayerUpdateValidationError(
+            "Update validation could not inspect the candidate checkout"
+        )
+    if result.stdout:
+        raise PlayerUpdateValidationError(
+            "Update validation requires a clean checked-out candidate revision"
+        )
+
+
 def _checked_out_source_revision() -> str:
     result = subprocess.run(
         ["git", "rev-parse", "--verify", "HEAD^{commit}"],
@@ -281,6 +305,7 @@ def _is_git_ancestor(base_revision: str, candidate_revision: str) -> bool:
 def _require_candidate_is_checked_out_descendant(
     base: ValidatedBundle, candidate: ValidatedBundle
 ) -> None:
+    _require_clean_checkout()
     base_revision = str(base.provenance["source_revision"])
     candidate_revision = str(candidate.provenance["source_revision"])
     if candidate_revision != _checked_out_source_revision():
