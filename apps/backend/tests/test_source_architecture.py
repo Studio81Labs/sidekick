@@ -1,9 +1,12 @@
 """Guardrails for backend packages reserved for the layered migration."""
 
 import ast
+import re
 from pathlib import Path
 
-APP_ROOT = Path(__file__).parents[1] / "app"
+BACKEND_ROOT = Path(__file__).parents[1]
+APP_ROOT = BACKEND_ROOT / "app"
+STARTUP_MODULE_INVOCATION = re.compile(r"python\s+-m\s+(app(?:\.[A-Za-z_]\w*)+)")
 LAYERS = {"api", "application", "domain", "infrastructure"}
 ALLOWED_IMPORTS = {
     "api": {"api", "application", "domain"},
@@ -130,6 +133,13 @@ def package_target(module: str, path: Path) -> str | None:
     return parts[0] if parts[0] in LAYERS else None
 
 
+def module_source_exists(module: str) -> bool:
+    relative = Path(*module.split(".")[1:])
+    return (APP_ROOT / relative.with_suffix(".py")).exists() or (
+        APP_ROOT / relative / "__init__.py"
+    ).exists()
+
+
 def test_future_backend_layers_follow_direction_and_boundaries() -> None:
     violations: list[str] = []
     for path in future_sources():
@@ -215,6 +225,21 @@ def test_legacy_recommendation_execution_is_retired() -> None:
     assert not list((APP_ROOT / "domain" / "recommendations").glob("*.py"))
     assert not list((APP_ROOT / "providers").glob("*.py"))
     assert not list((APP_ROOT / "solvers").glob("*.py"))
+
+
+def test_container_startup_only_runs_modules_that_exist() -> None:
+    # The entrypoint runs under `set -eu` before the server binds, so a stale
+    # `python -m` target aborts the container instead of failing a test: the
+    # healthcheck then never passes and the deployment rolls back.
+    entrypoint = BACKEND_ROOT / "docker-entrypoint.sh"
+
+    missing = [
+        module
+        for module in STARTUP_MODULE_INVOCATION.findall(entrypoint.read_text())
+        if not module_source_exists(module)
+    ]
+
+    assert missing == []
 
 
 def test_remote_reference_domain_has_only_pure_dependencies() -> None:
