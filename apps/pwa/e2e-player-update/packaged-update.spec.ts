@@ -242,7 +242,8 @@ test("hands a staged player shell to the candidate worker only when safe", async
       page.getByText("A local player update is ready to reload."),
     ).toBeVisible();
 
-    await page.getByLabel("Player backup ZIP").setInputFiles({
+    const backupInput = page.getByLabel("Player backup ZIP");
+    await backupInput.setInputFiles({
       name: "pending-backup.zip",
       mimeType: "application/zip",
       buffer: Buffer.from("pending backup"),
@@ -255,7 +256,19 @@ test("hands a staged player shell to the candidate worker only when safe", async
     page.once("dialog", (dialog) => void dialog.dismiss());
     await page.getByRole("button", { name: "Discard and reload" }).click();
     await expect.poll(() => waitingWorkerState(page)).toBe("installed");
-    await page.getByLabel("Player backup ZIP").setInputFiles([]);
+    await expect
+      .poll(() =>
+        backupInput.evaluate(
+          (input: HTMLInputElement) => input.files?.[0]?.name ?? null,
+        ),
+      )
+      .toBe("pending-backup.zip");
+    await expect(
+      page.getByText(
+        "A local player update is ready. Finish your drafts or explicitly discard them.",
+      ),
+    ).toBeVisible();
+    await backupInput.setInputFiles([]);
 
     let releaseExport: (() => void) | undefined;
     let resolveExportStarted: (() => void) | undefined;

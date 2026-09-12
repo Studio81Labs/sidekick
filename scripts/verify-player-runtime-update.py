@@ -1673,7 +1673,6 @@ def _run_update_validation(
         application_root = temporary / "application-files"
         data_dir = temporary / "player-data"
         data_dir.mkdir(mode=0o700)
-        grade_record_key = _seed_retained_grade_artifact(data_dir)
         capture_dir = temporary / "browser-capture"
         capture_dir.mkdir(mode=0o700)
         base = _stage_archive(base_archive, stage_root=application_root, label="base")
@@ -1682,6 +1681,18 @@ def _run_update_validation(
         )
         _require_distinct_bundles(base, candidate)
         _require_candidate_is_checked_out_descendant(base, candidate)
+        initialization_capture = capture_dir / "base-initialization-launch-url"
+        initialization_process, _initialization_session = _start_runtime(
+            base,
+            data_dir=data_dir,
+            capture_path=initialization_capture,
+        )
+        try:
+            pass
+        finally:
+            initialization_capture.unlink(missing_ok=True)
+            _stop_runtime(initialization_process)
+        grade_record_key = _seed_retained_grade_artifact(data_dir)
         _run_browser_update_rehearsal(
             base,
             candidate,
@@ -1983,6 +1994,7 @@ def _run_update_validation(
             deleted = _delete_hand(
                 record_key, _hand_detail(record_key, candidate_session), candidate_session
             )
+            workspace_metadata_after_deletion = _workspace_metadata_snapshot(data_dir)
             post_deletion_backup = _export_backup(candidate_session)
             deleted_artifacts = _backup_record_artifact_inventory(
                 post_deletion_backup,
@@ -2016,7 +2028,7 @@ def _run_update_validation(
             )
             _assert_workspace_metadata_preserved(
                 data_dir,
-                expected=workspace_metadata_before_handoff,
+                expected=workspace_metadata_after_deletion,
             )
             _assert_workspace_manifest_preserved(
                 data_dir,
