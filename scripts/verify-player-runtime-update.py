@@ -639,6 +639,43 @@ def _assert_restored_artifact_inventory_matches(
         raise PlayerUpdateValidationError(description)
 
 
+def _seed_retained_grade_artifact(data_dir: Path) -> str:
+    """Seed one valid grade through the current workspace persistence API.
+
+    This source-run qualification harness requires a clean checkout already.
+    Its test fixture supplies the complete, internally consistent learning
+    authority needed to persist one real grade; the packaged player never
+    depends on test code.  The fixture lives only in this private rehearsal
+    workspace and is included to exercise backup retention, not grading UX.
+    """
+
+    test_support = BACKEND / "tests"
+    if not test_support.is_dir():
+        raise PlayerUpdateValidationError(
+            "Update validation grade fixture is unavailable from this checkout"
+        )
+    test_support_text = str(test_support)
+    if test_support_text not in sys.path:
+        sys.path.insert(0, test_support_text)
+    try:
+        from test_current_learning_revalidation import configured_workspace
+    except ImportError as exc:
+        raise PlayerUpdateValidationError(
+            "Update validation could not load its retained-grade fixture"
+        ) from exc
+
+    workspace, record_key, grade, _catalog = configured_workspace(data_dir)
+    workspace.persist_current_reference_activated_grade(record_key, grade)
+    artifacts = workspace.imported_hands.list_reference_activated_grade_artifacts(
+        record_key
+    )
+    if len(artifacts) != 1:
+        raise PlayerUpdateValidationError(
+            "Update-validation grade fixture did not retain one grade artifact"
+        )
+    return record_key
+
+
 def _restore_backup(session: dict[str, object], archive: bytes) -> None:
     _json_response(
         "/api/player/backups/restore",
@@ -1024,6 +1061,7 @@ def _run_update_validation(
         application_root = temporary / "application-files"
         data_dir = temporary / "player-data"
         data_dir.mkdir(mode=0o700)
+        grade_record_key = _seed_retained_grade_artifact(data_dir)
         capture_dir = temporary / "browser-capture"
         capture_dir.mkdir(mode=0o700)
         base = _stage_archive(base_archive, stage_root=application_root, label="base")
@@ -1052,6 +1090,14 @@ def _run_update_validation(
             if not backup_artifacts["decision_artifacts"]:
                 raise PlayerUpdateValidationError(
                     "Update-validation approved hand has no retained decision artifacts"
+                )
+            grade_backup_artifacts = _backup_record_artifact_inventory(
+                backup_archive,
+                record_key=grade_record_key,
+            )
+            if not grade_backup_artifacts["grade_artifacts"]:
+                raise PlayerUpdateValidationError(
+                    "Update-validation grade fixture has no retained grade artifacts"
                 )
         finally:
             base_capture.unlink(missing_ok=True)
@@ -1129,6 +1175,14 @@ def _run_update_validation(
                     "and grade artifacts"
                 ),
             )
+            _assert_restored_artifact_inventory_matches(
+                grade_backup_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(restore_session),
+                    record_key=grade_record_key,
+                ),
+                description="Backup restore rehearsal did not preserve retained grades",
+            )
         finally:
             restore_capture.unlink(missing_ok=True)
             _stop_runtime(restore_process)
@@ -1141,12 +1195,46 @@ def _run_update_validation(
             deleted = _delete_hand(
                 record_key, _hand_detail(record_key, candidate_session), candidate_session
             )
+            post_deletion_backup = _export_backup(candidate_session)
+            deleted_artifacts = _backup_record_artifact_inventory(
+                post_deletion_backup,
+                record_key=record_key,
+            )
+            if any(deleted_artifacts.values()):
+                raise PlayerUpdateValidationError(
+                    "Candidate deletion did not purge the deleted hand's artifacts"
+                )
+            retained_grade_artifacts = _backup_record_artifact_inventory(
+                post_deletion_backup,
+                record_key=grade_record_key,
+            )
+            _assert_restored_artifact_inventory_matches(
+                grade_backup_artifacts,
+                retained_grade_artifacts,
+                description="Candidate deletion changed an unrelated retained grade",
+            )
             _restore_backup(candidate_session, backup_archive)
             retained_tombstone = _hand_detail(record_key, candidate_session)
             if _hand_snapshot(retained_tombstone) != _hand_snapshot(deleted):
                 raise PlayerUpdateValidationError(
                     "Stale backup restore changed a newer deletion generation"
                 )
+            _assert_restored_artifact_inventory_matches(
+                deleted_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(candidate_session),
+                    record_key=record_key,
+                ),
+                description="Stale backup restore changed the deleted hand's artifacts",
+            )
+            _assert_restored_artifact_inventory_matches(
+                retained_grade_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(candidate_session),
+                    record_key=grade_record_key,
+                ),
+                description="Stale backup restore changed an unrelated retained grade",
+            )
         finally:
             candidate_capture.unlink(missing_ok=True)
             _stop_runtime(candidate_process)
@@ -1216,11 +1304,23 @@ def _run_update_validation(
             record_key=record_key,
         )
         _assert_restored_artifact_inventory_matches(
-            backup_artifacts,
+            deleted_artifacts,
             final_backup_artifacts,
             description=(
+                "Candidate export-before-data-removal backup did not preserve "
+                "the deleted hand's artifact inventory"
+            ),
+        )
+        final_grade_artifacts = _backup_record_artifact_inventory(
+            final_backup.read_bytes(),
+            record_key=grade_record_key,
+        )
+        _assert_restored_artifact_inventory_matches(
+            retained_grade_artifacts,
+            final_grade_artifacts,
+            description=(
                 "Candidate export-before-data-removal backup did not retain "
-                "decision and grade artifacts"
+                "an unrelated grade artifact"
             ),
         )
         final_restore_dir = temporary / "export-before-data-removal-restore"
@@ -1250,6 +1350,17 @@ def _run_update_validation(
                 description=(
                     "Candidate export-before-data-removal backup restore did not "
                     "preserve decision and grade artifacts"
+                ),
+            )
+            _assert_restored_artifact_inventory_matches(
+                final_grade_artifacts,
+                _backup_record_artifact_inventory(
+                    _export_backup(final_restore_session),
+                    record_key=grade_record_key,
+                ),
+                description=(
+                    "Candidate export-before-data-removal backup restore did not "
+                    "preserve the retained grade artifact"
                 ),
             )
         finally:

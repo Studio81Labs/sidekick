@@ -15,6 +15,8 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
 
+from app.player_workspace import PlayerWorkspace
+
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -773,6 +775,18 @@ def test_update_restore_comparison_rejects_missing_retained_artifacts(
                 "and grade artifacts"
             ),
         )
+
+
+def test_update_seeds_a_valid_retained_grade_artifact(tmp_path: Path) -> None:
+    data_dir = tmp_path / "player-data"
+    data_dir.mkdir(mode=0o700)
+
+    record_key = verify_player_runtime_update._seed_retained_grade_artifact(data_dir)
+
+    workspace = PlayerWorkspace.open(data_dir)
+    assert len(
+        workspace.imported_hands.list_reference_activated_grade_artifacts(record_key)
+    ) == 1
 
 
 def test_update_workspace_digest_rejects_a_lease_failure_mutation(
