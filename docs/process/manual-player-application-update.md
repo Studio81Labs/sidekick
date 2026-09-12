@@ -30,10 +30,12 @@ pnpm player:package:update:test \
 ```
 
 That release-engineering harness requires two separately built archives from
-different clean revisions. It rejects an identical archive, the same source
-revision, or identical packaged application files; a same-bundle restart is
-not update evidence. It verifies both checksum/manifest/platform/provenance
-bindings, stages each bundle independently, confirms the candidate process
+different clean revisions. Run it from a source checkout at the intended
+candidate revision with the base revision available in its Git history. It
+rejects an identical archive, the same source revision, a candidate that does
+not match that checkout or descend from the base, or identical packaged
+application files; a same-bundle restart is not update evidence. It verifies
+both checksum/manifest/platform/provenance bindings, stages each bundle independently, confirms the candidate process
 serves its own embedded shell, preserves an imported canonical revision and a
 rejected lifecycle state, rehearses backup/restore, rejects an old runtime
 session and concurrent runtime, checks corrupt/incomplete/interrupted staging,

@@ -175,7 +175,9 @@ pnpm player:package:test -- /absolute/path/poker-hero-player-*.tar.gz
 ```
 
 To validate a manual application-file update, build a base and a candidate from
-different clean source revisions into separate output directories, then run:
+different clean source revisions into separate output directories. Run the
+source harness from a checkout at the intended candidate revision with the base
+revision available in its Git history, then run:
 
 ```bash
 pnpm player:package:update:test \
@@ -183,9 +185,10 @@ pnpm player:package:update:test \
   /absolute/private/candidate/poker-hero-player-*.tar.gz
 ```
 
-The harness rejects a same archive, same revision, identical application
-inventory, or identical executed binary/shell/worker assets. It uses private
-temporary application/data roots to test integrity, platform binding,
+The harness rejects a same archive, same revision, a candidate that does not
+match the checked-out revision or descend from the base revision, identical
+application inventory, or identical executed binary/shell/worker assets. It
+uses private temporary application/data roots to test integrity, platform binding,
 side-by-side staging, fresh sessions, lease/port failure, backup/restore,
 stale restore, application-only removal, and packaged export-before-data-removal.
 Follow the archive-embedded or source

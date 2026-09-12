@@ -419,6 +419,101 @@ def test_update_staging_requires_changed_clean_source_and_application_bytes(
     assert base.bundle_root.parent != candidate.bundle_root.parent
 
 
+def test_update_requires_candidate_to_match_checkout_and_descend_from_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = verify_player_runtime_update.ValidatedBundle(
+        archive_path=Path("base.tar.gz"),
+        archive_sha256="a" * 64,
+        provenance={"source_revision": "a" * 40},
+        bundle_root=Path("base"),
+        entrypoint=Path("base/player"),
+        manifest={},
+    )
+    candidate = verify_player_runtime_update.ValidatedBundle(
+        archive_path=Path("candidate.tar.gz"),
+        archive_sha256="b" * 64,
+        provenance={"source_revision": "b" * 40},
+        bundle_root=Path("candidate"),
+        entrypoint=Path("candidate/player"),
+        manifest={},
+    )
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_checked_out_source_revision",
+        lambda: "b" * 40,
+    )
+    ancestry_checks: list[tuple[str, str]] = []
+
+    def is_ancestor(base_revision: str, candidate_revision: str) -> bool:
+        ancestry_checks.append((base_revision, candidate_revision))
+        return True
+
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_is_git_ancestor",
+        is_ancestor,
+    )
+
+    verify_player_runtime_update._require_candidate_is_checked_out_descendant(
+        base, candidate
+    )
+
+    assert ancestry_checks == [("a" * 40, "b" * 40)]
+
+
+def test_update_rejects_downgrade_or_wrong_checked_out_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    base = verify_player_runtime_update.ValidatedBundle(
+        archive_path=Path("base.tar.gz"),
+        archive_sha256="a" * 64,
+        provenance={"source_revision": "a" * 40},
+        bundle_root=Path("base"),
+        entrypoint=Path("base/player"),
+        manifest={},
+    )
+    candidate = verify_player_runtime_update.ValidatedBundle(
+        archive_path=Path("candidate.tar.gz"),
+        archive_sha256="b" * 64,
+        provenance={"source_revision": "b" * 40},
+        bundle_root=Path("candidate"),
+        entrypoint=Path("candidate/player"),
+        manifest={},
+    )
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_checked_out_source_revision",
+        lambda: "b" * 40,
+    )
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_is_git_ancestor",
+        lambda *_: False,
+    )
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="does not descend",
+    ):
+        verify_player_runtime_update._require_candidate_is_checked_out_descendant(
+            base, candidate
+        )
+
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_checked_out_source_revision",
+        lambda: "c" * 40,
+    )
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="does not match",
+    ):
+        verify_player_runtime_update._require_candidate_is_checked_out_descendant(
+            base, candidate
+        )
+
+
 def test_update_staging_cleans_incomplete_application_directory(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -467,6 +562,65 @@ def test_update_negative_artifact_checks_handle_truncated_gzip(
         archive,
         stage_root=tmp_path / "negative-artifacts",
     )
+
+
+def test_update_corrupt_artifact_keeps_valid_sidecars_for_digest_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    archive = _runtime_archive(
+        tmp_path,
+        output_name="candidate",
+        payload=b"candidate application bytes",
+        source_revision="b" * 40,
+    )
+    original_stage_archive = verify_player_runtime_update._stage_archive
+    checked_corrupt_artifact = False
+
+    def stage_with_corrupt_artifact_check(
+        archive_path: Path, *, stage_root: Path, label: str
+    ) -> verify_player_runtime_update.ValidatedBundle:
+        nonlocal checked_corrupt_artifact
+        if archive_path.parent.name == "corrupt-artifact":
+            checksum_path = archive_path.with_name(archive_path.name + ".sha256")
+            provenance_path = archive_path.with_name(
+                archive_path.name + ".provenance.json"
+            )
+            assert archive_path.name == archive.name
+            assert (
+                checksum_path.read_text(encoding="ascii").split()[1] == archive.name
+            )
+            assert json.loads(
+                provenance_path.read_text(encoding="utf-8")
+            ) == json.loads(
+                archive.with_name(archive.name + ".provenance.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            with pytest.raises(
+                smoke_player_runtime.PlayerPackageSmokeError,
+                match="failed its checksum",
+            ):
+                smoke_player_runtime._verify_archive_checksum(archive_path)
+            checked_corrupt_artifact = True
+        return original_stage_archive(
+            archive_path,
+            stage_root=stage_root,
+            label=label,
+        )
+
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_stage_archive",
+        stage_with_corrupt_artifact_check,
+    )
+
+    verify_player_runtime_update._assert_negative_artifacts_do_not_stage(
+        archive,
+        stage_root=tmp_path / "negative-artifacts",
+    )
+
+    assert checked_corrupt_artifact
 
 
 def test_update_detects_only_durable_ready_cascades(tmp_path: Path) -> None:

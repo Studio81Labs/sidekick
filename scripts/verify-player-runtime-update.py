@@ -236,6 +236,63 @@ def _require_distinct_bundles(base: ValidatedBundle, candidate: ValidatedBundle)
         )
 
 
+def _checked_out_source_revision() -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD^{commit}"],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    revision = result.stdout.strip()
+    if (
+        result.returncode != 0
+        or re.fullmatch(r"[0-9a-f]{40,64}", revision) is None
+    ):
+        raise PlayerUpdateValidationError(
+            "Update validation requires a checked-out Git candidate revision"
+        )
+    return revision
+
+
+def _is_git_ancestor(base_revision: str, candidate_revision: str) -> bool:
+    result = subprocess.run(
+        [
+            "git",
+            "merge-base",
+            "--is-ancestor",
+            base_revision,
+            candidate_revision,
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise PlayerUpdateValidationError(
+        "Update validation could not verify the base/candidate Git history"
+    )
+
+
+def _require_candidate_is_checked_out_descendant(
+    base: ValidatedBundle, candidate: ValidatedBundle
+) -> None:
+    base_revision = str(base.provenance["source_revision"])
+    candidate_revision = str(candidate.provenance["source_revision"])
+    if candidate_revision != _checked_out_source_revision():
+        raise PlayerUpdateValidationError(
+            "Candidate archive source revision does not match the checked-out release revision"
+        )
+    if not _is_git_ancestor(base_revision, candidate_revision):
+        raise PlayerUpdateValidationError(
+            "Candidate archive source revision does not descend from the base revision"
+        )
+
+
 def _runtime_environment(data_dir: Path, capture_path: Path) -> dict[str, str]:
     return {
         "BROWSER": str(LAUNCH_CAPTURE_HELPER),
@@ -749,7 +806,9 @@ def _assert_negative_artifacts_do_not_stage(
     stage_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     if stage_root.is_symlink() or not stage_root.is_dir():
         raise PlayerUpdateValidationError("Negative-artifact staging root is invalid")
-    corrupt = stage_root / "corrupt.tar.gz"
+    corrupt_root = stage_root / "corrupt-artifact"
+    corrupt_root.mkdir(mode=0o700)
+    corrupt = corrupt_root / candidate_archive.name
     shutil.copyfile(candidate_archive, corrupt)
     with corrupt.open("r+b") as stream:
         stream.seek(-1, os.SEEK_END)
@@ -760,8 +819,16 @@ def _assert_negative_artifacts_do_not_stage(
         candidate_archive.with_name(candidate_archive.name + ".sha256"),
         corrupt.with_name(corrupt.name + ".sha256"),
     )
+    shutil.copyfile(
+        _provenance_path(candidate_archive),
+        _provenance_path(corrupt),
+    )
     try:
-        _stage_archive(corrupt, stage_root=stage_root / "negative", label="corrupt")
+        _stage_archive(
+            corrupt,
+            stage_root=stage_root / "negative",
+            label="corrupt",
+        )
     except (PlayerUpdateValidationError, SMOKE.PlayerPackageSmokeError):
         pass
     else:
@@ -835,7 +902,11 @@ def _run_update_validation(
             candidate_archive, stage_root=application_root, label="candidate"
         )
         _require_distinct_bundles(base, candidate)
-        _assert_negative_artifacts_do_not_stage(candidate.archive_path, stage_root=temporary)
+        _require_candidate_is_checked_out_descendant(base, candidate)
+        _assert_negative_artifacts_do_not_stage(
+            candidate.archive_path,
+            stage_root=temporary,
+        )
 
         base_capture = capture_dir / "base-launch-url"
         base_process, base_session = _start_runtime(
