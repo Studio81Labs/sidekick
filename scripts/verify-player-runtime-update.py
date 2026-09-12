@@ -44,6 +44,7 @@ _UUID_DELETE = "11111111-1111-4111-8111-111111111111"
 _DELETE_REASON = "Exercise stale-restore protection after manual update"
 _BROWSER_REHEARSAL_OUTER_TIMEOUT_SECONDS = 130
 _BROWSER_REHEARSAL_TERMINATION_TIMEOUT_SECONDS = 5
+_CANDIDATE_RECOVERY_REPLAY_COPIES = 64
 
 _SYNTHETIC_HAND = b"""PokerStars Hand #900000000002: Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:35:56 ET
 Table 'Synthetic Heads Up' 2-max Seat #1 is the button
@@ -294,9 +295,15 @@ def _run_browser_update_rehearsal(
         {
             "POKER_PLAYER_UPDATE_BASE_CWD": str(base.bundle_root),
             "POKER_PLAYER_UPDATE_BASE_ENTRYPOINT": str(base.entrypoint),
+            "POKER_PLAYER_UPDATE_BASE_SOURCE_REVISION": str(
+                base.provenance["source_revision"]
+            ),
             "POKER_PLAYER_UPDATE_BASE_WORKER": str(base_worker),
             "POKER_PLAYER_UPDATE_CANDIDATE_CWD": str(candidate.bundle_root),
             "POKER_PLAYER_UPDATE_CANDIDATE_ENTRYPOINT": str(candidate.entrypoint),
+            "POKER_PLAYER_UPDATE_CANDIDATE_SOURCE_REVISION": str(
+                candidate.provenance["source_revision"]
+            ),
             "POKER_PLAYER_UPDATE_CANDIDATE_WORKER": str(candidate_worker),
             "POKER_PLAYER_UPDATE_DATA_DIR": str(data_dir),
             "POKER_PLAYER_UPDATE_CAPTURE_DIR": str(capture_dir),
@@ -1207,6 +1214,100 @@ def _interrupt_lifecycle_write(
     return expected_transition
 
 
+def _duplicate_ready_cascade_for_recovery_interruption(
+    ready_marker: Path,
+) -> tuple[Path, ...]:
+    """Create enough durable replay work to interrupt candidate startup.
+
+    A lifecycle purge has one staged record replacement and can finish before
+    an external process observes it.  Exact copies are safe in this temporary
+    rehearsal: journal replay is idempotent, and each copy contains the same
+    already-durable transition.  Multiple copies make the interruption happen
+    while the candidate is still inside its startup recovery sweep rather than
+    after it has already bound the local server.
+    """
+
+    source = ready_marker.parent
+    if not source.is_dir() or ready_marker.parent.parent.name != ".cascade":
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle write has an invalid ready cascade"
+        )
+    markers = [ready_marker]
+    for copy_index in range(_CANDIDATE_RECOVERY_REPLAY_COPIES):
+        duplicate = source.with_name(f"{source.name}.replay-{copy_index:03d}")
+        try:
+            shutil.copytree(source, duplicate, symlinks=True)
+        except OSError as exc:
+            raise PlayerUpdateValidationError(
+                "Could not prepare replay work for candidate recovery interruption"
+            ) from exc
+        duplicate_marker = duplicate / "ready"
+        if duplicate_marker.is_symlink() or not duplicate_marker.is_file():
+            raise PlayerUpdateValidationError(
+                "Candidate recovery interruption copied an invalid ready cascade"
+            )
+        markers.append(duplicate_marker)
+    return tuple(markers)
+
+
+def _interrupt_candidate_during_recovery(
+    candidate: ValidatedBundle,
+    *,
+    data_dir: Path,
+    capture_path: Path,
+    ready_marker: Path,
+) -> None:
+    """Kill one candidate while it replays durable work, then leave it retryable."""
+
+    replay_markers = _duplicate_ready_cascade_for_recovery_interruption(ready_marker)
+    capture_path.unlink(missing_ok=True)
+    process = subprocess.Popen(
+        [str(candidate.entrypoint)],
+        cwd=candidate.bundle_root,
+        env=_runtime_environment(data_dir, capture_path),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        deadline = monotonic() + 10
+        while monotonic() < deadline:
+            pending_markers = _ready_cascade_markers(data_dir)
+            if 0 < len(pending_markers) < len(replay_markers):
+                process.kill()
+                process.wait(timeout=10)
+                break
+            if not pending_markers:
+                raise PlayerUpdateValidationError(
+                    "Candidate completed lifecycle recovery before controlled interruption"
+                )
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                raise PlayerUpdateValidationError(
+                    "Candidate exited while replaying lifecycle recovery:\n"
+                    + stdout.decode(errors="replace")
+                    + stderr.decode(errors="replace")
+                )
+            sleep(0.001)
+        else:
+            raise PlayerUpdateValidationError(
+                "Candidate did not begin lifecycle recovery before controlled interruption"
+            )
+    except BaseException:
+        _stop_runtime(process)
+        raise
+    finally:
+        capture_path.unlink(missing_ok=True)
+
+    if process.returncode == 0:
+        raise PlayerUpdateValidationError(
+            "Controlled interruption stopped the recovering candidate successfully"
+        )
+    if not _ready_cascade_markers(data_dir):
+        raise PlayerUpdateValidationError(
+            "Candidate interruption did not leave durable lifecycle recovery work"
+        )
+
+
 def _assert_recovered_lifecycle_retains_audit_state(
     before: dict[str, Any],
     after: dict[str, Any],
@@ -1575,6 +1676,18 @@ def _run_update_validation(
         )
         workspace_manifest_before_candidate = _workspace_manifest_snapshot(data_dir)
         installation_key_before_candidate = _installation_key_snapshot(data_dir)
+
+        ready_markers = _ready_cascade_markers(data_dir)
+        if len(ready_markers) != 1:
+            raise PlayerUpdateValidationError(
+                "Interrupted lifecycle write did not leave one ready cascade for candidate recovery"
+            )
+        _interrupt_candidate_during_recovery(
+            candidate,
+            data_dir=data_dir,
+            capture_path=capture_dir / "interrupted-candidate-launch-url",
+            ready_marker=ready_markers[0],
+        )
 
         candidate_capture = capture_dir / "candidate-launch-url"
         candidate_process, candidate_session = _start_runtime(

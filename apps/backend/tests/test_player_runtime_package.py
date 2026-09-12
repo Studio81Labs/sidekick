@@ -467,6 +467,155 @@ def test_update_requires_a_real_browser_worker_transition(tmp_path: Path) -> Non
         verify_player_runtime_update._require_distinct_player_workers(base, candidate)
 
 
+def test_update_browser_rehearsal_passes_validated_source_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launched_environment: dict[str, str] = {}
+
+    def bundle(
+        label: str, revision: str, worker: bytes
+    ) -> verify_player_runtime_update.ValidatedBundle:
+        root = tmp_path / label
+        assets = root / "_internal" / "player-assets"
+        assets.mkdir(parents=True)
+        worker_path = assets / "sw.js"
+        worker_path.write_bytes(worker)
+        entrypoint = root / "poker-hero-player"
+        entrypoint.write_text("#!/bin/sh\n", encoding="utf-8")
+        return verify_player_runtime_update.ValidatedBundle(
+            archive_path=root / f"{label}.tar.gz",
+            archive_sha256=label * 64,
+            provenance={"source_revision": revision},
+            bundle_root=root,
+            entrypoint=entrypoint,
+            manifest={"files": [{"path": "_internal/player-assets/sw.js"}]},
+        )
+
+    class Process:
+        returncode = 0
+
+        def communicate(self, *, timeout: int) -> tuple[str, str]:
+            assert (
+                timeout
+                == verify_player_runtime_update._BROWSER_REHEARSAL_OUTER_TIMEOUT_SECONDS
+            )
+            return "", ""
+
+    def start_process(*_args: object, **kwargs: object) -> Process:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        launched_environment.update(environment)
+        return Process()
+
+    monkeypatch.setattr(
+        verify_player_runtime_update.subprocess, "Popen", start_process
+    )
+
+    verify_player_runtime_update._run_browser_update_rehearsal(
+        bundle("base", "a" * 40, b"base worker"),
+        bundle("candidate", "b" * 40, b"candidate worker"),
+        data_dir=tmp_path / "data",
+        capture_dir=tmp_path / "capture",
+    )
+
+    assert (
+        launched_environment["POKER_PLAYER_UPDATE_BASE_SOURCE_REVISION"] == "a" * 40
+    )
+    assert (
+        launched_environment["POKER_PLAYER_UPDATE_CANDIDATE_SOURCE_REVISION"]
+        == "b" * 40
+    )
+
+
+def test_update_recovery_interruption_duplicates_a_ready_cascade(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "imported-hands" / ".cascade" / "cascade"
+    staged = source / "staged" / "record" / "content"
+    staged.mkdir(parents=True)
+    (staged / "record.json").write_text('{"lifecycle": "pending"}\n', encoding="utf-8")
+    ready = source / "ready"
+    ready.write_bytes(b"")
+
+    markers = (
+        verify_player_runtime_update._duplicate_ready_cascade_for_recovery_interruption(
+            ready
+        )
+    )
+
+    assert (
+        len(markers)
+        == verify_player_runtime_update._CANDIDATE_RECOVERY_REPLAY_COPIES + 1
+    )
+    assert all(marker.is_file() and not marker.is_symlink() for marker in markers)
+    assert all(
+        (marker.parent / "staged" / "record" / "content" / "record.json").read_text(
+            encoding="utf-8"
+        )
+        == '{"lifecycle": "pending"}\n'
+        for marker in markers
+    )
+
+
+def test_update_candidate_recovery_interruption_keeps_pending_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pending_markers = tuple(
+        tmp_path / f"cascade-{index}" / "ready" for index in range(3)
+    )
+    observations = iter((pending_markers, pending_markers[1:], pending_markers[1:]))
+
+    class Process:
+        returncode: int | None = None
+        killed = False
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+        def wait(self, *, timeout: int) -> None:
+            assert timeout == 10
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+    process = Process()
+    candidate = verify_player_runtime_update.ValidatedBundle(
+        archive_path=tmp_path / "candidate.tar.gz",
+        archive_sha256="c" * 64,
+        provenance={"source_revision": "c" * 40},
+        bundle_root=tmp_path,
+        entrypoint=tmp_path / "poker-hero-player",
+        manifest={},
+    )
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_duplicate_ready_cascade_for_recovery_interruption",
+        lambda _ready: pending_markers,
+    )
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_ready_cascade_markers",
+        lambda _data_dir: next(observations),
+    )
+    monkeypatch.setattr(
+        verify_player_runtime_update.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+
+    verify_player_runtime_update._interrupt_candidate_during_recovery(
+        candidate,
+        data_dir=tmp_path / "data",
+        capture_path=tmp_path / "capture",
+        ready_marker=pending_markers[0],
+    )
+
+    assert process.killed is True
+
+
 def test_update_timeout_terminates_the_browser_rehearsal_process_group(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

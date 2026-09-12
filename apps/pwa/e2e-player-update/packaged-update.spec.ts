@@ -11,6 +11,7 @@ const PLAYER_ORIGIN = "http://127.0.0.1:8765";
 interface RuntimeSpec {
   cwd: string;
   entrypoint: string;
+  sourceRevision: string;
   workerPath: string;
 }
 
@@ -34,6 +35,9 @@ function runtimeSpec(name: "BASE" | "CANDIDATE"): RuntimeSpec {
   return {
     cwd: requiredEnvironment(`POKER_PLAYER_UPDATE_${name}_CWD`),
     entrypoint: requiredEnvironment(`POKER_PLAYER_UPDATE_${name}_ENTRYPOINT`),
+    sourceRevision: requiredEnvironment(
+      `POKER_PLAYER_UPDATE_${name}_SOURCE_REVISION`,
+    ),
     workerPath: requiredEnvironment(`POKER_PLAYER_UPDATE_${name}_WORKER`),
   };
 }
@@ -56,10 +60,12 @@ async function playerBuildIdentity(
   const cacheName = /const CACHE_NAME = "([^"]+)";/.exec(worker)?.[1];
   if (
     !revision ||
+    revision !== spec.sourceRevision ||
     !cacheName ||
-    !cacheName.startsWith("poker-hero-player-shell-")
+    !cacheName.startsWith("poker-hero-player-shell-") ||
+    !cacheName.endsWith(`-r${spec.sourceRevision.slice(0, 12)}`)
   ) {
-    throw new Error("Packaged player build identity is invalid");
+    throw new Error("Packaged player build identity does not match provenance");
   }
   return { cacheName, revision };
 }

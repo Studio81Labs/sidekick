@@ -196,18 +196,30 @@ verify_player_archive /absolute/private/base/poker-hero-player-*.tar.gz
 verify_player_archive /absolute/private/candidate/poker-hero-player-*.tar.gz
 ```
 
-Extract base and candidate into different newly-created application directories.
-The result is side-by-side staging, not replacement. Rename a completed
-candidate directory into its final application directory only after the
-extraction and manifest inspection finish. If extraction is interrupted, remove
-only the incomplete candidate application directory; do not alter the old
-application or player data.
+Extract base and candidate into unique private staging directories on the same
+filesystem as `APP_ROOT`. The result is side-by-side staging, not replacement.
+Publish each completed staging directory with one rename only after extraction
+and the archive verification above have finished. If extraction is interrupted,
+the trap removes only the incomplete staging directory; it never creates or
+alters either final application directory or player data.
 
 ```bash
-mkdir -m 700 "$APP_ROOT/base"
-tar -xzf /absolute/private/base/poker-hero-player-*.tar.gz -C "$APP_ROOT/base"
-mkdir -m 700 "$APP_ROOT/candidate"
-tar -xzf /absolute/private/candidate/poker-hero-player-*.tar.gz -C "$APP_ROOT/candidate"
+set -eu
+umask 077
+test ! -e "$APP_ROOT/base" && test ! -e "$APP_ROOT/candidate" || {
+  printf '%s\n' 'final application directory already exists; do not overwrite it' >&2
+  exit 1
+}
+BASE_STAGE=$(mktemp -d "$APP_ROOT/.base-staging.XXXXXX")
+CANDIDATE_STAGE=$(mktemp -d "$APP_ROOT/.candidate-staging.XXXXXX")
+trap 'rm -rf "$BASE_STAGE" "$CANDIDATE_STAGE"' EXIT HUP INT TERM
+tar -xzpf /absolute/private/base/poker-hero-player-*.tar.gz -C "$BASE_STAGE"
+tar -xzpf /absolute/private/candidate/poker-hero-player-*.tar.gz -C "$CANDIDATE_STAGE"
+test "$(find "$BASE_STAGE" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" = 1
+test "$(find "$CANDIDATE_STAGE" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d ' ')" = 1
+mv "$BASE_STAGE" "$APP_ROOT/base"
+mv "$CANDIDATE_STAGE" "$APP_ROOT/candidate"
+trap - EXIT HUP INT TERM
 ```
 
 Set `BASE_APP` and `CANDIDATE_APP` to the single root directory produced in
