@@ -22,6 +22,10 @@ import {
   type PlayerHandConflictResolution,
   type PlayerHandList,
   type PlayerHandSummary,
+  type ImportedHandState,
+  type ImportedHandSourceEvidence,
+  type PlayerHandReviewPreview,
+  type PlayerHandReviewSourceLines,
   type PlayerImportBatchOutcome,
   type PlayerStorageStatus,
   approvePlayerHand,
@@ -33,7 +37,9 @@ import {
   importPokerStarsFiles,
   loadPlayerHand,
   loadPlayerHands,
+  loadPlayerHandReviewSourceLines,
   loadPlayerStorage,
+  previewPlayerHandReview,
   reimportPlayerHand,
   resolvePlayerHandConflict,
   restorePlayerBackup,
@@ -54,6 +60,12 @@ import {
 } from "./playerReimportRetry";
 import { unitIntervalPercentage } from "./playerDecimal";
 import { RecordedHandTimeline } from "./RecordedHandTimeline";
+import {
+  selectedDetectionEvidence,
+  sourceEvidenceKey,
+  uniqueSourceEvidence,
+} from "./reviewEvidence";
+import { StructuredHandReviewEditor } from "./StructuredHandReviewEditor";
 
 type BusyAction =
   | "export"
@@ -61,6 +73,8 @@ type BusyAction =
   | "restore"
   | "records"
   | "detail"
+  | "preview"
+  | "source-lines"
   | "approve"
   | "resolve"
   | "withdraw"
@@ -121,8 +135,50 @@ function evidenceLocation(
 
 interface HandApprovalDraft {
   detectionId: string;
-  reviewedState: string;
+  reviewedState: ImportedHandState;
   correctionReason: string;
+}
+
+interface ReviewSourceScope {
+  detectionId: string;
+  recordKey: string;
+  recordVersion: string;
+  sessionToken: string;
+}
+
+interface ReviewSourcePageState {
+  page: PlayerHandReviewSourceLines;
+  scope: ReviewSourceScope;
+}
+
+interface ReviewSourceEvidenceSelection {
+  evidence: ImportedHandSourceEvidence[];
+  scope: ReviewSourceScope;
+}
+
+function sourceScopeFor(
+  credentials: PlayerCredentials,
+  detail: PlayerHandDetail,
+  detectionId: string,
+): ReviewSourceScope {
+  return {
+    detectionId,
+    recordKey: detail.summary.record_key,
+    recordVersion: detail.summary.record_version,
+    sessionToken: credentials.sessionToken,
+  };
+}
+
+function sourceScopesMatch(
+  left: ReviewSourceScope,
+  right: ReviewSourceScope,
+): boolean {
+  return (
+    left.detectionId === right.detectionId &&
+    left.recordKey === right.recordKey &&
+    left.recordVersion === right.recordVersion &&
+    left.sessionToken === right.sessionToken
+  );
 }
 
 function approvalDraftFor(
@@ -163,7 +219,7 @@ function approvalDraftFor(
   if (!state) return null;
   return {
     detectionId,
-    reviewedState: JSON.stringify(state, null, 2),
+    reviewedState: structuredClone(state),
     correctionReason: "",
   };
 }
@@ -181,6 +237,32 @@ function normalizedJson(value: unknown): string {
     return item;
   };
   return JSON.stringify(normalize(value));
+}
+
+function reviewedChangePointers(
+  detected: unknown,
+  reviewed: unknown,
+  pointer = "",
+): string[] {
+  if (normalizedJson(detected) === normalizedJson(reviewed)) return [];
+  if (
+    detected !== null &&
+    reviewed !== null &&
+    typeof detected === "object" &&
+    typeof reviewed === "object" &&
+    !Array.isArray(detected) &&
+    !Array.isArray(reviewed)
+  ) {
+    const keys = new Set([...Object.keys(detected), ...Object.keys(reviewed)]);
+    return [...keys].flatMap((key) =>
+      reviewedChangePointers(
+        (detected as Record<string, unknown>)[key],
+        (reviewed as Record<string, unknown>)[key],
+        `${pointer}/${key}`,
+      ),
+    );
+  }
+  return [pointer || "/"];
 }
 
 function approvalRequiresConflictResolution(
@@ -247,6 +329,7 @@ interface HandDetailProps {
   reimportFile: File | null;
   reimportInput: RefObject<HTMLInputElement>;
   onApprove: () => void;
+  onPreview: () => void;
   onApprovalDetectionChange: (detectionId: string) => void;
   onCorrectionReasonChange: (reason: string) => void;
   onClose: (action: PlayerHandCloseAction) => void;
@@ -260,7 +343,100 @@ interface HandDetailProps {
     resolution: PlayerHandConflictResolution,
     selectedRawSourceId: string,
   ) => void;
-  onReviewedStateChange: (state: string) => void;
+  onReviewedStateChange: (state: ImportedHandState) => void;
+  onLoadReviewSourceLines: (startLine?: number) => void;
+  onSelectReviewSourceEvidence: (evidence: ImportedHandSourceEvidence) => void;
+  reviewPreview: PlayerHandReviewPreview | null;
+  reviewPreviewCurrent: boolean;
+  reviewSourceEvidence: readonly ImportedHandSourceEvidence[];
+  reviewSourceLines: PlayerHandReviewSourceLines | null;
+  reviewSourceLinesError: string | null;
+}
+
+function ReviewPreviewSummary({
+  detail,
+  draft,
+  preview,
+  current,
+}: {
+  detail: PlayerHandDetail;
+  draft: HandApprovalDraft;
+  preview: PlayerHandReviewPreview;
+  current: boolean;
+}) {
+  const detection = detail.detections.find(
+    (item) => item.detection_id === draft.detectionId,
+  );
+  const changes =
+    detection && preview.reviewed_state
+      ? reviewedChangePointers(detection.state, preview.reviewed_state)
+      : [];
+  return (
+    <section
+      aria-live="polite"
+      className={
+        preview.valid && current
+          ? "review-preview review-preview-valid"
+          : "review-preview"
+      }
+    >
+      <h5>Preview and change summary</h5>
+      {!current ? (
+        <p role="status">
+          This preview is stale because the review draft changed. Preview again
+          before approval.
+        </p>
+      ) : preview.valid && preview.reviewed_state ? (
+        <>
+          <p>
+            This current draft is valid and has not been written. Approval will
+            require a separate confirmation.
+          </p>
+          <p>
+            {changes.length === 0
+              ? "No recorded values differ from the selected detection."
+              : `${changes.length} recorded ${changes.length === 1 ? "field differs" : "fields differ"} from the selected detection.`}
+          </p>
+          {changes.length > 0 ? (
+            <ul>
+              {changes.slice(0, 20).map((pointer) => (
+                <li key={pointer}>
+                  <code>{pointer}</code>
+                </li>
+              ))}
+              {changes.length > 20 ? (
+                <li>
+                  Additional changed fields are retained in the approval audit.
+                </li>
+              ) : null}
+            </ul>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <p role="alert">
+            The current draft needs correction before it can be approved.
+          </p>
+          {preview.field_errors.length > 0 ? (
+            <ul className="review-preview-errors">
+              {preview.field_errors.map((error, index) => (
+                <li key={`${error.pointer}-${error.code}-${index}`}>
+                  <code>{error.pointer}</code>: {error.message}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </>
+      )}
+      {preview.warnings.length > 0 ? (
+        <ul className="review-preview-warnings">
+          {preview.warnings.map((warning, index) => (
+            <li key={`${warning}-${index}`}>{warning}</li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
 }
 
 function HandDetail({
@@ -272,6 +448,7 @@ function HandDetail({
   reimportFile,
   reimportInput,
   onApprove,
+  onPreview,
   onApprovalDetectionChange,
   onCorrectionReasonChange,
   onClose,
@@ -282,6 +459,13 @@ function HandDetail({
   onReasonChange,
   onResolveConflict,
   onReviewedStateChange,
+  onLoadReviewSourceLines,
+  onSelectReviewSourceEvidence,
+  reviewPreview,
+  reviewPreviewCurrent,
+  reviewSourceEvidence,
+  reviewSourceLines,
+  reviewSourceLinesError,
 }: HandDetailProps) {
   const { summary } = detail;
   const recognitionWarnings = detail.detections.flatMap((detection) => [
@@ -310,6 +494,17 @@ function HandDetail({
   const approvalBlockedByConflict = approvalDraft
     ? approvalRequiresConflictResolution(detail, approvalDraft.detectionId)
     : false;
+  const reviewedDetection = approvalDraft
+    ? detail.detections.find(
+        (detection) => detection.detection_id === approvalDraft.detectionId,
+      )
+    : null;
+  const reviewEvidenceOptions = reviewedDetection
+    ? uniqueSourceEvidence([
+        ...selectedDetectionEvidence(reviewedDetection),
+        ...reviewSourceEvidence,
+      ])
+    : [];
   return (
     <article className="hand-detail" aria-labelledby="hand-detail-heading">
       <div>
@@ -340,30 +535,30 @@ function HandDetail({
             </p>
           ) : (
             <p>
-              Deletion cleanup is pending. This record is inactive and is not
-              used for learning.
+              Deletion cleanup is pending. This record is inactive and cannot be
+              reviewed or approved.
             </p>
           )
         ) : summary.learning_eligible ? (
           <p>
             Canonical revision {summary.active_canonical_revision} is active and
-            eligible for local learning.
+            retained as the current recorded-hand review.
           </p>
         ) : summary.lifecycle_status === "withdrawn" ? (
           <p>
             This hand was previously approved, but its approval is now
-            withdrawn. Its retained canonical revisions are inactive and not
-            used for learning.
+            withdrawn. Its retained canonical revisions remain auditable but are
+            inactive.
           </p>
         ) : summary.lifecycle_status === "rejected" ? (
           <p>
             This hand was previously approved, then rejected. Its retained
-            canonical revisions are inactive and not used for learning.
+            canonical revisions remain auditable but are inactive.
           </p>
         ) : (
           <p>
-            This record is not approved for learning. Detected evidence remains
-            a proposal until a later review workflow explicitly approves it.
+            This record is not yet approved. Detected evidence remains a
+            proposal until the review workflow explicitly approves it.
           </p>
         )}
       </div>
@@ -392,10 +587,10 @@ function HandDetail({
         <div className="audit-block lifecycle-actions approval-review">
           <h4>Review and approve canonical state</h4>
           <p>
-            Select one retained detection, review every field, and explicitly
-            publish the JSON below as canonical ground truth. Parser output
-            remains retained as evidence; your approved revision is stored
-            separately and becomes the only state eligible for learning.
+            Select one retained detection, correct recorded fields using the
+            structured controls, preview the result, then explicitly approve it
+            as canonical ground truth. Parser output remains retained as
+            evidence and is never overwritten.
           </p>
           {summary.unresolved_conflict_count > 0 ? (
             approvalBlockedByConflict ? (
@@ -433,18 +628,131 @@ function HandDetail({
                 ))}
             </select>
           </label>
-          <label>
-            <span>Reviewed canonical state (JSON)</span>
-            <textarea
-              className="canonical-state-editor"
-              required
-              rows={18}
-              spellCheck={false}
-              value={approvalDraft.reviewedState}
-              disabled={busy !== null}
-              onChange={(event) => onReviewedStateChange(event.target.value)}
-            />
-          </label>
+          <section
+            className="review-source-lines"
+            aria-labelledby="review-source-lines-heading"
+          >
+            <h5 id="review-source-lines-heading">Retained source lines</h5>
+            <p className="field-help">
+              Open the selected hand's retained source only when a parser
+              locator does not cover a correction. The text stays in this
+              browser session and is not parser evidence or positive action
+              authority.
+            </p>
+            {reviewSourceLines === null ? (
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={busy !== null}
+                onClick={() => onLoadReviewSourceLines()}
+              >
+                {busy === "source-lines"
+                  ? "Opening retained source…"
+                  : "Open retained source lines"}
+              </button>
+            ) : (
+              <>
+                <p className="field-help">
+                  Lines {reviewSourceLines.start_line}–
+                  {reviewSourceLines.lines[reviewSourceLines.lines.length - 1]
+                    ?.line_number ?? reviewSourceLines.start_line}{" "}
+                  of {reviewSourceLines.total_lines}
+                  from the selected retained hand segment.
+                </p>
+                <ol
+                  className="review-source-line-list"
+                  start={reviewSourceLines.start_line}
+                >
+                  {reviewSourceLines.lines.map((line) => {
+                    const selected =
+                      line.binding !== null &&
+                      reviewSourceEvidence.some(
+                        (evidence) =>
+                          sourceEvidenceKey(evidence) ===
+                          sourceEvidenceKey(line.binding!),
+                      );
+                    return (
+                      <li key={line.line_number}>
+                        <span className="review-source-line-number">
+                          Line {line.line_number}
+                        </span>
+                        <code className="review-source-line-text">
+                          {line.text}
+                        </code>
+                        {line.unavailable_reason === "blank" ? (
+                          <p className="field-help">
+                            Blank lines cannot support a correction.
+                          </p>
+                        ) : line.unavailable_reason === "line_too_long" ? (
+                          <p className="field-help">
+                            This line is truncated for display and cannot
+                            support a correction.
+                          </p>
+                        ) : line.binding ? (
+                          <button
+                            aria-label={
+                              selected
+                                ? `Source line ${line.line_number} selected for review binding`
+                                : `Use source line ${line.line_number} for a correction`
+                            }
+                            className="quiet-button"
+                            type="button"
+                            disabled={busy !== null || selected}
+                            onClick={() =>
+                              onSelectReviewSourceEvidence(line.binding!)
+                            }
+                          >
+                            {selected
+                              ? "Selected for review binding"
+                              : "Use this source line for a correction"}
+                          </button>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ol>
+                {reviewSourceLines.next_start_line ? (
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={() =>
+                      onLoadReviewSourceLines(
+                        reviewSourceLines.next_start_line ?? undefined,
+                      )
+                    }
+                  >
+                    {busy === "source-lines"
+                      ? "Loading retained source…"
+                      : "Load more retained source lines"}
+                  </button>
+                ) : null}
+              </>
+            )}
+            {reviewSourceLinesError ? (
+              <p className="deletion-failure" role="alert">
+                {reviewSourceLinesError}
+              </p>
+            ) : null}
+          </section>
+          <StructuredHandReviewEditor
+            key={approvalDraft.detectionId}
+            confirmationActionCandidates={
+              reviewedDetection?.state.streets.map(
+                (street) => street.actions,
+              ) ?? []
+            }
+            disabled={busy !== null}
+            evidenceOptions={reviewEvidenceOptions}
+            errors={reviewPreview?.field_errors ?? []}
+            immutablePlayerIds={
+              reviewedDetection?.state.seats
+                .map((seat) => seat.player_id)
+                .filter((playerId) => playerId !== "") ?? []
+            }
+            state={approvalDraft.reviewedState}
+            onChange={onReviewedStateChange}
+          />
           <label>
             <span>Correction reason</span>
             <textarea
@@ -456,14 +764,38 @@ function HandDetail({
             />
           </label>
           <p className="field-help">
-            A reason is required whenever the reviewed JSON differs from the
-            selected detection. The service derives corrected fields, detected
-            values, and audit timestamps itself.
+            A reason is required whenever recorded values differ from the
+            selected detection. Preview does not write a hand. The service
+            derives corrected fields, detected values, and audit timestamps.
           </p>
+          {reviewPreview ? (
+            <ReviewPreviewSummary
+              detail={detail}
+              draft={approvalDraft}
+              preview={reviewPreview}
+              current={reviewPreviewCurrent}
+            />
+          ) : null}
+          <button
+            className="secondary-button"
+            type="button"
+            disabled={busy !== null || approvalBlockedByConflict}
+            onClick={onPreview}
+          >
+            {busy === "preview"
+              ? "Previewing reviewed state…"
+              : "Preview changes"}
+          </button>
           <button
             className="primary-button"
             type="button"
-            disabled={busy !== null || approvalBlockedByConflict}
+            disabled={
+              busy !== null ||
+              approvalBlockedByConflict ||
+              !reviewPreviewCurrent ||
+              reviewPreview?.valid !== true ||
+              reviewPreview.reviewed_state === null
+            }
             onClick={onApprove}
           >
             {busy === "approve"
@@ -478,9 +810,9 @@ function HandDetail({
         <div className="audit-block lifecycle-actions">
           <h4>Change approval state</h4>
           <p>
-            Both actions immediately remove this revision from local learning.
-            Raw sources, detections, corrections, and canonical revisions stay
-            retained for audit.
+            Both actions immediately make this revision inactive for
+            recorded-hand review. Raw sources, detections, corrections, and
+            canonical revisions stay retained for audit.
           </p>
           <label>
             <span>Reason</span>
@@ -521,7 +853,7 @@ function HandDetail({
             explicitly crosses the deletion boundary, advances its deletion
             generation, and creates a fresh unapproved parser proposal. It does
             not restore prior sources, corrections, conflicts, approvals, or
-            learning data.
+            prior review status.
           </p>
           {summary.lifecycle_status === "deletion_pending" ? (
             <p className="field-help">
@@ -947,6 +1279,9 @@ export default function PlayerApp() {
   const importInput = useRef<HTMLInputElement>(null);
   const reimportInput = useRef<HTMLInputElement>(null);
   const permitNextUnloadRef = useRef(false);
+  const reviewPreviewFenceRef = useRef(0);
+  const reviewSourceFenceRef = useRef(0);
+  const draftRevisionRef = useRef(0);
   const [credentials, setCredentials] = useState<PlayerCredentials | null>(
     null,
   );
@@ -969,6 +1304,15 @@ export default function PlayerApp() {
   const [approvalDraft, setApprovalDraft] = useState<HandApprovalDraft | null>(
     null,
   );
+  const [reviewPreview, setReviewPreview] =
+    useState<PlayerHandReviewPreview | null>(null);
+  const [reviewSourcePage, setReviewSourcePage] =
+    useState<ReviewSourcePageState | null>(null);
+  const [reviewSourceEvidence, setReviewSourceEvidence] =
+    useState<ReviewSourceEvidenceSelection | null>(null);
+  const [reviewSourceLinesError, setReviewSourceLinesError] = useState<
+    string | null
+  >(null);
   const [loadingHandKey, setLoadingHandKey] = useState<string | null>(null);
   const [closeReason, setCloseReason] = useState("");
   const [deleteReason, setDeleteReason] = useState("");
@@ -976,6 +1320,40 @@ export default function PlayerApp() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<BusyAction>(null);
   const [draftRevision, setDraftRevision] = useState(0);
+
+  const reviewSourceScope =
+    credentials && handDetail && approvalDraft
+      ? sourceScopeFor(credentials, handDetail, approvalDraft.detectionId)
+      : null;
+  const reviewSourceScopeKey = reviewSourceScope
+    ? JSON.stringify([
+        reviewSourceScope.sessionToken,
+        reviewSourceScope.recordKey,
+        reviewSourceScope.recordVersion,
+        reviewSourceScope.detectionId,
+      ])
+    : null;
+
+  const invalidateReviewPreview = () => {
+    reviewPreviewFenceRef.current += 1;
+    setReviewPreview(null);
+  };
+
+  const invalidateReviewSourceLines = () => {
+    reviewSourceFenceRef.current += 1;
+    setReviewSourcePage(null);
+    setReviewSourceEvidence(null);
+    setReviewSourceLinesError(null);
+  };
+
+  useEffect(() => {
+    // The source text is scoped to this exact authenticated hand/detection
+    // revision. It must not survive a hand, source, version, or session swap.
+    reviewSourceFenceRef.current += 1;
+    setReviewSourcePage(null);
+    setReviewSourceEvidence(null);
+    setReviewSourceLinesError(null);
+  }, [reviewSourceScopeKey]);
 
   const clearReimportSelection = () => {
     setSelectedReimportFile(null);
@@ -1012,6 +1390,8 @@ export default function PlayerApp() {
       setHandPage(null);
       setHandDetail(null);
       setApprovalDraft(null);
+      invalidateReviewPreview();
+      invalidateReviewSourceLines();
       setCloseReason("");
       setDeleteReason("");
       clearReimportSelection();
@@ -1028,6 +1408,8 @@ export default function PlayerApp() {
     setHandPage(null);
     setHandDetail(null);
     setApprovalDraft(null);
+    invalidateReviewPreview();
+    invalidateReviewSourceLines();
     setCloseReason("");
     setDeleteReason("");
     clearReimportSelection();
@@ -1071,6 +1453,7 @@ export default function PlayerApp() {
       if (!append) {
         setHandDetail(null);
         setApprovalDraft(null);
+        invalidateReviewPreview();
         setCloseReason("");
         setDeleteReason("");
         clearReimportSelection();
@@ -1089,6 +1472,7 @@ export default function PlayerApp() {
     setActionNotice(null);
     setHandDetail(null);
     setApprovalDraft(null);
+    invalidateReviewPreview();
     setCloseReason("");
     setDeleteReason("");
     clearReimportSelection();
@@ -1097,6 +1481,7 @@ export default function PlayerApp() {
       const detail = await loadPlayerHand(credentials, recordKey);
       setHandDetail(detail);
       setApprovalDraft(approvalDraftFor(detail));
+      invalidateReviewPreview();
       if (detail.summary.lifecycle_status === "deletion_pending") {
         setDeleteReason(detail.lifecycle.reason ?? "");
       }
@@ -1116,6 +1501,8 @@ export default function PlayerApp() {
     detail: PlayerHandDetail,
     nextApprovalDraft = approvalDraftFor(detail),
   ) => {
+    invalidateReviewPreview();
+    invalidateReviewSourceLines();
     setHandDetail(detail);
     setApprovalDraft(nextApprovalDraft);
     setHandPage((current) =>
@@ -1132,6 +1519,235 @@ export default function PlayerApp() {
     );
   };
 
+  const loadReviewSourceLines = async (startLine = 1) => {
+    if (!credentials || !handDetail || !approvalDraft) return;
+    if (
+      approvalRequiresConflictResolution(handDetail, approvalDraft.detectionId)
+    ) {
+      setReviewSourceLinesError(
+        "Resolve the retained source conflict before opening source lines for this detection.",
+      );
+      return;
+    }
+    if (
+      !["pending_review", "active", "withdrawn", "rejected"].includes(
+        handDetail.summary.lifecycle_status,
+      )
+    ) {
+      setReviewSourceLinesError(
+        "This hand lifecycle state cannot expose retained source lines for review.",
+      );
+      return;
+    }
+
+    const requestedCredentials = credentials;
+    const requestedDetail = handDetail;
+    const requestedDraft = approvalDraft;
+    const requestedScope = sourceScopeFor(
+      requestedCredentials,
+      requestedDetail,
+      requestedDraft.detectionId,
+    );
+    const requestFence = reviewSourceFenceRef.current;
+    setBusy("source-lines");
+    setError(null);
+    setActionNotice(null);
+    setReviewSourceLinesError(null);
+    try {
+      const page = await loadPlayerHandReviewSourceLines(
+        requestedCredentials,
+        requestedDetail.summary.record_key,
+        {
+          detection_id: requestedDraft.detectionId,
+          expected_record_version: requestedDetail.summary.record_version,
+          expected_lifecycle_status: requestedDetail.summary
+            .lifecycle_status as
+            | "pending_review"
+            | "active"
+            | "withdrawn"
+            | "rejected",
+          expected_active_canonical_revision:
+            requestedDetail.summary.active_canonical_revision,
+          expected_canonical_revision_count:
+            requestedDetail.summary.canonical_revision_count,
+          expected_deletion_generation:
+            requestedDetail.summary.deletion_generation,
+          expected_lifecycle_changed_at:
+            requestedDetail.summary.lifecycle_changed_at,
+          start_line: startLine,
+          limit: 50,
+        },
+      );
+      if (reviewSourceFenceRef.current !== requestFence) return;
+      const selectedDetection = requestedDetail.detections.find(
+        (detection) => detection.detection_id === requestedDraft.detectionId,
+      );
+      if (
+        !selectedDetection ||
+        page.schema_version !== "player-hand-review-source-lines/v1" ||
+        page.record_key !== requestedScope.recordKey ||
+        page.record_version !== requestedScope.recordVersion ||
+        page.detection_id !== requestedScope.detectionId ||
+        page.raw_source_id !== selectedDetection.raw_source_id ||
+        page.start_line !== startLine
+      ) {
+        setReviewSourceLinesError(
+          "The local player runtime returned source lines for a different review scope. Reload the hand before trying again.",
+        );
+        return;
+      }
+      setReviewSourcePage((current) => {
+        if (
+          startLine !== 1 &&
+          current !== null &&
+          sourceScopesMatch(current.scope, requestedScope) &&
+          current.page.raw_source_id === page.raw_source_id &&
+          current.page.total_lines === page.total_lines
+        ) {
+          const linesByNumber = new Map(
+            current.page.lines.map((line) => [line.line_number, line]),
+          );
+          for (const line of page.lines) {
+            linesByNumber.set(line.line_number, line);
+          }
+          return {
+            scope: requestedScope,
+            page: {
+              ...page,
+              start_line: current.page.start_line,
+              lines: [...linesByNumber.values()].sort(
+                (left, right) => left.line_number - right.line_number,
+              ),
+            },
+          };
+        }
+        return { page, scope: requestedScope };
+      });
+    } catch (sourceError) {
+      if (sourceError instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(sourceError.message);
+      } else if (
+        sourceError instanceof PlayerApiError &&
+        sourceError.status === 409
+      ) {
+        invalidateReviewSourceLines();
+        setReviewSourceLinesError(
+          "The retained source changed while it was being opened. Reload the hand before trying again.",
+        );
+      } else if (
+        sourceError instanceof PlayerApiError &&
+        sourceError.status === 401
+      ) {
+        handleRequestError(sourceError);
+      } else {
+        setReviewSourceLinesError(friendlyError(sourceError));
+      }
+    } finally {
+      setBusy((current) => (current === "source-lines" ? null : current));
+    }
+  };
+
+  const selectReviewSourceEvidence = (evidence: ImportedHandSourceEvidence) => {
+    if (reviewSourceScope === null) return;
+    setReviewSourceEvidence((current) => ({
+      scope: reviewSourceScope,
+      evidence: uniqueSourceEvidence([
+        ...(current && sourceScopesMatch(current.scope, reviewSourceScope)
+          ? current.evidence
+          : []),
+        structuredClone(evidence),
+      ]),
+    }));
+  };
+
+  const previewReviewedHand = async () => {
+    if (!credentials || !handDetail || !approvalDraft) return;
+    if (
+      approvalRequiresConflictResolution(handDetail, approvalDraft.detectionId)
+    ) {
+      setError(
+        "Resolve the retained source conflict before switching canonical source.",
+      );
+      return;
+    }
+    const requestedDetail = handDetail;
+    const requestedDraft = approvalDraft;
+    if (
+      !["pending_review", "active", "withdrawn", "rejected"].includes(
+        requestedDetail.summary.lifecycle_status,
+      )
+    ) {
+      setError("This hand lifecycle state cannot be previewed for approval.");
+      return;
+    }
+    const requestId = crypto.randomUUID();
+    const requestRevision = draftRevisionRef.current;
+    const requestFence = reviewPreviewFenceRef.current;
+    setBusy("preview");
+    setError(null);
+    setActionNotice(null);
+    try {
+      const preview = await previewPlayerHandReview(
+        credentials,
+        requestedDetail.summary.record_key,
+        {
+          request_id: requestId,
+          draft_revision: requestRevision,
+          detection_id: requestedDraft.detectionId,
+          approved_state: requestedDraft.reviewedState,
+          correction_reason: requestedDraft.correctionReason.trim() || null,
+          expected_record_version: requestedDetail.summary.record_version,
+          expected_lifecycle_status: requestedDetail.summary
+            .lifecycle_status as
+            | "pending_review"
+            | "active"
+            | "withdrawn"
+            | "rejected",
+          expected_active_canonical_revision:
+            requestedDetail.summary.active_canonical_revision,
+          expected_canonical_revision_count:
+            requestedDetail.summary.canonical_revision_count,
+          expected_deletion_generation:
+            requestedDetail.summary.deletion_generation,
+          expected_lifecycle_changed_at:
+            requestedDetail.summary.lifecycle_changed_at,
+        },
+      );
+      if (reviewPreviewFenceRef.current !== requestFence) return;
+      if (
+        preview.schema_version !== "player-hand-review-preview/v1" ||
+        preview.request_id !== requestId ||
+        preview.draft_revision !== requestRevision ||
+        preview.record_key !== requestedDetail.summary.record_key ||
+        preview.record_version !== requestedDetail.summary.record_version ||
+        preview.detection_id !== requestedDraft.detectionId
+      ) {
+        setError(
+          "The local player runtime returned a preview for a different review draft. Reload the hand before trying again.",
+        );
+        return;
+      }
+      if (preview.valid && preview.reviewed_state) {
+        setApprovalDraft((current) =>
+          current &&
+          current.detectionId === requestedDraft.detectionId &&
+          reviewPreviewFenceRef.current === requestFence
+            ? { ...current, reviewedState: preview.reviewed_state! }
+            : current,
+        );
+      }
+      setReviewPreview(preview);
+    } catch (previewError) {
+      if (previewError instanceof PlayerHandRecoveryRequiredError) {
+        requireHandRecovery(previewError.message);
+      } else {
+        handleRequestError(previewError);
+      }
+    } finally {
+      setBusy((current) => (current === "preview" ? null : current));
+    }
+  };
+
   const approveReviewedHand = async () => {
     if (!credentials || !handDetail || !approvalDraft) return;
     if (
@@ -1142,21 +1758,21 @@ export default function PlayerApp() {
       );
       return;
     }
-    let approvedState: Record<string, unknown>;
-    try {
-      const parsed = JSON.parse(approvalDraft.reviewedState) as unknown;
-      if (
-        parsed === null ||
-        typeof parsed !== "object" ||
-        Array.isArray(parsed)
-      ) {
-        throw new Error("not an object");
-      }
-      approvedState = parsed as Record<string, unknown>;
-    } catch {
-      setError("Reviewed canonical state must be a valid JSON object.");
+    if (
+      reviewPreview === null ||
+      !reviewPreview.valid ||
+      reviewPreview.reviewed_state === null ||
+      reviewPreview.draft_revision !== draftRevisionRef.current ||
+      reviewPreview.record_key !== handDetail.summary.record_key ||
+      reviewPreview.record_version !== handDetail.summary.record_version ||
+      reviewPreview.detection_id !== approvalDraft.detectionId
+    ) {
+      setError(
+        "Preview the current structured review and resolve any errors before approval.",
+      );
       return;
     }
+    const approvedState = reviewPreview.reviewed_state;
     const detection = handDetail.detections.find(
       (item) => item.detection_id === approvalDraft.detectionId,
     );
@@ -1167,17 +1783,8 @@ export default function PlayerApp() {
       return;
     }
     const correctionReason = approvalDraft.correctionReason.trim();
-    if (
-      normalizedJson(approvedState) !== normalizedJson(detection.state) &&
-      correctionReason.length === 0
-    ) {
-      setError(
-        "Add a correction reason because the reviewed state differs from the selected detection.",
-      );
-      return;
-    }
     const confirmed = window.confirm(
-      `Confirm canonical approval from detection ${approvalDraft.detectionId}. The reviewed state will become explicit ground truth for local learning, while the parser proposal remains retained separately for audit.`,
+      `Confirm canonical approval from detection ${approvalDraft.detectionId}. The reviewed state will become explicit recorded-hand ground truth, while the parser proposal remains retained separately for audit.`,
     );
     if (!confirmed) return;
 
@@ -1198,7 +1805,7 @@ export default function PlayerApp() {
       );
       replaceHandDetail(updated);
       setActionNotice(
-        `Canonical revision ${updated.summary.active_canonical_revision} approved. The reviewed state is now active for local learning.`,
+        `Canonical revision ${updated.summary.active_canonical_revision} approved. The reviewed state is now the active recorded-hand review.`,
       );
     } catch (approvalError) {
       if (approvalError instanceof PlayerHandRecoveryRequiredError) {
@@ -1280,7 +1887,7 @@ export default function PlayerApp() {
     const confirmed = window.confirm(
       resolution === "keep_active"
         ? "Confirm keeping the preserved canonical state. The competing source remains retained for audit, but this conflict will be closed."
-        : `Confirm source ${selectedRawSourceId} for review. An active hand will become pending review and stop contributing to learning until you explicitly approve reviewed canonical state.`,
+        : `Confirm source ${selectedRawSourceId} for review. An active hand will return to pending review until you explicitly approve the reviewed canonical state.`,
     );
     if (!confirmed) return;
 
@@ -1316,7 +1923,7 @@ export default function PlayerApp() {
       setActionNotice(
         resolution === "keep_active"
           ? "Conflict resolved. The preserved canonical state remains in effect."
-          : "Conflict resolved to the selected source. Review and explicitly approve its detected state before it can contribute to learning.",
+          : "Conflict resolved to the selected source. Review and explicitly approve its detected state before it becomes canonical.",
       );
     } catch (resolutionError) {
       if (resolutionError instanceof PlayerHandRecoveryRequiredError) {
@@ -1385,7 +1992,7 @@ export default function PlayerApp() {
     const verb =
       action === "withdraw" ? "withdraw approval" : "reject this hand";
     const confirmed = window.confirm(
-      `Confirm ${verb}. The hand will stop contributing to local learning, while its audit evidence remains retained.`,
+      `Confirm ${verb}. The hand will become inactive for recorded-hand review, while its audit evidence remains retained.`,
     );
     if (!confirmed) return;
 
@@ -1568,7 +2175,7 @@ export default function PlayerApp() {
       return;
     }
     const confirmed = window.confirm(
-      "Authorize this exact PokerStars hand reimport. The deleted incarnation will not return: a new deletion generation with fresh parser evidence will be created as pending review, with no approval or learning eligibility.",
+      "Authorize this exact PokerStars hand reimport. The deleted incarnation will not return: a new deletion generation with fresh parser evidence will be created as pending review, with no approval or canonical status.",
     );
     if (!confirmed) return;
 
@@ -1606,7 +2213,7 @@ export default function PlayerApp() {
       setActionNotice(
         result.disposition === "duplicate_request"
           ? "The authorized reimport had already committed. Its fresh pending-review evidence was loaded without duplication."
-          : "Authorized reimport completed. Fresh parser evidence is pending explicit canonical review and remains ineligible for learning.",
+          : "Authorized reimport completed. Fresh parser evidence is pending explicit canonical review and has no canonical status yet.",
       );
     } catch (reason) {
       if (reason instanceof PlayerHandRecoveryRequiredError) {
@@ -1681,6 +2288,7 @@ export default function PlayerApp() {
       setHandPage(null);
       setHandDetail(null);
       setApprovalDraft(null);
+      invalidateReviewSourceLines();
       setCloseReason("");
       setDeleteReason("");
       clearReimportSelection();
@@ -1854,8 +2462,29 @@ export default function PlayerApp() {
     approvalDraft !== null &&
     (defaultApprovalDraft === null ||
       approvalDraft.detectionId !== defaultApprovalDraft.detectionId ||
-      approvalDraft.reviewedState !== defaultApprovalDraft.reviewedState ||
+      normalizedJson(approvalDraft.reviewedState) !==
+        normalizedJson(defaultApprovalDraft.reviewedState) ||
       approvalDraft.correctionReason !== defaultApprovalDraft.correctionReason);
+  const reviewPreviewCurrent =
+    reviewPreview !== null &&
+    handDetail !== null &&
+    approvalDraft !== null &&
+    reviewPreview.draft_revision === draftRevision &&
+    reviewPreview.record_key === handDetail.summary.record_key &&
+    reviewPreview.record_version === handDetail.summary.record_version &&
+    reviewPreview.detection_id === approvalDraft.detectionId;
+  const visibleReviewSourceLines =
+    reviewSourceScope !== null &&
+    reviewSourcePage !== null &&
+    sourceScopesMatch(reviewSourcePage.scope, reviewSourceScope)
+      ? reviewSourcePage.page
+      : null;
+  const visibleReviewSourceEvidence =
+    reviewSourceScope !== null &&
+    reviewSourceEvidence !== null &&
+    sourceScopesMatch(reviewSourceEvidence.scope, reviewSourceScope)
+      ? reviewSourceEvidence.evidence
+      : [];
   const dirtyReasons = playerUpdateDirtyReasons({
     approvalChanged: approvalDraftDirty,
     approvalStateReasonChanged: closeReason !== "",
@@ -1896,7 +2525,9 @@ export default function PlayerApp() {
   }, [updateSafety.isBusy, updateSafety.isDirty]);
 
   const markDraftChanged = () => {
-    setDraftRevision((current) => current + 1);
+    draftRevisionRef.current += 1;
+    setDraftRevision(draftRevisionRef.current);
+    invalidateReviewPreview();
   };
   const activateDiscardingDrafts = () => {
     if (
@@ -2139,8 +2770,8 @@ export default function PlayerApp() {
                         </span>
                         <span>
                           {hand.learning_eligible
-                            ? `Active revision ${hand.active_canonical_revision} · learning eligible`
-                            : "Not used for learning"}
+                            ? `Active revision ${hand.active_canonical_revision} · reviewed`
+                            : "Pending or inactive review"}
                         </span>
                         {hand.played_at ? (
                           <span>
@@ -2203,6 +2834,7 @@ export default function PlayerApp() {
                 reimportFile={selectedReimportFile}
                 reimportInput={reimportInput}
                 onApprove={() => void approveReviewedHand()}
+                onPreview={() => void previewReviewedHand()}
                 onApprovalDetectionChange={(detectionId) => {
                   markDraftChanged();
                   setApprovalDraft(approvalDraftFor(handDetail, detectionId));
@@ -2241,6 +2873,17 @@ export default function PlayerApp() {
                     current ? { ...current, reviewedState } : current,
                   );
                 }}
+                onLoadReviewSourceLines={(startLine) =>
+                  void loadReviewSourceLines(startLine)
+                }
+                onSelectReviewSourceEvidence={selectReviewSourceEvidence}
+                reviewPreview={reviewPreview}
+                reviewPreviewCurrent={reviewPreviewCurrent}
+                reviewSourceEvidence={visibleReviewSourceEvidence}
+                reviewSourceLines={visibleReviewSourceLines}
+                reviewSourceLinesError={
+                  reviewSourceScope === null ? null : reviewSourceLinesError
+                }
               />
             ) : null}
           </section>
@@ -2306,11 +2949,11 @@ export default function PlayerApp() {
               Bounded PokerStars text import, correction, and explicit approval
               are enabled in this local runtime. Imported parser output remains
               pending review and never becomes canonical ground truth
-              automatically. The V2 learning loop is not enabled yet. Existing
-              approvals can be revised, withdrawn, or rejected while evidence
-              remains auditable, and retained hands can be permanently deleted
-              to receipt-only tombstones. Screenshot capture is not a player
-              feature.
+              automatically. This review workflow does not run a local learning
+              loop. Existing approvals can be revised, withdrawn, or rejected
+              while evidence remains auditable, and retained hands can be
+              permanently deleted to receipt-only tombstones. Screenshot capture
+              is not a player feature.
             </span>
           </aside>
         </>
