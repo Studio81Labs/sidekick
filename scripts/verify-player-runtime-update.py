@@ -2010,6 +2010,22 @@ def _run_update_validation(
                 record_key=secondary_record_key,
             )
             _restore_backup(candidate_session, backup_archive)
+            _assert_current_operator_authorities_preserved(
+                data_dir,
+                expected=operator_authorities_before_candidate,
+            )
+            _assert_workspace_metadata_preserved(
+                data_dir,
+                expected=workspace_metadata_before_handoff,
+            )
+            _assert_workspace_manifest_preserved(
+                data_dir,
+                expected=workspace_manifest_before_candidate,
+            )
+            _assert_installation_key_preserved(
+                data_dir,
+                expected=installation_key_before_candidate,
+            )
             retained_tombstone = _hand_detail(record_key, candidate_session)
             if _hand_snapshot(retained_tombstone) != _hand_snapshot(deleted):
                 raise PlayerUpdateValidationError(
