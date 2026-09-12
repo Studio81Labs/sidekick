@@ -203,6 +203,7 @@ test("hands a staged player shell to the candidate worker only when safe", async
     ]);
   expect(baseWorker.equals(candidateWorker)).toBe(false);
   expect(baseBuild).not.toEqual(candidateBuild);
+  expect(baseBuild.cacheName).not.toBe(candidateBuild.cacheName);
 
   const dataDir = requiredEnvironment("POKER_PLAYER_UPDATE_DATA_DIR");
   const baseRuntime = await startRuntime(base, {
@@ -224,6 +225,7 @@ test("hands a staged player shell to the candidate worker only when safe", async
       capturePath: launchFile("candidate-launch-url"),
     });
     await page.goto(candidateRuntime.launchUrl);
+    await page.reload();
     await expect(page.getByText("Ready on this machine")).toBeVisible();
     await page.evaluate(async () => {
       const registration = await navigator.serviceWorker.getRegistration("/");
