@@ -515,6 +515,16 @@ def _hand_snapshot(detail: dict[str, Any]) -> str:
     return json.dumps(fields, sort_keys=True, separators=(",", ":"))
 
 
+def _assert_restored_hand_matches(
+    expected: dict[str, Any],
+    restored: dict[str, Any],
+    *,
+    description: str,
+) -> None:
+    if _hand_snapshot(restored) != _hand_snapshot(expected):
+        raise PlayerUpdateValidationError(description)
+
+
 def _export_backup(session: dict[str, object]) -> bytes:
     return SMOKE._require_response(
         SMOKE._request(
@@ -976,10 +986,11 @@ def _run_update_validation(
         try:
             _restore_backup(restore_session, backup_archive)
             restored = _hand_detail(record_key, restore_session)
-            if _hand_snapshot(restored) != before_snapshot:
-                raise PlayerUpdateValidationError(
-                    "Backup restore rehearsal did not preserve the reviewed hand"
-                )
+            _assert_restored_hand_matches(
+                before_update,
+                restored,
+                description="Backup restore rehearsal did not preserve the reviewed hand",
+            )
         finally:
             restore_capture.unlink(missing_ok=True)
             _stop_runtime(restore_process)
@@ -1061,6 +1072,27 @@ def _run_update_validation(
             raise PlayerUpdateValidationError(
                 "Packaged export-before-data-removal did not complete safely"
             )
+        final_restore_dir = temporary / "export-before-data-removal-restore"
+        final_restore_dir.mkdir(mode=0o700)
+        final_restore_capture = capture_dir / "export-before-data-removal-launch-url"
+        final_restore_process, final_restore_session = _start_runtime(
+            candidate,
+            data_dir=final_restore_dir,
+            capture_path=final_restore_capture,
+        )
+        try:
+            _restore_backup(final_restore_session, final_backup.read_bytes())
+            _assert_restored_hand_matches(
+                retained_tombstone,
+                _hand_detail(record_key, final_restore_session),
+                description=(
+                    "Candidate export-before-data-removal backup did not preserve "
+                    "the deleted hand"
+                ),
+            )
+        finally:
+            final_restore_capture.unlink(missing_ok=True)
+            _stop_runtime(final_restore_process)
 
         print("Player runtime update validation passed")
         print(f"base archive sha256: {base.archive_sha256}")

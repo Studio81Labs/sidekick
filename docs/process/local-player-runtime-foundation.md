@@ -191,6 +191,8 @@ application inventory, or identical executed binary/shell/worker assets. It
 uses private temporary application/data roots to test integrity, platform binding,
 side-by-side staging, fresh sessions, lease/port failure, backup/restore,
 stale restore, application-only removal, and packaged export-before-data-removal.
+It restores that final candidate backup into a separate private workspace and
+compares the retained deleted-hand audit snapshot before reporting success.
 Follow the archive-embedded or source
 [manual update runbook](manual-player-application-update.md) for the separate
 controlled target-machine procedure and evidence record.

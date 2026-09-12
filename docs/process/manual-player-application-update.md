@@ -41,7 +41,8 @@ rejected lifecycle state, rehearses backup/restore, rejects an old runtime
 session and concurrent runtime, checks corrupt/incomplete/interrupted staging,
 tests occupied-port startup without workspace mutation, retains a newer
 deletion through a stale restore, removes only the old application files, and
-finishes with packaged export-before-data-removal. It also rejects a candidate
+restores the final candidate export in a separate workspace before completing
+export-before-data-removal. It also rejects a candidate
 whose executed binary, shell, and worker bytes are unchanged. The test uses
 only a temporary test workspace; it never accepts a production data path.
 

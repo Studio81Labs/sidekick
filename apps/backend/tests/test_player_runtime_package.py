@@ -693,6 +693,29 @@ def test_update_snapshot_includes_retained_recognition_evidence() -> None:
     assert verify_player_runtime_update._hand_snapshot(detail) != snapshot
 
 
+def test_update_restore_comparison_rejects_an_incomplete_deleted_hand() -> None:
+    expected = {
+        "summary": {"record_key": "record", "lifecycle_status": "deleted"},
+        "lifecycle": {"status": "deleted"},
+        "raw_sources": [{"raw_source_id": "source"}],
+        "detections": [{"detection_id": "detection", "confidence": 0.8}],
+        "conflicts": [],
+        "canonical_revisions": [{"revision": 1}],
+        "deletion_receipt": {"deleted_at": "2026-09-12T00:00:00Z"},
+    }
+    restored = expected | {"deletion_receipt": None}
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="did not preserve the deleted hand",
+    ):
+        verify_player_runtime_update._assert_restored_hand_matches(
+            expected,
+            restored,
+            description="Candidate export-before-data-removal backup did not preserve the deleted hand",
+        )
+
+
 def test_update_report_is_private_and_non_replaceable(tmp_path: Path) -> None:
     report_path = tmp_path / "update-report.json"
     report = {"schema_version": 1, "candidate": {"source_revision": "b" * 40}}
