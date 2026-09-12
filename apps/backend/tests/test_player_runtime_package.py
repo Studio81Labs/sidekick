@@ -528,34 +528,37 @@ def test_update_browser_rehearsal_passes_validated_source_provenance(
     )
 
 
-def test_update_recovery_interruption_duplicates_a_ready_cascade(
+def test_update_recovery_interruption_duplicates_distinct_ready_cascades(
     tmp_path: Path,
 ) -> None:
-    source = tmp_path / "imported-hands" / ".cascade" / "cascade"
-    staged = source / "staged" / "record" / "content"
-    staged.mkdir(parents=True)
-    (staged / "record.json").write_text('{"lifecycle": "pending"}\n', encoding="utf-8")
-    ready = source / "ready"
-    ready.write_bytes(b"")
-
-    markers = (
-        verify_player_runtime_update._duplicate_ready_cascade_for_recovery_interruption(
-            ready
+    ready_markers = []
+    for cascade, record in (("first", "primary"), ("second", "secondary")):
+        source = tmp_path / "imported-hands" / ".cascade" / cascade
+        staged = source / "staged" / record / "content"
+        staged.mkdir(parents=True)
+        (staged / "record.json").write_text(
+            f'{{"record": "{record}"}}\n', encoding="utf-8"
         )
+        ready = source / "ready"
+        ready.write_bytes(b"")
+        ready_markers.append(ready)
+
+    markers = verify_player_runtime_update._duplicate_ready_cascades_for_recovery_interruption(
+        tuple(ready_markers)
     )
 
     assert (
         len(markers)
-        == verify_player_runtime_update._CANDIDATE_RECOVERY_REPLAY_COPIES + 1
+        == 2
+        * (
+            verify_player_runtime_update._CANDIDATE_RECOVERY_REPLAY_COPIES_PER_RECORD
+            + 1
+        )
     )
     assert all(marker.is_file() and not marker.is_symlink() for marker in markers)
-    assert all(
-        (marker.parent / "staged" / "record" / "content" / "record.json").read_text(
-            encoding="utf-8"
-        )
-        == '{"lifecycle": "pending"}\n'
-        for marker in markers
-    )
+    assert {
+        next((marker.parent / "staged").iterdir()).name for marker in markers
+    } == {"primary", "secondary"}
 
 
 def test_update_candidate_recovery_interruption_keeps_pending_work(
@@ -592,7 +595,7 @@ def test_update_candidate_recovery_interruption_keeps_pending_work(
     )
     monkeypatch.setattr(
         verify_player_runtime_update,
-        "_duplicate_ready_cascade_for_recovery_interruption",
+        "_duplicate_ready_cascades_for_recovery_interruption",
         lambda _ready: pending_markers,
     )
     monkeypatch.setattr(
@@ -605,15 +608,36 @@ def test_update_candidate_recovery_interruption_keeps_pending_work(
         "Popen",
         lambda *_args, **_kwargs: process,
     )
+    monkeypatch.setattr(
+        verify_player_runtime_update,
+        "_assert_player_listener_unreachable_during_recovery",
+        lambda: None,
+    )
 
     verify_player_runtime_update._interrupt_candidate_during_recovery(
         candidate,
         data_dir=tmp_path / "data",
         capture_path=tmp_path / "capture",
-        ready_marker=pending_markers[0],
+        ready_markers=pending_markers,
     )
 
     assert process.killed is True
+
+
+def test_update_recovery_interruption_rejects_an_available_player_listener(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        verify_player_runtime_update.SMOKE,
+        "_request",
+        lambda _path: (503, b"", {}),
+    )
+
+    with pytest.raises(
+        verify_player_runtime_update.PlayerUpdateValidationError,
+        match="bound the player listener",
+    ):
+        verify_player_runtime_update._assert_player_listener_unreachable_during_recovery()
 
 
 def test_update_timeout_terminates_the_browser_rehearsal_process_group(

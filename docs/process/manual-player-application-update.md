@@ -255,9 +255,16 @@ CANDIDATE_APP="$APP_ROOT/candidate/poker-hero-player-..."
    primary workspace. Start the staged candidate with `RESTORE_DATA`, use its
    newly opened page to restore the backup, and inspect the expected hand
    identities, canonical revisions, lifecycle/deletion records, and source
-   audit. Stop it afterwards and retain the primary data directory unchanged.
+   audit. `RESTORE_DATA` must be newly created and empty: do not merge this
+   rehearsal into a prior restore workspace. Stop it afterwards and retain the
+   primary data directory unchanged.
 
    ```bash
+   test ! -e "$RESTORE_DATA" || {
+     printf '%s\n' 'restore rehearsal directory already exists; choose a new path' >&2
+     exit 1
+   }
+   mkdir -m 700 "$RESTORE_DATA"
    POKER_DATA_DIR="$RESTORE_DATA" "$CANDIDATE_APP/poker-hero-player"
    ```
 

@@ -41,10 +41,13 @@ PROVENANCE_SCHEMA_VERSION = 1
 _UUID_IMPORT = "55555555-5555-4555-8555-555555555555"
 _UUID_APPROVE = "33333333-3333-4333-8333-333333333333"
 _UUID_DELETE = "11111111-1111-4111-8111-111111111111"
+_UUID_IMPORT_SECONDARY = "66666666-6666-4666-8666-666666666666"
+_UUID_APPROVE_SECONDARY = "44444444-4444-4444-8444-444444444444"
+_UUID_DELETE_SECONDARY = "22222222-2222-4222-8222-222222222222"
 _DELETE_REASON = "Exercise stale-restore protection after manual update"
 _BROWSER_REHEARSAL_OUTER_TIMEOUT_SECONDS = 130
 _BROWSER_REHEARSAL_TERMINATION_TIMEOUT_SECONDS = 5
-_CANDIDATE_RECOVERY_REPLAY_COPIES = 64
+_CANDIDATE_RECOVERY_REPLAY_COPIES_PER_RECORD = 32
 
 _SYNTHETIC_HAND = b"""PokerStars Hand #900000000002: Hold'em No Limit ($0.50/$1.00 USD) - 2026/08/30 12:35:56 ET
 Table 'Synthetic Heads Up' 2-max Seat #1 is the button
@@ -62,6 +65,9 @@ Total pot $1.00 | Rake $0.00
 Seat 1: Heads Hero (button) (small blind) folded before Flop
 Seat 2: Heads Rival (big blind) collected ($1.00)
 """
+_SECONDARY_SYNTHETIC_HAND = _SYNTHETIC_HAND.replace(
+    b"PokerStars Hand #900000000002", b"PokerStars Hand #900000000003"
+)
 
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
@@ -556,13 +562,15 @@ def _json_response(
     return SMOKE._decode_json_object(response, description=description)
 
 
-def _multipart_import_body() -> tuple[bytes, str]:
+def _multipart_import_body(
+    *, hand: bytes = _SYNTHETIC_HAND, request_id: str = _UUID_IMPORT
+) -> tuple[bytes, str]:
     boundary = "poker-hero-update-boundary"
     body = b"".join(
         (
             f"--{boundary}\r\n".encode(),
             b'Content-Disposition: form-data; name="request_id"\r\n\r\n',
-            _UUID_IMPORT.encode(),
+            request_id.encode(),
             b"\r\n",
             f"--{boundary}\r\n".encode(),
             (
@@ -570,7 +578,7 @@ def _multipart_import_body() -> tuple[bytes, str]:
                 b'filename="update-validation.txt"\r\n'
             ),
             b"Content-Type: text/plain\r\n\r\n",
-            _SYNTHETIC_HAND,
+            hand,
             b"\r\n",
             f"--{boundary}--\r\n".encode(),
         )
@@ -578,8 +586,17 @@ def _multipart_import_body() -> tuple[bytes, str]:
     return body, f"multipart/form-data; boundary={boundary}"
 
 
-def _import_and_reject(session: dict[str, object]) -> tuple[str, dict[str, Any]]:
-    body, content_type = _multipart_import_body()
+def _import_and_reject(
+    session: dict[str, object],
+    *,
+    hand: bytes = _SYNTHETIC_HAND,
+    import_request_id: str = _UUID_IMPORT,
+    approval_request_id: str = _UUID_APPROVE,
+) -> tuple[str, dict[str, Any]]:
+    body, content_type = _multipart_import_body(
+        hand=hand,
+        request_id=import_request_id,
+    )
     outcome = _json_response(
         "/api/player/imports",
         session=session,
@@ -599,7 +616,7 @@ def _import_and_reject(session: dict[str, object]) -> tuple[str, dict[str, Any]]
     detail = _hand_detail(record_key, session)
     summary = detail["summary"]
     approval_payload = {
-        "request_id": _UUID_APPROVE,
+        "request_id": approval_request_id,
         "detection_id": detail["detections"][-1]["detection_id"],
         "approved_state": detail["detections"][-1]["state"],
         "correction_reason": None,
@@ -823,10 +840,12 @@ def _restore_backup(session: dict[str, object], archive: bytes) -> None:
     )
 
 
-def _delete_payload(detail: dict[str, Any]) -> dict[str, object]:
+def _delete_payload(
+    detail: dict[str, Any], *, request_id: str = _UUID_DELETE
+) -> dict[str, object]:
     summary = detail["summary"]
     return {
-        "request_id": _UUID_DELETE,
+        "request_id": request_id,
         "reason": _DELETE_REASON,
         "expected_record_version": summary["record_version"],
         "expected_lifecycle_status": summary["lifecycle_status"],
@@ -1050,37 +1069,6 @@ def _ready_cascade_markers(data_dir: Path) -> tuple[Path, ...]:
     )
 
 
-def _wait_for_ready_cascade(
-    data_dir: Path,
-    process: subprocess.Popen[bytes],
-    *,
-    timeout_seconds: float = 10,
-) -> Path:
-    """Wait for a runtime lifecycle write to cross its durable replay point."""
-
-    deadline = monotonic() + timeout_seconds
-    while monotonic() < deadline:
-        markers = _ready_cascade_markers(data_dir)
-        if len(markers) == 1:
-            return markers[0]
-        if len(markers) > 1:
-            raise PlayerUpdateValidationError(
-                "Controlled interruption created multiple pending lifecycle cascades"
-            )
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise PlayerUpdateValidationError(
-                "Base runtime exited before its interrupted lifecycle write reached "
-                "the durable recovery point:\n"
-                + stdout.decode(errors="replace")
-                + stderr.decode(errors="replace")
-            )
-        sleep(0.01)
-    raise PlayerUpdateValidationError(
-        "Controlled interruption did not reach a durable lifecycle recovery point"
-    )
-
-
 def _staged_pending_lifecycle_transition(
     ready_marker: Path,
     *,
@@ -1129,36 +1117,71 @@ def _staged_pending_lifecycle_transition(
     }
 
 
-def _interrupt_lifecycle_write(
+def _staged_pending_lifecycle_transitions(
+    ready_markers: tuple[Path, ...],
+    *,
+    record_keys: tuple[str, ...],
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Read every distinct transition promised by the ready cascades."""
+
+    transitions: dict[str, dict[str, dict[str, Any]]] = {}
+    for ready_marker in ready_markers:
+        matching_keys = tuple(
+            record_key
+            for record_key in record_keys
+            if (ready_marker.parent / "staged" / record_key).is_dir()
+        )
+        if len(matching_keys) != 1 or matching_keys[0] in transitions:
+            raise PlayerUpdateValidationError(
+                "Interrupted lifecycle writes did not leave distinct ready cascades"
+            )
+        record_key = matching_keys[0]
+        transitions[record_key] = _staged_pending_lifecycle_transition(
+            ready_marker,
+            record_key=record_key,
+        )
+    if set(transitions) != set(record_keys):
+        raise PlayerUpdateValidationError(
+            "Interrupted lifecycle writes did not retain every expected transition"
+        )
+    return transitions
+
+
+def _interrupt_lifecycle_writes(
     process: subprocess.Popen[bytes],
     *,
     data_dir: Path,
-    record_key: str,
-    detail: dict[str, Any],
+    records: tuple[tuple[str, dict[str, Any], str], ...],
     session: dict[str, object],
-) -> dict[str, dict[str, Any]]:
-    """Kill a packaged runtime after a real lifecycle write becomes recoverable.
+) -> dict[str, dict[str, dict[str, Any]]]:
+    """Kill a packaged runtime after distinct real lifecycle writes are ready.
 
-    The record directory is temporarily non-writable before the request starts.
-    That lets the runtime stage and durably mark the delete lifecycle cascade,
-    while preventing its first live-file replacement.  Once ``ready`` exists,
-    the journal contract requires a subsequent runtime to complete it.  The
-    process is then terminated rather than stopped normally, so candidate
-    startup must perform real recovery rather than merely opening clean data.
+    Each record directory is temporarily non-writable before its request
+    starts. That lets the runtime stage and durably mark each delete lifecycle
+    cascade while preventing its first live-file replacement. Once every
+    ``ready`` marker exists, the journal contract requires a subsequent runtime
+    to complete every one. The process is then terminated rather than stopped
+    normally, so candidate startup must perform real recovery rather than
+    merely opening clean data.
     """
 
-    record_dir = data_dir / "imported-hands" / record_key
-    if record_dir.is_symlink() or not record_dir.is_dir():
+    if len(records) < 2 or len({record_key for record_key, _, _ in records}) != len(
+        records
+    ):
         raise PlayerUpdateValidationError(
-            "Could not locate the retained record for interruption validation"
+            "Recovery interruption requires multiple distinct retained records"
         )
-    original_mode = record_dir.stat(follow_symlinks=False).st_mode & 0o777
-    request_result: list[tuple[int, bytes, dict[str, str]]] = []
-    payload = json.dumps(_delete_payload(detail)).encode()
+    original_modes: dict[str, int] = {}
+    request_results: dict[str, list[tuple[int, bytes, dict[str, str]]]] = {
+        record_key: [] for record_key, _, _ in records
+    }
+    request_threads: list[Thread] = []
 
-    def request_delete() -> None:
+    def request_delete(
+        record_key: str, detail: dict[str, Any], request_id: str
+    ) -> None:
         try:
-            request_result.append(
+            request_results[record_key].append(
                 SMOKE._request(
                     f"/api/player/hands/{record_key}/delete",
                     method="POST",
@@ -1166,7 +1189,9 @@ def _interrupt_lifecycle_write(
                         **_session_headers(session, mutation=True),
                         "Content-Type": "application/json",
                     },
-                    body=payload,
+                    body=json.dumps(
+                        _delete_payload(detail, request_id=request_id)
+                    ).encode(),
                 )
             )
         except BaseException:
@@ -1174,80 +1199,142 @@ def _interrupt_lifecycle_write(
             # expected 503.  The durable marker below is the test evidence.
             pass
 
-    request_thread = Thread(target=request_delete, daemon=True)
-    os.chmod(record_dir, 0o500)
-    ready_marker: Path | None = None
-    expected_transition: dict[str, dict[str, Any]] | None = None
-    try:
-        request_thread.start()
-        ready_marker = _wait_for_ready_cascade(data_dir, process)
-        expected_transition = _staged_pending_lifecycle_transition(
-            ready_marker,
-            record_key=record_key,
+    for record_key, _detail, _request_id in records:
+        record_dir = data_dir / "imported-hands" / record_key
+        if record_dir.is_symlink() or not record_dir.is_dir():
+            raise PlayerUpdateValidationError(
+                "Could not locate the retained record for interruption validation"
+            )
+        original_modes[record_key] = (
+            record_dir.stat(follow_symlinks=False).st_mode & 0o777
         )
+        os.chmod(record_dir, 0o500)
+
+    ready_markers: tuple[Path, ...] = ()
+    expected_transitions: dict[str, dict[str, dict[str, Any]]] | None = None
+    try:
+        for record_key, detail, request_id in records:
+            request_thread = Thread(
+                target=request_delete,
+                args=(record_key, detail, request_id),
+                daemon=True,
+            )
+            request_threads.append(request_thread)
+            request_thread.start()
+        deadline = monotonic() + 10
+        while monotonic() < deadline:
+            ready_markers = _ready_cascade_markers(data_dir)
+            if len(ready_markers) == len(records):
+                expected_transitions = _staged_pending_lifecycle_transitions(
+                    ready_markers,
+                    record_keys=tuple(record_key for record_key, _, _ in records),
+                )
+                break
+            if len(ready_markers) > len(records):
+                raise PlayerUpdateValidationError(
+                    "Controlled interruption created unexpected pending lifecycle cascades"
+                )
+            if process.poll() is not None:
+                stdout, stderr = process.communicate()
+                raise PlayerUpdateValidationError(
+                    "Base runtime exited before interrupted lifecycle writes reached "
+                    "the durable recovery point:\n"
+                    + stdout.decode(errors="replace")
+                    + stderr.decode(errors="replace")
+                )
+            sleep(0.01)
+        else:
+            raise PlayerUpdateValidationError(
+                "Controlled interruption did not reach every durable lifecycle "
+                "recovery point"
+            )
         process.kill()
         process.wait(timeout=10)
     finally:
-        os.chmod(record_dir, original_mode)
-        request_thread.join(timeout=10)
+        for record_key, original_mode in original_modes.items():
+            os.chmod(data_dir / "imported-hands" / record_key, original_mode)
+        for request_thread in request_threads:
+            request_thread.join(timeout=10)
 
-    if request_thread.is_alive():
+    if any(request_thread.is_alive() for request_thread in request_threads):
         raise PlayerUpdateValidationError(
-            "Interrupted lifecycle request did not finish after terminating the runtime"
+            "Interrupted lifecycle requests did not finish after terminating the runtime"
         )
     if process.returncode == 0:
         raise PlayerUpdateValidationError(
             "Controlled interruption stopped the base runtime successfully"
         )
-    if ready_marker is None or not ready_marker.is_file():
+    if len(ready_markers) != len(records) or any(
+        not marker.is_file() for marker in ready_markers
+    ):
         raise PlayerUpdateValidationError(
-            "Interrupted lifecycle write did not leave durable recovery work"
+            "Interrupted lifecycle writes did not leave durable recovery work"
         )
-    if request_result and request_result[0][0] != 503:
+    if any(
+        request_results[record_key] and request_results[record_key][0][0] != 503
+        for record_key, _, _ in records
+    ):
         raise PlayerUpdateValidationError(
-            "Interrupted lifecycle request did not report recovery as required"
+            "Interrupted lifecycle requests did not report recovery as required"
         )
-    if expected_transition is None:
+    if expected_transitions is None:
         raise PlayerUpdateValidationError(
-            "Interrupted lifecycle write did not retain its expected transition"
+            "Interrupted lifecycle writes did not retain their expected transitions"
         )
-    return expected_transition
+    return expected_transitions
 
 
-def _duplicate_ready_cascade_for_recovery_interruption(
-    ready_marker: Path,
+def _duplicate_ready_cascades_for_recovery_interruption(
+    ready_markers: tuple[Path, ...],
 ) -> tuple[Path, ...]:
     """Create enough durable replay work to interrupt candidate startup.
 
-    A lifecycle purge has one staged record replacement and can finish before
-    an external process observes it.  Exact copies are safe in this temporary
-    rehearsal: journal replay is idempotent, and each copy contains the same
-    already-durable transition.  Multiple copies make the interruption happen
-    while the candidate is still inside its startup recovery sweep rather than
-    after it has already bound the local server.
+    Two real, distinct record transitions must survive candidate recovery. Each
+    transition has one staged record replacement and can finish before an
+    external process observes it, so the temporary rehearsal copies each valid
+    cascade. Journal replay is idempotent; the copies make the interruption
+    happen while the candidate is still in its startup recovery sweep, while
+    the independent final assertions still require both original records.
     """
 
-    source = ready_marker.parent
-    if not source.is_dir() or ready_marker.parent.parent.name != ".cascade":
+    if len(ready_markers) < 2:
         raise PlayerUpdateValidationError(
-            "Interrupted lifecycle write has an invalid ready cascade"
+            "Candidate recovery interruption requires distinct ready cascades"
         )
-    markers = [ready_marker]
-    for copy_index in range(_CANDIDATE_RECOVERY_REPLAY_COPIES):
-        duplicate = source.with_name(f"{source.name}.replay-{copy_index:03d}")
-        try:
-            shutil.copytree(source, duplicate, symlinks=True)
-        except OSError as exc:
+    markers = list(ready_markers)
+    for ready_marker in ready_markers:
+        source = ready_marker.parent
+        if not source.is_dir() or source.parent.name != ".cascade":
             raise PlayerUpdateValidationError(
-                "Could not prepare replay work for candidate recovery interruption"
-            ) from exc
-        duplicate_marker = duplicate / "ready"
-        if duplicate_marker.is_symlink() or not duplicate_marker.is_file():
-            raise PlayerUpdateValidationError(
-                "Candidate recovery interruption copied an invalid ready cascade"
+                "Interrupted lifecycle write has an invalid ready cascade"
             )
-        markers.append(duplicate_marker)
+        for copy_index in range(_CANDIDATE_RECOVERY_REPLAY_COPIES_PER_RECORD):
+            duplicate = source.with_name(f"{source.name}.replay-{copy_index:03d}")
+            try:
+                shutil.copytree(source, duplicate, symlinks=True)
+            except OSError as exc:
+                raise PlayerUpdateValidationError(
+                    "Could not prepare replay work for candidate recovery interruption"
+                ) from exc
+            duplicate_marker = duplicate / "ready"
+            if duplicate_marker.is_symlink() or not duplicate_marker.is_file():
+                raise PlayerUpdateValidationError(
+                    "Candidate recovery interruption copied an invalid ready cascade"
+                )
+            markers.append(duplicate_marker)
     return tuple(markers)
+
+
+def _assert_player_listener_unreachable_during_recovery() -> None:
+    """A process must not serve a partially replayed player workspace."""
+
+    try:
+        SMOKE._request("/api/player/health")
+    except OSError:
+        return
+    raise PlayerUpdateValidationError(
+        "Candidate bound the player listener before lifecycle recovery completed"
+    )
 
 
 def _interrupt_candidate_during_recovery(
@@ -1255,11 +1342,13 @@ def _interrupt_candidate_during_recovery(
     *,
     data_dir: Path,
     capture_path: Path,
-    ready_marker: Path,
+    ready_markers: tuple[Path, ...],
 ) -> None:
     """Kill one candidate while it replays durable work, then leave it retryable."""
 
-    replay_markers = _duplicate_ready_cascade_for_recovery_interruption(ready_marker)
+    replay_markers = _duplicate_ready_cascades_for_recovery_interruption(
+        ready_markers
+    )
     capture_path.unlink(missing_ok=True)
     process = subprocess.Popen(
         [str(candidate.entrypoint)],
@@ -1272,6 +1361,8 @@ def _interrupt_candidate_during_recovery(
         deadline = monotonic() + 10
         while monotonic() < deadline:
             pending_markers = _ready_cascade_markers(data_dir)
+            if pending_markers:
+                _assert_player_listener_unreachable_during_recovery()
             if 0 < len(pending_markers) < len(replay_markers):
                 process.kill()
                 process.wait(timeout=10)
@@ -1290,7 +1381,8 @@ def _interrupt_candidate_during_recovery(
             sleep(0.001)
         else:
             raise PlayerUpdateValidationError(
-                "Candidate did not begin lifecycle recovery before controlled interruption"
+                "Candidate did not begin lifecycle recovery before controlled "
+                "interruption"
             )
     except BaseException:
         _stop_runtime(process)
@@ -1610,6 +1702,13 @@ def _run_update_validation(
         try:
             record_key, before_update = _import_and_reject(base_session)
             before_snapshot = _hand_snapshot(before_update)
+            secondary_record_key, secondary_before_update = _import_and_reject(
+                base_session,
+                hand=_SECONDARY_SYNTHETIC_HAND,
+                import_request_id=_UUID_IMPORT_SECONDARY,
+                approval_request_id=_UUID_APPROVE_SECONDARY,
+            )
+            secondary_before_snapshot = _hand_snapshot(secondary_before_update)
             grade_before_update = _hand_detail(grade_record_key, base_session)
             backup_archive = _export_backup(base_session)
             backup_artifacts = _backup_record_artifact_inventory(
@@ -1643,18 +1742,30 @@ def _run_update_validation(
             base, data_dir=data_dir, capture_path=base_capture
         )
         base_interrupted = False
-        expected_transition: dict[str, dict[str, Any]] | None = None
+        expected_transitions: dict[str, dict[str, dict[str, Any]]] | None = None
         try:
             restarted = _hand_detail(record_key, base_session)
             if _hand_snapshot(restarted) != before_snapshot:
                 raise PlayerUpdateValidationError(
                     "Base runtime restart changed retained audit state before interruption"
                 )
-            expected_transition = _interrupt_lifecycle_write(
+            secondary_restarted = _hand_detail(secondary_record_key, base_session)
+            if _hand_snapshot(secondary_restarted) != secondary_before_snapshot:
+                raise PlayerUpdateValidationError(
+                    "Base runtime restart changed the secondary audit state before "
+                    "interruption"
+                )
+            expected_transitions = _interrupt_lifecycle_writes(
                 base_process,
                 data_dir=data_dir,
-                record_key=record_key,
-                detail=restarted,
+                records=(
+                    (record_key, restarted, _UUID_DELETE),
+                    (
+                        secondary_record_key,
+                        secondary_restarted,
+                        _UUID_DELETE_SECONDARY,
+                    ),
+                ),
                 session=base_session,
             )
             base_interrupted = True
@@ -1663,9 +1774,9 @@ def _run_update_validation(
             if not base_interrupted:
                 _stop_runtime(base_process)
 
-        if expected_transition is None:
+        if expected_transitions is None:
             raise PlayerUpdateValidationError(
-                "Interrupted lifecycle write did not retain its expected transition"
+                "Interrupted lifecycle writes did not retain their expected transitions"
             )
         if workspace_metadata_before_handoff is None:
             raise PlayerUpdateValidationError(
@@ -1678,15 +1789,16 @@ def _run_update_validation(
         installation_key_before_candidate = _installation_key_snapshot(data_dir)
 
         ready_markers = _ready_cascade_markers(data_dir)
-        if len(ready_markers) != 1:
+        if len(ready_markers) != len(expected_transitions):
             raise PlayerUpdateValidationError(
-                "Interrupted lifecycle write did not leave one ready cascade for candidate recovery"
+                "Interrupted lifecycle writes did not leave distinct ready cascades "
+                "for candidate recovery"
             )
         _interrupt_candidate_during_recovery(
             candidate,
             data_dir=data_dir,
             capture_path=capture_dir / "interrupted-candidate-launch-url",
-            ready_marker=ready_markers[0],
+            ready_markers=ready_markers,
         )
 
         candidate_capture = capture_dir / "candidate-launch-url"
@@ -1717,7 +1829,12 @@ def _run_update_validation(
             _assert_recovered_lifecycle_retains_audit_state(
                 before_update,
                 after_update,
-                expected_transition,
+                expected_transitions[record_key],
+            )
+            _assert_recovered_lifecycle_retains_audit_state(
+                secondary_before_update,
+                _hand_detail(secondary_record_key, candidate_session),
+                expected_transitions[secondary_record_key],
             )
             _assert_current_operator_authorities_preserved(
                 data_dir,
@@ -1811,6 +1928,22 @@ def _run_update_validation(
             candidate, data_dir=data_dir, capture_path=candidate_capture
         )
         try:
+            _assert_current_operator_authorities_preserved(
+                data_dir,
+                expected=operator_authorities_before_candidate,
+            )
+            _assert_workspace_metadata_preserved(
+                data_dir,
+                expected=workspace_metadata_before_handoff,
+            )
+            _assert_workspace_manifest_preserved(
+                data_dir,
+                expected=workspace_manifest_before_candidate,
+            )
+            _assert_installation_key_preserved(
+                data_dir,
+                expected=installation_key_before_candidate,
+            )
             deleted = _delete_hand(
                 record_key, _hand_detail(record_key, candidate_session), candidate_session
             )
